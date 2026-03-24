@@ -1,0 +1,142 @@
+[project]
+name = "ypl-agent"
+description = "Agent infrastructure service for Yupp"
+version = "0.0.1"
+readme = "README.md"
+requires-python = ">=3.12"
+
+
+[tool.ruff]
+# The directories to consider when resolving first- vs. third-party imports
+src = ["ypl"]
+
+exclude = [
+    ".git/",
+    "ypl/db/alembic/versions/*",
+    "tmp/",
+]
+
+line-length = 120
+indent-width = 4
+
+[tool.ruff.lint.per-file-ignores]
+# ignore star and unused imports
+"__init__.py" = ["F403", "F405"]
+
+[tool.ruff.lint]
+select = [
+    # flake8-bugbear (bug-prone patterns and design issues)
+    "B",
+    # flake8-comprehensions (better comprehensions)
+    "C4",
+    # pycodestyle error
+    "E",
+    # pyflakes
+    "F",
+    # refurb (modernize Python code)
+    "FURB",
+    # isort
+    "I",
+    # perflint (performance anti-patterns)
+    "PERF",
+    # flake8-pie (misc - duplicate calls, etc)
+    "PIE",
+    # flake8-return (simplify return statements)
+    "RET",
+    # flake8-simplify (code simplification)
+    "SIM11",
+    # flake8-tidy-imports
+    "TID",
+    # pyupgrade
+    "UP",
+    # pycodestyle warning
+    "W",
+    # misuse of noqa
+    "RUF1",
+    # dates without tz
+    "DTZ",
+]
+
+ignore = []
+
+fixable = ["ALL"]
+unfixable = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.ruff.lint.isort]
+order-by-type = true
+no-lines-before = ["future", "standard-library"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"sqlalchemy.select" = {msg = "Please use SQLModel.select instead of SQLAlchemy's select"}
+"sqlalchemy.ext.asyncio.session.AsyncSession" = {msg = "Please use SQLModel.AsyncSession instead of SQLAlchemy's AsyncSession"}
+
+
+[tool.poetry]
+name = "ypl-agent"
+version = "0.0.1"
+description = "Agent infrastructure service for Yupp"
+license = "Proprietary"
+authors = [
+    "Yupp Eng <eng@yupp.ai>",
+]
+readme = "README.md"
+package-mode = true
+
+[tool.poetry.dependencies]
+alembic = "^1.17.2"
+asyncpg = "0.31.0"
+pgvector = "0.2.5"
+psycopg2-binary = "2.9.11"
+pydantic = {version = "2.11.10", extras = ["email"]}
+pydantic-settings = "2.10.1"
+python = ">=3.12.12,<3.13"
+python-dotenv = "^1.2.1"
+sqlalchemy = {version = "2.0.44", extras = ["asyncio"]}
+sqlmodel = "0.0.27"
+
+[tool.poetry.group.dev.dependencies]
+mypy = "^1.19.0"
+pytest = "^8.3.3"
+pytest-alembic = "^0.11.1"
+pytest-asyncio = "^0.24.0"
+pytest-mock = "^3.14.0"
+ruff = "^0.14.9"
+
+[tool.mypy]
+python_version = "3.12"
+show_error_codes = true
+check_untyped_defs = true
+disallow_untyped_defs = true
+disallow_untyped_calls = true
+disallow_incomplete_defs = true
+no_implicit_optional = true
+strict_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+warn_unreachable = true
+warn_no_return = true
+strict_equality = true
+ignore_missing_imports = true
+plugins = ["pydantic.mypy"]
+exclude = ["ypl/db/alembic/", "tmp/"]
+cache_dir = ".mypy_cache"
+incremental = true
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore::DeprecationWarning:importlib.*:",
+    "ignore:Using extra keyword arguments on `Field` is deprecated:DeprecationWarning",
+]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
