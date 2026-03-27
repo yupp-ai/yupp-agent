@@ -265,7 +265,7 @@ if [ ! -d .venv ] || [ "$VENV_PY_VER" = "none" ] || [ "$VENV_PY_VER" != "$EXPECT
     sudo -u ahs rm -rf .venv
     # Use --without-pip because source-built Python may lack ensurepip
     sudo -u ahs "$PYTHON_BIN" -m venv --without-pip .venv
-    sudo -u ahs bash -c 'cd /opt/yupp-agent && curl -sS https://bootstrap.pypa.io/get-pip.py | .venv/bin/python3'
+    sudo -u ahs bash -c 'cd /opt/yupp-agent && curl -sS https://bootstrap.pypa.io/get-pip.py | .venv/bin/python3 && .venv/bin/pip install "setuptools<80"'
 else
     echo "  Venv OK: $VENV_PY_VER"
 fi
