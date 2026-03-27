@@ -1,5 +1,5 @@
-name: Deploy Agent Services
-# Deploy agent services (MCP Server, MCP OAuth, SAG, AHS) individually or all at once.
+name: Deploy Servers
+# Deploy services (MCP Server, MCP OAuth, SAG, AHS, Streamlit) individually or all at once.
 
 on:
   workflow_call:
