@@ -2,23 +2,15 @@ import os
 from typing import Literal, get_args
 
 # Any third-party dependencies that are added here, should also be installed during the
-# "Generate gcloud deploy secrets string" step in the deploy-v2-deploy-only.yml workflow.
+# "Generate gcloud deploy secrets string" step in the deploy workflow.
 import yaml
 from pydantic import BaseModel, field_validator
 
 Environment = Literal["local", "staging", "production"]
 Service = Literal[
     "agent-harness-service",
-    "backend",
-    "cronjob",
     "mcp-server",
-    "partner-payments-server",
-    "webhooks-service",
-    "risk-service",
     "slack-agent-gateway",
-    "slack-interaction-server",
-    "streamlit-server",
-    "discord-service",
 ]
 
 SECRET_ENV_VAR_MAP_FILE = "data/secret-env-var-map.yml"

@@ -6,7 +6,6 @@ on:
       - main
   pull_request:
 
-# Required permissions for dorny/path-filter
 permissions:
   contents: read
   packages: read
@@ -22,8 +21,6 @@ jobs:
     outputs:
       has_python_changes: ${{ steps.filter.outputs.has_python_changes }}
       has_db_changes: ${{ steps.filter.outputs.has_db_changes }}
-      has_dynamic_app_settings_changes: ${{ steps.filter.outputs.has_dynamic_app_settings_changes }}
-      has_reward_rule_changes: ${{ steps.filter.outputs.has_reward_rule_changes }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -39,12 +36,6 @@ jobs:
             has_db_changes:
               - 'ypl/db/**'
               - 'alembic.ini'
-              - 'tests/conftest.py'
-              - 'tests/test_db_datetime_timezone.py'
-            has_dynamic_app_settings_changes:
-              - 'data/dynamic_app_settings*.yml'
-            has_reward_rule_changes:
-              - 'data/reward_rules.yml'
 
   lint:
     needs: changes
@@ -124,36 +115,8 @@ jobs:
           ENVIRONMENT: test
         run: poetry run pytest --test-alembic tests/conftest.py tests/alembic/test_db_datetime_timezone.py
 
-  dynamic-app-settings:
-    needs: changes
-    if: needs.changes.outputs.has_dynamic_app_settings_changes == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Python environment
-        uses: ./.github/actions/setup-test-runner
-
-      - name: Run dynamic app settings tests
-        run: poetry run pytest ypl/backend/tests/test_dynamic_app_settings.py
-
-  reward-rules:
-    needs: changes
-    if: needs.changes.outputs.has_reward_rule_changes == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Python environment
-        uses: ./.github/actions/setup-test-runner
-
-      - name: Run reward rules tests
-        run: poetry run pytest ypl/backend/tests/test_rewards.py
-
-  lint-and-test-backend:
-    needs: [lint, mypy, test, test-alembic, dynamic-app-settings, reward-rules]
+  lint-and-test:
+    needs: [lint, mypy, test, test-alembic]
     runs-on: ubuntu-latest
     if: always()
     steps:

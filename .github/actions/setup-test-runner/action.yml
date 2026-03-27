@@ -1,0 +1,44 @@
+name: 'Setup Python Environment for running lint and tests'
+description: 'Setup Python, Poetry, and install dependencies for running lint and tests'
+
+runs:
+  using: composite
+  steps:
+    - name: Install Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Cache Poetry install
+      uses: actions/cache@v4
+      with:
+        path: ~/.local
+        key: poetry-1.8.5-0
+
+    - name: Install Poetry
+      uses: snok/install-poetry@v1
+      with:
+        version: 1.8.5
+        virtualenvs-create: true
+        virtualenvs-in-project: true
+
+    - name: Cache Poetry dependencies
+      id: cache-deps
+      uses: actions/cache@v4
+      with:
+        path: .venv
+        # Use a different key to avoid conflicts where dev dependencies are not needed.
+        # Include Python version in cache key to avoid using Python 3.11 cache with Python 3.12
+        key: pydeps-dev-py312-${{ hashFiles('**/poetry.lock') }}
+        restore-keys: |
+          pydeps-dev-py312-${{ hashFiles('**/poetry.lock') }}-
+          pydeps-dev-py312-
+          pydeps-dev
+
+    - name: Install dependencies
+      shell: bash
+      # Intentionally install dev dependencies here.
+      # Ensure Poetry uses the correct Python version (3.12) from setup-python
+      run: |
+        poetry env use python
+        poetry install --no-interaction --no-root --sync
