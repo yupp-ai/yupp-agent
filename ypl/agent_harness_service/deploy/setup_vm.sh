@@ -133,12 +133,6 @@ if [ "$NEEDS_RELOAD" = true ]; then
     echo "  Persisted sysctl settings to $SYSCTL_FILE"
 fi
 
-# Verify bwrap works
-if sudo -u ahs bwrap --ro-bind /usr /usr --proc /proc --dev /dev --tmpfs /tmp ls / > /dev/null 2>&1; then
-    echo "  bwrap verified OK"
-else
-    echo "  WARNING: bwrap verification failed — agents will fall back to unsandboxed execution"
-fi
 fi
 
 # --- Step 1b: Lint tools (ruff, mypy) ---
@@ -191,6 +185,15 @@ else
 fi
 fi
 
+# Verify bwrap works (needs ahs user from step 3)
+if command -v bwrap &> /dev/null && id -u ahs &> /dev/null; then
+    if sudo -u ahs bwrap --ro-bind /usr /usr --proc /proc --dev /dev --tmpfs /tmp ls / > /dev/null 2>&1; then
+        echo "  bwrap verified OK"
+    else
+        echo "  WARNING: bwrap verification failed — agents will fall back to unsandboxed execution"
+    fi
+fi
+
 # --- Step 4: Install Claude Code CLI + OpenAI Codex CLI ---
 if [ "$START_STEP" -le 4 ]; then
 echo ""
@@ -220,7 +223,7 @@ echo ""
 echo "--------------------------------------------"
 echo "  Step 5/13: Creating directory structure"
 echo "--------------------------------------------"
-mkdir -p /data/{shared,agents,repos,sessions,session_logs}
+mkdir -p /data/{shared,agents,repos,sessions,session_logs,memories,workspaces}
 mkdir -p /data/ahs
 chown -R ahs:ahs /data
 echo "  /data/ directory structure ready"
@@ -230,12 +233,18 @@ fi
 if [ "$START_STEP" -le 6 ]; then
 echo ""
 echo "--------------------------------------------"
-echo "  Step 6/13: Cloning yupp-mind repo"
+echo "  Step 6/13: Cloning yupp-agent repo"
 echo "--------------------------------------------"
+# Private repos need a GitHub token. Pass GITHUB_TOKEN in the environment.
+if [ -z "${GITHUB_TOKEN:-}" ]; then
+    echo "  WARNING: GITHUB_TOKEN not set — cloning private repos will fail."
+    echo "  Set it with: sudo GITHUB_TOKEN=ghp_xxx bash setup_vm.sh"
+fi
+CLONE_URL="https://${GITHUB_TOKEN:+${GITHUB_TOKEN}@}github.com/yupp-ai/yupp-agent.git"
 if [ ! -d /opt/yupp-agent/.git ]; then
     mkdir -p /opt/yupp-agent
     chown ahs:ahs /opt/yupp-agent
-    sudo -u ahs git clone https://github.com/yupp-ai/yupp-agent.git /opt/yupp-agent
+    sudo -u ahs git clone "$CLONE_URL" /opt/yupp-agent
 else
     echo "  Already cloned at /opt/yupp-agent"
 fi
@@ -260,7 +269,7 @@ if [ ! -d .venv ] || [ "$VENV_PY_VER" = "none" ] || [ "$VENV_PY_VER" != "$EXPECT
 else
     echo "  Venv OK: $VENV_PY_VER"
 fi
-sudo -u ahs .venv/bin/pip install poetry
+sudo -u ahs bash -c 'cd /opt/yupp-agent && .venv/bin/pip install poetry'
 # Some dependencies are hosted on private GitHub repos and require a token.
 # STRIPE_GITHUB_TOKEN must be set in the caller's environment.
 if [ -z "${STRIPE_GITHUB_TOKEN:-}" ]; then
@@ -272,7 +281,7 @@ cd /opt/yupp-agent
 .venv/bin/poetry install --no-root
 .venv/bin/poetry build
 .venv/bin/pip install -e .
-[ -n "$STRIPE_GITHUB_TOKEN" ] && git config --global --unset url."https://${STRIPE_GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+[ -n "$STRIPE_GITHUB_TOKEN" ] && git config --global --unset url."https://${STRIPE_GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/" || true
 '
 fi
 
@@ -331,13 +340,17 @@ echo "--------------------------------------------"
 echo "  Step 11/13: Cloning code repos for agents"
 echo "--------------------------------------------"
 cd /data/repos
-for repo in yupp-mind yupp-soul yupp-head; do
+for repo in yupp-agent yupp-mind yupp-soul yupp-head; do
     if [ ! -d "$repo" ]; then
-        sudo -u ahs git clone https://github.com/yupp-ai/${repo}.git "$repo"
+        REPO_URL="https://${GITHUB_TOKEN:+${GITHUB_TOKEN}@}github.com/yupp-ai/${repo}.git"
+        sudo -u ahs git clone "$REPO_URL" "$repo" || echo "  WARNING: Failed to clone $repo (is GITHUB_TOKEN set?)"
     else
         echo "  $repo already cloned"
     fi
 done
+# Symlink .claude at /data/repos/ level so Claude CLI picks up settings/hooks
+ln -sfn /data/repos/yupp-agent/.claude /data/repos/.claude
+echo "  /data/repos/.claude -> yupp-agent/.claude"
 fi
 
 # --- Step 12: Install systemd service ---
@@ -383,7 +396,12 @@ echo "============================================"
 echo ""
 echo "Next steps:"
 echo "  1. Edit /data/ahs/.env with your actual values (see DEPLOYMENT.md)"
-echo "  2. Authenticate GitHub: sudo -u ahs bash /data/ahs/gh_app_auth.sh"
+echo "  2. Set up GitHub App auth:"
+echo "     - Copy the GitHub App private key to /data/ahs/github-app-key.pem"
+echo "     - Copy gh_app_auth.sh to /data/ahs/gh_app_auth.sh"
+echo "     - chmod 600 /data/ahs/github-app-key.pem"
+echo "     - chmod +x /data/ahs/gh_app_auth.sh"
+echo "     - sudo -u ahs bash /data/ahs/gh_app_auth.sh"
 echo "  3. (Optional) Edit agent configs in /data/agents/"
 echo "  4. Start the service: sudo systemctl start ahs"
 echo "  5. Check status: sudo systemctl status ahs / journalctl -u ahs -f"
