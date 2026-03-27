@@ -278,6 +278,7 @@ fi
 sudo -u ahs STRIPE_GITHUB_TOKEN="${STRIPE_GITHUB_TOKEN:-}" bash -c '
 cd /opt/yupp-agent
 [ -n "$STRIPE_GITHUB_TOKEN" ] && git config --global url."https://${STRIPE_GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+.venv/bin/poetry lock --no-update
 .venv/bin/poetry install --no-root
 .venv/bin/poetry build
 .venv/bin/pip install -e .
