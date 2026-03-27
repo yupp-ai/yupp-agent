@@ -23,6 +23,14 @@ from sqlmodel import Field, Relationship
 from ypl.db.base import BaseModel
 
 
+class AgentArtifactType(str, enum.Enum):
+    """Type of artifact tracked in the agent artifact registry."""
+
+    YUPPASTE = "YUPPASTE"  # Text content (investigations, reports, summaries)
+    CODE_REVIEW = "CODE_REVIEW"  # GitHub PR review
+    OTHER = "OTHER"  # Catch-all for future types
+
+
 class AgentSessionTrigger(str, enum.Enum):
     """How the session was initiated."""
 
@@ -242,6 +250,9 @@ class AgentSessionMessage(BaseModel, table=True):
     duration_ms: int | None = Field(default=None, sa_type=sa.Integer)
     num_agent_turns: int | None = Field(default=None, sa_type=sa.Integer)
     slack_ts: str | None = Field(default=None, sa_type=sa.Text)
+    # Per-turn inference latency metrics derived from wall-clock timing in the event loop.
+    ttfct_ms: int | None = Field(default=None, sa_type=sa.Integer)
+    ttlct_ms: int | None = Field(default=None, sa_type=sa.Integer)
     completion_status: AgentSessionMessageCompletionStatus = Field(
         default=AgentSessionMessageCompletionStatus.SUCCESS,
         sa_column=Column(
@@ -437,4 +448,122 @@ class AgentTask(BaseModel, table=True):
     __table_args__ = (
         Index("ix_agent_tasks_project_status", "agent_project_id", "status"),
         sa.CheckConstraint("parent_task_id != agent_task_id", name="no_self_parent"),
+    )
+
+
+class AgentSecurityIncidentType(str, enum.Enum):
+    """Type of security incident detected by an agent."""
+
+    SECRETS_PROBE = "SECRETS_PROBE"
+    MEMORY_MANIPULATION = "MEMORY_MANIPULATION"
+    SCOPE_MANIPULATION = "SCOPE_MANIPULATION"
+    SOCIAL_ENGINEERING = "SOCIAL_ENGINEERING"
+
+
+class AgentSecuritySeverity(str, enum.Enum):
+    """Severity level of a security incident."""
+
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
+
+
+class AgentSecurityResolution(str, enum.Enum):
+    """Resolution status of a reviewed security incident."""
+
+    FALSE_POSITIVE = "FALSE_POSITIVE"
+    CONFIRMED = "CONFIRMED"
+    MITIGATED = "MITIGATED"
+
+
+class AgentSecurityIncident(BaseModel, table=True):
+    """A security incident detected by an agent during a session.
+
+    Written by the report_security_incident MCP tool. Reviewed by humans
+    via the Soul admin dashboard.
+    """
+
+    __tablename__ = "agent_security_incidents"
+
+    incident_id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True, nullable=False)
+    agent_session_id: uuid.UUID | None = Field(
+        default=None,
+        sa_column=Column(sa.Uuid, sa.ForeignKey("agent_sessions.agent_session_id"), nullable=True),
+    )
+    agent_name: str = Field(nullable=False, sa_type=sa.Text)
+    incident_type: AgentSecurityIncidentType = Field(
+        sa_column=Column(
+            sa.Enum(AgentSecurityIncidentType, create_type=False),
+            nullable=False,
+        )
+    )
+    severity: AgentSecuritySeverity = Field(
+        sa_column=Column(
+            sa.Enum(AgentSecuritySeverity, create_type=False),
+            nullable=False,
+        )
+    )
+    description: str = Field(nullable=False, sa_type=sa.Text)
+    evidence: dict[str, Any] | None = Field(default=None, sa_column=Column(JSONB, nullable=True))
+    turn_number: int | None = Field(default=None, nullable=True)
+    offense_number: int = Field(default=1, nullable=False)
+    auto_detected: bool = Field(default=True, nullable=False)
+    reported_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(sa.DateTime(timezone=True), nullable=True, server_default=sa.func.now()),
+    )
+    reviewed_at: datetime | None = Field(default=None, sa_type=sa.DateTime(timezone=True))  # type: ignore[call-overload]
+    reviewed_by: str | None = Field(default=None, sa_type=sa.Text)
+    resolution: AgentSecurityResolution | None = Field(
+        default=None,
+        sa_column=Column(sa.Enum(AgentSecurityResolution, create_type=False), nullable=True),
+    )
+
+    __table_args__ = (
+        Index("ix_agent_security_incidents_session", "agent_session_id"),
+        Index("ix_agent_security_incidents_type_severity", "incident_type", "severity"),
+        Index("ix_agent_security_incidents_reported_at", "reported_at"),
+        Index(
+            "ix_agent_security_incidents_unreviewed",
+            "reviewed_at",
+            postgresql_where=sa.text("reviewed_at IS NULL"),
+        ),
+    )
+
+
+class AgentArtifact(BaseModel, table=True):
+    """A pointer to an artifact created by or shared with agents.
+
+    Artifacts are lightweight metadata records pointing to external resources
+    (yuppastes, PR reviews, documents, etc.). No content is stored here — only
+    the URL and enough context to find, filter, and attribute the artifact.
+    """
+
+    __tablename__ = "agent_artifacts"
+
+    agent_artifact_id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True, nullable=False)
+    artifact_type: AgentArtifactType = Field(sa_column=Column(sa.Enum(AgentArtifactType), nullable=False))
+    title: str = Field(nullable=False, sa_type=sa.Text)
+    description: str | None = Field(default=None, sa_type=sa.Text)
+    # The canonical pointer to the artifact (yuppaste URL, PR link, etc.)
+    url: str = Field(nullable=False, sa_type=sa.Text)
+
+    # Attribution: who/what created this artifact (no FK constraint — user may not exist in this DB)
+    creator_user_id: str | None = Field(default=None, nullable=True, sa_type=sa.Text, index=True)
+    creator_agent_id: uuid.UUID | None = Field(default=None, foreign_key="agents.agent_id", nullable=True, index=True)
+
+    # Context: where/why this artifact was created
+    agent_session_id: uuid.UUID | None = Field(
+        default=None, foreign_key="agent_sessions.agent_session_id", nullable=True
+    )
+    agent_task_id: uuid.UUID | None = Field(
+        default=None, foreign_key="agent_tasks.agent_task_id", nullable=True, index=True
+    )
+
+    # Flexible bag for type-specific data (e.g. {"pr_number": 123, "repo": "yupp-mind"})
+    artifact_metadata: dict[str, Any] | None = Field(default=None, sa_column=Column(JSONB, nullable=True))
+
+    __table_args__ = (
+        Index("ix_agent_artifacts_type", "artifact_type"),
+        Index("ix_agent_artifacts_session_type", "agent_session_id", "artifact_type"),
     )

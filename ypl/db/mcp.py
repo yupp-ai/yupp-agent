@@ -124,6 +124,12 @@ class MCPAuditLog(BaseModel, table=True):
         ),
     )
     error_message: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    error_type: str | None = Field(
+        default=None, sa_column=Column(sa.String(255), nullable=True)
+    )  # Exception class name, e.g. "ValueError"
+    stack_trace: str | None = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )  # Full traceback for FAILED calls
     result_summary: str | None = Field(default=None, sa_column=Column(Text, nullable=True))  # Brief summary of results
 
     # Context

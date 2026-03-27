@@ -2,13 +2,11 @@
 """Dump relevant tables from the old yuppdb (yupp-mind) to CSV files.
 
 Usage:
-    python -m ypl.db.tools.dump_from_yuppdb \
-        --host 34.48.17.132 --port 6432 --db yuppdb \
-        --user developer --password '<PASSWORD>' \
-        --output-dir ./dump
+    export SOURCE_DB='postgresql://user:pass@host:port/yuppdb'
+    python -m ypl.db.tools.dump_from_yuppdb --output-dir ./dump
 
-Connects to the old prod yuppdb (via pgbouncer) and exports only the tables
-and columns needed by yupp-agent into a directory of CSV files.
+    # Or pass directly:
+    python -m ypl.db.tools.dump_from_yuppdb --source "$SOURCE_DB" --output-dir ./dump
 
 Tables with name changes (soul_* → new names) are exported under their NEW names.
 The users table is exported with only the subset of columns needed by yupp-agent.
@@ -16,7 +14,6 @@ The users table is exported with only the subset of columns needed by yupp-agent
 
 import argparse
 import os
-import sys
 
 import psycopg2
 
@@ -30,6 +27,8 @@ DIRECT_TABLES = [
     "agent_schedule_runs",
     "agent_projects",
     "agent_tasks",
+    "agent_security_incidents",
+    "agent_artifacts",
     "agent_memory_sections",
     "agent_memory_section_embeddings",
     "mcp_dev_tokens",
@@ -41,7 +40,6 @@ DIRECT_TABLES = [
 ]
 
 # Tables that need renaming: (old_table, new_table, column_select)
-# column_select is None for "all columns" or a list of columns to select.
 RENAMED_TABLES = [
     ("soul_roles", "roles", ["role_id", "name", "description", "created_at", "modified_at", "deleted_at"]),
     ("soul_role_permissions", "role_permissions", ["role_id", "permission"]),
@@ -52,7 +50,13 @@ RENAMED_TABLES = [
 USERS_COLUMNS = ["user_id", "name", "email", "image", "status", "created_at", "modified_at", "deleted_at"]
 
 
-def dump_table(cursor: psycopg2.extensions.cursor, table: str, output_dir: str, columns: str = "*", output_name: str | None = None) -> int:
+def dump_table(
+    cursor: psycopg2.extensions.cursor,
+    table: str,
+    output_dir: str,
+    columns: str = "*",
+    output_name: str | None = None,
+) -> int:
     """Dump a table to CSV. Returns row count."""
     output_name = output_name or table
     path = os.path.join(output_dir, f"{output_name}.csv")
@@ -69,25 +73,21 @@ def dump_table(cursor: psycopg2.extensions.cursor, table: str, output_dir: str, 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Dump yupp-agent tables from old yuppdb")
-    parser.add_argument("--host", required=True, help="Database host (pgbouncer IP or Cloud SQL IP)")
-    parser.add_argument("--port", type=int, default=6432, help="Database port (default: 6432 for pgbouncer)")
-    parser.add_argument("--db", default="yuppdb", help="Source database name")
-    parser.add_argument("--user", default="developer", help="Database user")
-    parser.add_argument("--password", required=True, help="Database password")
+    parser.add_argument(
+        "--source",
+        default=os.environ.get("SOURCE_DB"),
+        help="Source connection string (or set SOURCE_DB env var)",
+    )
     parser.add_argument("--output-dir", required=True, help="Directory to write CSV files to")
     args = parser.parse_args()
 
+    if not args.source:
+        parser.error("--source is required (or set SOURCE_DB env var)")
+
     os.makedirs(args.output_dir, exist_ok=True)
 
-    print(f"Connecting to {args.host}:{args.port}/{args.db} as {args.user} ...")
-    conn = psycopg2.connect(
-        host=args.host,
-        port=args.port,
-        dbname=args.db,
-        user=args.user,
-        password=args.password,
-        sslmode="require",
-    )
+    print(f"Connecting to source database ...")
+    conn = psycopg2.connect(args.source, sslmode="require")
     conn.set_session(readonly=True)
     cur = conn.cursor()
 

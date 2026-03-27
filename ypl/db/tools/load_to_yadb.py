@@ -2,14 +2,14 @@
 """Load CSV dump files into the new yadb database.
 
 Usage:
-    python -m ypl.db.tools.load_to_yadb \
-        --host 34.48.17.132 --port 6432 --db yadb \
-        --user schema_manager --password '<PASSWORD>' \
-        --input-dir ./dump
+    export DEST_DB='postgresql://user:pass@host:port/yadb'
+    python -m ypl.db.tools.load_to_yadb --input-dir ./dump
 
-Reads CSV files produced by dump_from_yuppdb.py and loads them into yadb.
-Tables are loaded in dependency order (parents before children).
-Existing rows with conflicting PKs are skipped (ON CONFLICT DO NOTHING).
+    # Or pass directly:
+    python -m ypl.db.tools.load_to_yadb --dest "$DEST_DB" --input-dir ./dump
+
+    # Dry-run preview:
+    python -m ypl.db.tools.load_to_yadb --input-dir ./dump --dry-run
 
 IMPORTANT: Run alembic migrations on yadb BEFORE running this script so that
 all tables and enum types exist.
@@ -18,7 +18,6 @@ all tables and enum types exist.
 import argparse
 import csv
 import os
-import sys
 
 import psycopg2
 import psycopg2.extras
@@ -45,15 +44,18 @@ LOAD_ORDER = [
     # Depends on agent_sessions
     ("agent_session_messages", "agent_session_messages"),
     ("agent_feedbacks", "agent_feedbacks"),
+    ("agent_security_incidents", "agent_security_incidents"),
     # Depends on agent_schedules
     ("agent_schedule_runs", "agent_schedule_runs"),
     # Depends on agent_projects
     ("agent_tasks", "agent_tasks"),
+    # Depends on agents + sessions + tasks
+    ("agent_artifacts", "agent_artifacts"),
     # Depends on agent_memory_sections
     ("agent_memory_section_embeddings", "agent_memory_section_embeddings"),
     # Depends on mcp_dev_tokens
     ("mcp_audit_logs", "mcp_audit_logs"),
-    # Depends on yuppaste_comment_threads
+    # Yuppaste
     ("yuppaste_comment_threads", "yuppaste_comment_threads"),
     ("yuppaste_comments", "yuppaste_comments"),
 ]
@@ -72,6 +74,8 @@ TABLE_PKS: dict[str, list[str]] = {
     "agent_schedule_runs": ["agent_schedule_run_id"],
     "agent_projects": ["agent_project_id"],
     "agent_tasks": ["agent_task_id"],
+    "agent_security_incidents": ["incident_id"],
+    "agent_artifacts": ["agent_artifact_id"],
     "agent_memory_sections": ["agent_memory_section_id"],
     "agent_memory_section_embeddings": ["agent_memory_section_embedding_id"],
     "mcp_dev_tokens": ["mcp_dev_token_id"],
@@ -133,11 +137,11 @@ def load_table(conn, table: str, csv_path: str, batch_size: int = 1000) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Load CSV dump into yadb")
-    parser.add_argument("--host", required=True, help="Database host (pgbouncer IP or Cloud SQL IP)")
-    parser.add_argument("--port", type=int, default=6432, help="Database port (default: 6432 for pgbouncer)")
-    parser.add_argument("--db", default="yadb", help="Target database name")
-    parser.add_argument("--user", default="schema_manager", help="Database user (needs write access)")
-    parser.add_argument("--password", required=True, help="Database password")
+    parser.add_argument(
+        "--dest",
+        default=os.environ.get("DEST_DB"),
+        help="Destination connection string (or set DEST_DB env var)",
+    )
     parser.add_argument("--input-dir", required=True, help="Directory containing CSV files from dump script")
     parser.add_argument("--batch-size", type=int, default=1000, help="Rows per INSERT batch")
     parser.add_argument("--dry-run", action="store_true", help="Print what would be loaded without executing")
@@ -155,15 +159,11 @@ def main() -> None:
                 print(f"  {csv_name}.csv: NOT FOUND")
         return
 
-    print(f"Connecting to {args.host}:{args.port}/{args.db} as {args.user} ...")
-    conn = psycopg2.connect(
-        host=args.host,
-        port=args.port,
-        dbname=args.db,
-        user=args.user,
-        password=args.password,
-        sslmode="require",
-    )
+    if not args.dest:
+        parser.error("--dest is required (or set DEST_DB env var)")
+
+    print(f"Connecting to destination database ...")
+    conn = psycopg2.connect(args.dest, sslmode="require")
 
     # Temporarily disable FK checks for bulk load
     cur = conn.cursor()
@@ -187,7 +187,7 @@ def main() -> None:
     conn.commit()
 
     conn.close()
-    print(f"\nDone. {total} total rows loaded into {args.db}.")
+    print(f"\nDone. {total} total rows loaded into destination.")
 
 
 if __name__ == "__main__":
