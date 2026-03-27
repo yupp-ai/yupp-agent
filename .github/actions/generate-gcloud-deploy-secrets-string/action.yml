@@ -1,0 +1,43 @@
+name: 'Generate gcloud deploy secrets string'
+description: 'Generates the secrets string to be used in the deploy command'
+
+inputs:
+  environment:
+    description: 'The environment to generate the secrets string for (staging/production)'
+    required: true
+  service:
+    description: 'The service to generate the secrets string for (backend, webhooks-service, etc.)'
+    required: true
+
+outputs:
+  secrets_string:
+    description: 'Generates the secrets string to be used in the deploy command'
+    value: ${{ steps.run-script.outputs.secrets_string }}
+  deploy_env_yaml:
+    description: 'Generates the deploy environment as a YAML file'
+    value: ${{ steps.run-script.outputs.deploy_env_yaml }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Run script
+      id: run-script
+      shell: bash
+      run: |
+        # TODO: Can we avoid installing hard-coded dependencies just for this script?
+        pip install PyYAML pydantic && \
+        export PYTHONPATH=$PYTHONPATH:${{ github.workspace }}
+        python3 .github/workflows/scripts/generate_gcloud_deploy_secrets_string.py ${{ inputs.environment }} ${{ inputs.service }} > secrets_string_output.txt
+        echo "secrets_string=$(cat secrets_string_output.txt)" >> $GITHUB_OUTPUT
+        echo "Generated secrets string:"
+        cat secrets_string_output.txt
+        python3 scripts/generate_deploy_env.py ${{ inputs.environment }} ${{ inputs.service }} yaml > deploy_env_output.txt
+        
+        {
+          echo 'deploy_env_yaml<<EOF'
+          cat deploy_env_output.txt
+          echo 'EOF'
+        } >> $GITHUB_OUTPUT
+        echo "Generated deploy environment (YAML):"
+        cat deploy_env_output.txt
+

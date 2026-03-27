@@ -2,26 +2,14 @@ import sys
 from pathlib import Path
 from typing import Any, Literal, cast, get_args
 
-# Any third-party dependencies that are added here, should also be installed in
-# .github/actions/generate-gcloud-deploy-secrets-string/action.yml
 import yaml
 from pydantic import BaseModel, field_validator
 
-# TODO: move these to a shared module
 Environment = Literal["local", "staging", "production"]
 Service = Literal[
     "agent-harness-service",
-    "backend",
-    "cronjob",
-    "discord-service",
-    "leaderboard",
     "mcp-server",
-    "partner-payments-server",
-    "risk-service",
     "slack-agent-gateway",
-    "slack-interaction-server",
-    "streamlit-server",
-    "webhooks-service",
 ]
 Format = Literal["yaml", "dotenv"]
 
@@ -40,7 +28,6 @@ class EnvVariables(BaseModel):
             )
             assert key.isupper(), f"NAME {key} must be uppercase"
             if isinstance(value, bool):
-                # Print boolean values as lowercase strings instead of 'True' or 'False'
                 result[key] = str(value).lower()
             else:
                 result[key] = str(value)
@@ -83,12 +70,10 @@ def load_config(env: Environment, service_name: Service) -> dict[str, str]:
 
 
 def print_env_yaml(config: dict[str, str]) -> None:
-    """Print the environment variables as a YAML file."""
     print(yaml.dump(config, sort_keys=False))
 
 
 def print_env_dotenv(config: dict[str, str]) -> None:
-    """Print the environment variables as a dotenv file."""
     for key, value in config.items():
         print(f"{key}={value}")
 

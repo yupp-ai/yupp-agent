@@ -1,4 +1,4 @@
-FROM gcr.io/yupp-llms/backend-base-py312:latest
+FROM gcr.io/yupp-llms/agent-base-py312:latest
 
 # set work directory
 WORKDIR /app
@@ -12,7 +12,6 @@ ENV PYTHONPATH=/app \
 COPY ./pyproject.toml ./poetry.lock* ./README.md /app/
 
 # Copy application code and data
-# These change frequently, so they're in a separate layer
 COPY ./ypl/ /app/ypl/
 COPY ./scripts/ /app/scripts/
 COPY ./data/ /app/data/
@@ -56,8 +55,8 @@ RUN find /app/ypl -type f -name "*entrypoint.sh" -exec chmod +x {} +
 
 EXPOSE 8080
 
-# Default script that can be overridden
-ENV SCRIPT_TO_RUN=/app/ypl/backend/entrypoint.sh
+# Default: AHS entrypoint (overridden per-service in deploy)
+ENV SCRIPT_TO_RUN=/app/ypl/agent_harness_service/entrypoint.sh
 
 # Use shell form to allow for environment variable expansion
 ENTRYPOINT exec $SCRIPT_TO_RUN
