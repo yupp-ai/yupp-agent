@@ -1,0 +1,149 @@
+"""Provider registry and model string parsing.
+
+Models are specified as '{provider}/{model_id}' (e.g., 'anthropic/claude-sonnet-4-6').
+"""
+
+from pydantic import BaseModel
+
+from ypl.agent_harness_service.common.constants import (
+    DEFAULT_MODEL_ANTHROPIC,
+    DEFAULT_MODEL_MINIMAX,
+    DEFAULT_MODEL_MOONSHOT,
+    DEFAULT_MODEL_OPENAI,
+    DEFAULT_MODEL_ZAI,
+    PROVIDER_ANTHROPIC,
+    PROVIDER_MINIMAX,
+    PROVIDER_MOONSHOT,
+    PROVIDER_OPENAI,
+    PROVIDER_ZAI,
+)
+
+
+class ProviderConfig(BaseModel):
+    """Configuration for a model provider."""
+
+    api_base: str
+    env_key: str
+    sdk: str
+    default_model: str
+
+
+PROVIDERS: dict[str, ProviderConfig] = {
+    PROVIDER_ANTHROPIC: ProviderConfig(
+        api_base="https://api.anthropic.com",
+        env_key="ANTHROPIC_API_KEY",
+        sdk="anthropic",
+        default_model=DEFAULT_MODEL_ANTHROPIC,
+    ),
+    PROVIDER_OPENAI: ProviderConfig(
+        api_base="https://api.openai.com/v1",
+        env_key="OPENAI_API_KEY",
+        sdk="openai",
+        default_model=DEFAULT_MODEL_OPENAI,
+    ),
+    PROVIDER_ZAI: ProviderConfig(
+        api_base="https://api.z.ai/api/paas/v4",
+        env_key="ZAI_API_KEY",
+        sdk="openai",
+        default_model=DEFAULT_MODEL_ZAI,
+    ),
+    PROVIDER_MINIMAX: ProviderConfig(
+        api_base="https://api.minimax.io/v1",
+        env_key="MINIMAX_API_KEY",
+        sdk="openai",
+        default_model=DEFAULT_MODEL_MINIMAX,
+    ),
+    PROVIDER_MOONSHOT: ProviderConfig(
+        api_base="https://api.moonshot.cn/v1",
+        env_key="MOONSHOT_API_KEY",
+        sdk="openai",
+        default_model=DEFAULT_MODEL_MOONSHOT,
+    ),
+}
+
+# All known models with provider prefix for route_model diversity guarantees
+KNOWN_MODELS: list[str] = [
+    "anthropic/claude-opus-4-6",
+    "anthropic/claude-sonnet-4-6",
+    "anthropic/claude-haiku-4-5",
+    "openai/gpt-4o",
+    "openai/o3",
+    "openai/gpt-4o-mini",
+    "zai/glm-5",
+    "minimax/MiniMax-M2.5",
+    "minimax/MiniMax-M2.1",
+    "moonshot/kimi-k2.5",
+]
+
+
+def parse_model_string(model: str) -> tuple[str, str]:
+    """Parse '{provider}/{model_id}' into (provider, model_id).
+
+    Args:
+        model: Model string (e.g., 'anthropic/claude-sonnet-4-6').
+
+    Returns:
+        Tuple of (provider, model_id).
+
+    Raises:
+        ValueError: If format is invalid or provider is unknown.
+    """
+    if "/" not in model:
+        raise ValueError(
+            f"Invalid model format: {model!r}. Expected '{{provider}}/{{model_id}}' "
+            f"(e.g., 'anthropic/claude-sonnet-4-6')."
+        )
+    provider, model_id = model.split("/", 1)
+    if provider not in PROVIDERS:
+        raise ValueError(f"Unknown provider: {provider!r}. Known providers: {list(PROVIDERS.keys())}")
+    return provider, model_id
+
+
+def resolve_model(
+    param_model: str | None,
+    agent_model: str | None,
+    parent_model: str | None,
+    default_model: str | None = None,
+) -> str:
+    """Resolve model using the precedence chain.
+
+    Resolution order:
+      1. param_model (from new_task call)
+      2. agent_model (from agent config)
+      3. parent_model (inherited from parent)
+      4. default_model (executor-type default)
+
+    Args:
+        param_model: Model override from new_task parameter.
+        agent_model: Default model from agent config.
+        parent_model: Parent agent's model.
+        default_model: Fallback default (e.g., per executor type).
+
+    Returns:
+        Resolved model string.
+
+    Raises:
+        ValueError: If no model can be resolved from any source.
+    """
+    model = param_model or agent_model or parent_model or default_model
+    if not model:
+        raise ValueError("No model specified: provide model in new_task call, agent config, or parent agent.")
+    # Validate format
+    parse_model_string(model)
+    return model
+
+
+def get_provider_config(provider: str) -> ProviderConfig:
+    """Get provider configuration by ID.
+
+    Raises:
+        ValueError: If provider is unknown.
+    """
+    if provider not in PROVIDERS:
+        raise ValueError(f"Unknown provider: {provider!r}. Known: {list(PROVIDERS.keys())}")
+    return PROVIDERS[provider]
+
+
+def is_openai_compatible(provider: str) -> bool:
+    """Check if a provider uses the OpenAI-compatible API (sdk='openai')."""
+    return get_provider_config(provider).sdk == "openai"

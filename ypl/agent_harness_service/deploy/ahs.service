@@ -1,0 +1,22 @@
+[Unit]
+Description=Agent Harness Service
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=ahs
+Group=ahs
+WorkingDirectory=/opt/yupp-mind
+EnvironmentFile=/data/ahs/.env
+ExecStart=/opt/yupp-mind/ypl/agent_harness_service/entrypoint.sh
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Resource limits
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
