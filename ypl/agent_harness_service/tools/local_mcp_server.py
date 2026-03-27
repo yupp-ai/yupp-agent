@@ -1464,7 +1464,7 @@ async def create_agent_tool(
         ),
         tool_permissions={str(k): str(v) for k, v in tool_perms.items()},
         allowed_subagents=[str(s) for s in allowed_sub],
-        default_repo=str(cfg.get("default_repo", "yupp-mind")),
+        default_repo=str(cfg.get("default_repo", "yupp-agent")),
         sandbox=SandboxConfigRequest(
             enabled=bool(sandbox_raw.get("enabled", True)),
             auto_allow_bash_if_sandboxed=bool(sandbox_raw.get("autoAllowBashIfSandboxed", True)),

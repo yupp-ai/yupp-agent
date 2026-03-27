@@ -159,7 +159,7 @@ def _resolve_inner_symlinks(
 
     bwrap mounts don't follow symlinks — if a directory contains symlinks
     whose targets live outside the mount namespace (e.g. ~/.claude/skills ->
-    /opt/yupp-mind/.agents/skills/), the symlink will dangle inside the
+    /opt/yupp-agent/.agents/skills/), the symlink will dangle inside the
     sandbox. This function scans for such symlinks and returns --ro-bind
     args so their real targets are visible.
 
@@ -389,7 +389,7 @@ def build_bwrap_cli_command(args: list[str], workspace: str) -> list[str]:
             # expects a persistent ~/.claude across resumes.
             bwrap_args += ["--bind", path, path]
             # Resolve symlinks inside mounted dirs (e.g. ~/.claude/skills ->
-            # /opt/yupp-mind/.agents/skills/) so their targets are reachable.
+            # /opt/yupp-agent/.agents/skills/) so their targets are reachable.
             # Without this, symlinks pointing outside the mount namespace dangle.
             bwrap_args += _resolve_inner_symlinks(path, _ALLOWED_SYMLINK_TARGET_PREFIXES)
     for subdir in _CLI_HOME_RO_BINDS:

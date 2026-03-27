@@ -320,7 +320,7 @@ class MCPToolAccess:
     @staticmethod
     def _resolve_yuppster_url() -> str | None:
         """Read yuppster MCP URL from the repo's .mcp.json."""
-        mcp_json_path = os.path.join(AHS_REPOS_DIR, "yupp-mind", ".mcp.json")
+        mcp_json_path = os.path.join(AHS_REPOS_DIR, "yupp-agent", ".mcp.json")
         try:
             with open(mcp_json_path) as f:
                 config = json.load(f)
