@@ -1,0 +1,35 @@
+/* Hide sidebar */
+[data-testid="stSidebar"] {
+    display: none;
+}
+/* Hide header */
+header {
+    display: none;
+}
+/* Hide footer */
+footer {
+    display: none;
+}
+/* Center the main content vertically */
+[data-testid="stMainBlockContainer"] {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    padding-top: 0 !important;
+}
+/* Force all nested containers to center their children */
+[data-testid="stMainBlockContainer"] > div {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+}
+[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlock"] {
+    align-items: center;
+}
+[data-testid="stMainBlockContainer"] [data-testid="stElementContainer"] {
+    display: flex;
+    justify-content: center;
+}
