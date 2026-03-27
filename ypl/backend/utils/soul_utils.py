@@ -4,6 +4,7 @@ from uuid import UUID
 from fastapi import Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
+
 from ypl.backend.config import settings
 from ypl.backend.db import get_async_session
 from ypl.backend.utils.json import json_dumps
@@ -56,61 +57,6 @@ TLM_EMAILS = {
 }
 
 
-async def validate_read_users(x_creator_email: str = Header(..., alias="X-Creator-Email")) -> None:
-    """Validate that the user has READ_USERS permission."""
-    log_dict = {
-        "message": "Validating read users",
-        "x_creator_email": x_creator_email,
-    }
-    logger.info(json_dumps(log_dict))
-    await validate_permissions([SoulPermission.READ_USERS], x_creator_email)
-
-
-async def validate_write_users(x_creator_email: str = Header(..., alias="X-Creator-Email")) -> None:
-    """Validate that the user has WRITE_USERS permission."""
-    await validate_permissions([SoulPermission.WRITE_USERS], x_creator_email)
-
-
-async def validate_delete_users(x_creator_email: str = Header(..., alias="X-Creator-Email")) -> None:
-    """Validate that the user has DELETE_USERS permission."""
-    await validate_permissions([SoulPermission.DELETE_USERS], x_creator_email)
-
-
-async def validate_purge_users(x_creator_email: str = Header(..., alias="X-Creator-Email")) -> None:
-    """Validate that the user has PURGE_USERS permission."""
-    await validate_permissions([SoulPermission.PURGE_USERS], x_creator_email)
-
-
-async def validate_view_payment_instruments(x_creator_email: str = Header(..., alias="X-Creator-Email")) -> None:
-    """Validate that the user has VIEW_PAYMENT_INSTRUMENTS permission."""
-    await validate_permissions([SoulPermission.VIEW_PAYMENT_INSTRUMENTS], x_creator_email)
-
-
-async def validate_manage_payment_instruments(x_creator_email: str = Header(..., alias="X-Creator-Email")) -> None:
-    """Validate that the user has MANAGE_PAYMENT_INSTRUMENTS permission."""
-    await validate_permissions([SoulPermission.MANAGE_PAYMENT_INSTRUMENTS], x_creator_email)
-
-
-async def validate_admin_user(x_creator_email: str = Header(..., alias="X-Creator-Email")) -> None:
-    """Validate that the user has ADMIN_USER role."""
-    await validate_role([RoleName.ADMIN_USER], x_creator_email)
-
-
-async def validate_risk_admin(x_creator_email: str = Header(..., alias="X-Creator-Email")) -> None:
-    """Validate that the user has RISK_ADMIN role."""
-    await validate_role([RoleName.RISK_ADMIN], x_creator_email)
-
-
-async def validate_view_risk(x_creator_email: str = Header(..., alias="X-Creator-Email")) -> None:
-    """Validate that the user has VIEW_RISK permission."""
-    await validate_permissions([SoulPermission.VIEW_RISK], x_creator_email)
-
-
-async def validate_write_risk(x_creator_email: str = Header(..., alias="X-Creator-Email")) -> None:
-    """Validate that the user has WRITE_RISK permission."""
-    await validate_permissions([SoulPermission.WRITE_RISK], x_creator_email)
-
-
 async def validate_read_yuppaste(x_creator_email: str = Header(..., alias="X-Creator-Email")) -> None:
     """Validate that the user has READ_YUPPASTE permission."""
     await validate_permissions([SoulPermission.READ_YUPPASTE], x_creator_email)
@@ -119,11 +65,6 @@ async def validate_read_yuppaste(x_creator_email: str = Header(..., alias="X-Cre
 async def validate_write_yuppaste(x_creator_email: str = Header(..., alias="X-Creator-Email")) -> None:
     """Validate that the user has WRITE_YUPPASTE permission."""
     await validate_permissions([SoulPermission.WRITE_YUPPASTE], x_creator_email)
-
-
-async def validate_create_adhoc_customer_export(x_creator_email: str = Header(..., alias="X-Creator-Email")) -> None:
-    """Validate that the user has CREATE_ADHOC_CUSTOMER_EXPORT permission."""
-    await validate_permissions([SoulPermission.CREATE_ADHOC_CUSTOMER_EXPORT], x_creator_email)
 
 
 async def validate_admin(x_creator_email: str = Header(..., alias="X-Creator-Email")) -> None:

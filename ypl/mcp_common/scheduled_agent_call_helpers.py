@@ -22,7 +22,7 @@ from ypl.db.agent_harness import (
     AgentScheduleStatus,
     AgentScheduleType,
 )
-from ypl.db.users import User, UserRole
+from ypl.db.users import User
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -128,10 +128,6 @@ async def resolve_yuppster_user_id(
 
         if user.deleted_at is not None:
             return None, f"User account is deleted: {user.user_id}"
-
-        # Check if user is a Yuppster
-        if UserRole.YUPPSTER not in (user.role or []):
-            return None, f"User is not a Yuppster: {user.user_id}"
 
         return user.user_id, None
 

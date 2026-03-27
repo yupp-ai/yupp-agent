@@ -6,6 +6,7 @@ import time
 import uuid
 
 from google.cloud import monitoring_v3
+
 from ypl.backend.config import settings
 from ypl.structured_logger import get_logger
 

@@ -10,15 +10,16 @@ class AsyncTaskList(BaseModel):
     """Minimal stub."""
 
     tasks: list[str] = []
+    num_active_tasks: int = 0
 
 
-async def get_async_task_statuses() -> AsyncTaskList:
+def get_async_task_statuses() -> AsyncTaskList:
     return AsyncTaskList()
 
 
-async def get_resource_leak_info() -> dict:
+def get_resource_leak_info(top_n: int = 50) -> dict:
     return {}
 
 
-async def log_resource_info() -> None:
+async def log_resource_info(*args: object, **kwargs: object) -> None:
     pass

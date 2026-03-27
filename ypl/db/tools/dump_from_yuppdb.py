@@ -45,10 +45,17 @@ _ROLE_IN = "(" + ", ".join(f"'{r}'" for r in VALID_ROLES) + ")"
 
 # Permissions that exist in yupp-agent's Permission enum.
 VALID_PERMISSIONS = (
-    "read_users", "write_users", "manage_rbac",
-    "READ_YUPPASTE", "WRITE_YUPPASTE", "USE_MCP",
-    "MANAGE_AGENTS", "MANAGE_AGENT_SCHEDULES", "MANAGE_AGENT_PROJECTS",
-    "MANAGE_AGENT_SESSIONS", "CREATE_AGENT",
+    "read_users",
+    "write_users",
+    "manage_rbac",
+    "READ_YUPPASTE",
+    "WRITE_YUPPASTE",
+    "USE_MCP",
+    "MANAGE_AGENTS",
+    "MANAGE_AGENT_SCHEDULES",
+    "MANAGE_AGENT_PROJECTS",
+    "MANAGE_AGENT_SESSIONS",
+    "CREATE_AGENT",
 )
 _PERM_IN = "(" + ", ".join(f"'{p}'" for p in VALID_PERMISSIONS) + ")"
 
@@ -116,7 +123,7 @@ def main() -> None:
 
     os.makedirs(args.output_dir, exist_ok=True)
 
-    print(f"Connecting to source database ...")
+    print("Connecting to source database ...")
     conn = psycopg2.connect(args.source, sslmode="require")
     conn.set_session(readonly=True)
     cur = conn.cursor()

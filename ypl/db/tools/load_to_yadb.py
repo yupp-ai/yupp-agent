@@ -91,11 +91,8 @@ TABLE_PKS: dict[str, list[str]] = {
 
 def create_tables(dest: str) -> None:
     """Create all tables from SQLModel metadata using SQLAlchemy."""
+    import sqlmodel
     from sqlalchemy import create_engine
-
-    import sqlmodel  # noqa: F401 — registers SQLModel metadata
-
-    from ypl.db.all_models import all_models  # noqa: F841 — populates metadata
 
     engine = create_engine(dest)
     sqlmodel.SQLModel.metadata.create_all(engine)
