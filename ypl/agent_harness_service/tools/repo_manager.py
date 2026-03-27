@@ -505,7 +505,7 @@ def parse_pr_url(pr_url: str) -> tuple[str, str]:
 def setup_workspace(
     session_id: str,
     context: dict,
-    default_repo: str = "yupp-mind",
+    default_repo: str = "yupp-agent",
 ) -> str:
     """Set up the workspace for a session based on context.
 

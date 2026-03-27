@@ -409,7 +409,7 @@ class AgentCreateRequest(BaseModel):
         default_factory=list,
         description="Agent types this agent can spawn via new_task",
     )
-    default_repo: str = Field("yupp-mind", description="Default git repo to clone")
+    default_repo: str = Field("yupp-agent", description="Default git repo to clone")
     sandbox: SandboxConfigRequest = Field(
         default_factory=SandboxConfigRequest,
         description="Sandbox configuration",

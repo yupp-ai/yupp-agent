@@ -24,7 +24,7 @@ MAX_MESSAGE_LENGTH = 250 * 1024  # Maximum message size (250KB)
 IS_PRODUCTION = os.environ.get("ENVIRONMENT", "").lower() == "production"
 CONTAINER_INSTANCE_ID = os.environ.get("CONTAINER_INSTANCE_ID", "unset")
 
-GITHUB_REPO_URL = "https://github.com/yupp-ai/yupp-mind"
+GITHUB_REPO_URL = "https://github.com/yupp-ai/yupp-agent"
 GITHUB_TAG = "latest-production"
 
 GOOGLE_LOGGING_CLIENT: google_logging.Client | None = None

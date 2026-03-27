@@ -34,7 +34,7 @@ _MAX_OUTPUT_BYTES = 100_000  # 100 KB for command output
 _MAX_READ_LINES = 2000
 _MAX_LINE_LENGTH = 2000  # Truncate individual lines longer than this
 _DEFAULT_COMMAND_TIMEOUT = 120  # seconds
-_DEFAULT_REPO = "yupp-mind"
+_DEFAULT_REPO = "yupp-agent"
 
 # Image extensions → returned as ImageContent (models see natively via vision).
 # Only formats supported by Claude's vision API: PNG, JPEG, GIF, WebP.
