@@ -32,18 +32,46 @@ DIRECT_TABLES = [
     "agent_memory_sections",
     "agent_memory_section_embeddings",
     "mcp_dev_tokens",
-    "mcp_audit_logs",
+    # mcp_audit_logs skipped — too large, not needed for migration
     "slack_agents",
     "slack_oauth_tokens",
     "yuppaste_comment_threads",
     "yuppaste_comments",
 ]
 
-# Tables that need renaming: (old_table, new_table, column_select)
+# Roles that exist in yupp-agent's RoleName enum.
+VALID_ROLES = ("ADMIN", "READONLY", "ADMIN_AGENT", "ENGINEER", "YUPPASTE_USER", "MCP_USER")
+_ROLE_IN = "(" + ", ".join(f"'{r}'" for r in VALID_ROLES) + ")"
+
+# Permissions that exist in yupp-agent's Permission enum.
+VALID_PERMISSIONS = (
+    "read_users", "write_users", "manage_rbac",
+    "READ_YUPPASTE", "WRITE_YUPPASTE", "USE_MCP",
+    "MANAGE_AGENTS", "MANAGE_AGENT_SCHEDULES", "MANAGE_AGENT_PROJECTS",
+    "MANAGE_AGENT_SESSIONS", "CREATE_AGENT",
+)
+_PERM_IN = "(" + ", ".join(f"'{p}'" for p in VALID_PERMISSIONS) + ")"
+
+# Tables that need renaming: (old_table, new_table, column_select, where)
 RENAMED_TABLES = [
-    ("soul_roles", "roles", ["role_id", "name", "description", "created_at", "modified_at", "deleted_at"]),
-    ("soul_role_permissions", "role_permissions", ["role_id", "permission"]),
-    ("soul_user_roles", "user_roles", ["user_id", "role_id"]),
+    (
+        "soul_roles",
+        "roles",
+        ["role_id", "name", "description", "created_at", "modified_at", "deleted_at"],
+        f"name IN {_ROLE_IN}",
+    ),
+    (
+        "soul_role_permissions",
+        "role_permissions",
+        ["role_id", "permission"],
+        f"role_id IN (SELECT role_id FROM soul_roles WHERE name IN {_ROLE_IN}) AND permission::text IN {_PERM_IN}",
+    ),
+    (
+        "soul_user_roles",
+        "user_roles",
+        ["user_id", "role_id"],
+        f"role_id IN (SELECT role_id FROM soul_roles WHERE name IN {_ROLE_IN})",
+    ),
 ]
 
 # Users table: only export columns that exist in yupp-agent's User model.
@@ -56,12 +84,14 @@ def dump_table(
     output_dir: str,
     columns: str = "*",
     output_name: str | None = None,
+    where: str | None = None,
 ) -> int:
     """Dump a table to CSV. Returns row count."""
     output_name = output_name or table
     path = os.path.join(output_dir, f"{output_name}.csv")
 
-    query = f"COPY (SELECT {columns} FROM {table}) TO STDOUT WITH CSV HEADER"
+    where_clause = f" WHERE {where}" if where else ""
+    query = f"COPY (SELECT {columns} FROM {table}{where_clause}) TO STDOUT WITH CSV HEADER"
     with open(path, "w") as f:
         cursor.copy_expert(query, f)
 
@@ -103,22 +133,22 @@ def main() -> None:
             print(f"  {table}: SKIPPED ({e})")
             conn.rollback()
 
-    # 2. Renamed tables
-    for old_name, new_name, columns in RENAMED_TABLES:
+    # 2. Renamed tables (with optional WHERE filter)
+    for old_name, new_name, columns, where in RENAMED_TABLES:
         try:
             cols = ", ".join(columns) if columns else "*"
-            count = dump_table(cur, old_name, args.output_dir, columns=cols, output_name=new_name)
+            count = dump_table(cur, old_name, args.output_dir, columns=cols, output_name=new_name, where=where)
             print(f"  {old_name} -> {new_name}: {count} rows")
             total += count
         except Exception as e:
             print(f"  {old_name} -> {new_name}: SKIPPED ({e})")
             conn.rollback()
 
-    # 3. Users (subset of columns)
+    # 3. Users (only @yupp.ai employees, subset of columns)
     try:
         cols = ", ".join(USERS_COLUMNS)
-        count = dump_table(cur, "users", args.output_dir, columns=cols)
-        print(f"  users (subset): {count} rows")
+        count = dump_table(cur, "users", args.output_dir, columns=cols, where="email LIKE '%@yupp.ai'")
+        print(f"  users (@yupp.ai only): {count} rows")
         total += count
     except Exception as e:
         print(f"  users: SKIPPED ({e})")
