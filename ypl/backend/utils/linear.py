@@ -3,6 +3,7 @@ from typing import Any
 
 import pandas as pd
 import requests
+
 from ypl.backend.config import settings
 from ypl.structured_logger import get_logger
 

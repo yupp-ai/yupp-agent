@@ -11,6 +11,7 @@ import aiohttp
 from gcloud.aio.storage import Storage
 from google.api_core import exceptions as google_exceptions
 from google.cloud import bigquery
+
 from ypl.backend.config import settings
 from ypl.backend.internal_tools.yuppaste_types import (
     AttachmentInfo,

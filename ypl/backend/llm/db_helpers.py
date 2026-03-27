@@ -5,12 +5,10 @@ Full implementation lives in yupp-mind.
 """
 
 from sqlalchemy import func
-from sqlmodel import col, select
+from sqlmodel import select
 
 from ypl.backend.db import (
     get_async_session,
-    get_async_session_read_replica,
-    get_engine_read_replica,
     retry_db,
 )
 from ypl.db.users import User
