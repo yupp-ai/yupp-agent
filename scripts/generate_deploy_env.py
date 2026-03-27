@@ -10,6 +10,7 @@ Service = Literal[
     "agent-harness-service",
     "mcp-server",
     "slack-agent-gateway",
+    "streamlit-server",
 ]
 Format = Literal["yaml", "dotenv"]
 

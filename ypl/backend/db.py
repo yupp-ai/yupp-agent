@@ -36,7 +36,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from ypl.backend.config import settings
+from ypl.backend.config import DbName, PostgresConnection, settings
 from ypl.backend.utils.context_utils import async_instrumenting_context_manager
 from ypl.backend.utils.monitoring import metric_record
 from ypl.structured_logger import get_logger
@@ -70,6 +70,11 @@ _PGBOUNCER_CONNECT_ARGS: dict[str, Any] = {
     "prepared_statement_cache_size": 0,
 }
 
+# Engine registry keyed by (db_name, replica)
+_engines: dict[tuple[DbName, bool], Engine] = {}
+_async_engines: dict[tuple[DbName, bool], AsyncEngine] = {}
+
+# Legacy module-level aliases (yuppdb primary/replica) — set lazily
 engine: Engine | None = None
 engine_read_replica: Engine | None = None
 async_engine: AsyncEngine | None = None
@@ -173,30 +178,34 @@ def on_engine_error(ctx: ExceptionContext) -> None:
         )
 
 
-def get_engine() -> Engine:
-    global engine
-    if engine is None:
-        engine = create_engine(
-            str(settings.db_url),
+def get_engine_for(db: DbName = "yuppdb", *, replica: bool = False) -> Engine:
+    """Get or create a sync engine for the given database."""
+    if replica and settings.ENVIRONMENT == "local":
+        replica = False
+    key = (db, replica)
+    if key not in _engines:
+        url = settings.db_url_for(db, replica=replica, async_mode=False)
+        eng = create_engine(
+            str(url),
             **_POOL_CONFIG,
             connect_args={"sslmode": settings.db_ssl_mode},
         )
-        _attach_engine_listeners(engine)
+        _attach_engine_listeners(eng)
+        _engines[key] = eng
+    return _engines[key]
+
+
+def get_engine() -> Engine:
+    global engine
+    if engine is None:
+        engine = get_engine_for("yuppdb")
     return engine
 
 
 def get_engine_read_replica() -> Engine:
-    # if it's not production, return regular primary instance engine
-    if settings.ENVIRONMENT == "local":
-        return get_engine()
     global engine_read_replica
     if engine_read_replica is None:
-        engine_read_replica = create_engine(
-            str(settings.db_url_read_replica),
-            **_POOL_CONFIG,
-            connect_args={"sslmode": settings.db_ssl_mode},
-        )
-        _attach_engine_listeners(engine_read_replica)
+        engine_read_replica = get_engine_for("yuppdb", replica=True)
     return engine_read_replica
 
 
@@ -212,58 +221,51 @@ def get_raw_sql(query: ClauseElement) -> Compiled:
 SessionDep = Annotated[Session, Depends(get_db)]
 
 
+def get_async_engine_for(db: DbName = "yuppdb", *, replica: bool = False) -> AsyncEngine:
+    """Get or create an async engine for the given database."""
+    if replica and settings.ENVIRONMENT == "local":
+        replica = False
+    key = (db, replica)
+    if key not in _async_engines:
+        conn = settings.get_pg_connection(db, replica=replica)
+        extra_kwargs: dict[str, Any] = {}
+        if replica:
+            extra_kwargs["isolation_level"] = "READ COMMITTED"
+        if settings.ENABLE_CLOUD_SQL_CONNECTOR and conn.cloud_sql_proxy_socket:
+            eng = create_async_engine(
+                "postgresql+asyncpg://",
+                creator=_make_cloud_sql_creator(
+                    settings.cloud_sql_instance_for(db, replica=replica),
+                    conn.user,
+                    conn.password,
+                    conn.database,
+                ),
+                **_POOL_CONFIG,
+                **extra_kwargs,
+            )
+        else:
+            eng = create_async_engine(
+                str(settings.db_url_for(db, replica=replica, async_mode=True)),
+                **_POOL_CONFIG,
+                connect_args={"ssl": settings.db_ssl_mode, **_PGBOUNCER_CONNECT_ARGS},
+                **extra_kwargs,
+            )
+        _attach_engine_listeners(eng)
+        _async_engines[key] = eng
+    return _async_engines[key]
+
+
 def get_async_engine() -> AsyncEngine:
     global async_engine
     if async_engine is None:
-        if settings.ENABLE_CLOUD_SQL_CONNECTOR:
-            async_engine = create_async_engine(
-                "postgresql+asyncpg://",
-                creator=_make_cloud_sql_creator(
-                    settings.cloud_sql_instance_primary,
-                    settings.POSTGRES_USER,
-                    settings.POSTGRES_PASSWORD,
-                    settings.POSTGRES_DATABASE,
-                ),
-                **_POOL_CONFIG,
-            )
-        else:
-            async_engine = create_async_engine(
-                str(settings.db_url_async),
-                **_POOL_CONFIG,
-                connect_args={"ssl": settings.db_ssl_mode, **_PGBOUNCER_CONNECT_ARGS},
-            )
-        _attach_engine_listeners(async_engine)
+        async_engine = get_async_engine_for("yuppdb")
     return async_engine
 
 
 def get_async_engine_read_replica() -> AsyncEngine:
-    # if it's not production, return regular primary instance engine
-    if settings.ENVIRONMENT == "local":
-        return get_async_engine()
     global async_engine_read_replica
     if async_engine_read_replica is None:
-        if settings.ENABLE_CLOUD_SQL_CONNECTOR:
-            async_engine_read_replica = create_async_engine(
-                "postgresql+asyncpg://",
-                creator=_make_cloud_sql_creator(
-                    settings.cloud_sql_instance_read_replica,
-                    # We're connecting to Managed Connection Pooler,
-                    # which needs the same credentials as the primary instance.
-                    settings.POSTGRES_USER,
-                    settings.POSTGRES_PASSWORD,
-                    settings.POSTGRES_DATABASE,
-                ),
-                **_POOL_CONFIG,
-                isolation_level="READ COMMITTED",
-            )
-        else:
-            async_engine_read_replica = create_async_engine(
-                str(settings.db_url_async_read_replica),
-                **_POOL_CONFIG,
-                isolation_level="READ COMMITTED",
-                connect_args={"ssl": settings.db_ssl_mode, **_PGBOUNCER_CONNECT_ARGS},
-            )
-        _attach_engine_listeners(async_engine_read_replica)
+        async_engine_read_replica = get_async_engine_for("yuppdb", replica=True)
     return async_engine_read_replica
 
 
@@ -278,22 +280,6 @@ def get_ypl_caller() -> str:
     return "(unknown)"  # type: ignore[unreachable]
 
 
-async_session_maker = async_sessionmaker(
-    get_async_engine(),
-    # Uses the SQLModel AsyncSession class to ensure that the session is compatible with SQLModel
-    class_=AsyncSession,
-    expire_on_commit=False,
-    close_resets_only=False,
-)
-
-# Add session maker for read replica
-async_session_maker_replica = async_sessionmaker(
-    get_async_engine_read_replica(),
-    # Uses the SQLModel AsyncSession class to ensure that the session is compatible with SQLModel
-    class_=AsyncSession,
-    expire_on_commit=False,
-    close_resets_only=False,
-)
 
 
 def _get_session_connections(session: AsyncSession) -> list[Any]:
@@ -370,28 +356,36 @@ def _invalidate_connection(conn: Any) -> None:
         logging.warning("Error invalidating connection after failed session close", exc_info=True)
 
 
-@async_instrumenting_context_manager(metric_prefix="db/session/primary")
 @asynccontextmanager
-async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
+async def get_async_session_for(
+    db: DbName = "yuppdb", *, replica: bool = False
+) -> AsyncGenerator[AsyncSession, None]:
+    """Generic session factory — explicitly choose a database."""
+    eng = get_async_engine_for(db, replica=replica)
+    maker = async_sessionmaker(eng, class_=AsyncSession, expire_on_commit=False, close_resets_only=False)
     session = None
     try:
-        session = async_session_maker()
+        session = maker()
         yield session
     finally:
         if session is not None:
             await _close_session_safely(session)
+
+
+@async_instrumenting_context_manager(metric_prefix="db/session/primary")
+@asynccontextmanager
+async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
+    """Async session using settings.DEFAULT_DB (agentdb for AHS/SAG, yuppdb otherwise)."""
+    async with get_async_session_for(settings.DEFAULT_DB) as session:
+        yield session
 
 
 @async_instrumenting_context_manager(metric_prefix="db/session/read_replica")
 @asynccontextmanager
 async def get_async_session_read_replica() -> AsyncGenerator[AsyncSession, None]:
-    session = None
-    try:
-        session = async_session_maker_replica() if settings.ENVIRONMENT != "local" else async_session_maker()
+    """Read-replica session using settings.DEFAULT_DB."""
+    async with get_async_session_for(settings.DEFAULT_DB, replica=True) as session:
         yield session
-    finally:
-        if session is not None:
-            await _close_session_safely(session)
 
 
 async def periodically_export_db_metrics() -> None:
