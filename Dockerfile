@@ -23,26 +23,14 @@ COPY ./.agents/skills/ /app/.agents/skills/
 COPY .env /app/.env
 
 # Sync dependencies (updates only if poetry.lock changed since base build)
-# Then build and install the package
 RUN set -e && \
-    # Install build dependencies if needed (some packages may need rebuilding)
     apt-get update && \
-    apt-get install -y --no-install-recommends \
-        cmake \
-        g++ \
-        make && \
-    # Sync dependencies to match poetry.lock exactly
+    apt-get install -y --no-install-recommends cmake g++ make && \
     echo "Syncing dependencies with poetry.lock..." && \
     poetry install --no-root --without dev --compile && \
-    # Build and install the package (without dependencies, already handled above)
-    echo "Building package..." && \
-    poetry build && \
-    pip install --no-cache-dir --no-deps dist/*.whl && \
-    # Remove build dependencies to reduce image size
     apt-get purge -y --auto-remove cmake g++ make && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/* && \
-    rm -rf dist/ build/ ~/.cache /root/.cache /tmp/*
+    rm -rf /var/lib/apt/lists/* ~/.cache /root/.cache /tmp/*
 
 
 RUN python -m compileall /app -q -f
