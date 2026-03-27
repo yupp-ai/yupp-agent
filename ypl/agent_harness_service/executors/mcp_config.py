@@ -38,7 +38,7 @@ def resolve_mcp_servers(
     injects the harness MCP server, and returns the final server dict.
     """
     # Read the base config from the repo (contains yuppster-mcp-server, etc.)
-    base_mcp_path = os.path.join(AHS_REPOS_DIR, "yupp-mind", ".mcp.json")
+    base_mcp_path = os.path.join(AHS_REPOS_DIR, "yupp-agent", ".mcp.json")
     base_servers: dict[str, Any] = {}
     try:
         with open(base_mcp_path) as f:

@@ -2,7 +2,7 @@
 #
 # Sync agent and shared config files from the repo to /data/.
 #
-# Pulls /opt/yupp-mind first (unless --no-pull), then copies changed .md and
+# Pulls /opt/yupp-agent first (unless --no-pull), then copies changed .md and
 # config.json files to the live /data/ directories used by the service.
 # Only files that differ are copied; unchanged files are skipped.
 #
@@ -17,7 +17,7 @@
 #
 set -euo pipefail
 
-SERVICE_REPO="/opt/yupp-mind"
+SERVICE_REPO="/opt/yupp-agent"
 DEPLOY_DIR="${SERVICE_REPO}/ypl/agent_harness_service/deploy"
 DATA_DIR="/data"
 SERVICE_USER="ahs"
@@ -187,11 +187,11 @@ if [ "$SYNC_AGENTS" = true ]; then
 fi
 
 # --- Step 2b: Sync AHS-only hooks into the repo's .claude/hooks/ ---
-# These hooks are deployed only on the VM (into /data/repos/yupp-mind/.claude/hooks/),
+# These hooks are deployed only on the VM (into /data/repos/yupp-agent/.claude/hooks/),
 # not checked into the repo's .claude/ directory, so local dev is unaffected.
 HOOKS_SRC="${DEPLOY_DIR}/shared/hooks"
-HOOKS_DST="${DATA_DIR}/repos/yupp-mind/.claude/hooks"
-SETTINGS_FILE="${DATA_DIR}/repos/yupp-mind/.claude/settings.json"
+HOOKS_DST="${DATA_DIR}/repos/yupp-agent/.claude/hooks"
+SETTINGS_FILE="${DATA_DIR}/repos/yupp-agent/.claude/settings.json"
 
 if [ "$SYNC_SHARED" = true ] && [ -d "$HOOKS_SRC" ]; then
     log "Syncing AHS hooks -> ${HOOKS_DST}/"

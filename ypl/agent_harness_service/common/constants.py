@@ -68,7 +68,7 @@ def is_personal_agent(agent_name: str) -> bool:
 # Mirrors the SRE agent config — harnessed executor, full tool access, sandbox enabled.
 # Stored as a dict so it can be written to Agent.config JSONB in the DB.
 PERSONAL_AGENT_DEFAULT_CONFIG: dict[str, Any] = {
-    "default_repo": "yupp-mind",
+    "default_repo": "yupp-agent",
     "max_turns": 50,
     "max_budget_usd": 3.0,
     "has_mcp": True,

@@ -232,12 +232,12 @@ echo ""
 echo "--------------------------------------------"
 echo "  Step 6/13: Cloning yupp-mind repo"
 echo "--------------------------------------------"
-if [ ! -d /opt/yupp-mind/.git ]; then
-    mkdir -p /opt/yupp-mind
-    chown ahs:ahs /opt/yupp-mind
-    sudo -u ahs git clone https://github.com/yupp-ai/yupp-mind.git /opt/yupp-mind
+if [ ! -d /opt/yupp-agent/.git ]; then
+    mkdir -p /opt/yupp-agent
+    chown ahs:ahs /opt/yupp-agent
+    sudo -u ahs git clone https://github.com/yupp-ai/yupp-agent.git /opt/yupp-agent
 else
-    echo "  Already cloned at /opt/yupp-mind"
+    echo "  Already cloned at /opt/yupp-agent"
 fi
 fi
 
@@ -247,7 +247,7 @@ echo ""
 echo "--------------------------------------------"
 echo "  Step 7/13: Installing Python dependencies"
 echo "--------------------------------------------"
-cd /opt/yupp-mind
+cd /opt/yupp-agent
 # Recreate venv if missing, corrupted, or Python version changed
 VENV_PY_VER=$(sudo -u ahs .venv/bin/python3 --version 2>/dev/null || echo "none")
 EXPECTED_PY_VER=$($PYTHON_BIN --version 2>/dev/null || echo "none")
@@ -256,7 +256,7 @@ if [ ! -d .venv ] || [ "$VENV_PY_VER" = "none" ] || [ "$VENV_PY_VER" != "$EXPECT
     sudo -u ahs rm -rf .venv
     # Use --without-pip because source-built Python may lack ensurepip
     sudo -u ahs "$PYTHON_BIN" -m venv --without-pip .venv
-    sudo -u ahs bash -c 'cd /opt/yupp-mind && curl -sS https://bootstrap.pypa.io/get-pip.py | .venv/bin/python3'
+    sudo -u ahs bash -c 'cd /opt/yupp-agent && curl -sS https://bootstrap.pypa.io/get-pip.py | .venv/bin/python3'
 else
     echo "  Venv OK: $VENV_PY_VER"
 fi
@@ -267,7 +267,7 @@ if [ -z "${STRIPE_GITHUB_TOKEN:-}" ]; then
     echo "  WARNING: STRIPE_GITHUB_TOKEN not set — private dependencies may fail to install"
 fi
 sudo -u ahs STRIPE_GITHUB_TOKEN="${STRIPE_GITHUB_TOKEN:-}" bash -c '
-cd /opt/yupp-mind
+cd /opt/yupp-agent
 [ -n "$STRIPE_GITHUB_TOKEN" ] && git config --global url."https://${STRIPE_GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
 .venv/bin/poetry install --no-root
 .venv/bin/poetry build
@@ -283,7 +283,7 @@ echo "--------------------------------------------"
 echo "  Step 8/13: Setting up environment file"
 echo "--------------------------------------------"
 if [ ! -f /data/ahs/.env ]; then
-    cp /opt/yupp-mind/ypl/agent_harness_service/deploy/env.template /data/ahs/.env
+    cp /opt/yupp-agent/ypl/agent_harness_service/deploy/env.template /data/ahs/.env
     chown ahs:ahs /data/ahs/.env
     chmod 600 /data/ahs/.env
     echo "  Created /data/ahs/.env from template"
@@ -300,7 +300,7 @@ echo "--------------------------------------------"
 echo "  Step 9/13: Copying agent configs"
 echo "--------------------------------------------"
 if [ ! -d /data/agents/sre ]; then
-    cp -r /opt/yupp-mind/ypl/agent_harness_service/deploy/agent_configs/* /data/agents/
+    cp -r /opt/yupp-agent/ypl/agent_harness_service/deploy/agent_configs/* /data/agents/
     chown -R ahs:ahs /data/agents
     echo "  Copied agent configs to /data/agents/"
 else
@@ -314,12 +314,12 @@ echo ""
 echo "--------------------------------------------"
 echo "  Step 10/13: Setting up shared identity files"
 echo "--------------------------------------------"
-cp -n /opt/yupp-mind/ypl/agent_harness_service/deploy/shared/SOUL.md /data/shared/ 2>/dev/null || true
-cp -n /opt/yupp-mind/ypl/agent_harness_service/deploy/shared/WORKSPACE.md /data/shared/ 2>/dev/null || true
+cp -n /opt/yupp-agent/ypl/agent_harness_service/deploy/shared/SOUL.md /data/shared/ 2>/dev/null || true
+cp -n /opt/yupp-agent/ypl/agent_harness_service/deploy/shared/WORKSPACE.md /data/shared/ 2>/dev/null || true
 mkdir -p /data/shared/raw_executor
-cp -n /opt/yupp-mind/ypl/agent_harness_service/deploy/shared/raw_executor/RAW_EXECUTOR.md /data/shared/raw_executor/ 2>/dev/null || true
+cp -n /opt/yupp-agent/ypl/agent_harness_service/deploy/shared/raw_executor/RAW_EXECUTOR.md /data/shared/raw_executor/ 2>/dev/null || true
 mkdir -p /data/shared/tasks
-cp -n /opt/yupp-mind/ypl/agent_harness_service/deploy/shared/tasks/TASK_EXECUTION.md /data/shared/tasks/ 2>/dev/null || true
+cp -n /opt/yupp-agent/ypl/agent_harness_service/deploy/shared/tasks/TASK_EXECUTION.md /data/shared/tasks/ 2>/dev/null || true
 chown -R ahs:ahs /data/shared
 echo "  Shared identity files ready in /data/shared/"
 fi
@@ -346,7 +346,7 @@ echo ""
 echo "--------------------------------------------"
 echo "  Step 12/13: Installing systemd service"
 echo "--------------------------------------------"
-cp /opt/yupp-mind/ypl/agent_harness_service/deploy/ahs.service /etc/systemd/system/
+cp /opt/yupp-agent/ypl/agent_harness_service/deploy/ahs.service /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable ahs
 echo "  ahs.service installed and enabled"
@@ -358,7 +358,7 @@ echo ""
 echo "--------------------------------------------"
 echo "  Step 13/13: Setting up cron jobs"
 echo "--------------------------------------------"
-DEPLOY_DIR="/opt/yupp-mind/ypl/agent_harness_service/deploy"
+DEPLOY_DIR="/opt/yupp-agent/ypl/agent_harness_service/deploy"
 LOG_DIR="/data/session_logs"
 
 # Install cron jobs in root's crontab (all run as ahs user via sudo -u)
@@ -369,7 +369,7 @@ cat <<CRON
 */50 * * * * sudo -u ahs bash /data/ahs/gh_app_auth.sh >> ${LOG_DIR}/gh_auth.log 2>&1
 # Pull agent repos every 5 min (read-only checkouts in /data/repos/)
 */5 * * * * sudo -u ahs bash ${DEPLOY_DIR}/pull_agent_repos.sh >> ${LOG_DIR}/pull_agent_repos.log 2>&1
-# Sync service code + configs every 30 min (git pull /opt/yupp-mind, copy to /data/)
+# Sync service code + configs every 30 min (git pull /opt/yupp-agent, copy to /data/)
 */30 * * * * sudo -u ahs bash ${DEPLOY_DIR}/sync_configs.sh >> ${LOG_DIR}/sync_configs.log 2>&1
 CRON
 ) | crontab -

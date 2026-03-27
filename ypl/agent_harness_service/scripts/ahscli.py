@@ -352,7 +352,7 @@ def main() -> None:
     p_ca.add_argument("--executor-model", default=None, help="Model (CLI name or provider/model_id)")
     p_ca.add_argument("--tool-permissions", default=None, help='JSON string, e.g. \'{"*": "allow"}\'')
     p_ca.add_argument("--allowed-subagents", default=None, help="Comma-separated agent names")
-    p_ca.add_argument("--default-repo", default="yupp-mind", help="Default repo (default: yupp-mind)")
+    p_ca.add_argument("--default-repo", default="yupp-agent", help="Default repo (default: yupp-agent)")
     p_ca.add_argument("--max-turns", type=int, default=20, help="Max turns (default: 20)")
     p_ca.add_argument("--max-budget-usd", type=float, default=2.0, help="Max budget USD (default: 2.0)")
     p_ca.add_argument("--timeout-s", type=int, default=300, help="Timeout seconds (default: 300)")
