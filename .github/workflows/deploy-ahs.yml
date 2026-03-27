@@ -104,35 +104,44 @@ jobs:
 
     - name: Verify AHS is running
       run: |
-        sleep 5
-        STATUS=$(gcloud compute ssh "${{ env.VM_NAME }}" \
-          --zone="${{ env.VM_ZONE }}" \
-          --project="${{ env.GCP_PROJECT_NAME }}" \
-          --command="sudo systemctl is-active ahs" 2>&1) || true
-
+        sleep 10
         COMMIT=$(gcloud compute ssh "${{ env.VM_NAME }}" \
           --zone="${{ env.VM_ZONE }}" \
           --project="${{ env.GCP_PROJECT_NAME }}" \
           --command="cd /opt/yupp-agent && git rev-parse --short HEAD" 2>&1) || true
 
+        # Hit the actual HTTP health endpoint (retries for up to 30s)
+        HEALTH=""
+        for i in $(seq 1 6); do
+          HEALTH=$(gcloud compute ssh "${{ env.VM_NAME }}" \
+            --zone="${{ env.VM_ZONE }}" \
+            --project="${{ env.GCP_PROJECT_NAME }}" \
+            --command="curl -sf http://localhost:8090/health 2>/dev/null" 2>&1) && break
+          echo "Health check attempt $i failed, retrying in 5s..."
+          sleep 5
+        done
+
+        STATUS=$(echo "$HEALTH" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unknown'))" 2>/dev/null || echo "unreachable")
+
         {
           echo "### AHS Health Check"
           echo "| Check | Result |"
           echo "|-------|--------|"
-          echo "| systemctl status | \`${STATUS}\` |"
+          echo "| /health status | \`${STATUS}\` |"
+          echo "| /health response | \`${HEALTH}\` |"
           echo "| VM commit | \`${COMMIT}\` |"
           echo "| Expected commit | \`${{ env.BUILD_GIT_SHA }}\` |"
         } >> $GITHUB_STEP_SUMMARY
 
-        if [ "$STATUS" != "active" ]; then
-          echo "::error::AHS is not running after deploy (status: ${STATUS})"
+        if [ "$STATUS" != "ok" ]; then
+          echo "::error::AHS health check failed (status: ${STATUS})"
           gcloud compute ssh "${{ env.VM_NAME }}" \
             --zone="${{ env.VM_ZONE }}" \
             --project="${{ env.GCP_PROJECT_NAME }}" \
-            --command="sudo journalctl -u ahs --no-pager -n 30" 2>&1 || true
+            --command="sudo journalctl -u ahs --no-pager -n 50" 2>&1 || true
           exit 1
         fi
-        echo "AHS is running (commit: ${COMMIT})"
+        echo "AHS is healthy (commit: ${COMMIT})"
 
     - name: Tag commit
       run: |
