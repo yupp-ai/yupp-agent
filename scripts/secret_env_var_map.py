@@ -11,6 +11,7 @@ Service = Literal[
     "agent-harness-service",
     "mcp-server",
     "slack-agent-gateway",
+    "streamlit-server",
 ]
 
 SECRET_ENV_VAR_MAP_FILE = "data/secret-env-var-map.yml"
