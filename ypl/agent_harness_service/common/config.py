@@ -75,7 +75,7 @@ class AgentConfig(BaseModel):
     # TODO: deprecate this as we are moving to use direct tool setup.
     has_mcp: bool = False
 
-    default_repo: str = "yupp-mind"
+    default_repo: str = "yupp-agent"
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
     max_turns: int = DEFAULT_MAX_TURNS
     max_budget_usd: float = 2.0
@@ -175,7 +175,7 @@ def load_agent_config(name: str) -> AgentConfig | None:
         display_name=raw.get("display_name", ""),
         description=raw.get("description"),
         executor_config=exec_cfg_raw,
-        default_repo=raw.get("default_repo", "yupp-mind"),
+        default_repo=raw.get("default_repo", "yupp-agent"),
         tool_permissions=tool_perms,
         sandbox=sandbox,
         max_turns=raw.get("max_turns", DEFAULT_MAX_TURNS),
@@ -226,7 +226,7 @@ def load_agent_config_from_db(agent: Any) -> AgentConfig:
         display_name=agent.display_name or agent.name,
         description=agent.description,
         executor_config=exec_cfg_raw,
-        default_repo=raw.get("default_repo", "yupp-mind"),
+        default_repo=raw.get("default_repo", "yupp-agent"),
         tool_permissions=tool_perms,
         sandbox=sandbox,
         max_turns=raw.get("max_turns", DEFAULT_MAX_TURNS),

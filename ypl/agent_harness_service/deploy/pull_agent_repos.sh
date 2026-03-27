@@ -9,7 +9,7 @@
 #
 set -euo pipefail
 
-SERVICE_REPO="/opt/yupp-mind"
+SERVICE_REPO="/opt/yupp-agent"
 VENV_PYTHON="${SERVICE_REPO}/.venv/bin/python"
 
 cd "$SERVICE_REPO"
