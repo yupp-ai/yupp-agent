@@ -7,6 +7,7 @@ from collections.abc import Callable
 from functools import cached_property
 from typing import Any, Literal, Self
 
+import pydantic
 import sqlalchemy
 from pydantic import (
     PostgresDsn,
@@ -24,6 +25,17 @@ os.environ.setdefault("TRANSFORMERS_NO_FRAMEWORK_WARNING", "1")
 DEFAULT_UNSAFE_PASSWORD = "changethis"
 
 EnvironmentType = Literal["production", "staging", "test", "local"]
+DbName = Literal["yuppdb", "agentdb"]
+
+class PostgresConnection(pydantic.BaseModel):
+    """A single Postgres connection target parsed from a JSON env var."""
+
+    user: str = "test"
+    password: str = "test"
+    host: str = "localhost:5432"
+    host_non_pooling: str = "localhost:5432"
+    database: str = "postgres"
+    cloud_sql_proxy_socket: str = ""
 
 
 class Settings(BaseSettings):
@@ -68,26 +80,18 @@ class Settings(BaseSettings):
 
     DOMAIN: str = "localhost"
     ENVIRONMENT: EnvironmentType = "local"
+    # Which database get_async_session() uses by default. Set to "agentdb" for AHS/SAG services.
+    DEFAULT_DB: DbName = "yuppdb"
     PROJECT_NAME: str = ""
     PRIMARY_CLOUD_PROVIDER: str = "google_cloud_run"
 
-    POSTGRES_USER: str = os.getenv("POSTGRES_USER", "test")
-    POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "test")
-    POSTGRES_HOST: str = os.getenv("POSTGRES_HOST", "localhost:5432")
-    POSTGRES_HOST_NON_POOLING: str = os.getenv("POSTGRES_HOST_NON_POOLING", "localhost:5432")
-    POSTGRES_DATABASE: str = os.getenv("POSTGRES_DATABASE", "postgres")
-
-    POSTGRES_USER_READ_REPLICA: str = os.getenv("POSTGRES_USER_READ_REPLICA", "test")
-    POSTGRES_PASSWORD_READ_REPLICA: str = os.getenv("POSTGRES_PASSWORD_READ_REPLICA", "test")
-    POSTGRES_HOST_READ_REPLICA: str = os.getenv("POSTGRES_HOST_READ_REPLICA", "localhost:5432")
-    POSTGRES_HOST_NON_POOLING_READ_REPLICA: str = os.getenv("POSTGRES_HOST_NON_POOLING_READ_REPLICA", "localhost:5432")
-    POSTGRES_DATABASE_READ_REPLICA: str = os.getenv("POSTGRES_DATABASE_READ_REPLICA", "postgres")
-    # For direct DB connection through Cloud SQL Proxy
-    # Ref: https://cloud.google.com/sql/docs/postgres/connect-run#connect
-    # Looks like "/cloudsql/<INSTANCE_CONNECTION_NAME>"
-    # Sample for staging db: /cloudsql/yupp-llms:us-east4:sarai-chat-dev
-    CLOUD_PRIMARY_SQL_PROXY_INSTANCE_UNIX_SOCKET: str = ""
-    CLOUD_READ_REPLICA_SQL_PROXY_INSTANCE_UNIX_SOCKET: str = ""
+    # Database connections are configured via JSON env vars. Each contains:
+    # {"user", "password", "host", "host_non_pooling", "database", "cloud_sql_proxy_socket"(optional)}
+    # yuppdb = the shared Yupp database (from yupp-mind), agentdb = the agent-specific database.
+    POSTGRES_CONNECTION_YUPPDB: str = ""
+    POSTGRES_CONNECTION_YUPPDB_REPLICA: str = ""
+    POSTGRES_CONNECTION_AGENTDB: str = ""
+    POSTGRES_CONNECTION_AGENTDB_REPLICA: str = ""
 
     CACHE_DIR: str = ".cache"
     USE_GOOGLE_CLOUD_LOGGING: bool = True
@@ -573,61 +577,77 @@ class Settings(BaseSettings):
             return f"http://{self.DOMAIN}"
         return f"https://{self.DOMAIN}"
 
-    def _use_proxy_socket(self, async_mode: bool) -> bool:
-        """Whether to connect via the Cloud SQL Auth Proxy unix socket.
+    def _parse_pg_connection(self, raw: str) -> PostgresConnection:
+        """Parse a JSON string into a PostgresConnection, falling back to defaults."""
+        if not raw:
+            return PostgresConnection()
+        return PostgresConnection.model_validate_json(raw)
 
-        When the cloud-sql-python-connector handles async connections, async
-        engines skip the proxy path — the connector creates connections directly.
-        Sync engines still use the proxy unix socket when ENABLE_CLOUDSQL_PROXY is set.
-        (as Cloud SQL Connector does not support psycopg2 yet)
-        """
+    @computed_field  # type: ignore[prop-decorator]
+    @cached_property
+    def yuppdb(self) -> PostgresConnection:
+        return self._parse_pg_connection(self.POSTGRES_CONNECTION_YUPPDB)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @cached_property
+    def yuppdb_replica(self) -> PostgresConnection:
+        return self._parse_pg_connection(self.POSTGRES_CONNECTION_YUPPDB_REPLICA)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @cached_property
+    def agentdb(self) -> PostgresConnection:
+        return self._parse_pg_connection(self.POSTGRES_CONNECTION_AGENTDB)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @cached_property
+    def agentdb_replica(self) -> PostgresConnection:
+        return self._parse_pg_connection(self.POSTGRES_CONNECTION_AGENTDB_REPLICA)
+
+    def get_pg_connection(self, db: DbName = "yuppdb", *, replica: bool = False) -> PostgresConnection:
+        """Return the PostgresConnection for the given database and replica flag."""
+        if db == "yuppdb":
+            return self.yuppdb_replica if replica else self.yuppdb
+        return self.agentdb_replica if replica else self.agentdb
+
+    def _use_proxy_socket(self, conn: PostgresConnection, async_mode: bool) -> bool:
+        """Whether to connect via the Cloud SQL Auth Proxy unix socket."""
         if self.ENVIRONMENT == "local" or not self.ENABLE_CLOUDSQL_PROXY:
+            return False
+        if not conn.cloud_sql_proxy_socket:
             return False
         if async_mode and self.ENABLE_CLOUD_SQL_CONNECTOR:
             return False
         return True
 
-    def _db_url(self, async_mode: bool) -> str:
+    def _build_db_url(self, conn: PostgresConnection, async_mode: bool) -> str:
         scheme = "postgresql" + ("+asyncpg" if async_mode else "")
-        if self._use_proxy_socket(async_mode):
+        if self._use_proxy_socket(conn, async_mode):
             return sqlalchemy.engine.url.URL.create(
                 drivername=scheme,
-                username=self.POSTGRES_USER,
-                password=self.POSTGRES_PASSWORD,
-                database=self.POSTGRES_DATABASE,
+                username=conn.user,
+                password=conn.password,
+                database=conn.database,
                 query={
-                    "host": f"{self.CLOUD_PRIMARY_SQL_PROXY_INSTANCE_UNIX_SOCKET}"
+                    "host": f"{conn.cloud_sql_proxy_socket}"
                     + ("/.s.PGSQL.5432" if async_mode else "")
                 },
             ).render_as_string(hide_password=False)
         return PostgresDsn.build(
             scheme=scheme,
-            username=self.POSTGRES_USER,
-            password=self.POSTGRES_PASSWORD,
-            host=self.POSTGRES_HOST,
-            path=f"{self.POSTGRES_DATABASE}",
+            username=conn.user,
+            password=conn.password,
+            host=conn.host,
+            path=f"{conn.database}",
         ).unicode_string()
 
-    def _db_url_read_replica(self, async_mode: bool) -> str:
-        scheme = "postgresql" + ("+asyncpg" if async_mode else "")
-        if self._use_proxy_socket(async_mode):
-            return sqlalchemy.engine.url.URL.create(
-                drivername=scheme,
-                username=self.POSTGRES_USER_READ_REPLICA,
-                password=self.POSTGRES_PASSWORD_READ_REPLICA,
-                database=self.POSTGRES_DATABASE,
-                query={
-                    "host": f"{self.CLOUD_READ_REPLICA_SQL_PROXY_INSTANCE_UNIX_SOCKET}"
-                    + ("/.s.PGSQL.5432" if async_mode else "")
-                },
-            ).render_as_string(hide_password=False)
-        return PostgresDsn.build(
-            scheme=scheme,
-            username=self.POSTGRES_USER_READ_REPLICA,
-            password=self.POSTGRES_PASSWORD_READ_REPLICA,
-            host=self.POSTGRES_HOST_READ_REPLICA,
-            path=f"{self.POSTGRES_DATABASE_READ_REPLICA}",
-        ).unicode_string()
+    def db_url_for(self, db: DbName = "yuppdb", *, replica: bool = False, async_mode: bool = False) -> str:
+        """Build a SQLAlchemy database URL for the given database."""
+        return self._build_db_url(self.get_pg_connection(db, replica=replica), async_mode=async_mode)
+
+    def cloud_sql_instance_for(self, db: DbName = "yuppdb", *, replica: bool = False) -> str:
+        """Instance connection name (e.g. 'yupp-llms:us-east4:sarai-chat-prod')."""
+        conn = self.get_pg_connection(db, replica=replica)
+        return conn.cloud_sql_proxy_socket.removeprefix("/cloudsql/")
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -636,37 +656,26 @@ class Settings(BaseSettings):
             return "disable"
         return "require"
 
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def cloud_sql_instance_primary(self) -> str:
-        """Instance connection name for primary (e.g. 'yupp-llms:us-east4:sarai-chat-prod')."""
-        return self.CLOUD_PRIMARY_SQL_PROXY_INSTANCE_UNIX_SOCKET.removeprefix("/cloudsql/")
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def cloud_sql_instance_read_replica(self) -> str:
-        """Instance connection name for read replica."""
-        return self.CLOUD_READ_REPLICA_SQL_PROXY_INSTANCE_UNIX_SOCKET.removeprefix("/cloudsql/")
-
+    # ---- Convenience aliases (yuppdb, the default) for backward compat ----
     @computed_field  # type: ignore[prop-decorator]
     @property
     def db_url(self) -> str:
-        return self._db_url(async_mode=False)
+        return self.db_url_for("yuppdb", async_mode=False)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def db_url_async(self) -> str:
-        return self._db_url(async_mode=True)
+        return self.db_url_for("yuppdb", async_mode=True)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def db_url_read_replica(self) -> str:
-        return self._db_url_read_replica(async_mode=False)
+        return self.db_url_for("yuppdb", replica=True, async_mode=False)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def db_url_async_read_replica(self) -> str:
-        return self._db_url_read_replica(async_mode=True)
+        return self.db_url_for("yuppdb", replica=True, async_mode=True)
 
     def _check_default_secret(self, var_name: str, value: str | None) -> None:
         if value == DEFAULT_UNSAFE_PASSWORD:
@@ -705,12 +714,13 @@ class Settings(BaseSettings):
         if self.ENVIRONMENT in ["production", "staging"]:
             # Only validate during actual runtime, not during tests
             if os.getenv("PYTEST_CURRENT_TEST") is None:  # This env var is automatically set by pytest
+                conn = self.yuppdb
                 test_values = ["test", "postgres", "localhost:5432"]
                 if (
-                    self.POSTGRES_USER in test_values
-                    or self.POSTGRES_PASSWORD == "test"
-                    or self.POSTGRES_HOST in test_values
-                    or self.POSTGRES_DATABASE in test_values
+                    conn.user in test_values
+                    or conn.password == "test"
+                    or conn.host in test_values
+                    or conn.database in test_values
                 ):
                     raise ValueError(
                         f"Database configuration using test values in {self.ENVIRONMENT} environment. "
