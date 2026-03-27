@@ -66,9 +66,9 @@ def run_migrations_online() -> None:
 
 
 if ("upgrade" in sys.argv or "downgrade" in sys.argv) and (
-    "localhost" not in settings.POSTGRES_HOST and "127.0.0.1" not in settings.POSTGRES_HOST
+    "localhost" not in settings.yuppdb.host and "127.0.0.1" not in settings.yuppdb.host
 ):
-    print(f"WARNING: You are about to upgrade {settings.POSTGRES_HOST} @ {settings.ENVIRONMENT.upper()}!")
+    print(f"WARNING: You are about to upgrade {settings.yuppdb.host} @ {settings.ENVIRONMENT.upper()}!")
     approval = input("Type 'yupp' to continue: ").strip().lower()
     if approval != "yupp":
         print("Migration aborted!")
