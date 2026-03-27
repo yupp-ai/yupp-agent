@@ -85,8 +85,9 @@ dmypy.json
 # Local md files
 *.local.md
 
-# claude worktrees
+# claude
 .claude/worktrees
+.claude/settings.local.json
 
 # temp
 tmp/

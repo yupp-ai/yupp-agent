@@ -14,7 +14,8 @@ import sqlalchemy as sa
 from google.cloud import bigquery
 
 from ypl.backend.config import settings
-from ypl.backend.db import get_async_session_read_replica, retry_db
+from ypl.backend.config import DbName
+from ypl.backend.db import get_async_session_for, retry_db
 from ypl.backend.utils.dynamic_app_settings import get_mcp_tools_settings
 from ypl.mcp_server.core import mcp_server
 from ypl.structured_logger import get_logger
@@ -247,10 +248,65 @@ async def _query_bigquery_impl(
 # ============================================================================
 
 
+async def _query_postgres_impl(
+    sql: str,
+    max_rows: int,
+    database: DbName,
+) -> dict[str, Any]:
+    """Common implementation for Postgres query tools."""
+    try:
+        sql_upper = _strip_sql_comments(sql).upper()
+        if not sql_upper.startswith("SELECT"):
+            return {
+                "success": False,
+                "error": "Only SELECT queries are allowed",
+                "sql": sql,
+            }
+
+        logger.info("Executing database query", database=database, sql=sql[:200])
+
+        async with get_async_session_for(database, replica=True) as session:
+            await session.execute(sa.text("SET LOCAL statement_timeout = '60s'"))
+
+            sql_clean = sql.rstrip(";")
+            if "LIMIT" not in sql_upper:
+                limited_sql = f"{sql_clean} LIMIT {max_rows}"
+            else:
+                limited_sql = sql_clean
+            result = await session.execute(sa.text(limited_sql))
+
+            rows = result.fetchall()
+            columns = result.keys()
+
+            formatted_results = []
+            for row in rows:
+                row_dict = {}
+                for i, column in enumerate(columns):
+                    value = row[i]
+                    if isinstance(value, datetime):
+                        value = value.isoformat()
+                    row_dict[column] = value
+                formatted_results.append(row_dict)
+
+            logger.info("Database query completed", database=database, row_count=len(formatted_results))
+
+            return {
+                "success": True,
+                "database": database,
+                "row_count": len(formatted_results),
+                "columns": list(columns),
+                "results": formatted_results[:max_rows] if len(formatted_results) > max_rows else formatted_results,
+            }
+
+    except Exception as e:
+        logger.warning("Error executing database query", database=database, error=str(e), sql=sql[:200])
+        return {"success": False, "error": str(e), "sql": sql}
+
+
 @mcp_server.tool(
     name="query_yuppdb",
     description=(
-        "Execute read-only SQL query on Yupp production database. Use SELECT queries to "
+        "Execute read-only SQL query on Yupp production database (yuppdb). Use SELECT queries to "
         "investigate data issues, check user states, or analyze patterns. "
         "IMPORTANT: Only SELECT queries are allowed - no writes/updates."
     ),
@@ -260,70 +316,25 @@ async def query_yuppdb(
     sql: str,
     max_rows: int = 1000,
 ) -> dict[str, Any]:
-    """Execute read-only SQL query on Yupp database.
+    """Execute read-only SQL query on Yupp database (yuppdb)."""
+    return await _query_postgres_impl(sql, max_rows, "yuppdb")
 
-    Uses read replica for safety and performance.
 
-    Args:
-        sql: SELECT query to execute
-        max_rows: Maximum number of rows to return (default: 1000)
-
-    Returns:
-        Dictionary containing query results
-    """
-    try:
-        # Validate that query is read-only (SELECT only)
-        sql_upper = _strip_sql_comments(sql).upper()
-        if not sql_upper.startswith("SELECT"):
-            return {
-                "success": False,
-                "error": "Only SELECT queries are allowed",
-                "sql": sql,
-            }
-
-        logger.info("Executing database query", sql=sql[:200])  # Log first 200 chars
-
-        async with get_async_session_read_replica() as session:
-            # Set statement timeout to prevent long-running queries from causing OOM
-            # 60 seconds should be sufficient for most analytics queries
-            await session.execute(sa.text("SET LOCAL statement_timeout = '60s'"))
-
-            # Add row limit only if not already present
-            sql_clean = sql.rstrip(";")
-            if "LIMIT" not in sql_upper:
-                limited_sql = f"{sql_clean} LIMIT {max_rows}"
-            else:
-                limited_sql = sql_clean
-            result = await session.execute(sa.text(limited_sql))
-
-            # Fetch results
-            rows = result.fetchall()
-            columns = result.keys()
-
-            # Format results
-            formatted_results = []
-            for row in rows:
-                row_dict = {}
-                for i, column in enumerate(columns):
-                    value = row[i]
-                    # Convert datetime objects to ISO format
-                    if isinstance(value, datetime):
-                        value = value.isoformat()
-                    row_dict[column] = value
-                formatted_results.append(row_dict)
-
-            logger.info("Database query completed", row_count=len(formatted_results))
-
-            return {
-                "success": True,
-                "row_count": len(formatted_results),
-                "columns": list(columns),
-                "results": formatted_results[:max_rows] if len(formatted_results) > max_rows else formatted_results,
-            }
-
-    except Exception as e:
-        logger.warning("Error executing database query", error=str(e), sql=sql[:200])
-        return {"success": False, "error": str(e), "sql": sql}
+@mcp_server.tool(
+    name="query_agentdb",
+    description=(
+        "Execute read-only SQL query on the Agent database (yadb). Contains agent harness data: "
+        "agent sessions, tasks, projects, schedules, artifacts, and memory indexes. "
+        "IMPORTANT: Only SELECT queries are allowed - no writes/updates."
+    ),
+)
+@retry_db
+async def query_agentdb(
+    sql: str,
+    max_rows: int = 1000,
+) -> dict[str, Any]:
+    """Execute read-only SQL query on the Agent database (agentdb)."""
+    return await _query_postgres_impl(sql, max_rows, "agentdb")
 
 
 @mcp_server.tool(
