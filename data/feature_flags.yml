@@ -1,0 +1,105 @@
+feature_flags:
+  - name: use_budget_decay
+    description: "Whether to use budget decay"
+    default_state: false
+    critical: true
+  - name: enable_taskiq_for_upi_monitoring
+    description: "Whether to enable TaskIQ for monitoring UPI cashouts"
+    default_state: true
+    critical: false
+  - name: store_usage_metrics
+    description: "Whether to store LanguageModelCostUsageMetrics in the DB. Temporary flag to help unblock db migration."
+    default_state: true
+    critical: false
+  - name: enable_event_user_updates
+    description: "Whether to update user data during event flushing"
+    default_state: true
+    critical: false
+  - name: event_flush_batch_size
+    description: "The number of events to flush at a time"
+    default_state: 100
+    critical: false
+  - name: enable_check_similar_prompt_abuse
+    description: "Whether to enable the check for repeat similar prompt abuse"
+    default_state: true
+    critical: true
+  - name: enable_check_confusing_prompt_abuse
+    description: "Whether to enable the check for confusing prompt abuse"
+    default_state: true
+    critical: true
+  - name: enable_check_consistent_similar_prompt_abuse
+    description: "Whether to enable the check for consistent similar prompt pattern abuse"
+    default_state: true
+    critical: true
+  - name: enable_check_consistent_similar_prompt_abuse_auto_action
+    description: "Whether to enable the auto action for consistent similar prompt pattern abuse"
+    default_state: false
+    critical: true
+  - name: enable_cashout_via_upi
+    description: "Whether to enable cashout via UPI"
+    default_state: false
+    critical: true
+  - name: enable_cashout_via_onchain
+    description: "Whether to enable cashout via onchain"
+    default_state: false
+    critical: true
+  - name: enable_cashout_via_coinbase
+    description: "Whether to enable cashout via Coinbase"
+    default_state: false
+    critical: true
+  - name: enable_cashout_via_paypal
+    description: "Whether to enable cashout via PayPal"
+    default_state: false
+    critical: true
+  - name: enable_cashout_via_solana
+    description: "Whether to enable cashout via Solana"
+    default_state: true
+    critical: true
+  - name: enable_coinbase_biz
+    description: "Whether to enable cashout via Coinbase Biz"
+    default_state: false
+    critical: true
+  - name: enable_connected_user_disable_cashout
+    description: "Whether to enable disabling cashout for connected users"
+    default_state: false
+    critical: true
+  - name: enable_amplitude_device_ring_detection
+    description: "Whether to enable amplitude device ring detection"
+    default_state: true
+    critical: false
+  - name: enable_paypal_via_login_with_paypal
+    description: "Whether to enable PayPal via Login with PayPal"
+    default_state: false
+    critical: true
+  - name: enable_new_year_bonus
+    description: "Whether to enable new year bonus"
+    default_state: false
+    critical: false
+  - name: enable_risk_evaluations
+    description: "Whether to enable risk evaluations"
+    default_state: true
+    critical: true
+  - name: enable_processing_uploaded_attachment_on_taskiq
+    description: "Whether to enable processing uploaded attachment on TaskIQ."
+    default_state: false
+    critical: false
+  - name: enable_signed_url_for_image_attachments
+    description: "Whether to enable using signed URL for image attachments."
+    default_state: false
+    critical: false
+  - name: enable_microsoft_content_safety
+    description: "Enable Microsoft Azure Content Safety API for prompt moderation during routing"
+    default_state: false
+    critical: true
+  - name: enable_public_chat_visibility_change
+    description: "Whether to allow changing the visibility of a public chat (e.g. making it private or link-only)"
+    default_state: false
+    critical: false
+  - name: enable_adjustment_eval
+    description: "Whether to enable creating MODEL_FEEDBACK_ADJUSTMENT rewards"
+    default_state: false
+    critical: true
+  - name: enable_winddown
+    description: "Whether to enable winddown mode to gradually shut down product functionalities"
+    default_state: false
+    critical: true

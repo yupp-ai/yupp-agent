@@ -1,0 +1,38 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Python optimization
+ENV PYTHONUNBUFFERED=1
+
+# Install poetry
+RUN pip install --no-cache-dir poetry==1.8.5 && \
+    poetry config virtualenvs.create false
+
+# Copy just dependency specification files
+# This layer caches until dependencies change
+COPY pyproject.toml poetry.lock README.md ./
+
+# Install dependencies without the package itself
+# Install build dependencies, use them, then remove them in a single layer
+RUN set -e && \
+    # Install build dependencies
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        cmake \
+        g++ \
+        git \
+        libgomp1 \
+        make && \
+    echo "Installing dependencies..." && \
+    poetry install --no-root --without dev --no-interaction --no-ansi --compile && \
+    # Remove build dependencies (keep git as it may be needed in derived images)
+    apt-get purge -y --auto-remove cmake g++ make && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* && \
+    # Install CPU-only PyTorch (inference only, no CUDA — saves ~570 MB vs default)
+    pip install --no-cache-dir torch==2.4.1+cpu --index-url https://download.pytorch.org/whl/cpu && \
+    # Clean up caches
+    rm -rf ~/.cache /root/.cache /tmp/* /var/tmp/* && \
+    find /usr/local/lib/python3.12/site-packages -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
+    echo "Dependencies installed and cached successfully"

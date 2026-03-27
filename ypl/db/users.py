@@ -11,6 +11,7 @@ from sqlalchemy import Column, UniqueConstraint
 from sqlmodel import Field
 
 from ypl.db.base import BaseModel
+from ypl.db.rbac import UserRoleAssociation as UserRole  # noqa: F401 — compat with yupp-mind imports
 
 
 class UserStatus(enum.Enum):
