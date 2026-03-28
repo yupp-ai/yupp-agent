@@ -167,13 +167,13 @@ jobs:
         if [[ "${{ env.ENVIRONMENT }}" == "production" ]]; then
           echo "ENVIRONMENT=production" >> $GITHUB_ENV
           echo "CLOUD_RUN_SERVICE_NAME=agent-mcp-server-production" >> $GITHUB_ENV
-          echo "CLOUD_SQL_CONNECTION_NAME=${{ secrets.CLOUD_SQL_CONNECTION_NAME_PRODUCTION }}" >> $GITHUB_ENV
-          echo "CLOUD_SQL_CONNECTION_NAME_READ_REPLICA=${{ secrets.CLOUD_SQL_CONNECTION_NAME_PRODUCTION_READ_REPLICA }}" >> $GITHUB_ENV
+          echo "CLOUD_SQL_CONNECTION_NAME=yupp-llms:us-east4:yupp-agent-prod" >> $GITHUB_ENV
+          echo "CLOUD_SQL_CONNECTION_NAME_READ_REPLICA=yupp-llms:us-east4:yupp-agent-prod" >> $GITHUB_ENV
         else
           echo "ENVIRONMENT=staging" >> $GITHUB_ENV
           echo "CLOUD_RUN_SERVICE_NAME=agent-mcp-server-staging" >> $GITHUB_ENV
-          echo "CLOUD_SQL_CONNECTION_NAME=${{ secrets.CLOUD_SQL_CONNECTION_NAME_STAGING }}" >> $GITHUB_ENV
-          echo "CLOUD_SQL_CONNECTION_NAME_READ_REPLICA=${{ secrets.CLOUD_SQL_CONNECTION_NAME_STAGING_READ_REPLICA }}" >> $GITHUB_ENV
+          echo "CLOUD_SQL_CONNECTION_NAME=yupp-llms:us-east4:yupp-agent-dev" >> $GITHUB_ENV
+          echo "CLOUD_SQL_CONNECTION_NAME_READ_REPLICA=yupp-llms:us-east4:yupp-agent-dev" >> $GITHUB_ENV
         fi
         echo "MEMORY=2Gi" >> $GITHUB_ENV
         echo "CPU=1" >> $GITHUB_ENV
@@ -266,14 +266,14 @@ jobs:
         if [[ "${{ env.ENVIRONMENT }}" == "production" ]]; then
           echo "ENVIRONMENT=production" >> $GITHUB_ENV
           echo "CLOUD_RUN_SERVICE_NAME=agent-mcp-server-oauth-production" >> $GITHUB_ENV
-          echo "CLOUD_SQL_CONNECTION_NAME=${{ secrets.CLOUD_SQL_CONNECTION_NAME_PRODUCTION }}" >> $GITHUB_ENV
-          echo "CLOUD_SQL_CONNECTION_NAME_READ_REPLICA=${{ secrets.CLOUD_SQL_CONNECTION_NAME_PRODUCTION_READ_REPLICA }}" >> $GITHUB_ENV
+          echo "CLOUD_SQL_CONNECTION_NAME=yupp-llms:us-east4:yupp-agent-prod" >> $GITHUB_ENV
+          echo "CLOUD_SQL_CONNECTION_NAME_READ_REPLICA=yupp-llms:us-east4:yupp-agent-prod" >> $GITHUB_ENV
           echo "MCP_SERVER_BASE_URL=https://yuppster-mcp-oauth.yupp.ai" >> $GITHUB_ENV
         else
           echo "ENVIRONMENT=staging" >> $GITHUB_ENV
           echo "CLOUD_RUN_SERVICE_NAME=agent-mcp-server-oauth-staging" >> $GITHUB_ENV
-          echo "CLOUD_SQL_CONNECTION_NAME=${{ secrets.CLOUD_SQL_CONNECTION_NAME_STAGING }}" >> $GITHUB_ENV
-          echo "CLOUD_SQL_CONNECTION_NAME_READ_REPLICA=${{ secrets.CLOUD_SQL_CONNECTION_NAME_STAGING_READ_REPLICA }}" >> $GITHUB_ENV
+          echo "CLOUD_SQL_CONNECTION_NAME=yupp-llms:us-east4:yupp-agent-dev" >> $GITHUB_ENV
+          echo "CLOUD_SQL_CONNECTION_NAME_READ_REPLICA=yupp-llms:us-east4:yupp-agent-dev" >> $GITHUB_ENV
           echo "MCP_SERVER_BASE_URL=https://yuppster-mcp-oauth-staging.yupp.ai" >> $GITHUB_ENV
         fi
         echo "MEMORY=2Gi" >> $GITHUB_ENV
@@ -349,13 +349,13 @@ jobs:
         if [[ "${{ env.ENVIRONMENT }}" == "production" ]]; then
           echo "ENVIRONMENT=production" >> $GITHUB_ENV
           echo "CLOUD_RUN_SERVICE_NAME=agent-slack-gateway-production" >> $GITHUB_ENV
-          echo "CLOUD_SQL_CONNECTION_NAME=${{ secrets.CLOUD_SQL_CONNECTION_NAME_PRODUCTION }}" >> $GITHUB_ENV
-          echo "CLOUD_SQL_CONNECTION_NAME_READ_REPLICA=${{ secrets.CLOUD_SQL_CONNECTION_NAME_PRODUCTION_READ_REPLICA }}" >> $GITHUB_ENV
+          echo "CLOUD_SQL_CONNECTION_NAME=yupp-llms:us-east4:yupp-agent-prod" >> $GITHUB_ENV
+          echo "CLOUD_SQL_CONNECTION_NAME_READ_REPLICA=yupp-llms:us-east4:yupp-agent-prod" >> $GITHUB_ENV
         else
           echo "ENVIRONMENT=staging" >> $GITHUB_ENV
           echo "CLOUD_RUN_SERVICE_NAME=agent-slack-gateway-staging" >> $GITHUB_ENV
-          echo "CLOUD_SQL_CONNECTION_NAME=${{ secrets.CLOUD_SQL_CONNECTION_NAME_STAGING }}" >> $GITHUB_ENV
-          echo "CLOUD_SQL_CONNECTION_NAME_READ_REPLICA=${{ secrets.CLOUD_SQL_CONNECTION_NAME_STAGING_READ_REPLICA }}" >> $GITHUB_ENV
+          echo "CLOUD_SQL_CONNECTION_NAME=yupp-llms:us-east4:yupp-agent-dev" >> $GITHUB_ENV
+          echo "CLOUD_SQL_CONNECTION_NAME_READ_REPLICA=yupp-llms:us-east4:yupp-agent-dev" >> $GITHUB_ENV
         fi
         echo "MEMORY=2Gi" >> $GITHUB_ENV
         echo "CPU=1" >> $GITHUB_ENV
@@ -443,13 +443,13 @@ jobs:
         if [[ "${{ env.ENVIRONMENT }}" == "production" ]]; then
           echo "ENVIRONMENT=production" >> $GITHUB_ENV
           echo "CLOUD_RUN_SERVICE_NAME=agent-streamlit-server-production" >> $GITHUB_ENV
-          echo "CLOUD_SQL_CONNECTION_NAME=${{ secrets.CLOUD_SQL_CONNECTION_NAME_PRODUCTION }}" >> $GITHUB_ENV
-          echo "CLOUD_SQL_CONNECTION_NAME_READ_REPLICA=${{ secrets.CLOUD_SQL_CONNECTION_NAME_PRODUCTION_READ_REPLICA }}" >> $GITHUB_ENV
+          echo "CLOUD_SQL_CONNECTION_NAME=yupp-llms:us-east4:yupp-agent-prod" >> $GITHUB_ENV
+          echo "CLOUD_SQL_CONNECTION_NAME_READ_REPLICA=yupp-llms:us-east4:yupp-agent-prod" >> $GITHUB_ENV
         else
           echo "ENVIRONMENT=staging" >> $GITHUB_ENV
           echo "CLOUD_RUN_SERVICE_NAME=agent-streamlit-server-staging" >> $GITHUB_ENV
-          echo "CLOUD_SQL_CONNECTION_NAME=${{ secrets.CLOUD_SQL_CONNECTION_NAME_STAGING }}" >> $GITHUB_ENV
-          echo "CLOUD_SQL_CONNECTION_NAME_READ_REPLICA=${{ secrets.CLOUD_SQL_CONNECTION_NAME_STAGING_READ_REPLICA }}" >> $GITHUB_ENV
+          echo "CLOUD_SQL_CONNECTION_NAME=yupp-llms:us-east4:yupp-agent-dev" >> $GITHUB_ENV
+          echo "CLOUD_SQL_CONNECTION_NAME_READ_REPLICA=yupp-llms:us-east4:yupp-agent-dev" >> $GITHUB_ENV
         fi
         echo "MEMORY=4Gi" >> $GITHUB_ENV
         echo "CPU=2" >> $GITHUB_ENV
