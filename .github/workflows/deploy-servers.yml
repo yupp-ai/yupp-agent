@@ -146,8 +146,8 @@ jobs:
             exit 1
           fi
 
-          if [[ "$ENVIRONMENT" == "production" && "$IMAGE_TAG" == "v2-latest" ]]; then
-            echo "❌ ERROR: Cannot deploy v2-latest tag to production"
+          if [[ "$ENVIRONMENT" == "production" && "$IMAGE_TAG" == "latest" ]]; then
+            echo "❌ ERROR: Cannot deploy latest tag to production"
             exit 1
           fi
 
