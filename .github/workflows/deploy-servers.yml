@@ -488,7 +488,7 @@ jobs:
           --timeout=10m \
           --set-cloudsql-instances=${{ env.CLOUD_SQL_CONNECTION_NAME }},${{ env.CLOUD_SQL_CONNECTION_NAME_READ_REPLICA }} \
           --set-secrets="${{ steps.generate_gcloud_deploy_outputs.outputs.secrets_string }}" \
-          --command="/app/ypl/streamlit_server/entrypoint.sh"
+          --command="/app/ypl/streamlit_server/streamlit_server_entrypoint.sh"
 
     - name: Update traffic to latest version
       run: |
