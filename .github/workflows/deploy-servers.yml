@@ -12,7 +12,7 @@ on:
       image_tag:
         description: 'Image tag to deploy'
         required: true
-        default: 'latest'
+        default: 'v2-latest'
         type: string
       git_sha:
         description: 'Git SHA for Cloud Run revision labels'
@@ -67,10 +67,10 @@ on:
       image_tag:
         description: 'Image tag to deploy'
         required: true
-        default: 'latest'
+        default: 'v2-latest'
         type: choice
         options:
-        - latest
+        - v2-latest
         - release-candidate
         - cherry-pick-release-candidate
       deploy_all:
@@ -103,8 +103,8 @@ env:
   ENVIRONMENT: ${{ github.event.inputs.environment || inputs.environment || 'staging' }}
   GCP_REGION: 'us-east4'
   GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-  IMAGE_NAME: "gcr.io/yupp-llms/agent-backend:${{ github.event.inputs.image_tag || inputs.image_tag || 'latest' }}"
-  IMAGE_TAG: ${{ github.event.inputs.image_tag || inputs.image_tag || 'latest' }}
+  IMAGE_NAME: "gcr.io/yupp-llms/backend:${{ github.event.inputs.image_tag || inputs.image_tag || 'v2-latest' }}"
+  IMAGE_TAG: ${{ github.event.inputs.image_tag || inputs.image_tag || 'v2-latest' }}
   REGION: 'us-east4'
   GIT_BRANCH: ${{ github.ref_name }}
   BUILD_GIT_SHA: ${{ inputs.git_sha || github.sha }}
@@ -146,8 +146,8 @@ jobs:
             exit 1
           fi
 
-          if [[ "$ENVIRONMENT" == "production" && "$IMAGE_TAG" == "latest" ]]; then
-            echo "❌ ERROR: Cannot deploy latest tag to production"
+          if [[ "$ENVIRONMENT" == "production" && "$IMAGE_TAG" == "v2-latest" ]]; then
+            echo "❌ ERROR: Cannot deploy v2-latest tag to production"
             exit 1
           fi
 
