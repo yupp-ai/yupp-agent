@@ -5,10 +5,10 @@ on:
   workflow_call:
     inputs:
       image_tag:
-        description: 'Image tag (e.g. v2-latest, release-candidate)'
+        description: 'Image tag (e.g. latest, release-candidate)'
         required: false
         type: string
-        default: 'v2-latest'
+        default: 'latest'
       rebuild_base:
         description: 'Rebuild base image (only needed when dependencies change)'
         required: false
@@ -19,10 +19,10 @@ on:
       image_tag:
         description: 'Image tag'
         required: true
-        default: 'v2-latest'
+        default: 'latest'
         type: choice
         options:
-        - v2-latest
+        - latest
         - release-candidate
       rebuild_base:
         description: 'Rebuild base image (only needed when dependencies change)'
@@ -33,7 +33,7 @@ on:
 env:
   IMAGE_BASE: gcr.io/yupp-llms/agent-backend
   BASE_IMAGE: gcr.io/yupp-llms/agent-base-py312:latest
-  IMAGE_TAG: ${{ github.event.inputs.image_tag || inputs.image_tag || 'v2-latest' }}
+  IMAGE_TAG: ${{ github.event.inputs.image_tag || inputs.image_tag || 'latest' }}
   GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
 
 permissions:
