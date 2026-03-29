@@ -516,7 +516,8 @@ jobs:
   deploy-ahs:
     runs-on: ubuntu-latest
     needs: [print-and-validate-inputs]
-    if: ${{ always() && needs.print-and-validate-inputs.result == 'success' && ((github.event.inputs.deploy_all == 'true' || inputs.deploy_all) || (github.event.inputs.deploy_ahs == 'true' || inputs.deploy_ahs)) }}
+    # AHS is opt-in only (not included in deploy_all) since it's VM-based and independent of Docker builds
+    if: ${{ always() && needs.print-and-validate-inputs.result == 'success' && (github.event.inputs.deploy_ahs == 'true' || inputs.deploy_ahs) }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -578,7 +579,7 @@ jobs:
         gcloud compute ssh "${{ env.VM_NAME }}" \
           --zone="${{ env.VM_ZONE }}" \
           --project="${{ env.GCP_PROJECT_NAME }}" \
-          --command="sudo cp /tmp/ahs.env /data/ahs/.env && sudo chown ahs:ahs /data/ahs/.env && sudo chmod 600 /data/ahs/.env && rm -f /tmp/ahs.env && cd /opt/yupp-agent && sudo -u ahs git fetch origin && sudo -u ahs git checkout --force ${{ env.BUILD_GIT_SHA }} && sudo -u ahs bash -c 'cd /opt/yupp-agent && .venv/bin/pip install \"setuptools<80\" && .venv/bin/poetry install --no-root' && sudo -u ahs /opt/yupp-agent/ypl/agent_harness_service/deploy/sync_configs.sh --no-pull && sudo systemctl restart ahs && echo 'AHS deployed and restarted successfully'"
+          --command="sudo cp /tmp/ahs.env /data/ahs/.env && sudo chown ahs:ahs /data/ahs/.env && sudo chmod 600 /data/ahs/.env && rm -f /tmp/ahs.env && cd /opt/yupp-agent && sudo -u ahs git fetch origin && sudo -u ahs git checkout --force ${{ env.BUILD_GIT_SHA }} && sudo -u ahs bash -c 'cd /opt/yupp-agent && .venv/bin/pip install \"setuptools<80\" && .venv/bin/poetry lock && .venv/bin/poetry install --no-root' && sudo -u ahs /opt/yupp-agent/ypl/agent_harness_service/deploy/sync_configs.sh --no-pull && sudo systemctl restart ahs && echo 'AHS deployed and restarted successfully'"
 
     - name: Verify AHS is running
       run: |
