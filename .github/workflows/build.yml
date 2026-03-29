@@ -9,6 +9,11 @@ on:
         required: false
         type: string
         default: 'v2-latest'
+      rebuild_base:
+        description: 'Rebuild base image (only needed when dependencies change)'
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       image_tag:
@@ -19,9 +24,15 @@ on:
         options:
         - v2-latest
         - release-candidate
+      rebuild_base:
+        description: 'Rebuild base image (only needed when dependencies change)'
+        required: false
+        type: boolean
+        default: false
 
 env:
   IMAGE_BASE: gcr.io/yupp-llms/agent-backend
+  BASE_IMAGE: gcr.io/yupp-llms/agent-base-py312:latest
   IMAGE_TAG: ${{ github.event.inputs.image_tag || inputs.image_tag || 'v2-latest' }}
   GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
 
@@ -48,6 +59,18 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
+    - name: Build and push base image
+      if: ${{ github.event.inputs.rebuild_base == 'true' || inputs.rebuild_base }}
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        file: Dockerfile.base
+        platforms: linux/amd64
+        push: true
+        tags: ${{ env.BASE_IMAGE }}
+        cache-from: type=gha,scope=base
+        cache-to: type=gha,scope=base,mode=max
+
     - name: Generate build metadata
       run: |
         echo "BUILD_GIT_SHA=${{ github.sha }}" >> .env
@@ -63,8 +86,8 @@ jobs:
         tags: |
           ${{ env.IMAGE_BASE }}:${{ env.IMAGE_TAG }}
           ${{ env.IMAGE_BASE }}:sha-${{ github.sha }}
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
+        cache-from: type=gha,scope=app
+        cache-to: type=gha,scope=app,mode=max
 
     - name: Print image info
       run: |
