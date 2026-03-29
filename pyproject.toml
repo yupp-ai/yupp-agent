@@ -180,6 +180,10 @@ pytest-alembic = "^0.11.1"
 pytest-asyncio = "^0.24.0"
 pytest-mock = "^3.14.0"
 ruff = "^0.14.9"
+pytest-timeout = "^2.4.0"
+types-requests = "^2.33.0.20260327"
+types-pyyaml = "^6.0.12.20250915"
+types-cachetools = "^6.2.0.20260317"
 
 [tool.mypy]
 python_version = "3.12"
@@ -198,7 +202,7 @@ warn_no_return = true
 strict_equality = true
 ignore_missing_imports = true
 plugins = ["pydantic.mypy"]
-exclude = ["ypl/db/alembic/", "tmp/"]
+exclude = ["ypl/db/alembic/", "tmp/", "scripts/"]
 cache_dir = ".mypy_cache"
 incremental = true
 
