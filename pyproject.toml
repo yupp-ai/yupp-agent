@@ -169,6 +169,7 @@ setuptools = "<80"
 tenacity = "8.5.0"
 PyYAML = ">=6.0"
 textual = ">=0.40"
+google-api-python-client = "^2.193.0"
 
 [tool.poetry.group.dev.dependencies]
 mypy = "^1.19.0"
