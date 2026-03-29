@@ -103,7 +103,7 @@ env:
   ENVIRONMENT: ${{ github.event.inputs.environment || inputs.environment || 'staging' }}
   GCP_REGION: 'us-east4'
   GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-  IMAGE_NAME: "gcr.io/yupp-llms/backend:${{ github.event.inputs.image_tag || inputs.image_tag || 'v2-latest' }}"
+  IMAGE_NAME: "gcr.io/yupp-llms/agent-backend:${{ github.event.inputs.image_tag || inputs.image_tag || 'v2-latest' }}"
   IMAGE_TAG: ${{ github.event.inputs.image_tag || inputs.image_tag || 'v2-latest' }}
   REGION: 'us-east4'
   GIT_BRANCH: ${{ github.ref_name }}
