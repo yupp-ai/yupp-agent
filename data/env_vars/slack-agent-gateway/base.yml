@@ -1,2 +1,11 @@
 env_vars:
   DEFAULT_DB: agentdb
+  ENABLE_CLOUDSQL_PROXY: 'true'
+  ENABLE_CLOUD_SQL_CONNECTOR: 'true'
+
+  PROJECT_NAME: 'slack-agent-gateway'
+
+  SCRIPT_TO_RUN: '/app/ypl/slack_agent_gateway/entrypoint.sh'
+
+  # Bot Father approval channel (#cybertron)
+  SLACK_BOT_FATHER_APPROVAL_CHANNEL: 'C0ALTCHNZ99'

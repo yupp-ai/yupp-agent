@@ -69,7 +69,6 @@ import click
 import google.auth
 import google.auth.exceptions
 from google.cloud import secretmanager
-
 from scripts.secret_env_var_map import (
     EnvVar,
     Service,

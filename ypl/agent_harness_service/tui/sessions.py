@@ -197,7 +197,7 @@ class SessionsScreen(Screen[str | None]):
         yield Header()
         with Vertical(id="sessions-container"):
             yield Static("", id="sessions-filter-bar")
-            st = DataTable(id="session-list", cursor_type="row")
+            st: DataTable[str] = DataTable(id="session-list", cursor_type="row")
             st.can_focus = True
             yield st
             detail = RichLog(id="session-detail-pane", markup=True, wrap=True, auto_scroll=False)

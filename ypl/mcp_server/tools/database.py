@@ -13,8 +13,7 @@ from typing import Any
 import sqlalchemy as sa
 from google.cloud import bigquery
 
-from ypl.backend.config import settings
-from ypl.backend.config import DbName
+from ypl.backend.config import DbName, settings
 from ypl.backend.db import get_async_session_for, retry_db
 from ypl.backend.utils.dynamic_app_settings import get_mcp_tools_settings
 from ypl.mcp_server.core import mcp_server

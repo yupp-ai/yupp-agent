@@ -27,6 +27,7 @@ DEFAULT_UNSAFE_PASSWORD = "changethis"
 EnvironmentType = Literal["production", "staging", "test", "local"]
 DbName = Literal["yuppdb", "agentdb"]
 
+
 class PostgresConnection(pydantic.BaseModel):
     """A single Postgres connection target parsed from a JSON env var."""
 
@@ -627,10 +628,7 @@ class Settings(BaseSettings):
                 username=conn.user,
                 password=conn.password,
                 database=conn.database,
-                query={
-                    "host": f"{conn.cloud_sql_proxy_socket}"
-                    + ("/.s.PGSQL.5432" if async_mode else "")
-                },
+                query={"host": f"{conn.cloud_sql_proxy_socket}" + ("/.s.PGSQL.5432" if async_mode else "")},
             ).render_as_string(hide_password=False)
         return PostgresDsn.build(
             scheme=scheme,

@@ -1,2 +1,3 @@
 env_vars:
   ENVIRONMENT: production
+  GATEWAY_BASE_URL: 'https://slack-agent-gateway-production.yupp.ai'

@@ -1,2 +1,3 @@
 env_vars:
   ENVIRONMENT: staging
+  GATEWAY_BASE_URL: 'https://slack-agent-gateway-staging.yupp.ai'
