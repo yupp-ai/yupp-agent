@@ -1,5 +1,7 @@
-name: Deploy Servers
-# Deploy Cloud Run services (MCP Server, MCP OAuth, SAG, Streamlit). AHS is in deploy-ahs.yml (VM-based, no Docker).
+name: "Deploy Servers 2 - Deploy"
+# Deploy Cloud Run services from an already-built image.
+# Can deploy to staging (redeploy without rebuild) or production.
+# AHS is in deploy-ahs.yml (VM-based, no Docker).
 
 on:
   workflow_call:
@@ -49,11 +51,6 @@ on:
         required: false
         type: boolean
         default: false
-      skip_build:
-        description: 'Skip the build step'
-        required: false
-        type: boolean
-        default: false
   workflow_dispatch:
     inputs:
       environment:
@@ -67,7 +64,7 @@ on:
       image_tag:
         description: 'Image tag to deploy'
         required: true
-        default: 'latest'
+        default: 'release-candidate'
         type: choice
         options:
         - latest
@@ -121,7 +118,7 @@ jobs:
       - name: Print Workflow Inputs
         run: |
           {
-            echo "## Agent Services Deployment Inputs"
+            echo "## Deploy Servers 2 - Deploy"
             echo "| Input | Value |"
             echo "|-------|-------|"
             echo "| Environment | ${{ env.ENVIRONMENT }} |"
@@ -131,7 +128,7 @@ jobs:
             echo "| Deploy All | ${{ github.event.inputs.deploy_all || inputs.deploy_all || 'false' }} |"
             echo "| Deploy MCP Server | ${{ github.event.inputs.deploy_mcp_server || inputs.deploy_mcp_server || 'false' }} |"
             echo "| Deploy MCP Server OAuth | ${{ github.event.inputs.deploy_mcp_server_oauth || inputs.deploy_mcp_server_oauth || 'false' }} |"
-            echo "| Deploy Slack Agent Gateway (SAG) | ${{ github.event.inputs.deploy_slack_agent_gateway || inputs.deploy_slack_agent_gateway || 'false' }} |"
+            echo "| Deploy SAG | ${{ github.event.inputs.deploy_slack_agent_gateway || inputs.deploy_slack_agent_gateway || 'false' }} |"
             echo "| Deploy Streamlit Server | ${{ github.event.inputs.deploy_streamlit_server || inputs.deploy_streamlit_server || 'false' }} |"
           } >> $GITHUB_STEP_SUMMARY
 
@@ -141,13 +138,12 @@ jobs:
           echo "Current git branch: ${{ env.GIT_BRANCH }}"
 
           if [[ "$ENVIRONMENT" == "production" && "$GIT_BRANCH" == "main" ]]; then
-            echo "❌ ERROR: Cannot deploy to production from main branch"
-            echo "Please use a release-candidate tag"
+            echo "::error::Cannot deploy to production from main branch. Use a release tag."
             exit 1
           fi
 
           if [[ "$ENVIRONMENT" == "production" && "$IMAGE_TAG" == "latest" ]]; then
-            echo "❌ ERROR: Cannot deploy latest tag to production"
+            echo "::error::Cannot deploy 'latest' tag to production. Use release-candidate or cherry-pick-release-candidate."
             exit 1
           fi
 

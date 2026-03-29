@@ -1,0 +1,190 @@
+name: "Deploy Servers 1 - Build & Staging"
+# Build the Docker image and deploy to staging. To deploy to production, use "Deploy Servers 2 - Production".
+
+on:
+  schedule:
+    - cron: '0 */12 * * *'  # Every 12 hours
+  workflow_dispatch:
+    inputs:
+      deployment_type:
+        description: 'Select the deployment type'
+        required: true
+        type: choice
+        default: 'normal staging deployment'
+        options:
+        - normal staging deployment
+        - create staging release candidate
+        - create cherry-pick release candidate
+      deploy_all:
+        description: 'Deploy all services to staging'
+        required: true
+        type: boolean
+        default: true
+      deploy_mcp_server:
+        description: 'Deploy MCP Server'
+        required: false
+        type: boolean
+        default: false
+      deploy_mcp_server_oauth:
+        description: 'Deploy MCP Server OAuth'
+        required: false
+        type: boolean
+        default: false
+      deploy_slack_agent_gateway:
+        description: 'Deploy Slack Agent Gateway (SAG)'
+        required: false
+        type: boolean
+        default: false
+      deploy_streamlit_server:
+        description: 'Deploy Streamlit Server'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  IMAGE_BASE: gcr.io/yupp-llms/agent-backend
+  BASE_IMAGE: gcr.io/yupp-llms/agent-base-py312:latest
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+
+permissions:
+  contents: write
+  packages: read
+
+jobs:
+  print-inputs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print Workflow Inputs
+        run: |
+          {
+            echo "## Deploy Servers 1 - Build & Staging"
+            echo "| Input | Value |"
+            echo "|-------|-------|"
+            echo "| Deployment Type | ${{ github.event.inputs.deployment_type || 'normal staging deployment (scheduled)' }} |"
+            echo "| Deploy All | ${{ github.event.inputs.deploy_all || 'true' }} |"
+            echo "| Deploy MCP Server | ${{ github.event.inputs.deploy_mcp_server || 'false' }} |"
+            echo "| Deploy MCP Server OAuth | ${{ github.event.inputs.deploy_mcp_server_oauth || 'false' }} |"
+            echo "| Deploy SAG | ${{ github.event.inputs.deploy_slack_agent_gateway || 'false' }} |"
+            echo "| Deploy Streamlit Server | ${{ github.event.inputs.deploy_streamlit_server || 'false' }} |"
+          } >> $GITHUB_STEP_SUMMARY
+
+  build:
+    runs-on: ubuntu-latest
+    needs: print-inputs
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Authenticate to Google Cloud
+      uses: ./.github/actions/gcp-auth
+      with:
+        gcp_project_id: ${{ env.GCP_PROJECT_ID }}
+        credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+    - name: Configure Docker for GCR
+      run: gcloud auth configure-docker gcr.io --quiet
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Check if base image needs rebuild
+      id: check_base
+      run: |
+        docker pull ${{ env.BASE_IMAGE }} || { echo "needs_rebuild=true" >> $GITHUB_OUTPUT; exit 0; }
+        CONTAINER_ID=$(docker create ${{ env.BASE_IMAGE }})
+        docker cp "$CONTAINER_ID:/app/pyproject.toml" /tmp/base_pyproject.toml 2>/dev/null || true
+        docker cp "$CONTAINER_ID:/app/poetry.lock" /tmp/base_poetry.lock 2>/dev/null || true
+        docker rm "$CONTAINER_ID"
+
+        REBUILD=false
+        if ! diff -q pyproject.toml /tmp/base_pyproject.toml > /dev/null 2>&1; then
+          echo "pyproject.toml changed - base image rebuild needed"
+          REBUILD=true
+        fi
+        if ! diff -q poetry.lock /tmp/base_poetry.lock > /dev/null 2>&1; then
+          echo "poetry.lock changed - base image rebuild needed"
+          REBUILD=true
+        fi
+        echo "needs_rebuild=$REBUILD" >> $GITHUB_OUTPUT
+
+    - name: Build and push base image
+      if: steps.check_base.outputs.needs_rebuild == 'true'
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        file: Dockerfile.base
+        platforms: linux/amd64
+        push: true
+        tags: ${{ env.BASE_IMAGE }}
+        cache-from: type=gha,scope=base
+        cache-to: type=gha,scope=base,mode=max
+
+    - name: Determine image tags
+      id: tags
+      run: |
+        DEPLOYMENT_TYPE="${{ github.event.inputs.deployment_type || 'normal staging deployment' }}"
+
+        if [ "$DEPLOYMENT_TYPE" = "create staging release candidate" ]; then
+          # Tag as both latest and release-candidate
+          TAGS="${{ env.IMAGE_BASE }}:latest,${{ env.IMAGE_BASE }}:release-candidate"
+          DEPLOY_TAG="release-candidate"
+        elif [ "$DEPLOYMENT_TYPE" = "create cherry-pick release candidate" ]; then
+          # Only tag as cherry-pick-release-candidate (do NOT update latest)
+          TAGS="${{ env.IMAGE_BASE }}:cherry-pick-release-candidate"
+          DEPLOY_TAG="cherry-pick-release-candidate"
+        else
+          # Normal staging: tag as latest only
+          TAGS="${{ env.IMAGE_BASE }}:latest"
+          DEPLOY_TAG="latest"
+        fi
+
+        # Add metadata tags
+        TAGS="${TAGS},${{ env.IMAGE_BASE }}:sha-${{ github.sha }},${{ env.IMAGE_BASE }}:run-${{ github.run_id }}"
+
+        echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+        echo "deploy_tag=${DEPLOY_TAG}" >> $GITHUB_OUTPUT
+
+    - name: Generate build metadata
+      run: |
+        echo "BUILD_GIT_SHA=${{ github.sha }}" >> .env
+        echo "BUILD_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> .env
+        echo "BUILD_GIT_BRANCH=${{ github.ref_name }}" >> .env
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        platforms: linux/amd64
+        push: true
+        tags: ${{ steps.tags.outputs.tags }}
+        cache-from: type=gha,scope=app
+        cache-to: type=gha,scope=app,mode=max
+
+    - name: Print image info
+      run: |
+        {
+          echo "## Docker Image Built"
+          echo "| Setting | Value |"
+          echo "|---------|-------|"
+          echo "| Tags | \`${{ steps.tags.outputs.tags }}\` |"
+          echo "| Deploy tag | \`${{ steps.tags.outputs.deploy_tag }}\` |"
+          echo "| Git SHA | \`${{ github.sha }}\` |"
+        } >> $GITHUB_STEP_SUMMARY
+
+    outputs:
+      deploy_tag: ${{ steps.tags.outputs.deploy_tag }}
+
+
+  deploy-staging:
+    needs: build
+    uses: ./.github/workflows/deploy-servers-2-deploy.yml
+    secrets: inherit
+    with:
+      environment: 'staging'
+      image_tag: ${{ needs.build.outputs.deploy_tag }}
+      git_sha: ${{ github.sha }}
+      deploy_all: ${{ (github.event_name == 'schedule') || (github.event.inputs.deploy_all == 'true') }}
+      deploy_mcp_server: ${{ github.event.inputs.deploy_mcp_server == 'true' }}
+      deploy_mcp_server_oauth: ${{ github.event.inputs.deploy_mcp_server_oauth == 'true' }}
+      deploy_slack_agent_gateway: ${{ github.event.inputs.deploy_slack_agent_gateway == 'true' }}
+      deploy_streamlit_server: ${{ github.event.inputs.deploy_streamlit_server == 'true' }}
