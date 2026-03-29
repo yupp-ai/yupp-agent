@@ -27,6 +27,7 @@ RUN set -e && \
     apt-get update && \
     apt-get install -y --no-install-recommends cmake g++ make && \
     echo "Syncing dependencies with poetry.lock..." && \
+    poetry lock --no-update && \
     poetry install --no-root --without dev --compile && \
     apt-get purge -y --auto-remove cmake g++ make && \
     apt-get clean && \
