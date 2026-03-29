@@ -18,6 +18,7 @@ import argparse
 import csv
 import os
 import sys
+from typing import Any
 
 import psycopg2
 import psycopg2.extras
@@ -100,7 +101,7 @@ def create_tables(dest: str) -> None:
     print("Tables created successfully.")
 
 
-def load_table(conn, table: str, csv_path: str, batch_size: int = 500) -> tuple[int, int]:
+def load_table(conn: Any, table: str, csv_path: str, batch_size: int = 500) -> tuple[int, int]:
     """Load a CSV file into a table row-by-row, skipping FK failures. Returns (inserted, skipped)."""
     with open(csv_path, newline="") as f:
         reader = csv.DictReader(f)

@@ -266,7 +266,7 @@ async def _sync_dir_to_gcs_inner(
         return 0
 
     uploaded = 0
-    async with aiohttp.ClientSession() as http_session, Storage(session=http_session) as storage:  # type: ignore[arg-type]
+    async with aiohttp.ClientSession() as http_session, Storage(session=http_session) as storage:
         for abs_path, rel_path, mtime in to_sync:
             gcs_object = f"{gcs_prefix}/{rel_path}"
             try:

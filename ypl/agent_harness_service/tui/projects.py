@@ -360,11 +360,11 @@ class ProjectsScreen(Screen[str | None]):
     def compose(self) -> ComposeResult:
         yield Header()
         with Vertical(id="projects-container"):
-            pt = DataTable(id="project-list", cursor_type="row")
+            pt: DataTable[str] = DataTable(id="project-list", cursor_type="row")
             pt.can_focus = True
             yield pt
             yield Static("", id="project-info-bar")
-            tt = DataTable(id="task-list", cursor_type="row")
+            tt: DataTable[str] = DataTable(id="task-list", cursor_type="row")
             tt.can_focus = True
             yield tt
             detail = RichLog(id="detail-pane", markup=True, wrap=True, auto_scroll=False)

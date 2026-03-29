@@ -195,7 +195,7 @@ async def fetch_all_projects(
                 func.coalesce(task_count_subq.c.completed_count, 0).label("completed_count"),
             )
             .outerjoin(task_count_subq, col(AgentProject.agent_project_id) == task_count_subq.c.agent_project_id)
-            .options(selectinload(AgentProject.creator_user))  # type: ignore[arg-type]
+            .options(selectinload(AgentProject.creator_user))  # type: ignore[attr-defined]
             .where(col(AgentProject.deleted_at).is_(None))
         )
 
@@ -215,7 +215,7 @@ async def fetch_all_projects(
             "project": row[0],
             "task_count": row[1],
             "completed_count": row[2],
-            "creator_name": row[0].creator_user.name if row[0].creator_user else "—",
+            "creator_name": row[0].creator_user.name if row[0].creator_user else "—",  # type: ignore[attr-defined]
         }
         for row in rows
     ]
@@ -266,7 +266,7 @@ async def fetch_project_with_tasks(project_id: uuid.UUID) -> dict[str, Any] | No
     async with get_async_session_read_replica() as session:
         project_query = (
             select(AgentProject)
-            .options(selectinload(AgentProject.creator_user))  # type: ignore[arg-type]
+            .options(selectinload(AgentProject.creator_user))  # type: ignore[attr-defined]
             .where(col(AgentProject.agent_project_id) == project_id)
             .where(col(AgentProject.deleted_at).is_(None))
         )
@@ -294,7 +294,7 @@ async def fetch_project_with_tasks(project_id: uuid.UUID) -> dict[str, Any] | No
     return {
         "project": project,
         "tasks": tasks,
-        "creator_name": project.creator_user.name if project.creator_user else "—",
+        "creator_name": project.creator_user.name if project.creator_user else "—",  # type: ignore[attr-defined]
         "default_agent_name": default_agent_name,
     }
 
