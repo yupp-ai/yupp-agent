@@ -40,6 +40,11 @@ on:
         required: false
         type: boolean
         default: false
+      deploy_ahs:
+        description: 'Deploy Agent Harness Service (VM-based, no Docker)'
+        required: false
+        type: boolean
+        default: false
 
 env:
   IMAGE_BASE: gcr.io/yupp-llms/agent-backend
@@ -188,3 +193,4 @@ jobs:
       deploy_mcp_server_oauth: ${{ github.event.inputs.deploy_mcp_server_oauth == 'true' }}
       deploy_slack_agent_gateway: ${{ github.event.inputs.deploy_slack_agent_gateway == 'true' }}
       deploy_streamlit_server: ${{ github.event.inputs.deploy_streamlit_server == 'true' }}
+      deploy_ahs: ${{ github.event.inputs.deploy_ahs == 'true' }}
