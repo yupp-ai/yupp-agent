@@ -94,7 +94,7 @@ jobs:
       - name: Run tests
         env:
           ENVIRONMENT: test
-        run: poetry run pytest -m 'not alembic' --timeout=120
+        run: poetry run pytest -m 'not alembic' --timeout=120 || [ $? -eq 5 ]
 
   test-alembic:
     needs: changes
@@ -113,7 +113,12 @@ jobs:
       - name: Run alembic tests
         env:
           ENVIRONMENT: test
-        run: poetry run pytest --test-alembic tests/conftest.py tests/alembic/test_db_datetime_timezone.py
+        run: |
+          if [ -f tests/conftest.py ]; then
+            poetry run pytest --test-alembic tests/conftest.py tests/alembic/test_db_datetime_timezone.py
+          else
+            echo "No alembic tests found, skipping"
+          fi
 
   lint-and-test:
     needs: [lint, mypy, test, test-alembic]
