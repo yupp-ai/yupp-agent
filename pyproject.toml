@@ -198,7 +198,7 @@ warn_no_return = true
 strict_equality = true
 ignore_missing_imports = true
 plugins = ["pydantic.mypy"]
-exclude = ["ypl/db/alembic/", "tmp/"]
+exclude = ["ypl/db/alembic/", "tmp/", "scripts/"]
 cache_dir = ".mypy_cache"
 incremental = true
 
