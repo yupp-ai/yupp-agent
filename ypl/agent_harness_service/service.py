@@ -108,6 +108,7 @@ from ypl.agent_harness_service.tools.local_mcp_server import (
     set_session_sandbox,
 )
 from ypl.agent_harness_service.tools.repo_manager import scan_session_worktrees
+from ypl.backend.config import settings
 from ypl.backend.db import get_async_session
 from ypl.backend.utils.async_utils import create_background_task
 from ypl.backend.utils.slack_utils import resolve_slack_user_to_yupp_user_id
@@ -2231,8 +2232,16 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
     # Best-effort: notify all channels that a new session was created.
     _sid = agent_session.agent_session_id
     _war_room_url = f"https://war-room.yuppster.ai/session/{_sid}"
-    _lit_url = f"http://lit.yupp.ai/agent_harness_console?session_id={_sid}"
-    session_notice = f"_[AHS] Session {_sid} (<{_war_room_url}|war-room>) (<{_lit_url}|lit>) created._"
+    _env = settings.ENVIRONMENT
+    if _env == "production":
+        _lit_base = "https://agent-streamlit-server-production-451082535721.us-east4.run.app"
+    else:
+        _lit_base = "https://agent-streamlit-server-staging-451082535721.us-east4.run.app"
+    _lit_url = f"{_lit_base}/agent_harness_console?session_id={_sid}"
+    if _env == "production":
+        session_notice = f"_Session {_sid} (<{_war_room_url}|WR> | <{_lit_url}|Lit>)_"
+    else:
+        session_notice = f"_Session {_sid} (<{_lit_url}|Lit>)_"
 
     # WebSocket stream
     # TODO: this notice is effectively dropped for new sessions because WebSocket

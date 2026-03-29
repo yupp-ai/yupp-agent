@@ -1,0 +1,15 @@
+# Permissions configuration for Streamlit server
+# Each permission defines a set of emails that are granted access to specific actions.
+# Users with @yupp.ai emails can login, but need explicit permission for restricted actions.
+
+permissions:
+  # Required for viewing the Agent Harness Console and all agent sessions/projects/schedules.
+  AGENT_HARNESS_ADMIN:
+    emails:
+      - ansuman@yupp.ai
+      - ax@yupp.ai
+      - gilad@yupp.ai
+      - lguan@yupp.ai
+      - pankaj@yupp.ai
+      - tian@yupp.ai
+      - will@yupp.ai
