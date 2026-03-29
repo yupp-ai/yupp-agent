@@ -1,7 +1,5 @@
 env_vars:
   DEFAULT_DB: agentdb
-  ENABLE_CLOUDSQL_PROXY: 'true'
-  ENABLE_CLOUD_SQL_CONNECTOR: 'true'
 
   PROJECT_NAME: 'slack-agent-gateway'
 
