@@ -70,7 +70,7 @@ async def download_from_gcs(url: str) -> bytes:
     # Create aiohttp session first and pass it to Storage to avoid file descriptor conflicts
     # between uvloop and aiohttp when multiple sessions are created. See:
     # https://github.com/MagicStack/uvloop/issues/653
-    async with aiohttp.ClientSession() as session, Storage(session=session) as async_client:
+    async with aiohttp.ClientSession() as session, Storage(session=session) as async_client:  # type: ignore[arg-type]
         return await async_client.download(
             bucket=gcs_url.bucket,
             object_name=gcs_url.object_path,
@@ -95,7 +95,7 @@ async def get_service_account_email() -> str:
         # Create aiohttp session first and pass it to Storage to avoid file descriptor conflicts
         # between uvloop and aiohttp when multiple sessions are created. See:
         # https://github.com/MagicStack/uvloop/issues/653
-        async with aiohttp.ClientSession() as session, Storage(session=session) as storage:
+        async with aiohttp.ClientSession() as session, Storage(session=session) as storage:  # type: ignore[arg-type]
             if "client_email" in storage.token.service_data:
                 _GCP_SERVICE_ACCOUNT_EMAIL = storage.token.service_data["client_email"]
             else:
@@ -130,14 +130,14 @@ async def get_signed_url(full_gcs_url: str) -> str:
     # https://github.com/MagicStack/uvloop/issues/653
     async with (
         aiohttp.ClientSession() as session,
-        Storage(session=session) as async_client,
+        Storage(session=session) as async_client,  # type: ignore[arg-type]
     ):
         bucket = async_client.get_bucket(gcs_url.bucket)
         blob = await bucket.get_blob(gcs_url.object_path)
         return await blob.get_signed_url(
             expiration=GS_SIGNED_URL_CACHE_TTL_SECONDS,
             service_account_email=service_account_email,
-            session=session,
+            session=session,  # type: ignore[arg-type]
         )
 
 
@@ -151,7 +151,7 @@ async def upload_to_gcs(data: bytes, gcs_url: str, content_type: str = "applicat
         content_type: MIME type for the uploaded object.
     """
     parsed = GCSUrl.from_url(gcs_url)
-    async with aiohttp.ClientSession() as session, Storage(session=session) as async_client:
+    async with aiohttp.ClientSession() as session, Storage(session=session) as async_client:  # type: ignore[arg-type]
         await async_client.upload(
             bucket=parsed.bucket,
             object_name=parsed.object_path,
@@ -165,7 +165,7 @@ async def copy_file(source: GCSUrl, destination: GCSUrl) -> None:
     # Create aiohttp session first and pass it to Storage to avoid file descriptor conflicts
     # between uvloop and aiohttp when multiple sessions are created. See:
     # https://github.com/MagicStack/uvloop/issues/653
-    async with aiohttp.ClientSession() as session, Storage(session=session) as async_client:
+    async with aiohttp.ClientSession() as session, Storage(session=session) as async_client:  # type: ignore[arg-type]
         await async_client.copy(
             bucket=source.bucket,
             object_name=source.object_path,

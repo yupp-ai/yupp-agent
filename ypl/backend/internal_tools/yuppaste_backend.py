@@ -545,7 +545,7 @@ async def get_yuppaste_by_uuid(paste_uuid: str) -> YuppasteContentResponse:
         async with Storage() as async_client:
             bucket = async_client.get_bucket(settings.GCS_BUCKET_NAME)
             async with aiohttp.ClientSession() as session:
-                blob = await bucket.get_blob(f"pastes/{paste_uuid}.txt", session=session)
+                blob = await bucket.get_blob(f"pastes/{paste_uuid}.txt", session=session)  # type: ignore[arg-type]
 
                 if blob is None:
                     raise ValueError(f"Yuppaste content not found in GCS for UUID {paste_uuid}")
@@ -673,7 +673,7 @@ async def get_yuppaste_by_slug(named_slug: str, version: int | None = None) -> Y
         async with Storage() as async_client:
             bucket = async_client.get_bucket(settings.GCS_BUCKET_NAME)
             async with aiohttp.ClientSession() as session:
-                blob = await bucket.get_blob(f"pastes/{paste_uuid}.txt", session=session)
+                blob = await bucket.get_blob(f"pastes/{paste_uuid}.txt", session=session)  # type: ignore[arg-type]
 
                 if blob is None:
                     raise ValueError(f"Yuppaste content not found in GCS for slug '{named_slug}'")
