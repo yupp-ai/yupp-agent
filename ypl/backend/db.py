@@ -36,7 +36,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from ypl.backend.config import DbName, PostgresConnection, settings
+from ypl.backend.config import DbName, settings
 from ypl.backend.utils.context_utils import async_instrumenting_context_manager
 from ypl.backend.utils.monitoring import metric_record
 from ypl.structured_logger import get_logger
@@ -280,8 +280,6 @@ def get_ypl_caller() -> str:
     return "(unknown)"  # type: ignore[unreachable]
 
 
-
-
 def _get_session_connections(session: AsyncSession) -> list[Any]:
     """Extract all existing SA Connections from a session without creating new ones.
 
@@ -357,9 +355,7 @@ def _invalidate_connection(conn: Any) -> None:
 
 
 @asynccontextmanager
-async def get_async_session_for(
-    db: DbName = "yuppdb", *, replica: bool = False
-) -> AsyncGenerator[AsyncSession, None]:
+async def get_async_session_for(db: DbName = "yuppdb", *, replica: bool = False) -> AsyncGenerator[AsyncSession, None]:
     """Generic session factory — explicitly choose a database."""
     eng = get_async_engine_for(db, replica=replica)
     maker = async_sessionmaker(eng, class_=AsyncSession, expire_on_commit=False, close_resets_only=False)

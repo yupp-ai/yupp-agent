@@ -77,7 +77,7 @@ async def _resolve_slack_user(client: AsyncWebClient, user_id: str) -> str:
     can retry.
     """
     if user_id in _slack_user_cache:
-        return _slack_user_cache[user_id]
+        return str(_slack_user_cache[user_id])
 
     try:
         response = await client.users_info(user=user_id)
