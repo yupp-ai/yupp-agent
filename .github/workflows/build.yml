@@ -2,6 +2,8 @@ name: Build and Push Docker Image
 # Build the agent-backend Docker image and push to GCR.
 
 on:
+  schedule:
+    - cron: '0 */12 * * *'  # Every 12 hours — rebuilds base image only if dependencies changed
   workflow_call:
     inputs:
       image_tag:
@@ -9,11 +11,6 @@ on:
         required: false
         type: string
         default: 'latest'
-      rebuild_base:
-        description: 'Rebuild base image (only needed when dependencies change)'
-        required: false
-        type: boolean
-        default: false
   workflow_dispatch:
     inputs:
       image_tag:
@@ -24,11 +21,6 @@ on:
         options:
         - latest
         - release-candidate
-      rebuild_base:
-        description: 'Rebuild base image (only needed when dependencies change)'
-        required: false
-        type: boolean
-        default: false
 
 env:
   IMAGE_BASE: gcr.io/yupp-llms/agent-backend
@@ -59,8 +51,30 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
+    - name: Check if base image needs rebuild
+      id: check_base
+      run: |
+        # Pull the current base image and extract its dependency files
+        docker pull ${{ env.BASE_IMAGE }} || { echo "needs_rebuild=true" >> $GITHUB_OUTPUT; exit 0; }
+        CONTAINER_ID=$(docker create ${{ env.BASE_IMAGE }})
+        docker cp "$CONTAINER_ID:/app/pyproject.toml" /tmp/base_pyproject.toml 2>/dev/null || true
+        docker cp "$CONTAINER_ID:/app/poetry.lock" /tmp/base_poetry.lock 2>/dev/null || true
+        docker rm "$CONTAINER_ID"
+
+        # Compare with current files
+        REBUILD=false
+        if ! diff -q pyproject.toml /tmp/base_pyproject.toml > /dev/null 2>&1; then
+          echo "pyproject.toml changed — base image rebuild needed"
+          REBUILD=true
+        fi
+        if ! diff -q poetry.lock /tmp/base_poetry.lock > /dev/null 2>&1; then
+          echo "poetry.lock changed — base image rebuild needed"
+          REBUILD=true
+        fi
+        echo "needs_rebuild=$REBUILD" >> $GITHUB_OUTPUT
+
     - name: Build and push base image
-      if: ${{ github.event.inputs.rebuild_base == 'true' || inputs.rebuild_base }}
+      if: steps.check_base.outputs.needs_rebuild == 'true'
       uses: docker/build-push-action@v6
       with:
         context: .
