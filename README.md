@@ -2,6 +2,8 @@
 
 **Agent Cloud Platform** — the infrastructure that powers Yupp's AI agents. Build, deploy, and operate autonomous agents that live in Slack, run on schedules, manage projects, and expose tools via MCP.
 
+Yupp's agents don't just answer questions — they investigate production incidents, review pull requests, run scheduled standups, and sit ready in Slack threads to help engineers move faster. yupp-agent is the platform behind all of it: a cohesive set of services for building, deploying, and operating autonomous agents at scale. Rather than treating agents as one-off scripts, it gives each one a persistent identity, long-term shared memory, sandboxed repo access, and the ability to spawn sub-agents for parallel work. A Slack bridge puts agents where your team already lives; an MCP server surfaces production tools inside every engineer's IDE; and a suite of operational dashboards keeps the whole system visible and debuggable.
+
 | Abbreviation | Service |
 |---|---|
 | **AHS** | Agent Harness Service — core agent runtime |
