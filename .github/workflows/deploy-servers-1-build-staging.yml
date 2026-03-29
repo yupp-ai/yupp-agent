@@ -193,4 +193,16 @@ jobs:
       deploy_mcp_server_oauth: ${{ github.event.inputs.deploy_mcp_server_oauth == 'true' }}
       deploy_slack_agent_gateway: ${{ github.event.inputs.deploy_slack_agent_gateway == 'true' }}
       deploy_streamlit_server: ${{ github.event.inputs.deploy_streamlit_server == 'true' }}
-      deploy_ahs: ${{ github.event.inputs.deploy_ahs == 'true' }}
+
+  # AHS is VM-based (no Docker) — deploy in parallel with build, not after it.
+  # Calls deploy-servers-2 with only deploy_ahs=true; Cloud Run jobs are skipped.
+  deploy-ahs-staging:
+    needs: print-inputs
+    if: ${{ github.event.inputs.deploy_ahs == 'true' }}
+    uses: ./.github/workflows/deploy-servers-2-deploy.yml
+    secrets: inherit
+    with:
+      environment: 'staging'
+      image_tag: 'latest'
+      git_sha: ${{ github.sha }}
+      deploy_ahs: true
