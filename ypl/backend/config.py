@@ -712,18 +712,20 @@ class Settings(BaseSettings):
         if self.ENVIRONMENT in ["production", "staging"]:
             # Only validate during actual runtime, not during tests
             if os.getenv("PYTEST_CURRENT_TEST") is None:  # This env var is automatically set by pytest
-                conn = self.yuppdb
-                test_values = ["test", "postgres", "localhost:5432"]
-                if (
-                    conn.user in test_values
-                    or conn.password == "test"
-                    or conn.host in test_values
-                    or conn.database in test_values
-                ):
-                    raise ValueError(
-                        f"Database configuration using test values in {self.ENVIRONMENT} environment. "
-                        "Please set proper database credentials."
-                    )
+                # Skip validation when yuppdb is not configured (e.g. SAG only uses agentdb)
+                if self.POSTGRES_CONNECTION_YUPPDB:
+                    conn = self.yuppdb
+                    test_values = ["test", "postgres", "localhost:5432"]
+                    if (
+                        conn.user in test_values
+                        or conn.password == "test"
+                        or conn.host in test_values
+                        or conn.database in test_values
+                    ):
+                        raise ValueError(
+                            f"Database configuration using test values in {self.ENVIRONMENT} environment. "
+                            "Please set proper database credentials."
+                        )
         return self
 
 
