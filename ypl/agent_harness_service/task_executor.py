@@ -12,6 +12,7 @@ its infrastructure for atomic claiming and graceful shutdown.
 
 import asyncio
 import os
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -79,9 +80,17 @@ TASK_EXECUTOR_BATCH_SIZE = _parse_env_int("AHS_TASK_EXECUTOR_BATCH_SIZE", 1)
 TASK_EXECUTOR_STALE_TIMEOUT_MINUTES = _parse_env_int("AHS_TASK_EXECUTOR_STALE_TIMEOUT_MINUTES", 30)
 TASK_EXECUTOR_RATE_LIMIT = _parse_env_int("AHS_TASK_EXECUTOR_RATE_LIMIT", 30)
 MAX_CONCURRENT_TASKS_PER_PROJECT = _parse_env_int("AHS_MAX_CONCURRENT_TASKS_PER_PROJECT", 3)
+# How long (seconds) to skip a project after it is rate-limited, to avoid a
+# log storm where every 10-second poll attempt logs a WARNING for the same task.
+RATE_LIMIT_BACKOFF_SECONDS = _parse_env_int("AHS_RATE_LIMIT_BACKOFF_SECONDS", 300)
 
 # Global rate limiter for all task execution (lazily initialized)
 _rate_limiter: RedisTokenBucketRateLimiter | None = None
+
+# Per-project rate-limit cooldown: maps project_id_str → monotonic deadline.
+# When a project is rate-limited, we skip it until deadline passes, avoiding a
+# log storm where every 10-second scheduler poll emits a WARNING for the same task.
+_rate_limited_projects: dict[str, float] = {}
 
 
 def _get_rate_limiter() -> RedisTokenBucketRateLimiter:
@@ -883,16 +892,32 @@ async def poll_and_execute_ready_tasks() -> None:
     # Consider moving rate check inside execute_task() after successful claim, though
     # that requires releasing the task if rate-limited. (see PR #10907)
     scheduled_count = 0
+    now = time.monotonic()
     for task in ready_tasks:
         # Check rate limit per project (project_id is the bucket identifier)
         project_id_str = str(task.agent_project_id)
+
+        # Skip projects that are in a post-rate-limit cooldown window.  Without
+        # this guard, every 10-second scheduler poll logs a WARNING for the same
+        # task until the token-bucket hour window rolls over — producing dozens of
+        # identical log entries and unnecessary Redis round-trips.
+        cooldown_until = _rate_limited_projects.get(project_id_str)
+        if cooldown_until is not None:
+            if now < cooldown_until:
+                continue
+            # Cooldown expired — clear the entry and re-check the rate limiter.
+            del _rate_limited_projects[project_id_str]
+
         if not await rate_limiter.is_allowed(project_id_str):
             logger.warning(
                 "Task execution rate limited",
                 agent_task_id=str(task.agent_task_id),
                 agent_project_id=project_id_str,
                 tasks_per_hour=TASK_EXECUTOR_RATE_LIMIT,
+                backoff_seconds=RATE_LIMIT_BACKOFF_SECONDS,
             )
+            # Record cooldown so subsequent polls skip this project silently.
+            _rate_limited_projects[project_id_str] = now + RATE_LIMIT_BACKOFF_SECONDS
             # Continue to next task - other projects may not be rate limited
             continue
 

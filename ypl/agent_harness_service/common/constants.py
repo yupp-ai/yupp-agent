@@ -50,6 +50,14 @@ SESSION_INFRA_DIRS = frozenset({"history", "attachments", "agent_memories", "too
 # Per-agent persistent memory directory (survives across sessions).
 AHS_MEMORIES_DIR = os.environ.get("AHS_MEMORIES_DIR", os.path.join(AHS_DATA_DIR, "memories"))
 
+# ---------------------------------------------------------------------------
+# Bwrapped Command Handler (BCH) settings
+# ---------------------------------------------------------------------------
+
+# Seconds of inactivity before the BCH proxy process is killed.
+# The next call_tool() transparently restarts it (Go binary restarts in ~2 ms).
+AHS_BCH_IDLE_TIMEOUT_SECONDS: int = int(os.environ.get("AHS_BCH_IDLE_TIMEOUT_SECONDS", "3600"))
+
 # GCS bucket and prefix for persisting agent memory directories.
 # Layout: gs://{bucket}/{prefix}/{agent_name}/...
 AHS_GCS_MEMORY_BUCKET = os.environ.get("AHS_GCS_MEMORY_BUCKET", "yupp-agents")

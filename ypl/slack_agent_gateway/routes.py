@@ -203,8 +203,15 @@ async def post_status_update(request_body: SendStatusUpdateRequest) -> SendStatu
 
     Returns:
         SendStatusUpdateResponse with success status
+
+    Raises:
+        HTTPException: 404 if the session is not found (expired or never existed),
+            so AHS can evict the session from its status-update queue immediately.
     """
-    return await send_status_update(request_body)
+    result = await send_status_update(request_body)
+    if not result.success and result.error == "Session not found":
+        raise HTTPException(status_code=404, detail="Session not found")
+    return result
 
 
 @router.post("/messages/send", dependencies=[Depends(verify_api_key)])
