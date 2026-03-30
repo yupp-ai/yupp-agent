@@ -1,0 +1,22 @@
+{
+  "display_name": "YuppClaw",
+  "description": "Personal agent creation helper \u2014 helps users set up their own personal YuppClaw agent.",
+  "default_repo": "yupp-mind",
+  "max_turns": 20,
+  "max_budget_usd": 1.0,
+  "has_mcp": true,
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": false
+  },
+  "executor_config": {
+    "type": "harnessed"
+  },
+  "tool_permissions": {
+    "*": "deny",
+    "@readonly": "allow",
+    "create_agent": "allow"
+  },
+  "allowed_subagents": [],
+  "timeout_s": 36000
+}

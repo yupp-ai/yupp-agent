@@ -1,0 +1,21 @@
+{
+  "display_name": "Raw Test",
+  "description": "Test agent for raw executor loop \u2014 no tools, pure chat with GLM-5.",
+  "default_repo": "yupp-mind",
+  "max_turns": 5,
+  "max_budget_usd": 1.0,
+  "has_mcp": false,
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": false
+  },
+  "executor_config": {
+    "type": "raw",
+    "model": "zai/glm-5"
+  },
+  "tool_permissions": {
+    "*": "deny"
+  },
+  "streaming": false,
+  "timeout_s": 36000
+}

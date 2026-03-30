@@ -110,7 +110,6 @@ class SessionResult(BaseModel):
     trigger: str | None = Field(None, description="How the session was triggered: slack, api, cron, …")
     model: str | None = None
     message_count: int = 0
-    cost_usd: float | None = None
     parent_session_id: str | None = None
 
 

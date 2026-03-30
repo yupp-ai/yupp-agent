@@ -6,7 +6,6 @@ from typing import Any, TypeVar
 
 import streamlit as st
 
-from ypl.backend.utils.batch_utils import flush_and_reset_batch_system, stop_batch_system
 from ypl.structured_logger import get_logger
 
 T = TypeVar("T")
@@ -20,27 +19,12 @@ _loop_worker_lock = threading.Lock()
 
 async def _initialize_streamlit_services() -> None:
     """Initialize services required for the streamlit server."""
-    from ypl.backend.llm.usage_metadata_tracker import initialize_usage_metrics_buffer
-    from ypl.backend.utils.batch_utils import initialize_batch_system
-
-    logger.info("STREAMLIT INIT: Initializing usage metrics buffer...")
-    await initialize_usage_metrics_buffer()
-    await initialize_batch_system()
     logger.info("STREAMLIT INIT: Services initialized successfully")
 
 
 async def _teardown_streamlit_services() -> None:
     """Teardown services when the streamlit server shuts down."""
-
-    logger.info("STREAMLIT TEARDOWN: Stopping batch system and flushing buffers...")
-    try:
-        async with asyncio.timeout(5):
-            await stop_batch_system()
-            # Reset batch manager to allow re-registration of buffers on worker recreation
-            await flush_and_reset_batch_system()
-        logger.info("STREAMLIT TEARDOWN: Services stopped successfully")
-    except TimeoutError:
-        logger.warning("STREAMLIT TEARDOWN: Timed out waiting for buffers to flush")
+    logger.info("STREAMLIT TEARDOWN: Services stopped successfully")
 
 
 class LoopWorker:

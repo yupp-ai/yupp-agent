@@ -340,6 +340,7 @@ class ProjectsScreen(Screen[str | None]):
         Binding("escape", "pop_screen", "Back", show=True),
         Binding("r", "resume_task", "Resume", show=True),
         Binding("s", "status_picker", "Status", show=True),
+        Binding("c", "toggle_completed", "Completed", show=True),
         Binding("R", "refresh_all", "Refresh", show=True, key_display="Shift+R"),
         Binding("tab", "focus_next_pane", "Next Pane", show=True),
         Binding("shift+tab", "focus_prev_pane", "Prev Pane", show=False),
@@ -356,6 +357,7 @@ class ProjectsScreen(Screen[str | None]):
         self._pane_order = ["project-list", "task-list", "detail-pane"]
         self._current_pane_idx = 0
         self._status_picker_target: str = ""  # "project" or "task"
+        self._show_completed: bool = False  # hide completed items by default
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -388,7 +390,7 @@ class ProjectsScreen(Screen[str | None]):
         self._load_projects()
 
     @work(thread=False)
-    async def _load_projects(self, force: bool = False) -> None:
+    async def _load_projects(self, force: bool = False, restore_project_id: str | None = None) -> None:
         detail = self.query_one("#detail-pane", RichLog)
 
         cached = None if force else _cache_get("projects")
@@ -408,12 +410,21 @@ class ProjectsScreen(Screen[str | None]):
 
         pt = self.query_one("#project-list", DataTable)
         pt.clear()
-        if not self._projects:
+
+        display_projects = self._projects
+        if not self._show_completed:
+            display_projects = [p for p in self._projects if p.get("status") != "COMPLETED"]
+
+        if not display_projects:
             detail.clear()
             detail.write("[dim]No projects found.[/dim]")
+            tt = self.query_one("#task-list", DataTable)
+            tt.clear()
+            self._selected_project = None
+            self._selected_task = None
             return
 
-        for proj in self._projects:
+        for proj in display_projects:
             status = proj.get("status", "")
             sym, color = PROJECT_STATUS_STYLE.get(status, (" ", ""))
             name = proj.get("name", "?")
@@ -442,14 +453,25 @@ class ProjectsScreen(Screen[str | None]):
             )
 
         detail.clear()
-        # Auto-select first project
-        if self._projects:
-            self._selected_project = self._projects[0]
-            self._show_project_detail(self._projects[0])
-            self._load_tasks(self._projects[0]["agent_project_id"])
+        # Restore cursor to the previously selected project, or auto-select first
+        target_proj = None
+        if restore_project_id:
+            target_proj = next((p for p in display_projects if p["agent_project_id"] == restore_project_id), None)
+        if target_proj is None and display_projects:
+            target_proj = display_projects[0]
+
+        if target_proj:
+            self._selected_project = target_proj
+            self._show_project_detail(target_proj)
+            self._load_tasks(target_proj["agent_project_id"])
+            # Move cursor to the restored project row
+            try:
+                pt.move_cursor(row=pt.get_row_index(target_proj["agent_project_id"]))
+            except Exception:
+                pass
 
     @work(thread=False)
-    async def _load_tasks(self, project_id: str, force: bool = False) -> None:
+    async def _load_tasks(self, project_id: str, force: bool = False, restore_task_id: str | None = None) -> None:
         cache_key = f"tasks:{project_id}"
         cached = None if force else _cache_get(cache_key)
         if cached is not None:
@@ -468,10 +490,14 @@ class ProjectsScreen(Screen[str | None]):
         self._task_tree = _build_task_tree(self._tasks)
         self._task_ranks = {t["agent_task_id"]: rank for t, rank, _ in self._task_tree}
 
+        display_tree = self._task_tree
+        if not self._show_completed:
+            display_tree = [(t, r, p) for t, r, p in self._task_tree if t.get("status") != "COMPLETED"]
+
         tt = self.query_one("#task-list", DataTable)
         tt.clear()
 
-        for task, rank, prefix in self._task_tree:
+        for task, rank, prefix in display_tree:
             status = task.get("status", "")
             sym, color = TASK_STATUS_STYLE.get(status, (" ", ""))
             priority = task.get("priority", "")
@@ -489,6 +515,13 @@ class ProjectsScreen(Screen[str | None]):
                 agent,
                 key=task["agent_task_id"],
             )
+
+        # Restore cursor to the previously selected task
+        if restore_task_id:
+            try:
+                tt.move_cursor(row=tt.get_row_index(restore_task_id))
+            except Exception:
+                pass
 
     def _show_project_detail(self, proj: dict[str, Any]) -> None:
         """Update the project info bar between project list and task list."""
@@ -566,7 +599,8 @@ class ProjectsScreen(Screen[str | None]):
         if sessions:
             for sid in sessions:
                 console_url = f"http://lit.yupp.ai/agent_harness_console?session_id={sid}"
-                links.append(f"[link={console_url}]Session {sid[:8]}[/link]")
+                links.append(f"[link={console_url}]Lit {sid[:8]} \u2192[/link]")
+            links.append("[dim]Enter=Chat[/dim]")
         slack_thread = result.get("slack_thread_url") if isinstance(result, dict) else None
         if isinstance(slack_thread, str) and slack_thread.startswith("https://"):
             links.append(f"[link={slack_thread}]Slack thread[/link]")
@@ -656,14 +690,7 @@ class ProjectsScreen(Screen[str | None]):
     # --- Actions ---
 
     def action_pop_screen(self) -> None:
-        # If status picker is visible, hide it instead of popping
-        picker = self.query_one("#status-picker-overlay", OptionList)
-        if picker.display:
-            picker.display = False
-            # Refocus the appropriate pane
-            pane_id = self._pane_order[self._current_pane_idx]
-            self.query_one(f"#{pane_id}").focus()
-            return
+        """ESC — always dismiss immediately back to chat."""
         self.dismiss(None)
 
     def action_focus_next_pane(self) -> None:
@@ -680,6 +707,12 @@ class ProjectsScreen(Screen[str | None]):
         self._selected_task = None
         _cache_invalidate("")  # clear all
         self._load_projects(force=True)
+
+    def action_toggle_completed(self) -> None:
+        """Toggle visibility of completed projects and tasks."""
+        self._show_completed = not self._show_completed
+        # Re-render without re-fetching
+        self._load_projects(force=False)
 
     def action_resume_task(self) -> None:
         if not self._selected_task:
@@ -757,7 +790,7 @@ class ProjectsScreen(Screen[str | None]):
             await _http_request("POST", f"/projects/{project_id}/status", {"status": status})
             detail.write(f"[green]Project status set to {status}.[/green]")
             _cache_invalidate("projects")
-            self._load_projects(force=True)
+            self._load_projects(force=True, restore_project_id=project_id)
         except Exception as e:
             detail.write(f"[indian_red]Error setting status: {e}[/indian_red]")
 
@@ -769,6 +802,6 @@ class ProjectsScreen(Screen[str | None]):
             detail.write(f"[green]Task status set to {status}.[/green]")
             _cache_invalidate(f"tasks:{project_id}")
             _cache_invalidate("projects")
-            self._load_tasks(project_id, force=True)
+            self._load_tasks(project_id, force=True, restore_task_id=task_id)
         except Exception as e:
             detail.write(f"[indian_red]Error setting status: {e}[/indian_red]")

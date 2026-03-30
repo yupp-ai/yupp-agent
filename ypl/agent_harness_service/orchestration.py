@@ -35,7 +35,7 @@ from ypl.agent_harness_service.common.constants import (
 from ypl.agent_harness_service.common.models import AgentSpec, ExecutorConfig, ExecutorResult, SubagentSession
 from ypl.agent_harness_service.common.types import SessionPermissions
 from ypl.agent_harness_service.core.subagent_queue import MAX_SUBAGENT_DEPTH, SubagentResult, put_result
-from ypl.agent_harness_service.executors.codex_runner import CodexRunner
+from ypl.agent_harness_service.executors.codex_app_server_runner import CodexAppServerRunner
 from ypl.agent_harness_service.executors.providers import KNOWN_MODELS, parse_model_string, resolve_model
 from ypl.agent_harness_service.executors.raw_executor import run_raw_executor
 from ypl.agent_harness_service.executors.runner import ClaudeCodeRunner, RunContext
@@ -774,9 +774,9 @@ async def _execute_harnessed(
 
     try:
         # Determine which runner to use
-        runner: CodexRunner | ClaudeCodeRunner
+        runner: CodexAppServerRunner | ClaudeCodeRunner
         if runner_config.executor_config.model == HARNESS_CODEX_CLI:
-            runner = CodexRunner(runner_config)
+            runner = CodexAppServerRunner(runner_config)
         else:
             runner = ClaudeCodeRunner(runner_config)
 

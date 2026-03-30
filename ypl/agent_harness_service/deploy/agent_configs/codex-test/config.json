@@ -1,0 +1,20 @@
+{
+  "display_name": "Codex Test",
+  "description": "Test agent for OpenAI Codex CLI harness.",
+  "default_repo": "yupp-mind",
+  "max_turns": 100,
+  "max_budget_usd": 0.5,
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true
+  },
+  "executor_config": {
+    "type": "harnessed",
+    "model": "codex-cli"
+  },
+  "tool_permissions": {
+    "*": "allow"
+  },
+  "allowed_subagents": [],
+  "timeout_s": 36000
+}

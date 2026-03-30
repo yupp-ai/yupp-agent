@@ -114,11 +114,11 @@ async def text_to_iql(text: str) -> SearchQuery:
         clean_json = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_json.strip(), flags=re.DOTALL)
         return SearchQuery.model_validate_json(clean_json)
     except TimeoutError:
-        logger.warning("iql_translator: Haiku timed out after %.1fs, using fallback", _HAIKU_TIMEOUT_S)
+        logger.warning("iql_translator_timeout", timeout_s=_HAIKU_TIMEOUT_S)
     except (json.JSONDecodeError, ValidationError) as exc:
-        logger.warning("iql_translator: invalid response from Haiku (%s), using fallback", exc)
+        logger.warning("iql_translator_invalid_response", error=str(exc))
     except Exception as exc:
-        logger.warning("iql_translator: Haiku call failed (%s), using fallback", exc)
+        logger.warning("iql_translator_failed", error=str(exc))
 
     return SearchQuery(q=text)
 
