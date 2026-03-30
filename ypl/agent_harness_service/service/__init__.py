@@ -65,6 +65,7 @@ from ypl.agent_harness_service.service.resolvers import (
 # ---------------------------------------------------------------------------
 from ypl.agent_harness_service.service.run_task import (
     EagerPersistState,
+    TurnContext,
     _eager_persist_agent_msg,
     _persist_system_msg,
     _run_agent_task,
