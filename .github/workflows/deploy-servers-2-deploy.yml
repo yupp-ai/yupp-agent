@@ -148,11 +148,6 @@ jobs:
         run: |
           echo "Current git branch: ${{ env.GIT_BRANCH }}"
 
-          if [[ "$ENVIRONMENT" == "production" && "$GIT_BRANCH" == "main" ]]; then
-            echo "::error::Cannot deploy to production from main branch. Use a release tag."
-            exit 1
-          fi
-
           if [[ "$ENVIRONMENT" == "production" && "$IMAGE_TAG" == "latest" ]]; then
             echo "::error::Cannot deploy 'latest' tag to production. Use release-candidate or cherry-pick-release-candidate."
             exit 1
@@ -526,10 +521,7 @@ jobs:
 
     - name: Validate inputs
       run: |
-        if [[ "$ENVIRONMENT" == "production" && "${{ env.GIT_BRANCH }}" == "main" ]]; then
-          echo "::error::Cannot deploy AHS to production from main branch"
-          exit 1
-        fi
+        echo "Deploying AHS to $ENVIRONMENT from ${{ env.GIT_BRANCH }}"
 
     - name: Set up environment
       run: |
