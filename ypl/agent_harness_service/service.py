@@ -164,7 +164,7 @@ def _parse_env_int(env_var: str, default: int) -> int:
         return default
 
 
-MAX_CONCURRENT_EXECUTIONS = _parse_env_int("AHS_MAX_CONCURRENT_EXECUTIONS", 10)
+MAX_CONCURRENT_EXECUTIONS = _parse_env_int("AHS_MAX_CONCURRENT_EXECUTIONS", 20)
 
 
 def get_active_turn_count() -> int:

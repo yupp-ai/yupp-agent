@@ -79,7 +79,7 @@ TASK_EXECUTOR_ENABLED = os.environ.get("AHS_TASK_EXECUTOR_ENABLED", "true").lowe
 TASK_EXECUTOR_BATCH_SIZE = _parse_env_int("AHS_TASK_EXECUTOR_BATCH_SIZE", 1)
 TASK_EXECUTOR_STALE_TIMEOUT_MINUTES = _parse_env_int("AHS_TASK_EXECUTOR_STALE_TIMEOUT_MINUTES", 30)
 TASK_EXECUTOR_RATE_LIMIT = _parse_env_int("AHS_TASK_EXECUTOR_RATE_LIMIT", 60)
-MAX_CONCURRENT_TASKS_PER_PROJECT = _parse_env_int("AHS_MAX_CONCURRENT_TASKS_PER_PROJECT", 3)
+MAX_CONCURRENT_TASKS_PER_PROJECT = _parse_env_int("AHS_MAX_CONCURRENT_TASKS_PER_PROJECT", 6)
 # Base cooldown (seconds) after the first rate-limit hit.  Subsequent hits use
 # exponential backoff: base * 2^(hit_count - 1), capped at the max.
 RATE_LIMIT_BACKOFF_SECONDS = _parse_env_int("AHS_RATE_LIMIT_BACKOFF_SECONDS", 300)
