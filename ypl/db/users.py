@@ -19,6 +19,11 @@ class UserStatus(enum.Enum):
     DEACTIVATED = "DEACTIVATED"
 
 
+class UserType(enum.Enum):
+    HUMAN = "HUMAN"
+    AGENT = "AGENT"
+
+
 class User(BaseModel, table=True):
     __tablename__ = "users"
 
@@ -29,6 +34,14 @@ class User(BaseModel, table=True):
     status: UserStatus = Field(
         default=UserStatus.ACTIVE,
         sa_column=Column(sa.Enum(UserStatus), nullable=False, server_default=UserStatus.ACTIVE.value),
+    )
+    user_type: UserType = Field(
+        default=UserType.HUMAN,
+        sa_column=Column(
+            sa.Enum(UserType, name="usertype"),
+            nullable=False,
+            server_default=UserType.HUMAN.value,
+        ),
     )
 
     __table_args__ = (
