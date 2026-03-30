@@ -1,9 +1,10 @@
 name: "Deploy Servers 1 - Build & Staging"
+run-name: "Staging: ${{ github.event.head_commit.message || github.event.inputs.deployment_type || 'manual' }} (${{ github.sha }})"
 # Build the Docker image and deploy to staging. To deploy to production, use "Deploy Servers 2 - Production".
 
 on:
-  schedule:
-    - cron: '0 */12 * * *'  # Every 12 hours
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       deployment_type:
@@ -55,9 +56,52 @@ permissions:
   contents: write
   packages: read
 
+concurrency:
+  group: staging-deploy
+  cancel-in-progress: false
+
 jobs:
+  rate-limit-gate:
+    runs-on: ubuntu-latest
+    # Only rate-limit push-triggered runs; manual and scheduled runs always proceed.
+    if: ${{ github.event_name == 'push' }}
+    outputs:
+      should_deploy: ${{ steps.check.outputs.should_deploy }}
+    steps:
+      - name: Check time since last staging deploy
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Find the last successful run of this workflow (excluding the current one)
+          LAST_SUCCESS=$(gh api \
+            "repos/${{ github.repository }}/actions/workflows/deploy-servers-1-build-staging.yml/runs?status=success&per_page=1" \
+            --jq '.workflow_runs[0].updated_at' 2>/dev/null || echo "")
+
+          if [ -z "$LAST_SUCCESS" ]; then
+            echo "No previous successful run found, proceeding."
+            echo "should_deploy=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          LAST_TS=$(date -d "$LAST_SUCCESS" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$LAST_SUCCESS" +%s 2>/dev/null || echo "0")
+          NOW_TS=$(date +%s)
+          DIFF=$(( NOW_TS - LAST_TS ))
+          echo "Last successful deploy: $LAST_SUCCESS ($DIFF seconds ago)"
+
+          if [ "$DIFF" -lt 1200 ]; then
+            echo "Last deploy was less than 20 minutes ago. Skipping."
+            echo "should_deploy=false" >> $GITHUB_OUTPUT
+          else
+            echo "Last deploy was 20+ minutes ago. Proceeding."
+            echo "should_deploy=true" >> $GITHUB_OUTPUT
+          fi
+
   print-inputs:
     runs-on: ubuntu-latest
+    needs: rate-limit-gate
+    # Run if: gate says deploy, OR gate was skipped (manual/scheduled trigger)
+    if: ${{ always() && (needs.rate-limit-gate.result == 'skipped' || needs.rate-limit-gate.outputs.should_deploy == 'true') }}
     steps:
       - name: Print Workflow Inputs
         run: |
@@ -65,7 +109,7 @@ jobs:
             echo "## Deploy Servers 1 - Build & Staging"
             echo "| Input | Value |"
             echo "|-------|-------|"
-            echo "| Deployment Type | ${{ github.event.inputs.deployment_type || 'normal staging deployment (scheduled)' }} |"
+            echo "| Deployment Type | ${{ github.event.inputs.deployment_type || 'normal staging deployment' }} |"
             echo "| Deploy All | ${{ github.event.inputs.deploy_all || 'true' }} |"
             echo "| Deploy MCP Server | ${{ github.event.inputs.deploy_mcp_server || 'false' }} |"
             echo "| Deploy MCP Server OAuth | ${{ github.event.inputs.deploy_mcp_server_oauth || 'false' }} |"
@@ -76,8 +120,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     needs: alembic-upgrade-staging
-    # Skip build when only AHS is selected (VM-based, no Docker needed)
-    if: ${{ github.event_name == 'schedule' || github.event.inputs.deploy_all == 'true' || github.event.inputs.deploy_mcp_server == 'true' || github.event.inputs.deploy_mcp_server_oauth == 'true' || github.event.inputs.deploy_slack_agent_gateway == 'true' || github.event.inputs.deploy_streamlit_server == 'true' }}
+    # Skip build when only AHS is selected (VM-based, no Docker needed). Push events deploy all by default.
+    if: ${{ github.event_name == 'push' || github.event.inputs.deploy_all == 'true' || github.event.inputs.deploy_mcp_server == 'true' || github.event.inputs.deploy_mcp_server_oauth == 'true' || github.event.inputs.deploy_slack_agent_gateway == 'true' || github.event.inputs.deploy_streamlit_server == 'true' }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -191,7 +235,7 @@ jobs:
       environment: 'staging'
       image_tag: ${{ needs.build.outputs.deploy_tag }}
       git_sha: ${{ github.sha }}
-      deploy_all: ${{ (github.event_name == 'schedule') || (github.event.inputs.deploy_all == 'true') }}
+      deploy_all: ${{ (github.event_name == 'push') || (github.event.inputs.deploy_all == 'true') }}
       deploy_mcp_server: ${{ github.event.inputs.deploy_mcp_server == 'true' }}
       deploy_mcp_server_oauth: ${{ github.event.inputs.deploy_mcp_server_oauth == 'true' }}
       deploy_slack_agent_gateway: ${{ github.event.inputs.deploy_slack_agent_gateway == 'true' }}
@@ -211,7 +255,7 @@ jobs:
   deploy-ahs-staging:
     runs-on: ubuntu-latest
     needs: alembic-upgrade-staging
-    if: ${{ github.event.inputs.deploy_all == 'true' || github.event.inputs.deploy_ahs == 'true' }}
+    if: ${{ github.event_name == 'push' || github.event.inputs.deploy_all == 'true' || github.event.inputs.deploy_ahs == 'true' }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
