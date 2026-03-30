@@ -119,6 +119,8 @@ EXECUTOR_TYPE_HARNESSED = "harnessed"
 # When type="harnessed", the model field specifies which CLI wrapper to use.
 HARNESS_CLAUDE_CODE_CLI = "claude-code-cli"
 HARNESS_CODEX_CLI = "codex-cli"
+# In-process SDK runner: no subprocess, uses Anthropic Python SDK directly.
+HARNESS_CLAUDE_SDK = "claude-agent-sdk"
 
 # Tool permission values
 PERM_ALLOW = "allow"
