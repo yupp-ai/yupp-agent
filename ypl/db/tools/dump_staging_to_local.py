@@ -447,6 +447,24 @@ def _run_psql_restore(dest: dict[str, str], dump_file: str) -> None:
     _print_info("Restore complete!")
 
 
+def _stamp_alembic(dest: dict[str, str]) -> None:
+    """Run alembic stamp head so the local DB is marked as up-to-date."""
+    env = _build_pg_env(dest)
+    db_url = f"postgresql://{dest['user']}:{dest['password']}@{dest['host']}:{dest['port']}/{dest['database']}"
+    env["ALEMBIC_DB_URL"] = db_url
+    env["ENVIRONMENT"] = "local"
+
+    cmd = ["poetry", "run", "alembic", "-c", "alembic.ini", "stamp", "head"]
+    _print_info("Stamping alembic version (alembic stamp head)...")
+    result = subprocess.run(cmd, env=env, capture_output=True, text=True)
+    if result.returncode != 0:
+        _print_info(f"Warning: alembic stamp failed (exit {result.returncode})")
+        if result.stderr.strip():
+            _print_info(f"  {result.stderr.strip()}")
+    else:
+        _print_info("Alembic version stamped to head.")
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -518,6 +536,7 @@ def main() -> None:
 
         _print_step(3, 3, "Restore dump to local")
         _run_psql_restore(dest, selected["path"])
+        _stamp_alembic(dest)
 
         _print_success(f"Done! Restored {selected['name']} into {dest['database']}.")
         return
@@ -540,6 +559,7 @@ def main() -> None:
 
         _print_step(3, 3, "Restore dump to local")
         _run_psql_restore(dest, args.restore_file)
+        _stamp_alembic(dest)
 
         _print_success(f"Done! Restored {args.restore_file} into {dest['database']}.")
         return
@@ -599,6 +619,7 @@ def main() -> None:
         step += 1
         _print_step(step, total_steps, "Restore dump to local")
         _run_psql_restore(dest, dump_file)
+        _stamp_alembic(dest)
 
     # --- Summary ---
     print()
