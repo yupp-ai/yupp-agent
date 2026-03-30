@@ -128,6 +128,7 @@ __all__ = [
     "_resolve_user_name_from_db",
     # Run task
     "EagerPersistState",
+    "TurnContext",
     "_eager_persist_agent_msg",
     "_persist_system_msg",
     "_run_agent_task",
