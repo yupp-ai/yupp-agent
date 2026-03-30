@@ -44,6 +44,7 @@ def _internal_link(text: str, url: str) -> str:
     """Return an HTML anchor that navigates in the same tab (target=_self)."""
     return f'<a href="{html.escape(url, quote=True)}" target="_self">{text}</a>'
 
+
 st.set_page_config(page_title="Agent Projects", page_icon="📁", layout="wide")
 require_auth()
 
@@ -1500,7 +1501,8 @@ def _render_task_detail(
         if task.assigned_session_ids:
             st.markdown("**Sessions:**")
             for sid in task.assigned_session_ids:
-                st.markdown(f"- {_internal_link(f'Session {sid[:8]}', f'/agent_harness_console?session_id={sid}')}", unsafe_allow_html=True)
+                link = _internal_link(f"Session {sid[:8]}", f"/agent_harness_console?session_id={sid}")
+                st.markdown(f"- {link}", unsafe_allow_html=True)
 
         if pr_link := _get_pr_link_parts(task.result):
             st.markdown(f"**PR:** [{pr_link[1]}]({pr_link[0]})")
@@ -1520,7 +1522,8 @@ def _render_task_detail(
             parent_tid = str(task.parent_task_id)
             parent_title = task_title_map.get(parent_tid, parent_tid[:8])
             parent_url = f"?project_id={project_id}&task_id={parent_tid}"
-            st.markdown(f"**Parent task:** {_internal_link(html.escape(parent_title), parent_url)}", unsafe_allow_html=True)
+            link = _internal_link(html.escape(parent_title), parent_url)
+            st.markdown(f"**Parent task:** {link}", unsafe_allow_html=True)
 
         # Child tasks
         child_tasks = children_map.get(task_id, [])
@@ -1531,7 +1534,8 @@ def _render_task_detail(
                 child_rank = rank_map.get(child_tid, "?")
                 child_emoji = _TASK_STATUS_EMOJI.get(child.status, "")
                 child_url = f"?project_id={project_id}&task_id={child_tid}"
-                st.markdown(f"- {child_emoji} {_internal_link(f'{child_rank}: {html.escape(child.title)}', child_url)}", unsafe_allow_html=True)
+                link = _internal_link(f"{child_rank}: {html.escape(child.title)}", child_url)
+                st.markdown(f"- {child_emoji} {link}", unsafe_allow_html=True)
 
         st.caption(f"Task ID: `{task_id}`")
 
