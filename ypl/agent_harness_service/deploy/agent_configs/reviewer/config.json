@@ -1,0 +1,21 @@
+{
+  "display_name": "Reviewer",
+  "description": "Code reviewer \u2014 read-only, thorough analysis.",
+  "default_repo": "yupp-mind",
+  "max_turns": 100,
+  "max_budget_usd": 5.0,
+  "has_mcp": true,
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": false
+  },
+  "executor_config": {
+    "type": "raw",
+    "model": "anthropic/claude-sonnet-4-6"
+  },
+  "tool_permissions": {
+    "*": "allow"
+  },
+  "streaming": false,
+  "timeout_s": 36000
+}

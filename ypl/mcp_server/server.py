@@ -13,23 +13,27 @@ Authentication mode is controlled by MCP_SERVER_MODE setting:
 import asyncio
 import contextlib
 import json
+import logging
 import time
-from collections.abc import AsyncGenerator
+import uuid
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from datetime import UTC, datetime
 
 from fastmcp.exceptions import NotFoundError
 from pydantic import ValidationError
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 from starlette.routing import Mount, Route
+from structlog.contextvars import bind_contextvars, clear_contextvars
 
 from ypl.backend.config import settings
 from ypl.backend.utils.batch_utils import initialize_batch_system, stop_batch_system
 from ypl.logger import flush_and_close_google_cloud_logging
 from ypl.loggers.config import flush_and_close_google_logging_client
-from ypl.mcp_server.context_vars import request_context
+from ypl.mcp_server.context_vars import mcp_request_id_var, request_context
 from ypl.mcp_server.core import mcp_server
 
 # Import mcp_tools to register tools via decorators
@@ -37,6 +41,88 @@ from ypl.mcp_server.mcp_tools import execute_tool, format_tool_result
 from ypl.structured_logger import get_logger, setup_asyncio_logging
 
 logger = get_logger()
+
+
+# --- MCP session tracking ---
+
+# Paths that do not need session-level tracking (lightweight / frequent).
+_PATHS_WITHOUT_SESSION_TRACKING: frozenset[str] = frozenset({"/health", "/healthz", "/tools"})
+
+
+class _McpSessionIdFilter(logging.Filter):
+    """Injects mcp_request_id into stdlib log records from mcp.server.streamable_http.
+
+    Reads the UUID from mcp_request_id_var (ContextVar) so the value is
+    automatically isolated per asyncio task / coroutine chain.  The attribute
+    is surfaced as a structured field in GCP log entries alongside the SDK's
+    own "Terminating session: None" message, enabling cross-request correlation
+    without patching the MCP SDK.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.mcp_request_id = mcp_request_id_var.get()
+        return True
+
+
+# Register once at import time — the filter is stateless and safe to share.
+logging.getLogger("mcp.server.streamable_http").addFilter(_McpSessionIdFilter())
+
+
+class McpSessionMiddleware(BaseHTTPMiddleware):
+    """Assigns a UUID to every inbound MCP request for session-level auditing.
+
+    Background
+    ----------
+    The server uses ``stateless_http=True`` (required for horizontal scaling).
+    In this mode the MCP SDK never initialises a persistent session, so
+    ``session_id`` remains ``None`` throughout the request and every connection
+    produces the log line::
+
+        mcp.server.streamable_http  INFO  Terminating session: None
+
+    This makes replay detection, multi-call correlation, and audit trail
+    reconstruction impossible.
+
+    What this middleware does
+    -------------------------
+    1. Generates a UUID (``mcp_request_id``) at the start of every MCP HTTP
+       request and stores it in ``mcp_request_id_var``.
+    2. Binds the UUID to structlog context vars (``bind_contextvars``) so it
+       appears automatically in every structlog call made during the request,
+       including tool-call audit logs and any intermediary logic.
+    3. Emits structured "Initializing session" / "Terminating session" log
+       messages that bracket the session lifetime with a correlated UUID —
+       replacing the SDK's uninformative ``None`` entries.
+
+    Companion
+    ---------
+    ``_McpSessionIdFilter`` (registered above) propagates the same UUID to the
+    MCP SDK's own stdlib logger as a ``mcp_request_id`` extra field on each
+    ``LogRecord``.
+    """
+
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        path = request.url.path
+
+        # Skip tracking for lightweight utility endpoints to keep logs clean.
+        if path in _PATHS_WITHOUT_SESSION_TRACKING or path.startswith("/tools/"):
+            return await call_next(request)
+
+        session_id = str(uuid.uuid4())
+        cv_token = mcp_request_id_var.set(session_id)
+        bind_contextvars(mcp_request_id=session_id)
+
+        logger.info("Initializing session")
+        try:
+            return await call_next(request)
+        finally:
+            logger.info("Terminating session")
+            clear_contextvars()
+            mcp_request_id_var.reset(cv_token)
 
 
 # --- Route handlers ---
@@ -226,19 +312,27 @@ async def lifespan(app: Starlette) -> AsyncGenerator[None, None]:
 def _get_middleware() -> list[Middleware]:
     """Get middleware list based on MCP_SERVER_MODE.
 
+    McpSessionMiddleware is always the outermost layer (first in list) so the
+    session UUID is bound to structlog before any auth or tool logic runs.
+
     Returns:
-        - DEV_TOKEN mode: [DevTokenAuthMiddleware] - validates yupp_dev_* tokens
-        - OAUTH mode: [] - FastMCP handles OAuth authentication
+        - DEV_TOKEN mode: [McpSessionMiddleware, DevTokenAuthMiddleware]
+        - OAUTH mode:     [McpSessionMiddleware]
     """
+    # Outermost first: session tracking wraps everything so every log call
+    # within auth, tool dispatch, and error handling carries mcp_request_id.
+    middlewares: list[Middleware] = [Middleware(McpSessionMiddleware)]
+
     if settings.MCP_SERVER_MODE == "DEV_TOKEN":
         from ypl.mcp_server.auth_dev_token import DevTokenAuthMiddleware
 
         logger.info("Configuring DevToken authentication middleware")
-        return [Middleware(DevTokenAuthMiddleware, request_context_var=request_context)]
+        middlewares.append(Middleware(DevTokenAuthMiddleware, request_context_var=request_context))
+    else:
+        # OAUTH mode - FastMCP handles authentication via GoogleProvider
+        logger.info("OAuth mode - authentication handled by FastMCP")
 
-    # OAUTH mode - FastMCP handles authentication via GoogleProvider
-    logger.info("OAuth mode - authentication handled by FastMCP")
-    return []
+    return middlewares
 
 
 # Create main Starlette app with mode-based middleware

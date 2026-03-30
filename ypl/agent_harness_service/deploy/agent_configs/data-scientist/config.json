@@ -1,0 +1,20 @@
+{
+  "display_name": "Data Scientist",
+  "description": "Data science agent \u2014 leaderboard analysis, model performance, engagement metrics.",
+  "default_repo": "yupp-mind",
+  "max_turns": 200,
+  "max_budget_usd": 5.0,
+  "has_mcp": true,
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true
+  },
+  "executor_config": {
+    "type": "harnessed"
+  },
+  "tool_permissions": {
+    "*": "allow"
+  },
+  "allowed_subagents": [],
+  "timeout_s": 36000
+}

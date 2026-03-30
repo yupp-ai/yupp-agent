@@ -46,6 +46,34 @@ from ypl.structured_logger import get_logger
 logger = get_logger()
 
 
+def _slack_len(s: str) -> int:
+    """Count characters as Slack/JS does — UTF-16 code units.
+
+    Python's len() counts Unicode code points (1 per character), but Slack uses
+    JavaScript's string length which counts UTF-16 code units. Characters outside
+    the Basic Multilingual Plane (U+10000+), such as most emoji, count as 1 in
+    Python but 2 in Slack. This mismatch causes msg_too_long errors when content
+    appears to be under the limit in Python but exceeds it in Slack's view.
+    """
+    return sum(2 if ord(c) > 0xFFFF else 1 for c in s)
+
+
+def _find_slack_truncation_point(s: str, max_slack_len: int) -> int:
+    """Return the largest Python char index i such that _slack_len(s[:i]) <= max_slack_len.
+
+    Walks forward through the string accumulating UTF-16 code units and stops
+    when the next character would exceed the limit. This gives a safe byte-exact
+    truncation point that respects Slack's character counting rules.
+    """
+    count = 0
+    for i, c in enumerate(s):
+        unit_count = 2 if ord(c) > 0xFFFF else 1
+        if count + unit_count > max_slack_len:
+            return i
+        count += unit_count
+    return len(s)
+
+
 async def append_to_reply(request: AppendToReplyRequest) -> AppendToReplyResponse:
     """Append text to the last reply (buffered).
 
@@ -176,17 +204,21 @@ async def flush_buffer(session_id: str) -> bool:
     # Leave margin to avoid edge cases (Slack limit is 40000, use 39000)
     max_length = SLACK_MAX_MESSAGE_LENGTH - 1000
 
-    # Check for overflow — if content exceeds Slack's limit, spill to new message(s)
+    # Check for overflow — if content exceeds Slack's limit, spill to new message(s).
+    # Use _slack_len() (UTF-16 code units) rather than Python len() because Slack counts
+    # characters as JavaScript does: astral-plane chars (emoji, etc.) count as 2.
     overflow_content: str | None = None
-    if len(new_content) > max_length:
-        # Find a clean truncation point (last newline or space before limit)
-        truncate_at = max_length
-        last_newline = new_content.rfind("\n", 0, max_length)
-        last_space = new_content.rfind(" ", 0, max_length)
+    if _slack_len(new_content) > max_length:
+        # Find the safe Python char index where _slack_len(s[:i]) <= max_length, then
+        # prefer a clean break at the last newline or space before that boundary.
+        safe_cutoff = _find_slack_truncation_point(new_content, max_length)
+        truncate_at = safe_cutoff
+        last_newline = new_content.rfind("\n", 0, safe_cutoff)
+        last_space = new_content.rfind(" ", 0, safe_cutoff)
 
-        if last_newline > max_length // 2:
+        if last_newline > safe_cutoff // 2:
             truncate_at = last_newline
-        elif last_space > max_length // 2:
+        elif last_space > safe_cutoff // 2:
             truncate_at = last_space
 
         overflow_content = new_content[truncate_at:].lstrip()
@@ -197,6 +229,7 @@ async def flush_buffer(session_id: str) -> bool:
             session_id=session_id,
             truncated_at=truncate_at,
             overflow_chars=len(overflow_content),
+            overflow_slack_len=_slack_len(overflow_content),
         )
 
     # Render blocks for typed content (e.g. thinking → context block).
@@ -231,19 +264,22 @@ async def flush_buffer(session_id: str) -> bool:
 
             remaining = overflow_content
             while remaining:
-                # Determine chunk size - if remaining fits, use it all; otherwise truncate
-                if len(remaining) <= max_length:
+                # Determine chunk size - if remaining fits, use it all; otherwise truncate.
+                # Use _slack_len() so the check matches Slack's UTF-16 character counting.
+                if _slack_len(remaining) <= max_length:
                     chunk = remaining
                     remaining = ""
                 else:
-                    # Find clean truncation point for this chunk
-                    chunk_truncate = max_length
-                    chunk_newline = remaining.rfind("\n", 0, max_length)
-                    chunk_space = remaining.rfind(" ", 0, max_length)
+                    # Find safe truncation point using UTF-16-aware cutoff, then prefer
+                    # a clean break at the last newline or space before that boundary.
+                    chunk_safe_cutoff = _find_slack_truncation_point(remaining, max_length)
+                    chunk_truncate = chunk_safe_cutoff
+                    chunk_newline = remaining.rfind("\n", 0, chunk_safe_cutoff)
+                    chunk_space = remaining.rfind(" ", 0, chunk_safe_cutoff)
 
-                    if chunk_newline > max_length // 2:
+                    if chunk_newline > chunk_safe_cutoff // 2:
                         chunk_truncate = chunk_newline
-                    elif chunk_space > max_length // 2:
+                    elif chunk_space > chunk_safe_cutoff // 2:
                         chunk_truncate = chunk_space
 
                     chunk = remaining[:chunk_truncate]
@@ -294,6 +330,9 @@ async def flush_buffer(session_id: str) -> bool:
             session_id=session_id,
             error=str(e),
             exc_info=True,
+            # Log both Python len and Slack len to surface any remaining counting mismatches.
+            new_content_python_len=len(new_content),
+            new_content_slack_len=_slack_len(new_content),
         )
         # Re-add buffer content on failure (best effort)
         await append_to_buffer(session_id, buffer_content)

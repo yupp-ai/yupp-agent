@@ -32,6 +32,8 @@ from ypl.agent_harness_service.tui.rendering import (
     _render_user_label,
     _render_user_message,
 )
+from ypl.agent_harness_service.tui.schedules import SchedulesScreen
+from ypl.agent_harness_service.tui.search import SearchScreen
 from ypl.agent_harness_service.tui.sessions import SessionsScreen
 
 # ---------------------------------------------------------------------------
@@ -49,6 +51,8 @@ SLASH_COMMANDS: dict[str, str] = {
     "/allsessions": "List all sessions",
     "/attach": "Attach to session: /attach <id>",
     "/projects": "Browse projects and tasks",
+    "/schedules": "Browse agent schedules",
+    "/search": "Search everything",
     "/exit": "Quit the TUI",
 }
 
@@ -61,6 +65,8 @@ HELP_TEXT = (
     + "  Escape    Stop current turn\n"
     + "  Ctrl+O    Projects\n"
     + "  Ctrl+S    Sessions\n"
+    + "  Ctrl+H    Schedules\n"
+    + "  Ctrl+/    Search\n"
     + "  Ctrl+X    Quit\n"
 )
 
@@ -144,6 +150,8 @@ class AHSTui(App[None]):
         Binding("escape", "stop_turn", "Stop", show=False),
         Binding("ctrl+o", "open_projects", "Projects", show=True),
         Binding("ctrl+s", "open_sessions", "Sessions", show=True),
+        Binding("ctrl+h", "open_schedules", "Schedules", show=True),
+        Binding("ctrl+slash", "open_search", "Search", show=True),
     ]
 
     def __init__(
@@ -607,6 +615,12 @@ class AHSTui(App[None]):
         elif cmd == "/projects":
             await self._cmd_projects(log)
 
+        elif cmd == "/schedules":
+            self._open_schedules_screen()
+
+        elif cmd == "/search":
+            self._open_search_screen()
+
         else:
             log.write(f"[dim]Unknown command: {cmd}. Type /help for commands.[/dim]")
 
@@ -738,6 +752,30 @@ class AHSTui(App[None]):
     def action_open_sessions(self) -> None:
         """Ctrl+S handler to open sessions screen."""
         self._open_sessions_screen()
+
+    def action_open_schedules(self) -> None:
+        """Ctrl+H handler to open schedules screen."""
+        self._open_schedules_screen()
+
+    def action_open_search(self) -> None:
+        """Ctrl+/ handler to open search screen."""
+        self._open_search_screen()
+
+    @work(thread=False)
+    async def _open_schedules_screen(self) -> None:
+        result = await self.push_screen_wait(SchedulesScreen(user_id=self._user_id))
+        if result:
+            log = self.query_one("#chat-log", RichLog)
+            await self._cmd_attach(result, log)
+
+    @work(thread=False)
+    async def _open_search_screen(self) -> None:
+        if not hasattr(self, "_search_screen") or self._search_screen is None:
+            self._search_screen: SearchScreen = SearchScreen(user_id=self._user_id)
+        result = await self.push_screen_wait(self._search_screen)
+        if result:
+            log = self.query_one("#chat-log", RichLog)
+            await self._cmd_attach(result, log)
 
     @work(thread=False)
     async def _open_sessions_screen(self) -> None:

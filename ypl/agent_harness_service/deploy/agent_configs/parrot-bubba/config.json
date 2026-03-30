@@ -1,0 +1,18 @@
+{
+  "display_name": "Parrot Bubba",
+  "executor_config": {
+    "type": "raw",
+    "model": "mock"
+  },
+  "default_repo": "yupp-mind",
+  "max_turns": 10,
+  "max_budget_usd": 0.0,
+  "tool_permissions": {
+    "*": "deny"
+  },
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": false
+  },
+  "timeout_s": 36000
+}

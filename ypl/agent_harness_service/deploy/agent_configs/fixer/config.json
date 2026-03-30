@@ -1,0 +1,20 @@
+{
+  "display_name": "Fixer",
+  "description": "Code fixer \u2014 applies changes based on a review plan.",
+  "default_repo": "yupp-mind",
+  "max_turns": 200,
+  "max_budget_usd": 5.0,
+  "has_mcp": true,
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true
+  },
+  "executor_config": {
+    "type": "harnessed"
+  },
+  "tool_permissions": {
+    "*": "allow"
+  },
+  "streaming": false,
+  "timeout_s": 36000
+}

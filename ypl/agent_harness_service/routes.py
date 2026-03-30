@@ -20,6 +20,7 @@ Endpoints:
 - POST /schedule/{agent_schedule_id}/trigger — trigger a recurring schedule immediately
 - DELETE /schedule/{agent_schedule_id} — cancel a schedule
 - WS   /session/{session_id}/ws — WebSocket streaming (Codex-compatible events)
+- POST /search — search sessions, projects, tasks, schedules, and artifacts
 """
 
 import hmac
@@ -54,6 +55,7 @@ from ypl.agent_harness_service.common.types import (
     ScheduleEditRequest,
     ScheduleEditResponse,
     ScheduleListResponse,
+    ScheduleRunsResponse,
     ScheduleTriggerRequest,
     ScheduleTriggerResponse,
     SessionAttachSlackRequest,
@@ -76,9 +78,11 @@ from ypl.agent_harness_service.projects.schedule_service import (
     create_recurring_schedule,
     edit_schedule,
     get_schedule_detail,
+    list_schedule_runs,
     list_schedules,
     trigger_schedule,
 )
+from ypl.agent_harness_service.search.search_routes import search_router
 from ypl.agent_harness_service.service import (
     attach_slack_to_session,
     create_agent,
@@ -540,6 +544,19 @@ async def get_schedule_detail_route(agent_schedule_id: str) -> ScheduleDetailRes
     return ScheduleDetailResponse(schedule=result["schedule"])
 
 
+@router.get(
+    "/schedule/{agent_schedule_id}/runs",
+    dependencies=[Depends(verify_api_key)],
+)
+async def list_schedule_runs_route(
+    agent_schedule_id: str,
+    limit: int = Query(20, description="Max runs to return", ge=1, le=100),
+) -> ScheduleRunsResponse:
+    """List past runs for a schedule, most recent first."""
+    runs = await list_schedule_runs(agent_schedule_id, limit=limit)
+    return ScheduleRunsResponse(runs=runs, count=len(runs))
+
+
 @router.post(
     "/schedule/edit",
     dependencies=[Depends(verify_api_key)],
@@ -697,3 +714,10 @@ async def session_ws(
         on_user_message=_on_user_message,
         on_stop=_on_stop,
     )
+
+
+# ---------------------------------------------------------------------------
+# Sub-router registration
+# ---------------------------------------------------------------------------
+
+router.include_router(search_router)

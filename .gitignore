@@ -8,6 +8,10 @@
 
 !.vscode/settings.json
 !.vscode/extensions.json
+!ypl/agent_harness_service/**/*.json
+
+# AHS compiled binaries (rebuild via services/command-handler/build.sh)
+ypl/agent_harness_service/executors/bin/ahs-command-handler
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

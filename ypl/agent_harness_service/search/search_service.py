@@ -112,7 +112,6 @@ async def _search_sessions(
             s.status,
             s.trigger,
             s.model,
-            s.cost_usd,
             s.parent_session_id,
             s.created_at,
             s.context::text  AS context_text,
@@ -129,10 +128,10 @@ async def _search_sessions(
                  s.title      ILIKE :pat
               OR s.context::text ILIKE :pat
               )
-          AND  (:agent    IS NULL OR a.name ILIKE :agent_pat)
-          AND  (:status   IS NULL OR UPPER(s.status::text) = UPPER(:status))
-          AND  (:date_from IS NULL OR s.created_at >= :date_from)
-          AND  (:date_to   IS NULL OR s.created_at <= :date_to)
+          AND  (CAST(:agent AS text) IS NULL OR a.name ILIKE :agent_pat)
+          AND  (CAST(:status AS text) IS NULL OR UPPER(s.status::text) = UPPER(:status))
+          AND  (CAST(:date_from AS timestamptz) IS NULL OR s.created_at >= :date_from)
+          AND  (CAST(:date_to AS timestamptz) IS NULL OR s.created_at <= :date_to)
         ORDER BY s.created_at DESC
         LIMIT  :limit
         """
@@ -153,8 +152,6 @@ async def _search_sessions(
         rows = (await session.execute(sql, params)).mappings().all()
 
     for row in rows:
-        cost_raw = row["cost_usd"]
-        cost = float(cost_raw) if cost_raw is not None else None
         score = _score_row(
             q,
             title=row["title"],
@@ -181,7 +178,6 @@ async def _search_sessions(
                 trigger=str(row["trigger"]) if row["trigger"] else None,
                 model=row["model"],
                 message_count=int(row["message_count"] or 0),
-                cost_usd=cost,
                 parent_session_id=str(row["parent_session_id"]) if row["parent_session_id"] else None,
             )
         )
@@ -219,9 +215,9 @@ async def _search_session_messages(
           AND  s.creator_user_id = :user_id
           AND  m.completion_status::text != 'IN_PROGRESS'
           AND  m.content ILIKE :pat
-          AND  (:agent    IS NULL OR a.name ILIKE :agent_pat)
-          AND  (:date_from IS NULL OR m.created_at >= :date_from)
-          AND  (:date_to   IS NULL OR m.created_at <= :date_to)
+          AND  (CAST(:agent AS text) IS NULL OR a.name ILIKE :agent_pat)
+          AND  (CAST(:date_from AS timestamptz) IS NULL OR m.created_at >= :date_from)
+          AND  (CAST(:date_to AS timestamptz) IS NULL OR m.created_at <= :date_to)
         ORDER BY m.created_at DESC
         LIMIT  :limit
         """
@@ -306,9 +302,9 @@ async def _search_projects(
               OR p.description        ILIKE :pat
               OR p.project_data::text ILIKE :pat
               )
-          AND  (:status   IS NULL OR UPPER(p.status::text) = UPPER(:status))
-          AND  (:date_from IS NULL OR p.created_at >= :date_from)
-          AND  (:date_to   IS NULL OR p.created_at <= :date_to)
+          AND  (CAST(:status AS text) IS NULL OR UPPER(p.status::text) = UPPER(:status))
+          AND  (CAST(:date_from AS timestamptz) IS NULL OR p.created_at >= :date_from)
+          AND  (CAST(:date_to AS timestamptz) IS NULL OR p.created_at <= :date_to)
         ORDER BY p.created_at DESC
         LIMIT  :limit
         """
@@ -417,10 +413,10 @@ async def _search_tasks(
                  t.title       ILIKE :pat
               OR t.description  ILIKE :pat
               )
-          AND  (:agent    IS NULL OR a.name ILIKE :agent_pat)
-          AND  (:status   IS NULL OR UPPER(t.status::text) = UPPER(:status))
-          AND  (:date_from IS NULL OR t.created_at >= :date_from)
-          AND  (:date_to   IS NULL OR t.created_at <= :date_to)
+          AND  (CAST(:agent AS text) IS NULL OR a.name ILIKE :agent_pat)
+          AND  (CAST(:status AS text) IS NULL OR UPPER(t.status::text) = UPPER(:status))
+          AND  (CAST(:date_from AS timestamptz) IS NULL OR t.created_at >= :date_from)
+          AND  (CAST(:date_to AS timestamptz) IS NULL OR t.created_at <= :date_to)
         ORDER BY t.created_at DESC
         LIMIT  :limit
         """
@@ -511,10 +507,10 @@ async def _search_schedules(
               OR s.message      ILIKE :pat
               OR s.description  ILIKE :pat
               )
-          AND  (:agent    IS NULL OR a.name ILIKE :agent_pat)
-          AND  (:status   IS NULL OR UPPER(s.status::text) = UPPER(:status))
-          AND  (:date_from IS NULL OR s.created_at >= :date_from)
-          AND  (:date_to   IS NULL OR s.created_at <= :date_to)
+          AND  (CAST(:agent AS text) IS NULL OR a.name ILIKE :agent_pat)
+          AND  (CAST(:status AS text) IS NULL OR UPPER(s.status::text) = UPPER(:status))
+          AND  (CAST(:date_from AS timestamptz) IS NULL OR s.created_at >= :date_from)
+          AND  (CAST(:date_to AS timestamptz) IS NULL OR s.created_at <= :date_to)
         ORDER BY s.created_at DESC
         LIMIT  :limit
         """
@@ -615,8 +611,8 @@ async def _search_artifacts(
               OR aa.description  ILIKE :pat
               OR aa.url          ILIKE :pat
               )
-          AND  (:date_from IS NULL OR aa.created_at >= :date_from)
-          AND  (:date_to   IS NULL OR aa.created_at <= :date_to)
+          AND  (CAST(:date_from AS timestamptz) IS NULL OR aa.created_at >= :date_from)
+          AND  (CAST(:date_to AS timestamptz) IS NULL OR aa.created_at <= :date_to)
         ORDER BY aa.created_at DESC
         LIMIT  :limit
         """
@@ -760,7 +756,7 @@ async def execute_search(query: SearchQuery, caller_user_id: str) -> SearchRespo
     results: dict[SearchType, list[Any]] = {}
     for key, outcome in zip(keys, gathered, strict=True):
         if isinstance(outcome, BaseException):
-            logger.warning("search_service: query for %s failed: %s", key, outcome)
+            logger.warning("search_type_query_failed", search_type=str(key), error=str(outcome))
             continue
         if outcome:
             results[key] = outcome

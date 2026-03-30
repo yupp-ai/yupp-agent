@@ -45,7 +45,6 @@ from ypl.agent_harness_service.common.constants import (
     EXECUTOR_TYPE_RAW,
     HARNESS_CODEX_CLI,
     TURN_LIMIT_NOTICE,
-    is_personal_agent,
 )
 from ypl.agent_harness_service.common.types import (
     AgentCreateRequest,
@@ -85,7 +84,7 @@ from ypl.agent_harness_service.core.streaming import (
     get_pubsub,
     translate_stream_event,
 )
-from ypl.agent_harness_service.executors.codex_runner import CodexRunner
+from ypl.agent_harness_service.executors.codex_app_server_runner import CodexAppServerRunner
 from ypl.agent_harness_service.executors.runner import (
     AgentRunner,
     ClaudeCodeRunner,
@@ -108,7 +107,6 @@ from ypl.agent_harness_service.tools.local_mcp_server import (
     set_session_sandbox,
 )
 from ypl.agent_harness_service.tools.repo_manager import scan_session_worktrees
-from ypl.backend.config import settings
 from ypl.backend.db import get_async_session
 from ypl.backend.utils.async_utils import create_background_task
 from ypl.backend.utils.slack_utils import resolve_slack_user_to_yupp_user_id
@@ -172,6 +170,82 @@ MAX_CONCURRENT_EXECUTIONS = _parse_env_int("AHS_MAX_CONCURRENT_EXECUTIONS", 10)
 def get_active_turn_count() -> int:
     """Return the number of currently active turns (all types)."""
     return len(_active_tasks)
+
+
+# ---------------------------------------------------------------------------
+# Slack courtesy messages — SIGTERM shutdown and post-restart notification
+# ---------------------------------------------------------------------------
+
+_SLACK_SHUTDOWN_COURTESY_MSG = (
+    "🔄 *Server is restarting.* Your session is safe — send me a message to continue when I'm back up."
+)
+_SLACK_RESTART_COURTESY_MSG = "✅ *I'm back online.* Send me a message to continue where we left off."
+
+
+async def _send_slack_courtesy(session_ids: list[uuid.UUID], text: str, event: str) -> None:
+    """Send a courtesy message to the Slack threads for the given session IDs.
+
+    Silently skips sessions that are not Slack-triggered or have no
+    ``slack_session_id``.  Errors from individual sends are logged but do not
+    propagate — courtesy messages are best-effort.
+    """
+    if not session_ids:
+        return
+
+    registry = GatewayRegistry.get_instance()
+    gateway = registry.get("slack")
+    if gateway is None:
+        logger.warning("Slack gateway unavailable — skipping courtesy messages", event=event)
+        return
+
+    async with get_async_session() as db_session:
+        result = await db_session.exec(
+            select(AgentSession)
+            .where(col(AgentSession.agent_session_id).in_(session_ids))
+            .where(col(AgentSession.slack_session_id).is_not(None))
+        )
+        slack_sessions = result.all()
+
+    if not slack_sessions:
+        logger.info("No in-scope Slack sessions for courtesy message", event=event)
+        return
+
+    logger.info("Sending courtesy messages to Slack sessions", event=event, count=len(slack_sessions))
+
+    results = await asyncio.gather(
+        *[gateway.send_reply(s.slack_session_id, text) for s in slack_sessions if s.slack_session_id],
+        return_exceptions=True,
+    )
+
+    sent = sum(1 for r in results if r is True)
+    failed = len(results) - sent
+    logger.info("Slack courtesy messages complete", event=event, sent=sent, failed=failed)
+
+
+async def send_slack_shutdown_courtesy() -> None:
+    """Send a courtesy message to all in-flight Slack sessions before shutdown.
+
+    Called during graceful shutdown (SIGTERM) so users know the server is
+    restarting and their session will be available again shortly.
+    """
+    await _send_slack_courtesy(
+        list(_active_tasks.keys()),
+        _SLACK_SHUTDOWN_COURTESY_MSG,
+        "shutdown",
+    )
+
+
+async def send_slack_restart_courtesy(stale_session_ids: list[uuid.UUID]) -> None:
+    """Send a courtesy message to stale Slack sessions after the server restarts.
+
+    Called from ``_recover_stale_sessions`` at startup for sessions that were
+    interrupted mid-turn by the previous SIGTERM so users know they can continue.
+    """
+    await _send_slack_courtesy(
+        stale_session_ids,
+        _SLACK_RESTART_COURTESY_MSG,
+        "restart",
+    )
 
 
 def has_execution_capacity() -> bool:
@@ -1157,7 +1231,7 @@ async def _run_agent_task(
                 pre_proc_task.cancel()
                 pre_proc_task = None
         elif exec_cfg.model == HARNESS_CODEX_CLI:
-            runner = CodexRunner(agent_config)
+            runner = CodexAppServerRunner(agent_config)
             # Codex runner uses a different CLI — cancel the Claude CLI pre-spawn.
             if pre_proc_task is not None:
                 pre_proc_task.cancel()
@@ -2054,48 +2128,8 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
             has_full_tool_access=_resolved_perms.has_full_tool_access,
         )
 
-        # --- Try to claim a pre-warmed process slot ---
-        # Conditions: non-Slack trigger, full MCP access, non-personal agent.
-        # If claimed, use the slot's pre-issued UUID as the real session_id and
-        # skip workspace setup (the slot's workspace is already fully prepared).
-        _warm_slot = None
-        _is_slack_trigger = trigger == AgentSessionTrigger.SLACK
-        _is_task_trigger = trigger == AgentSessionTrigger.TASK
-        if not _is_slack_trigger and _resolved_perms.has_full_tool_access and not is_personal_agent(resolved_agent_id):
-            try:
-                from ypl.agent_harness_service.process_pool import get_pool, register_warm_slot
-                from ypl.agent_harness_service.sandbox import bwrap_available
-
-                _agent_conf_for_pool = load_agent_config(resolved_agent_id)
-                _has_bwrap = (
-                    _agent_conf_for_pool is not None
-                    and _agent_conf_for_pool.sandbox.bwrap_enabled
-                    and bwrap_available()
-                )
-                _warm_slot = get_pool().acquire(
-                    resolved_agent_id,
-                    is_task=_is_task_trigger,
-                    has_bwrap=_has_bwrap,
-                )
-                if _warm_slot is not None:
-                    register_warm_slot(_warm_slot)
-                    logger.info(
-                        "Claimed warm slot for new session",
-                        warm_session_id=str(_warm_slot.session_id),
-                        agent_name=resolved_agent_id,
-                        is_task=_is_task_trigger,
-                    )
-            except Exception:
-                logger.warning("Warm pool acquisition failed, falling back to cold-start", exc_info=True)
-                _warm_slot = None
-        # --- End warm slot acquisition ---
-
-        # Build constructor kwargs: if a warm slot was claimed, pre-set its UUID
-        # as the session_id so MCP headers (X-AHS-Session-ID already embedded in
-        # the warm process) match the DB record.  Otherwise let default_factory run.
+        # Build constructor kwargs for the new session.
         _agent_session_kwargs: dict = {}
-        if _warm_slot is not None:
-            _agent_session_kwargs["agent_session_id"] = _warm_slot.session_id
 
         # Create session (need agent_session_id for workspace path)
         agent_session = AgentSession(
@@ -2111,61 +2145,52 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
         session.add(agent_session)
         await session.flush()  # assigns agent_session_id (or confirms pre-issued one)
 
-        if _warm_slot is not None:
-            # Workspace already fully prepared by the pool (symlinks, .mcp.json).
-            workspace = str(_warm_slot.workspace)
-            logger.info(
-                "Reusing warm slot workspace",
-                session_id=str(agent_session.agent_session_id),
-                workspace=workspace,
-            )
-        else:
-            # Cold-start: set up workspace from scratch.
-            # Consolidated session workspace: everything the agent needs lives here.
-            # Layout: .claude/, .mcp.json, repo symlinks, worktrees, history/, attachments/
-            workspace = os.path.join(AHS_SESSIONS_DIR, str(agent_session.agent_session_id))
-            os.makedirs(workspace, exist_ok=True)
+        # Set up workspace from scratch.
+        # Consolidated session workspace: everything the agent needs lives here.
+        # Layout: .claude/, .mcp.json, repo symlinks, worktrees, history/, attachments/
+        workspace = os.path.join(AHS_SESSIONS_DIR, str(agent_session.agent_session_id))
+        os.makedirs(workspace, exist_ok=True)
 
-            # Symlink .claude/ so Claude CLI detects this dir as the project root.
-            # Uses yupp-agent's .claude/ which has settings.json and hooks.
-            claude_link = os.path.join(workspace, ".claude")
-            claude_target = os.path.join(AHS_REPOS_DIR, "yupp-agent", ".claude")
-            try:
-                os.symlink(claude_target, claude_link)
-            except FileExistsError:
-                pass
+        # Symlink .claude/ so Claude CLI detects this dir as the project root.
+        # Uses yupp-mind's .claude/ which has settings.json and hooks.
+        claude_link = os.path.join(workspace, ".claude")
+        claude_target = os.path.join(AHS_REPOS_DIR, "yupp-mind", ".claude")
+        try:
+            os.symlink(claude_target, claude_link)
+        except FileExistsError:
+            pass
 
-            # Symlink all repos from AHS_REPOS_DIR into the workspace so agents
-            # can access them without a separate --add-dir flag.
-            if os.path.isdir(AHS_REPOS_DIR):
-                for repo_entry in os.listdir(AHS_REPOS_DIR):
-                    repo_src = os.path.join(AHS_REPOS_DIR, repo_entry)
-                    if not os.path.isdir(repo_src):
-                        continue
-                    repo_link = os.path.join(workspace, repo_entry)
-                    try:
-                        os.symlink(repo_src, repo_link)
-                    except FileExistsError:
-                        pass
+        # Symlink all repos from AHS_REPOS_DIR into the workspace so agents
+        # can access them without a separate --add-dir flag.
+        if os.path.isdir(AHS_REPOS_DIR):
+            for repo_entry in os.listdir(AHS_REPOS_DIR):
+                repo_src = os.path.join(AHS_REPOS_DIR, repo_entry)
+                if not os.path.isdir(repo_src):
+                    continue
+                repo_link = os.path.join(workspace, repo_entry)
+                try:
+                    os.symlink(repo_src, repo_link)
+                except FileExistsError:
+                    pass
 
-            # Create history/ subdir for session history persistence
-            os.makedirs(os.path.join(workspace, "history"), exist_ok=True)
+        # Create history/ subdir for session history persistence
+        os.makedirs(os.path.join(workspace, "history"), exist_ok=True)
 
-            # Symlink persistent memory directory into workspace for all agents.
-            # This makes agent_memories/ available across sessions.
-            memory_dir = os.path.join(AHS_MEMORIES_DIR, resolved_agent_id, "agent_memories")
-            os.makedirs(memory_dir, exist_ok=True)
-            memory_link = os.path.join(workspace, "agent_memories")
-            try:
-                os.symlink(memory_dir, memory_link)
-            except FileExistsError:
-                pass
-            logger.info(
-                "Symlinked agent memory directory",
-                agent_name=resolved_agent_id,
-                memory_dir=memory_dir,
-                workspace=workspace,
-            )
+        # Symlink persistent memory directory into workspace for all agents.
+        # This makes agent_memories/ available across sessions.
+        memory_dir = os.path.join(AHS_MEMORIES_DIR, resolved_agent_id, "agent_memories")
+        os.makedirs(memory_dir, exist_ok=True)
+        memory_link = os.path.join(workspace, "agent_memories")
+        try:
+            os.symlink(memory_dir, memory_link)
+        except FileExistsError:
+            pass
+        logger.info(
+            "Symlinked agent memory directory",
+            agent_name=resolved_agent_id,
+            memory_dir=memory_dir,
+            workspace=workspace,
+        )
 
         # Start pre-spawning the subprocess so the bwrap+CLI cold start (~4.2s) overlaps
         # with the remaining DB writes (session.commit, send_message DB ops, background
@@ -2177,7 +2202,7 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
         #   • No attachments — send_message() prepends attachment paths to the prompt,
         #     so the pre-built args would diverge from the final prompt.
         _pre_spawn_task: asyncio.Task | None = None
-        if request.message and not request.attachments and _warm_slot is None:
+        if request.message and not request.attachments:
             _spawn_cfg = load_agent_config(request.agent_id)
             if (
                 _spawn_cfg
@@ -2231,17 +2256,19 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
 
     # Best-effort: notify all channels that a new session was created.
     _sid = agent_session.agent_session_id
-    _war_room_url = f"https://war-room.yuppster.ai/session/{_sid}"
-    _env = settings.ENVIRONMENT
-    if _env == "production":
-        _lit_base = "https://agent-streamlit-server-production-451082535721.us-east4.run.app"
-    else:
-        _lit_base = "https://agent-streamlit-server-staging-451082535721.us-east4.run.app"
+    _env = os.environ.get("ENVIRONMENT", "local")
+    _lit_hosts = {
+        "production": "https://agent-streamlit-server-production-451082535721.us-east4.run.app",
+        "staging": "https://agent-streamlit-server-staging-451082535721.us-east4.run.app",
+    }
+    _lit_base = _lit_hosts.get(_env, "http://localhost:8501")
     _lit_url = f"{_lit_base}/agent_harness_console?session_id={_sid}"
     if _env == "production":
-        session_notice = f"_Session {_sid} (<{_war_room_url}|WR> | <{_lit_url}|Lit>)_"
+        _war_room_url = f"https://war-room.yuppster.ai/session/{_sid}"
+        _links = f"(<{_war_room_url}|WR> | <{_lit_url}|Lit>)"
     else:
-        session_notice = f"_Session {_sid} (<{_lit_url}|Lit>)_"
+        _links = f"(<{_lit_url}|Lit>)"
+    session_notice = f"_Session {_sid} {_links} — {_env}_"
 
     # WebSocket stream
     # TODO: this notice is effectively dropped for new sessions because WebSocket
@@ -2988,7 +3015,7 @@ def _build_agent_info_from_db(agent: Agent) -> AgentInfo:
         llm_model=executor_cfg.get("model") if executor_cfg.get("type") == "raw" else None,
         tool_permissions=cfg.get("tool_permissions", {"*": "allow"}),
         allowed_subagents=cfg.get("allowed_subagents", []),
-        default_repo=cfg.get("default_repo", "yupp-agent"),
+        default_repo=cfg.get("default_repo", "yupp-mind"),
         max_turns=cfg.get("max_turns", 20),
         max_budget_usd=cfg.get("max_budget_usd", 2.0),
         timeout_s=cfg.get("timeout_s", 300),

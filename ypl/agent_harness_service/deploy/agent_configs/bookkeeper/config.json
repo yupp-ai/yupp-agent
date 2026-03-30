@@ -1,0 +1,24 @@
+{
+  "display_name": "Bookkeeper",
+  "description": "Memory curator \u2014 reads entries from other agents (events, journals, learnings) and maintains its own derived summaries and indexes. Should not modify or erase original entries created by other agents.",
+  "max_turns": 200,
+  "max_budget_usd": 0.5,
+  "has_mcp": true,
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": false
+  },
+  "executor_config": {
+    "type": "raw",
+    "model": "minimax/MiniMax-M2.5"
+  },
+  "tool_permissions": {
+    "*": "deny",
+    "get_agent_memory": "allow",
+    "search_agent_memory": "allow",
+    "store_agent_memory": "allow",
+    "report_security_incident": "allow"
+  },
+  "allowed_subagents": [],
+  "timeout_s": 36000
+}
