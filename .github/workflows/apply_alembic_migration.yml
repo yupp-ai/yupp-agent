@@ -30,6 +30,7 @@ on:
         options:
         - upgrade
         - downgrade
+        - stamp
         - fetch_current_revision
       revision_id:
         description: 'Alembic revision ID to migrate to'
