@@ -9,7 +9,7 @@ from ypl.agent_harness_service.common.types import (
     AgentEditRequest,
     AgentEditResponse,
 )
-from ypl.agent_harness_service.service._resolvers import _resolve_agent
+from ypl.agent_harness_service.service.resolvers import _resolve_agent
 from ypl.backend.db import get_async_session
 from ypl.db.agent_harness import Agent, AgentExecutorType
 from ypl.structured_logger import get_logger

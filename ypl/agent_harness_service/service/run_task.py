@@ -42,23 +42,23 @@ from ypl.agent_harness_service.executors.runner import (
 )
 from ypl.agent_harness_service.gateway import TRIGGER_TO_GATEWAY, GatewayRegistry
 from ypl.agent_harness_service.gateway.base import Gateway
-from ypl.agent_harness_service.service._resolvers import (
+from ypl.agent_harness_service.service.message_helpers import (
+    _extract_visible_content,
+    _scrub_null_bytes,
+    _trim_value,
+    strip_thinking_tags,
+)
+from ypl.agent_harness_service.service.resolvers import (
     _load_agent_config_with_db_fallback,
     _mark_session_completed,
 )
-from ypl.agent_harness_service.service._state import (
+from ypl.agent_harness_service.service.state import (
     _EAGER_PERSIST_TOOL_INTERVAL,
     _GATEWAY_APPEND_THRESHOLD_SECONDS,
     _TASK_FAILURE_SUBTYPES,
     _active_tasks,
     _command_handlers,
     _pre_spawn_tasks,
-)
-from ypl.agent_harness_service.service.message_helpers import (
-    _extract_visible_content,
-    _scrub_null_bytes,
-    _trim_value,
-    strip_thinking_tags,
 )
 from ypl.agent_harness_service.tools.local_mcp_server import (
     clear_session_sandbox,

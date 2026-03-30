@@ -5,7 +5,7 @@ from typing import Any, NamedTuple
 
 from ypl.agent_harness_service.common.types import ToolUseItem
 from ypl.agent_harness_service.executors.runner import StreamEvent
-from ypl.agent_harness_service.service._state import (
+from ypl.agent_harness_service.service.state import (
     _OUTLET_TOOL_NAMES,
     _TOOL_OUTPUT_MAX_CHARS,
     _TRIM_KEYS,

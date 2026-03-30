@@ -26,11 +26,11 @@ from ypl.agent_harness_service.common.types import (
     SessionListResponse,
     SessionPermissions,
 )
-from ypl.agent_harness_service.service._resolvers import (
+from ypl.agent_harness_service.service.message_helpers import _extract_tool_uses
+from ypl.agent_harness_service.service.resolvers import (
     _load_agent_config_with_db_fallback,
     _resolve_session,
 )
-from ypl.agent_harness_service.service.message_helpers import _extract_tool_uses
 from ypl.backend.db import get_async_session
 from ypl.db.agent_harness import (
     Agent,

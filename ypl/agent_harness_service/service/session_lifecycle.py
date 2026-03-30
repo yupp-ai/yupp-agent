@@ -48,7 +48,7 @@ from ypl.agent_harness_service.executors.runner import (
 from ypl.agent_harness_service.gateway import TRIGGER_TO_GATEWAY, GatewayRegistry
 from ypl.agent_harness_service.gateway.slack_prefetch import fetch_slack_thread_content
 from ypl.agent_harness_service.orchestration import cancel_subagent_tasks
-from ypl.agent_harness_service.service._resolvers import (
+from ypl.agent_harness_service.service.resolvers import (
     _download_attachments_to_workspace,
     _has_inflight_turn,
     _load_agent_config_with_db_fallback,
@@ -59,7 +59,8 @@ from ypl.agent_harness_service.service._resolvers import (
     _resolve_session,
     _resolve_user_name_from_db,
 )
-from ypl.agent_harness_service.service._state import (
+from ypl.agent_harness_service.service.run_task import _run_agent_task
+from ypl.agent_harness_service.service.state import (
     _MAX_PENDING_MESSAGES,
     _SLACK_RESTART_COURTESY_MSG,
     _SLACK_SHUTDOWN_COURTESY_MSG,
@@ -70,7 +71,6 @@ from ypl.agent_harness_service.service._state import (
     _pending_messages,
     _pre_spawn_tasks,
 )
-from ypl.agent_harness_service.service.run_task import _run_agent_task
 from ypl.agent_harness_service.tools.local_mcp_server import (
     clear_session_state,
     set_session_current_user,

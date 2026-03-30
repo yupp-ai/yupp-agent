@@ -16,29 +16,6 @@ that import from ``ypl.agent_harness_service.service``.
 # ---------------------------------------------------------------------------
 # DB resolvers
 # ---------------------------------------------------------------------------
-from ypl.agent_harness_service.service._resolvers import (
-    _download_attachments_to_workspace,
-    _has_inflight_turn,
-    _load_agent_config_with_db_fallback,
-    _mark_session_completed,
-    _next_turn_number,
-    _prepend_attachment_paths,
-    _resolve_agent,
-    _resolve_personal_agent_for_user,
-    _resolve_session,
-    _resolve_user_name_from_db,
-)
-from ypl.agent_harness_service.service._state import (
-    PERSONAL_AGENT_PREFIXES,
-    PendingMessage,
-    _active_tasks,
-    _command_handlers,  # test-only export (test_service_bch_lifecycle.py)
-    _pending_messages,
-    _pre_spawn_tasks,
-    get_active_turn_count,
-    has_execution_capacity,
-)
-
 # ---------------------------------------------------------------------------
 # Agent CRUD
 # ---------------------------------------------------------------------------
@@ -70,6 +47,18 @@ from ypl.agent_harness_service.service.queries import (
     list_sessions,
     send_feedback,
 )
+from ypl.agent_harness_service.service.resolvers import (
+    _download_attachments_to_workspace,
+    _has_inflight_turn,
+    _load_agent_config_with_db_fallback,
+    _mark_session_completed,
+    _next_turn_number,
+    _prepend_attachment_paths,
+    _resolve_agent,
+    _resolve_personal_agent_for_user,
+    _resolve_session,
+    _resolve_user_name_from_db,
+)
 
 # ---------------------------------------------------------------------------
 # Agent turn runner
@@ -96,6 +85,16 @@ from ypl.agent_harness_service.service.session_lifecycle import (
     send_slack_shutdown_courtesy,
     stop_all_command_handler_managers,
     stop_session,
+)
+from ypl.agent_harness_service.service.state import (
+    PERSONAL_AGENT_PREFIXES,
+    PendingMessage,
+    _active_tasks,
+    _command_handlers,  # test-only export (test_service_bch_lifecycle.py)
+    _pending_messages,
+    _pre_spawn_tasks,
+    get_active_turn_count,
+    has_execution_capacity,
 )
 
 __all__ = [
