@@ -53,6 +53,7 @@ class AgentSessionMessageRole(str, enum.Enum):
     """Who authored the message."""
 
     USER = "USER"
+    AGENT_AS_USER = "AGENT_AS_USER"  # another agent as a conversing user (e.g. for subagents)
     AGENT = "AGENT"
     SYSTEM = "SYSTEM"
 

@@ -110,6 +110,7 @@ def upgrade() -> None:
     sa.Column('email', sa.Text(), nullable=False),
     sa.Column('image', sa.Text(), nullable=True),
     sa.Column('status', sa.Enum('ACTIVE', 'DEACTIVATED', name='userstatus'), server_default='ACTIVE', nullable=False),
+    sa.Column('user_type', sa.Enum('HUMAN', 'AGENT', name='usertype'), server_default='HUMAN', nullable=False),
     sa.PrimaryKeyConstraint('user_id', name=op.f('pk_users')),
     sa.UniqueConstraint('email', name='users_email_key')
     )
@@ -533,7 +534,7 @@ def downgrade() -> None:
         'agentsessionstatus', 'agentsessiontrigger', 'agenttaskpriority',
         'agenttaskstatus', 'commentthreadstatus', 'mcpauditlogstatus',
         'mcptokenstatus', 'mcptokentype', 'permission_enum', 'role_name_enum',
-        'slackagentstatus', 'slackoauthtokentype', 'userstatus',
+        'slackagentstatus', 'slackoauthtokentype', 'userstatus', 'usertype',
         'agentfeedbackrating',
     ]:
         sa.Enum(name=enum_name).drop(op.get_bind(), checkfirst=True)
