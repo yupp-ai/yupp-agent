@@ -39,6 +39,11 @@ from ypl.structured_logger import get_logger
 
 logger = get_logger()
 
+
+def _internal_link(text: str, url: str) -> str:
+    """Return an HTML anchor that navigates in the same tab (target=_self)."""
+    return f'<a href="{html.escape(url, quote=True)}" target="_self">{text}</a>'
+
 st.set_page_config(page_title="Agent Projects", page_icon="📁", layout="wide")
 require_auth()
 
@@ -1041,7 +1046,7 @@ def _render_task_list_recursive(
 
         with row_cols[3]:
             task_url = f"?project_id={project_id}&task_id={task_id}"
-            title_md = f"[{html.escape(task.title)}]({task_url})"
+            title_md = _internal_link(html.escape(task.title), task_url)
             if children_str:
                 title_md += f" {children_str}"
             # Use sub-columns for indentation: depth 0 = full, depth 1 = [1,7], depth 2+ = [2,6]
@@ -1495,7 +1500,7 @@ def _render_task_detail(
         if task.assigned_session_ids:
             st.markdown("**Sessions:**")
             for sid in task.assigned_session_ids:
-                st.markdown(f"- [Session {sid[:8]}](/agent_harness_console?session_id={sid})")
+                st.markdown(f"- {_internal_link(f'Session {sid[:8]}', f'/agent_harness_console?session_id={sid}')}", unsafe_allow_html=True)
 
         if pr_link := _get_pr_link_parts(task.result):
             st.markdown(f"**PR:** [{pr_link[1]}]({pr_link[0]})")
@@ -1515,7 +1520,7 @@ def _render_task_detail(
             parent_tid = str(task.parent_task_id)
             parent_title = task_title_map.get(parent_tid, parent_tid[:8])
             parent_url = f"?project_id={project_id}&task_id={parent_tid}"
-            st.markdown(f"**Parent task:** [{html.escape(parent_title)}]({parent_url})")
+            st.markdown(f"**Parent task:** {_internal_link(html.escape(parent_title), parent_url)}", unsafe_allow_html=True)
 
         # Child tasks
         child_tasks = children_map.get(task_id, [])
@@ -1526,7 +1531,7 @@ def _render_task_detail(
                 child_rank = rank_map.get(child_tid, "?")
                 child_emoji = _TASK_STATUS_EMOJI.get(child.status, "")
                 child_url = f"?project_id={project_id}&task_id={child_tid}"
-                st.markdown(f"- {child_emoji} [{child_rank}: {html.escape(child.title)}]({child_url})")
+                st.markdown(f"- {child_emoji} {_internal_link(f'{child_rank}: {html.escape(child.title)}', child_url)}", unsafe_allow_html=True)
 
         st.caption(f"Task ID: `{task_id}`")
 
@@ -1574,7 +1579,7 @@ def _render_project_detail(project_id: uuid.UUID, task_id: str | None) -> None:
         return
 
     # Breadcrumb
-    st.markdown(f"[All Projects](?/) · {html.escape(project.name)}")
+    st.markdown(f"{_internal_link('All Projects', '?/')} · {html.escape(project.name)}", unsafe_allow_html=True)
 
     status_emoji = _PROJECT_STATUS_EMOJI.get(project.status, "")
     st.markdown(f"## {status_emoji} {html.escape(project.name)}")
@@ -1849,7 +1854,7 @@ def _render_project_detail(project_id: uuid.UUID, task_id: str | None) -> None:
                 row_cols = st.columns([1.5, 1.5, 2, 1, 1.5])
                 with row_cols[0]:
                     title_display = sess.title or session_id_str[:8]
-                    st.markdown(f"[{html.escape(title_display)}]({session_url})")
+                    st.markdown(_internal_link(html.escape(title_display), session_url), unsafe_allow_html=True)
                 with row_cols[1]:
                     st.caption(html.escape(agent_name))
                 with row_cols[2]:
@@ -1989,7 +1994,7 @@ def _render_at_a_glance() -> None:
             with row_cols[0]:
                 if idx == 0:
                     project_url = f"?project_id={project_id}"
-                    st.markdown(f"[{html.escape(project_name)}]({project_url})")
+                    st.markdown(_internal_link(html.escape(project_name), project_url), unsafe_allow_html=True)
                 # Show nothing for subsequent tasks in same project group
 
             with row_cols[1]:
@@ -1997,8 +2002,8 @@ def _render_at_a_glance() -> None:
 
             with row_cols[2]:
                 task_url = f"?project_id={project_id}&task_id={task_id}"
-                title_md = f"[{html.escape(task.title)}]({task_url})"
-                st.markdown(title_md)
+                title_md = _internal_link(html.escape(task.title), task_url)
+                st.markdown(title_md, unsafe_allow_html=True)
 
             with row_cols[3]:
                 if pr_link := _get_pr_link_parts(task.result):
@@ -2012,8 +2017,8 @@ def _render_at_a_glance() -> None:
                     session_links = []
                     for sid in task.assigned_session_ids:
                         short_id = sid[:8]
-                        session_links.append(f"[{short_id}](/agent_harness_console?session_id={sid})")
-                    st.caption(", ".join(session_links))
+                        session_links.append(_internal_link(short_id, f"/agent_harness_console?session_id={sid}"))
+                    st.caption(", ".join(session_links), unsafe_allow_html=True)
 
 
 def _render_project_list() -> None:
@@ -2123,7 +2128,7 @@ def _render_project_list_filtered(show_mine_only: bool, current_user_id: str | N
 
         with row_cols[1]:
             project_url = f"?project_id={project.agent_project_id}"
-            st.markdown(f"[{html.escape(project.name)}]({project_url})")
+            st.markdown(_internal_link(html.escape(project.name), project_url), unsafe_allow_html=True)
 
         with row_cols[2]:
             if desc_preview:
