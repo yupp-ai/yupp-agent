@@ -2268,7 +2268,8 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
         _links = f"(<{_war_room_url}|WR> | <{_lit_url}|Lit>)"
     else:
         _links = f"(<{_lit_url}|Lit>)"
-    session_notice = f"_Session {_sid} {_links} — {_env}_"
+    _env_suffix = f" — {_env}" if _env != "production" else ""
+    session_notice = f"_Session {_sid} {_links}{_env_suffix}_"
 
     # WebSocket stream
     # TODO: this notice is effectively dropped for new sessions because WebSocket
