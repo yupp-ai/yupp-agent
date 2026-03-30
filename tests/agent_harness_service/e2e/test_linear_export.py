@@ -130,7 +130,8 @@ async def run_export(
     from ypl.db.all_models import all_models  # noqa: F401
 
     print(f"Linear API Key configured: {'Yes' if settings.LINEAR_API_KEY else 'No'}")
-    print(f"Database URL: {settings.POSTGRES_HOST[:50]}..." if settings.POSTGRES_HOST else "No POSTGRES_HOST")
+    pg = settings.POSTGRES_CONNECTION_AGENTDB
+    print(f"Database URL: {pg[:50]}..." if pg else "No POSTGRES_CONNECTION_AGENTDB")
     print()
 
     print(f"Input project: {project_id}")
