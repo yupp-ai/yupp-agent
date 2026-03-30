@@ -82,7 +82,7 @@ jobs:
             SECRET_NAME="ym-postgres-connection-agentdb-staging"
           fi
 
-          POSTGRES_CONNECTION=$(gcloud secrets versions access latest --secret="$SECRET_NAME" --project="${{ secrets.GCP_PROJECT_ID }}")
+          POSTGRES_CONNECTION=$(gcloud secrets versions access latest --secret="$SECRET_NAME")
           echo "POSTGRES_CONNECTION_AGENTDB=${POSTGRES_CONNECTION}" >> .env
 
       - name: Get current migration version
