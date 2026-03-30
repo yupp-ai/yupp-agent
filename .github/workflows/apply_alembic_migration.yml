@@ -77,13 +77,13 @@ jobs:
           echo "ENVIRONMENT=${{ env.ENVIRONMENT }}" > .env
 
           if [[ "${{ env.ENVIRONMENT }}" == "production" ]]; then
-            SECRET_NAME="ym-postgres-connection-agentdb-production"
+            SECRET_NAME="ym-postgres-connection-agentdb-production-admin"
           else
-            SECRET_NAME="ym-postgres-connection-agentdb-staging"
+            SECRET_NAME="ym-postgres-connection-agentdb-staging-admin"
           fi
 
-          POSTGRES_CONNECTION=$(gcloud secrets versions access latest --secret="$SECRET_NAME")
-          echo "POSTGRES_CONNECTION_AGENTDB=${POSTGRES_CONNECTION}" >> .env
+          echo -n "POSTGRES_CONNECTION_AGENTDB=" >> .env
+          gcloud secrets versions access latest --secret="$SECRET_NAME" >> .env
 
       - name: Get current migration version
         id: current_version

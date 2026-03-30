@@ -10,7 +10,6 @@ from typing import Any, Literal, Self
 import pydantic
 import sqlalchemy
 from pydantic import (
-    PostgresDsn,
     computed_field,
     model_validator,
 )
@@ -630,13 +629,17 @@ class Settings(BaseSettings):
                 database=conn.database,
                 query={"host": f"{conn.cloud_sql_proxy_socket}" + ("/.s.PGSQL.5432" if async_mode else "")},
             ).render_as_string(hide_password=False)
-        return PostgresDsn.build(
-            scheme=scheme,
+        host, _, port_str = conn.host.rpartition(":")
+        if not host:
+            host, port_str = port_str, ""
+        return sqlalchemy.engine.url.URL.create(
+            drivername=scheme,
             username=conn.user,
             password=conn.password,
-            host=conn.host,
-            path=f"{conn.database}",
-        ).unicode_string()
+            host=host,
+            port=int(port_str) if port_str else 5432,
+            database=conn.database,
+        ).render_as_string(hide_password=False)
 
     def db_url_for(self, db: DbName = "yuppdb", *, replica: bool = False, async_mode: bool = False) -> str:
         """Build a SQLAlchemy database URL for the given database."""
