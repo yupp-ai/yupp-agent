@@ -2,8 +2,16 @@
 
 Pure functions (no MCP dependency) that provide filesystem and shell access
 within session workspaces. Registered as MCP tools in local_mcp_server.py.
+
+BCH integration:
+  When a ``CommandHandlerManager`` is registered for a session via
+  ``set_command_handler_manager(session_id, manager)``, async wrappers
+  forward calls to the warm bwrapped proxy instead of spawning a new bwrap
+  process per call.  The sync ``run_command()`` is kept for backward
+  compatibility; the MCP tool layer uses the async path when a manager is set.
 """
 
+from __future__ import annotations
 import fnmatch
 import ipaddress
 import os
@@ -25,9 +33,23 @@ from ypl.agent_harness_service.common.constants import (
 from ypl.agent_harness_service.common.constants import (
     get_session_dir as get_session_dir,  # re-export for backward compat
 )
+from ypl.agent_harness_service.common.types import ToolDispatcher
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
+
+# ---------------------------------------------------------------------------
+# BCH manager registry
+# ---------------------------------------------------------------------------
+# Maps session_id → CommandHandlerManager.  Populated by service.py when a
+# session starts (A5), cleared on session teardown.  When a manager is
+# registered for a session, the async MCP tool wrappers (mcp_bash etc. in
+# local_mcp_server.py) forward calls to the warm proxy instead of spawning
+# a new bwrap process per call.
+#
+# Pattern mirrors register_orchestration_callbacks() in local_mcp_server.py:
+# module-level dict + registration helpers wired by the service layer.
+_session_managers: dict[str, ToolDispatcher] = {}
 
 # Output limits
 _MAX_OUTPUT_BYTES = 100_000  # 100 KB for command output
@@ -815,3 +837,31 @@ async def search_web(query: str, num_results: int = 10) -> str:
         lines.append(f"Snippet: {r.get('snippet', '')}")
         lines.append("")
     return "\n".join(lines).strip()
+
+
+# ---------------------------------------------------------------------------
+# BCH manager registration helpers
+# ---------------------------------------------------------------------------
+
+
+def set_command_handler_manager(session_id: str, manager: ToolDispatcher | None) -> None:
+    """Register or clear the BCH CommandHandlerManager for a session.
+
+    Called by service.py (A5) when a session starts or ends.  When a manager
+    is registered, the async MCP tool wrappers in local_mcp_server.py forward
+    calls to the warm bwrapped proxy instead of spawning a new bwrap process.
+
+    Args:
+        session_id: The AHS session UUID.
+        manager: The ``CommandHandlerManager`` instance to register, or
+            ``None`` to deregister (called during session teardown).
+    """
+    if manager is None:
+        _session_managers.pop(session_id, None)
+    else:
+        _session_managers[session_id] = manager
+
+
+def get_command_handler_manager(session_id: str) -> ToolDispatcher | None:
+    """Return the BCH manager for a session, or None if not registered."""
+    return _session_managers.get(session_id)
