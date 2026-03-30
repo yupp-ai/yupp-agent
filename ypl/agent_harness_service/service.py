@@ -85,6 +85,7 @@ from ypl.agent_harness_service.core.streaming import (
     translate_stream_event,
 )
 from ypl.agent_harness_service.executors.codex_app_server_runner import CodexAppServerRunner
+from ypl.agent_harness_service.executors.command_handler import CommandHandlerManager
 from ypl.agent_harness_service.executors.runner import (
     AgentRunner,
     ClaudeCodeRunner,
@@ -107,6 +108,7 @@ from ypl.agent_harness_service.tools.local_mcp_server import (
     set_session_sandbox,
 )
 from ypl.agent_harness_service.tools.repo_manager import scan_session_worktrees
+from ypl.agent_harness_service.tools.workspace_tools import set_command_handler_manager
 from ypl.backend.db import get_async_session
 from ypl.backend.utils.async_utils import create_background_task
 from ypl.backend.utils.slack_utils import resolve_slack_user_to_yupp_user_id
@@ -137,6 +139,12 @@ _active_tasks: dict[uuid.UUID, asyncio.Task] = {}
 # Maps agent_session_id → asyncio.Task[asyncio.subprocess.Process].
 # Consumed (popped) by _run_agent_task on the first turn; absent for all later turns.
 _pre_spawn_tasks: dict[uuid.UUID, asyncio.Task] = {}
+
+# BCH managers: one CommandHandlerManager per active session.
+# Created at session start (create_session()), registered with workspace_tools.py
+# so all tool dispatch routes through the warm bwrapped proxy.
+# Keyed by agent_session_id, same schema as _active_tasks.
+_command_handlers: dict[uuid.UUID, CommandHandlerManager] = {}
 
 # Session subtypes that indicate the agent was stopped before completing its task.
 # When a session ends with one of these subtypes, the associated task should be
@@ -246,6 +254,27 @@ async def send_slack_restart_courtesy(stale_session_ids: list[uuid.UUID]) -> Non
         _SLACK_RESTART_COURTESY_MSG,
         "restart",
     )
+
+
+async def stop_all_command_handler_managers() -> None:
+    """Stop all active BCH managers.
+
+    Called during graceful SIGTERM shutdown to cleanly terminate every
+    bwrapped proxy process.  Errors from individual stops are logged but do
+    not propagate so one broken manager cannot block the rest.
+    """
+    managers = dict(_command_handlers)
+    _command_handlers.clear()
+    for session_id, manager in managers.items():
+        set_command_handler_manager(str(session_id), None)
+        try:
+            await manager.stop()
+        except Exception:
+            logger.warning(
+                "Failed to stop BCH manager during shutdown",
+                session_id=str(session_id),
+                exc_info=True,
+            )
 
 
 def has_execution_capacity() -> bool:
@@ -1885,6 +1914,18 @@ async def _run_agent_task(
     finally:
         clear_session_sandbox(str(agent_session_id))
         clear_session_websearch_count(str(agent_session_id))
+
+        # Stop the BCH manager for terminal trigger types (CRON / TASK / WEBHOOK /
+        # API) where the session will not receive another message.  For interactive
+        # SLACK sessions the manager stays alive; it is reaped by the idle timer
+        # after AHS_BCH_IDLE_TIMEOUT_SECONDS of inactivity, or by stop_session().
+        _is_interactive_session = (trigger or "").upper() == AgentSessionTrigger.SLACK.value
+        if not _is_interactive_session:
+            _bch_mgr = _command_handlers.pop(agent_session_id, None)
+            if _bch_mgr is not None:
+                set_command_handler_manager(str(agent_session_id), None)
+                create_background_task(_bch_mgr.stop())
+
         # Cancel any pre-spawn task that wasn't consumed by the runner (e.g. the
         # session was stopped before _run_agent_task reached the runner creation
         # code, or the guard-check returned early).
@@ -2192,6 +2233,11 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
             workspace=workspace,
         )
 
+        # Create the BCH manager for this session.  The bwrap proxy process starts
+        # lazily on the first tool call; creating the manager here is cheap (no I/O).
+        # Stored in a local so we can stop it on commit failure (try/finally below).
+        _bch_manager = CommandHandlerManager(workspace=workspace)
+
         # Start pre-spawning the subprocess so the bwrap+CLI cold start (~4.2s) overlaps
         # with the remaining DB writes (session.commit, send_message DB ops, background
         # task setup).  Prerequisites satisfied above: workspace dir, .claude symlink,
@@ -2236,12 +2282,26 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
             # Cancel the pre-spawn task to avoid an orphaned subprocess.
             if _pre_spawn_task is not None:
                 _pre_spawn_task.cancel()
+            # Stop the BCH manager — it hasn't started yet (lazy start), so
+            # this is a no-op today but ensures no state leaks on future retries.
+            await _bch_manager.stop()
             raise
 
         # Register the pre-spawn task now that the commit succeeded, so
         # _run_agent_task can find it by session ID on the first turn.
         if _pre_spawn_task is not None:
             _pre_spawn_tasks[agent_session.agent_session_id] = _pre_spawn_task
+
+        # Register the BCH manager now that the session is committed.
+        # workspace_tools.py tool handlers query this dict on every tool call;
+        # registering here (after commit) ensures no phantom entries survive a
+        # failed creation.
+        _command_handlers[agent_session.agent_session_id] = _bch_manager
+        set_command_handler_manager(str(agent_session.agent_session_id), _bch_manager)
+        logger.info(
+            "BCH manager registered for session",
+            session_id=str(agent_session.agent_session_id),
+        )
 
         _session_perms = SessionPermissions.from_context(context)
         logger.info(
@@ -2732,6 +2792,12 @@ async def stop_session(session_id: str) -> SessionStopResponse:
     # Clean up session-specific state (auth terminal states, current user tracking,
     # polling tasks). Safe to call here since this is explicit session end.
     clear_session_state(str(agent_session_id))
+
+    # Stop and deregister the BCH manager for this session.
+    _bch_mgr = _command_handlers.pop(agent_session_id, None)
+    if _bch_mgr is not None:
+        set_command_handler_manager(str(agent_session_id), None)
+        await _bch_mgr.stop()
 
     logger.info(
         "Session stopped by user",
