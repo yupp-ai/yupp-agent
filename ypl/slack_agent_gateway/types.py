@@ -278,3 +278,50 @@ class SendStatusUpdateResponse(BaseModel):
     success: bool = Field(..., description="Whether the update was accepted")
     message_ts: str | None = Field(None, description="Slack ts of the status context block (may be None if deferred)")
     error: str | None = Field(None, description="Error message if failed")
+
+
+# Questionnaire (interactive multiple-choice prompt)
+
+
+class QuestionChoice(BaseModel):
+    """A single selectable choice in a questionnaire question."""
+
+    label: str = Field(..., description="Button label shown to the user in Slack")
+    value: str = Field(..., description="Opaque value returned to the caller (may differ from label)")
+
+
+class SendQuestionnaireRequest(BaseModel):
+    """Request body for POST /sessions/questionnaire (called by AHS).
+
+    Posts a multiple-choice question to the Slack thread with action buttons.
+    The user's selection (or a typed reply) is forwarded back to AHS as a
+    regular session message so the agent can continue its turn.
+    """
+
+    session_id: str = Field(..., description="Session identifier")
+    question_id: str = Field(
+        ...,
+        description=(
+            "Caller-assigned identifier for this question (alphanumeric + underscores). "
+            "Embedded in Slack action_id so the interaction handler can route the response."
+        ),
+    )
+    text: str = Field(..., description="Question text shown to the user")
+    choices: list[QuestionChoice] = Field(
+        ...,
+        min_length=1,
+        max_length=5,
+        description="Choices rendered as Slack action buttons (Slack allows up to 5 per actions block)",
+    )
+    allow_free_text: bool = Field(
+        default=True,
+        description="If True, a hint is shown telling the user they can type a free-text reply instead",
+    )
+
+
+class SendQuestionnaireResponse(BaseModel):
+    """Response for POST /sessions/questionnaire."""
+
+    success: bool
+    message_ts: str | None = None
+    error: str | None = None

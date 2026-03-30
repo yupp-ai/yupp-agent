@@ -93,3 +93,29 @@ class Gateway(ABC):
             True if the update was accepted, False if unsupported or failed.
         """
         return False
+
+    async def send_questionnaire(
+        self,
+        session_id: str,
+        question_id: str,
+        text: str,
+        choices: list[dict[str, str]],
+        allow_free_text: bool = True,
+    ) -> bool:
+        """Post a multiple-choice questionnaire to the session.
+
+        Optional — the default no-op implementation returns ``False`` for
+        gateways that do not support interactive buttons.  Only the Slack
+        gateway currently overrides this.
+
+        Args:
+            session_id: The gateway session identifier.
+            question_id: Caller-assigned ID for this question (alphanumeric + underscores).
+            text: Question text to display to the user.
+            choices: List of ``{"label": str, "value": str}`` dicts (max 5 for Slack).
+            allow_free_text: If True, a hint is shown that the user can type a free answer.
+
+        Returns:
+            True if the questionnaire was posted, False if unsupported or failed.
+        """
+        return False
