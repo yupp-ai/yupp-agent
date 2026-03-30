@@ -1,0 +1,148 @@
+name: Apply Alembic Migration
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: 'Environment to apply migration to'
+        required: true
+        type: string
+      revision_id:
+        description: 'Alembic revision ID to migrate to (default: head)'
+        required: false
+        type: string
+        default: 'head'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to apply migration to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+        - staging
+        - production
+      operation:
+        description: 'Migration Operation to perform'
+        required: true
+        default: 'upgrade'
+        type: choice
+        options:
+        - upgrade
+        - downgrade
+        - fetch_current_revision
+      revision_id:
+        description: 'Alembic revision ID to migrate to'
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  ENVIRONMENT: ${{ github.event.inputs.environment || inputs.environment || 'staging' }}
+
+jobs:
+  apply-alembic-migration:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Record Workflow Inputs
+        run: |
+          OPERATION="${{ github.event.inputs.operation || 'upgrade' }}"
+          REVISION="${{ github.event.inputs.revision_id || inputs.revision_id || 'head' }}"
+          {
+            echo "## Alembic Migration"
+            echo "| Input | Value |"
+            echo "|-------|-------|"
+            echo "| Environment | ${{ env.ENVIRONMENT }} |"
+            echo "| Operation | ${OPERATION} |"
+            echo "| Target Revision | ${REVISION} |"
+          } >> $GITHUB_STEP_SUMMARY
+
+      - name: Set up test runner
+        uses: ./.github/actions/setup-test-runner
+
+      - name: Authenticate to Google Cloud
+        uses: ./.github/actions/gcp-auth
+        with:
+          gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Create .env file with database connection
+        run: |
+          echo "ENVIRONMENT=${{ env.ENVIRONMENT }}" > .env
+
+          if [[ "${{ env.ENVIRONMENT }}" == "production" ]]; then
+            SECRET_NAME="ym-postgres-connection-agentdb-production"
+          else
+            SECRET_NAME="ym-postgres-connection-agentdb-staging"
+          fi
+
+          POSTGRES_CONNECTION=$(gcloud secrets versions access latest --secret="$SECRET_NAME" --project="${{ secrets.GCP_PROJECT_ID }}")
+          echo "POSTGRES_CONNECTION_AGENTDB=${POSTGRES_CONNECTION}" >> .env
+
+      - name: Get current migration version
+        id: current_version
+        run: |
+          CURRENT_VERSION=$(poetry run alembic current 2>/dev/null | grep -o '[a-f0-9]\{12\}' | head -1 || echo "")
+          echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          echo "Current alembic version: ${CURRENT_VERSION:-<none>}"
+
+      - name: Apply migration
+        if: github.event.inputs.operation != 'fetch_current_revision'
+        run: |
+          OPERATION="${{ github.event.inputs.operation || 'upgrade' }}"
+          REVISION="${{ github.event.inputs.revision_id || inputs.revision_id || 'head' }}"
+
+          echo "Applying ${OPERATION} migration to revision ${REVISION}"
+          set +e
+          MIGRATION_OUTPUT=$(echo "yupp" | poetry run alembic ${OPERATION} ${REVISION} 2>&1)
+          MIGRATION_EXIT_CODE=$?
+          echo "$MIGRATION_OUTPUT"
+
+          echo "MIGRATION_OUTPUT<<EOF" >> $GITHUB_ENV
+          echo "$MIGRATION_OUTPUT" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+          {
+            echo "## ${OPERATION^} Output"
+            echo '```'
+            echo "$MIGRATION_OUTPUT"
+            echo '```'
+            if [ $MIGRATION_EXIT_CODE -ne 0 ]; then
+              echo "**Migration failed with exit code: $MIGRATION_EXIT_CODE**"
+            else
+              echo "**Migration completed successfully**"
+            fi
+          } >> $GITHUB_STEP_SUMMARY
+
+          if [ $MIGRATION_EXIT_CODE -ne 0 ]; then
+            exit $MIGRATION_EXIT_CODE
+          fi
+
+      - name: Verify migration
+        run: |
+          NEW_VERSION=$(poetry run alembic current 2>/dev/null | grep -o '[a-f0-9]\{12\}' | head -1 || echo "")
+
+          OPERATION="${{ github.event.inputs.operation || 'upgrade' }}"
+          PREVIOUS="${{ steps.current_version.outputs.version }}"
+
+          if [[ "${OPERATION}" == "fetch_current_revision" ]]; then
+            echo "Current version: ${NEW_VERSION:-<none>}"
+          else
+            echo "Migration completed. New version: ${NEW_VERSION:-<none>} (Previous: ${PREVIOUS:-<none>})"
+          fi
+
+          {
+            echo "## Summary"
+            if [[ "${OPERATION}" == "fetch_current_revision" ]]; then
+              echo "- **Current Version:** ${NEW_VERSION:-<none>}"
+            else
+              echo "- **Previous Version:** ${PREVIOUS:-<none>}"
+              echo "- **New Version:** ${NEW_VERSION:-<none>}"
+            fi
+          } >> $GITHUB_STEP_SUMMARY

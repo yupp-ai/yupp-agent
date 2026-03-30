@@ -197,6 +197,16 @@ jobs:
       deploy_slack_agent_gateway: ${{ github.event.inputs.deploy_slack_agent_gateway == 'true' }}
       deploy_streamlit_server: ${{ github.event.inputs.deploy_streamlit_server == 'true' }}
 
+  # Run Alembic migrations on staging agentdb after build, before/parallel with service deploys.
+  alembic-upgrade-staging:
+    needs: build
+    if: ${{ always() && needs.build.result == 'success' }}
+    uses: ./.github/workflows/apply_alembic_migration.yml
+    secrets: inherit
+    with:
+      environment: 'staging'
+      revision_id: 'head'
+
   # AHS is VM-based (no Docker) — deploy in parallel with build, not after it.
   deploy-ahs-staging:
     runs-on: ubuntu-latest
