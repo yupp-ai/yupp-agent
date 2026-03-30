@@ -15,8 +15,8 @@ Today, Yupp agents investigate production incidents, review pull requests, ship 
                               |                     |
 ┌───────────────────────────────────────────────────────────────────┐
 │  Access Points                                                    │
-│    Slack Agent Gateway (SAG)            REST Endpoints             │
-│                                         (streaming / non-streaming)│
+│    Slack Agent Gateway (SAG)          REST Endpoints              │
+│                                       (streaming / non-streaming) │
 ├───────────────────────────────────────────────────────────────────┤
 │  Orchestration                                                    │
 │    Project & Task Management            Scheduled Jobs            │
