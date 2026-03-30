@@ -75,7 +75,7 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
-    needs: print-inputs
+    needs: alembic-upgrade-staging
     # Skip build when only AHS is selected (VM-based, no Docker needed)
     if: ${{ github.event_name == 'schedule' || github.event.inputs.deploy_all == 'true' || github.event.inputs.deploy_mcp_server == 'true' || github.event.inputs.deploy_mcp_server_oauth == 'true' || github.event.inputs.deploy_slack_agent_gateway == 'true' || github.event.inputs.deploy_streamlit_server == 'true' }}
     steps:
@@ -197,20 +197,19 @@ jobs:
       deploy_slack_agent_gateway: ${{ github.event.inputs.deploy_slack_agent_gateway == 'true' }}
       deploy_streamlit_server: ${{ github.event.inputs.deploy_streamlit_server == 'true' }}
 
-  # Run Alembic migrations on staging agentdb after build, before/parallel with service deploys.
+  # Run Alembic migrations on staging agentdb before build and deploys.
   alembic-upgrade-staging:
-    needs: build
-    if: ${{ always() && needs.build.result == 'success' }}
+    needs: print-inputs
     uses: ./.github/workflows/apply_alembic_migration.yml
     secrets: inherit
     with:
       environment: 'staging'
       revision_id: 'head'
 
-  # AHS is VM-based (no Docker) — deploy in parallel with build, not after it.
+  # AHS is VM-based (no Docker) — deploy in parallel with build, after alembic migration.
   deploy-ahs-staging:
     runs-on: ubuntu-latest
-    needs: print-inputs
+    needs: alembic-upgrade-staging
     if: ${{ github.event.inputs.deploy_all == 'true' || github.event.inputs.deploy_ahs == 'true' }}
     steps:
     - name: Checkout code
