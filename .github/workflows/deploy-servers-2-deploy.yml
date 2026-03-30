@@ -581,7 +581,7 @@ jobs:
         gcloud compute ssh "${{ env.VM_NAME }}" \
           --zone="${{ env.VM_ZONE }}" \
           --project="${{ env.GCP_PROJECT_NAME }}" \
-          --command="sudo cp /tmp/ahs.env /data/ahs/.env && sudo chown ahs:ahs /data/ahs/.env && sudo chmod 600 /data/ahs/.env && rm -f /tmp/ahs.env && cd /opt/yupp-agent && sudo -u ahs git fetch origin && sudo -u ahs git checkout --force ${{ env.BUILD_GIT_SHA }} && sudo -u ahs bash -c 'cd /opt/yupp-agent && .venv/bin/pip install \"setuptools<80\" && .venv/bin/poetry lock && .venv/bin/poetry install --no-root' && sudo -u ahs bash /opt/yupp-agent/services/command-handler/build.sh && sudo -u ahs /opt/yupp-agent/ypl/agent_harness_service/deploy/sync_configs.sh --no-pull && sudo systemctl restart ahs && echo 'AHS deployed and restarted successfully'"
+          --command="cd /opt/yupp-agent && sudo -u ahs git fetch origin && sudo -u ahs git checkout --force ${{ env.BUILD_GIT_SHA }} && sudo bash /opt/yupp-agent/ypl/agent_harness_service/deploy/deploy_vm.sh"
 
     - name: Verify AHS is running
       run: |
