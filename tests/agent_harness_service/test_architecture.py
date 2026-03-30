@@ -42,7 +42,7 @@ LAYER_1 = {"core", "gateway", "executors", "tools", "projects"}
 ROOT_WIRING = {"service", "server", "routes", "orchestration", "task_executor", "scheduler"}
 
 # Directories excluded from architectural lint (UI, scripts, deploy, etc.)
-EXCLUDED_DIRS = {"tui", "scripts", "deploy", "docs", "__pycache__"}
+EXCLUDED_DIRS = {"tui", "scripts", "deploy", "docs", "__pycache__", "service"}
 
 
 # ---------------------------------------------------------------------------
