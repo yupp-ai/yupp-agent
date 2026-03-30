@@ -407,8 +407,13 @@ def build_bwrap_cli_command(args: list[str], workspace: str) -> list[str]:
         if os.path.isdir(git_dir):
             for subdir in _GIT_RW_SUBDIRS:
                 subdir_path = os.path.join(git_dir, subdir)
-                if os.path.isdir(subdir_path):
-                    bwrap_args += ["--bind", subdir_path, subdir_path]
+                # Pre-create subdirs that git creates lazily (e.g. worktrees/
+                # only appears after the first `git worktree add`). Without
+                # this, repos that have never had worktrees get a read-only
+                # .git/worktrees/ inside bwrap, blocking git add in worktrees
+                # created later by the harness.
+                os.makedirs(subdir_path, exist_ok=True)
+                bwrap_args += ["--bind", subdir_path, subdir_path]
 
     # Read-write session workspace (worktrees, attachments, history)
     bwrap_args += ["--bind", workspace, workspace]
