@@ -98,6 +98,26 @@ jobs:
           OPERATION="${{ github.event.inputs.operation || 'upgrade' }}"
           REVISION="${{ github.event.inputs.revision_id || inputs.revision_id || 'head' }}"
 
+          # If the DB has no alembic_version but tables already exist, stamp instead of upgrade.
+          # This handles the one-time bootstrap for databases created before alembic was introduced.
+          CURRENT_VERSION="${{ steps.current_version.outputs.version }}"
+          if [[ -z "$CURRENT_VERSION" && "$OPERATION" == "upgrade" ]]; then
+            TABLE_COUNT=$(echo "yupp" | poetry run python -c "
+from ypl.backend.config import Settings
+from sqlalchemy import create_engine, text
+s = Settings()
+e = create_engine(s.db_url_for('agentdb'))
+with e.connect() as c:
+    r = c.execute(text(\"SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'\"))
+    print(r.scalar())
+" 2>/dev/null | tail -1)
+            if [[ "$TABLE_COUNT" -gt 0 ]]; then
+              echo "DB has $TABLE_COUNT tables but no alembic_version — stamping instead of upgrading"
+              echo "yupp" | poetry run alembic stamp "$REVISION"
+              exit 0
+            fi
+          fi
+
           echo "Applying ${OPERATION} migration to revision ${REVISION}"
           set +e
           MIGRATION_OUTPUT=$(echo "yupp" | poetry run alembic ${OPERATION} ${REVISION} 2>&1)
