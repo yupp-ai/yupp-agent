@@ -1,7 +1,6 @@
 """Count public tables in the agentdb. Used by CI to detect pre-existing databases."""
 
 from sqlalchemy import create_engine, text
-
 from ypl.backend.config import Settings
 
 settings = Settings()
