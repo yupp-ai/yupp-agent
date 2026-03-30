@@ -78,19 +78,24 @@ def _parse_env_int(env_var: str, default: int) -> int:
 TASK_EXECUTOR_ENABLED = os.environ.get("AHS_TASK_EXECUTOR_ENABLED", "true").lower() == "true"
 TASK_EXECUTOR_BATCH_SIZE = _parse_env_int("AHS_TASK_EXECUTOR_BATCH_SIZE", 1)
 TASK_EXECUTOR_STALE_TIMEOUT_MINUTES = _parse_env_int("AHS_TASK_EXECUTOR_STALE_TIMEOUT_MINUTES", 30)
-TASK_EXECUTOR_RATE_LIMIT = _parse_env_int("AHS_TASK_EXECUTOR_RATE_LIMIT", 30)
+TASK_EXECUTOR_RATE_LIMIT = _parse_env_int("AHS_TASK_EXECUTOR_RATE_LIMIT", 60)
 MAX_CONCURRENT_TASKS_PER_PROJECT = _parse_env_int("AHS_MAX_CONCURRENT_TASKS_PER_PROJECT", 3)
-# How long (seconds) to skip a project after it is rate-limited, to avoid a
-# log storm where every 10-second poll attempt logs a WARNING for the same task.
+# Base cooldown (seconds) after the first rate-limit hit.  Subsequent hits use
+# exponential backoff: base * 2^(hit_count - 1), capped at the max.
 RATE_LIMIT_BACKOFF_SECONDS = _parse_env_int("AHS_RATE_LIMIT_BACKOFF_SECONDS", 300)
+MAX_RATE_LIMIT_BACKOFF_SECONDS = _parse_env_int("AHS_MAX_RATE_LIMIT_BACKOFF_SECONDS", 3600)
+# After this many consecutive rate-limit strikes an ERROR is logged and a Slack
+# alert is fired so a human can intervene (e.g. increase the limit or cancel
+# tasks).  The project remains in cooldown — it is NOT auto-failed.
+RATE_LIMIT_MAX_STRIKES = _parse_env_int("AHS_RATE_LIMIT_MAX_STRIKES", 5)
 
 # Global rate limiter for all task execution (lazily initialized)
 _rate_limiter: RedisTokenBucketRateLimiter | None = None
 
-# Per-project rate-limit cooldown: maps project_id_str → monotonic deadline.
-# When a project is rate-limited, we skip it until deadline passes, avoiding a
-# log storm where every 10-second scheduler poll emits a WARNING for the same task.
-_rate_limited_projects: dict[str, float] = {}
+# Per-project rate-limit state: maps project_id_str → (monotonic_deadline, hit_count).
+# When a project is rate-limited, we skip it until deadline passes (avoiding a
+# log storm) and use the hit_count to apply exponential back-off on each retry.
+_rate_limited_projects: dict[str, tuple[float, int]] = {}
 
 
 def _get_rate_limiter() -> RedisTokenBucketRateLimiter:
@@ -858,6 +863,46 @@ async def resume_task(task_id: uuid.UUID) -> dict[str, Any]:
         }
 
 
+async def _alert_rate_limited_project(
+    project_id: uuid.UUID,
+    agent_task_id: uuid.UUID,
+    strike_count: int,
+) -> None:
+    """Post a best-effort Slack alert when a project hits RATE_LIMIT_MAX_STRIKES.
+
+    This is fire-and-forget — all errors are swallowed so it never affects the
+    scheduler polling loop.
+    """
+    try:
+        async with get_async_session() as session:
+            project = await session.get(AgentProject, project_id)
+            if not project:
+                return
+            agent = None
+            if project.default_agent_id:
+                agent = await get_agent_by_id(project.default_agent_id)
+            creator_mention = _get_creator_mention(project.shared_state)
+            next_retry_min = (
+                min(RATE_LIMIT_BACKOFF_SECONDS * (2 ** (strike_count - 1)), MAX_RATE_LIMIT_BACKOFF_SECONDS) // 60
+            )
+            text = (
+                f"⚠️ *Rate-limit storm detected*{creator_mention}\n"
+                f"Project *{project.name}* has been rate-limited {strike_count} times in a row "
+                f"(limit: {TASK_EXECUTOR_RATE_LIMIT} tasks/hr). "
+                f"Next retry in ≥{next_retry_min} min.\n"
+                f"Consider increasing `AHS_TASK_EXECUTOR_RATE_LIMIT` or cancelling stuck tasks.\n"
+                f"Blocked task: `{agent_task_id}`"
+            )
+            agent_name = agent.name if agent else "task-executor"
+        await _post_project_slack_update(project_id, agent_name, text)
+    except Exception:
+        logger.error(
+            "Failed to post rate-limit alert (non-fatal)",
+            agent_project_id=str(project_id),
+            exc_info=True,
+        )
+
+
 def _task_done_callback(task: asyncio.Task) -> None:
     """Remove completed tasks from tracking set."""
     _task_execution_tasks.discard(task)
@@ -901,25 +946,60 @@ async def poll_and_execute_ready_tasks() -> None:
         # this guard, every 10-second scheduler poll logs a WARNING for the same
         # task until the token-bucket hour window rolls over — producing dozens of
         # identical log entries and unnecessary Redis round-trips.
-        cooldown_until = _rate_limited_projects.get(project_id_str)
-        if cooldown_until is not None:
+        #
+        # _rate_limited_projects stores (monotonic_deadline, hit_count) per project.
+        # hit_count is preserved across cooldown expirations so exponential back-off
+        # accumulates correctly until the rate limiter finally allows a task.
+        cooldown_entry = _rate_limited_projects.get(project_id_str)
+        if cooldown_entry is not None:
+            cooldown_until, prior_hits = cooldown_entry
             if now < cooldown_until:
                 continue
-            # Cooldown expired — clear the entry and re-check the rate limiter.
-            del _rate_limited_projects[project_id_str]
+            # Cooldown expired — fall through to re-check the rate limiter.
+            # Keep prior_hits for continued exponential back-off if still denied.
+        else:
+            prior_hits = 0
 
         if not await rate_limiter.is_allowed(project_id_str):
-            logger.warning(
-                "Task execution rate limited",
-                agent_task_id=str(task.agent_task_id),
-                agent_project_id=project_id_str,
-                tasks_per_hour=TASK_EXECUTOR_RATE_LIMIT,
-                backoff_seconds=RATE_LIMIT_BACKOFF_SECONDS,
+            new_hits = prior_hits + 1
+            backoff_seconds = min(
+                RATE_LIMIT_BACKOFF_SECONDS * (2 ** (new_hits - 1)),
+                MAX_RATE_LIMIT_BACKOFF_SECONDS,
             )
-            # Record cooldown so subsequent polls skip this project silently.
-            _rate_limited_projects[project_id_str] = now + RATE_LIMIT_BACKOFF_SECONDS
-            # Continue to next task - other projects may not be rate limited
+            # Record cooldown + updated hit count for exponential back-off.
+            _rate_limited_projects[project_id_str] = (now + backoff_seconds, new_hits)
+
+            if new_hits >= RATE_LIMIT_MAX_STRIKES:
+                # Escalate to ERROR and fire a Slack alert so a human can intervene.
+                logger.error(
+                    "Project sustained rate limiting — manual intervention may be needed",
+                    agent_task_id=str(task.agent_task_id),
+                    agent_project_id=project_id_str,
+                    tasks_per_hour=TASK_EXECUTOR_RATE_LIMIT,
+                    backoff_seconds=backoff_seconds,
+                    strike_count=new_hits,
+                    max_strikes=RATE_LIMIT_MAX_STRIKES,
+                )
+                bg = create_background_task(
+                    _alert_rate_limited_project(task.agent_project_id, task.agent_task_id, new_hits)
+                )
+                _task_execution_tasks.add(bg)
+                bg.add_done_callback(_task_done_callback)
+            else:
+                logger.warning(
+                    "Task execution rate limited",
+                    agent_task_id=str(task.agent_task_id),
+                    agent_project_id=project_id_str,
+                    tasks_per_hour=TASK_EXECUTOR_RATE_LIMIT,
+                    backoff_seconds=backoff_seconds,
+                    strike_count=new_hits,
+                )
+            # Continue to next task — other projects may not be rate limited.
             continue
+
+        # Rate limiter allowed — clear any accumulated back-off state so the next
+        # denial (if any) starts fresh from the base cooldown.
+        _rate_limited_projects.pop(project_id_str, None)
 
         # Check per-project parallelism limit
         if not has_project_capacity(task.agent_project_id):
