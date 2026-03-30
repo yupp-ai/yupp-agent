@@ -2,11 +2,24 @@
 
 from __future__ import annotations
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
 from ypl.agent_harness_service.common.constants import ALL_MCP_SERVERS, RESTRICTED_HARNESS_TOOLS
+
+
+@runtime_checkable
+class ToolDispatcher(Protocol):
+    """Protocol for dispatching tool calls to a warm proxy process.
+
+    Implemented by ``CommandHandlerManager`` in executors/. Defined here in
+    common/ so that both tools/ and executors/ can reference the type without
+    creating a cross-package import.
+    """
+
+    async def call_tool(self, tool: str, args: dict[str, Any]) -> str: ...
+
 
 # Known request origins for source tracking / logging.
 # Using str (not Literal) to allow any source string without validation errors.

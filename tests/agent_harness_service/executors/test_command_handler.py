@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 from asyncio import Future
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -48,7 +49,7 @@ def _make_mock_proc() -> MagicMock:
 
 
 @pytest.fixture
-def workspace(tmp_path) -> str:
+def workspace(tmp_path: Path) -> str:
     ws = str(tmp_path / "workspace")
     import os
 
@@ -57,7 +58,7 @@ def workspace(tmp_path) -> str:
 
 
 @pytest.fixture
-def manager(workspace) -> CommandHandlerManager:
+def manager(workspace: str) -> CommandHandlerManager:
     """Return a CommandHandlerManager pointed at a temporary workspace."""
     return CommandHandlerManager(
         workspace=workspace,
@@ -376,7 +377,7 @@ class TestWorkspaceToolsIntegration:
         set_command_handler_manager(session_id, None)
         assert get_command_handler_manager(session_id) is None
 
-    def test_set_manager_multiple_sessions(self, manager: CommandHandlerManager, tmp_path) -> None:
+    def test_set_manager_multiple_sessions(self, manager: CommandHandlerManager, tmp_path: Path) -> None:
         import os
 
         from ypl.agent_harness_service.tools.workspace_tools import (

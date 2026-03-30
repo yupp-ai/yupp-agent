@@ -20,7 +20,6 @@ import signal
 import subprocess
 import threading
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 import httpx
@@ -34,10 +33,8 @@ from ypl.agent_harness_service.common.constants import (
 from ypl.agent_harness_service.common.constants import (
     get_session_dir as get_session_dir,  # re-export for backward compat
 )
+from ypl.agent_harness_service.common.types import ToolDispatcher
 from ypl.structured_logger import get_logger
-
-if TYPE_CHECKING:
-    from ypl.agent_harness_service.executors.command_handler import CommandHandlerManager
 
 logger = get_logger()
 
@@ -52,7 +49,7 @@ logger = get_logger()
 #
 # Pattern mirrors register_orchestration_callbacks() in local_mcp_server.py:
 # module-level dict + registration helpers wired by the service layer.
-_session_managers: dict[str, CommandHandlerManager] = {}
+_session_managers: dict[str, ToolDispatcher] = {}
 
 # Output limits
 _MAX_OUTPUT_BYTES = 100_000  # 100 KB for command output
@@ -847,7 +844,7 @@ async def search_web(query: str, num_results: int = 10) -> str:
 # ---------------------------------------------------------------------------
 
 
-def set_command_handler_manager(session_id: str, manager: CommandHandlerManager | None) -> None:
+def set_command_handler_manager(session_id: str, manager: ToolDispatcher | None) -> None:
     """Register or clear the BCH CommandHandlerManager for a session.
 
     Called by service.py (A5) when a session starts or ends.  When a manager
@@ -865,6 +862,6 @@ def set_command_handler_manager(session_id: str, manager: CommandHandlerManager 
         _session_managers[session_id] = manager
 
 
-def get_command_handler_manager(session_id: str) -> CommandHandlerManager | None:
+def get_command_handler_manager(session_id: str) -> ToolDispatcher | None:
     """Return the BCH manager for a session, or None if not registered."""
     return _session_managers.get(session_id)

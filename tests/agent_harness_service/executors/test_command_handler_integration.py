@@ -13,6 +13,8 @@ Run with:
 
 from __future__ import annotations
 import os
+from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
 from ypl.agent_harness_service.executors.command_handler import (
@@ -35,7 +37,7 @@ pytestmark = [
 
 
 @pytest.fixture
-async def live_manager(tmp_path):
+async def live_manager(tmp_path: Path) -> AsyncIterator[CommandHandlerManager]:
     """Start a real CommandHandlerManager against the compiled Go binary."""
     ws = str(tmp_path / "workspace")
     os.makedirs(ws, exist_ok=True)
@@ -95,7 +97,7 @@ class TestBashIntegration:
 
 class TestReadIntegration:
     @pytest.mark.asyncio
-    async def test_read_file(self, live_manager: CommandHandlerManager, tmp_path) -> None:
+    async def test_read_file(self, live_manager: CommandHandlerManager, tmp_path: Path) -> None:
         test_file = tmp_path / "workspace" / "hello.txt"
         test_file.write_text("line one\nline two\nline three\n")
 
@@ -104,7 +106,7 @@ class TestReadIntegration:
         assert "line two" in result
 
     @pytest.mark.asyncio
-    async def test_read_nonexistent(self, live_manager: CommandHandlerManager, tmp_path) -> None:
+    async def test_read_nonexistent(self, live_manager: CommandHandlerManager, tmp_path: Path) -> None:
         missing = str(tmp_path / "workspace" / "does_not_exist.txt")
         with pytest.raises(RuntimeError):
             await live_manager.call_tool("Read", {"file_path": missing})
@@ -117,7 +119,7 @@ class TestReadIntegration:
 
 class TestWriteIntegration:
     @pytest.mark.asyncio
-    async def test_write_and_read_back(self, live_manager: CommandHandlerManager, tmp_path) -> None:
+    async def test_write_and_read_back(self, live_manager: CommandHandlerManager, tmp_path: Path) -> None:
         target = str(tmp_path / "workspace" / "output.txt")
         content = "written by BCH proxy\n"
 
@@ -134,7 +136,7 @@ class TestWriteIntegration:
 
 class TestEditIntegration:
     @pytest.mark.asyncio
-    async def test_edit_replaces_string(self, live_manager: CommandHandlerManager, tmp_path) -> None:
+    async def test_edit_replaces_string(self, live_manager: CommandHandlerManager, tmp_path: Path) -> None:
         target = str(tmp_path / "workspace" / "edit_me.txt")
         with open(target, "w") as f:
             f.write("foo bar baz\n")
@@ -154,7 +156,7 @@ class TestEditIntegration:
 
 class TestGlobIntegration:
     @pytest.mark.asyncio
-    async def test_glob_matches_files(self, live_manager: CommandHandlerManager, tmp_path) -> None:
+    async def test_glob_matches_files(self, live_manager: CommandHandlerManager, tmp_path: Path) -> None:
         ws = tmp_path / "workspace"
         (ws / "a.py").write_text("# a")
         (ws / "b.py").write_text("# b")
@@ -173,7 +175,7 @@ class TestGlobIntegration:
 
 class TestGrepIntegration:
     @pytest.mark.asyncio
-    async def test_grep_finds_pattern(self, live_manager: CommandHandlerManager, tmp_path) -> None:
+    async def test_grep_finds_pattern(self, live_manager: CommandHandlerManager, tmp_path: Path) -> None:
         ws = tmp_path / "workspace"
         (ws / "source.py").write_text("def hello():\n    return 'world'\n")
 
@@ -189,7 +191,7 @@ class TestGrepIntegration:
 
 class TestIdleRestartIntegration:
     @pytest.mark.asyncio
-    async def test_transparent_restart_after_idle(self, tmp_path) -> None:
+    async def test_transparent_restart_after_idle(self, tmp_path: Path) -> None:
         """After idle timeout kills the process, next call_tool restarts it."""
         ws = str(tmp_path / "workspace")
         os.makedirs(ws, exist_ok=True)
