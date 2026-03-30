@@ -100,25 +100,84 @@ Operational dashboards for monitoring and managing the agent platform. Six pages
 
 ## Quick Start
 
+### 1. Install dependencies
+
 ```bash
-# Install dependencies
 poetry install
+```
 
-# Set up environment
-cp .env.example .env  # edit with your DB credentials
+### 2. Set up environment
 
-# Run AHS locally
+```bash
+cp .env.example .env
+```
+
+Get secrets from the **1Password** entry `yupp-agent .env` and fill in your `.env`.
+
+### 3. Set up CLI tools
+
+Make sure you have [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or [Codex CLI](https://github.com/openai/codex) installed and logged in. AHS uses these as agent executors.
+
+### 4. Set up the database
+
+Pull a copy of the staging database locally:
+
+```bash
+python -m ypl.db.tools.dump_staging_to_local
+```
+
+This auto-fetches credentials from GCP Secret Manager, dumps from the staging read replica, and restores into your local Postgres. See [Database Tools](#database-tools) for more options.
+
+## Run Locally
+
+### AHS + TUI
+
+Start the Agent Harness Service:
+
+```bash
 ./ypl/agent_harness_service/entrypoint.sh
+```
 
-# Run SAG locally
+Then connect with the TUI:
+
+```bash
+# Local AHS
+python -m ypl.agent_harness_service.tui --host localhost:8090
+
+# Staging AHS
+python -m ypl.agent_harness_service.tui --host ahs-staging.yupp.ai
+
+# Production AHS
+python -m ypl.agent_harness_service.tui
+```
+
+Optional: add these aliases to your `.bashrc` / `.zshrc`:
+
+```bash
+alias atuil='python -m ypl.agent_harness_service.tui --host localhost:8090'
+alias atuis='python -m ypl.agent_harness_service.tui --host ahs-staging.yupp.ai'
+alias atuip='python -m ypl.agent_harness_service.tui'
+```
+
+### SAG (Slack Agent Gateway)
+
+```bash
 ./ypl/slack_agent_gateway/entrypoint.sh
+```
 
-# Run MCP server locally
+### MCP Server
+
+```bash
 ./ypl/mcp_server/entrypoint.sh
+```
 
-# Run Streamlit dashboards locally
+### Streamlit Dashboards
+
+```bash
 streamlit run ypl/streamlit_server/app.py
 ```
+
+Accessible at `http://localhost:8501` by default.
 
 ## Architecture
 
