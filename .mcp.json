@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "yuppster-mcp-server": {
+      "type": "http",
+      "url": "https://yuppster-mcp.yupp.ai/mcp",
+      "headers": {
+        "Authorization": "Bearer ${YUPPSTER_MCP_TOKEN}"
+      }
+    },
+    "yuppster-mcp-server-staging": {
+      "type": "http",
+      "url": "https://yuppster-mcp-staging.yupp.ai/mcp",
+      "headers": {
+        "Authorization": "Bearer ${YUPPSTER_MCP_TOKEN_STAGING:-}"
+      },
+      "disabled": true
+    }
+  }
+}
