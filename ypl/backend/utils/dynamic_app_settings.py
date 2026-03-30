@@ -97,13 +97,17 @@ def _load_settings_from_yaml() -> dict[str, Any]:
 async def get_slack_agent_gateway_settings() -> SlackAgentGatewaySettings:
     """Return Slack Agent Gateway settings from YAML or defaults."""
     settings = _load_settings_from_yaml()
-    return settings.get("slack_agent_gateway_settings", SlackAgentGatewaySettings())
+    result = settings.get("slack_agent_gateway_settings", SlackAgentGatewaySettings())
+    assert isinstance(result, SlackAgentGatewaySettings)
+    return result
 
 
 async def get_mcp_tools_settings() -> MCPToolsSettings:
     """Return MCP tools settings from YAML or defaults."""
     settings = _load_settings_from_yaml()
-    return settings.get("mcp_tools_settings", MCPToolsSettings())
+    result = settings.get("mcp_tools_settings", MCPToolsSettings())
+    assert isinstance(result, MCPToolsSettings)
+    return result
 
 
 async def refresh_dynamic_app_settings_in_redis(yaml_path: str | None = None, always_log: bool = False) -> None:

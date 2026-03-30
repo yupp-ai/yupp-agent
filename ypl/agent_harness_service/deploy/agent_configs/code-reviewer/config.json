@@ -1,0 +1,21 @@
+{
+  "display_name": "Code Reviewer",
+  "description": "Code reviewer agent \u2014 thorough review with read-only file access.",
+  "default_repo": "yupp-mind",
+  "max_turns": 200,
+  "max_budget_usd": 2.0,
+  "has_mcp": true,
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": false
+  },
+  "executor_config": {
+    "type": "harnessed"
+  },
+  "tool_permissions": {
+    "*": "deny",
+    "@readonly": "allow"
+  },
+  "allowed_subagents": [],
+  "timeout_s": 36000
+}

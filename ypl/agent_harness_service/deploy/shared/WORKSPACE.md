@@ -11,6 +11,7 @@
 ├── yupp-mind/        → read-only repo symlink
 ├── yupp-head/        → read-only repo symlink
 ├── yupp-soul/        → read-only repo symlink
+├── yupp-agent/       → read-only repo symlink
 ├── yupp-mind-fix-bug-a1b2/  → writable worktree (created on demand)
 ├── attachments/      → downloaded attachments
 └── history/          → session history
@@ -26,6 +27,8 @@
 **yupp-head** — Public web app (Next.js 16, React 19, TypeScript, Tailwind v4, Turborepo monorepo).
 
 **yupp-soul** — Internal admin dashboard (Next.js 15, TypeScript, Tailwind, Shadcn/UI).
+
+**yupp-agent** — Agent Cloud Platform. Agent harness infrastructure, agent configs, skills, and shared agent tooling.
 
 ## Code Change Workflow (Summary)
 

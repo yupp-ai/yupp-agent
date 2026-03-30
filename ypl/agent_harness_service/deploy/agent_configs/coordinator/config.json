@@ -1,0 +1,22 @@
+{
+  "display_name": "Coordinator",
+  "description": "General coordinator \u2014 can spawn any subagent type for complex multi-step workflows.",
+  "default_repo": "yupp-mind",
+  "max_turns": 10,
+  "max_budget_usd": 15.0,
+  "has_mcp": true,
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": false
+  },
+  "executor_config": {
+    "type": "harnessed"
+  },
+  "tool_permissions": {
+    "*": "allow"
+  },
+  "allowed_subagents": [
+    "*"
+  ],
+  "timeout_s": 36000
+}

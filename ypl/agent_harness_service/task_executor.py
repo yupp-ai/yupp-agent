@@ -45,6 +45,7 @@ def _get_lit_session_url(session_id: str) -> str:
         base = "https://agent-streamlit-server-staging-451082535721.us-east4.run.app"
     return f"{base}/agent_harness_console?session_id={session_id}"
 
+
 logger = get_logger()
 
 # Error subtypes that indicate the task can be resumed (session state is preserved).
@@ -746,9 +747,7 @@ async def update_task_completion(
         if _notify_agent:
             creator_mention = _get_creator_mention(_notify_project.shared_state if _notify_project else None)
             short_sid = session_id[:8] if session_id else ""
-            session_suffix = (
-                f"\n📎 Session: <{_get_lit_session_url(session_id)}|{short_sid}>" if session_id else ""
-            )
+            session_suffix = f"\n📎 Session: <{_get_lit_session_url(session_id)}|{short_sid}>" if session_id else ""
             if success:
                 summary_line = f"\n{_slack_summary}" if _slack_summary else ""
                 notice = f"✅ *{_slack_title}*{creator_mention}{summary_line}{session_suffix}"

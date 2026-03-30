@@ -409,7 +409,7 @@ class AgentCreateRequest(BaseModel):
         default_factory=list,
         description="Agent types this agent can spawn via new_task",
     )
-    default_repo: str = Field("yupp-agent", description="Default git repo to clone")
+    default_repo: str = Field("yupp-mind", description="Default git repo to clone")
     sandbox: SandboxConfigRequest = Field(
         default_factory=SandboxConfigRequest,
         description="Sandbox configuration",
@@ -583,6 +583,25 @@ class ScheduleListResponse(BaseModel):
     """Response for GET /schedules."""
 
     schedules: list[ScheduleInfo]
+    count: int
+
+
+class ScheduleRunInfo(BaseModel):
+    """A single past run of a schedule."""
+
+    agent_schedule_run_id: str
+    run_number: int
+    status: str
+    started_at: str | None = None
+    completed_at: str | None = None
+    session_id: str | None = None
+    error: str | None = None
+
+
+class ScheduleRunsResponse(BaseModel):
+    """Response for GET /schedule/{id}/runs."""
+
+    runs: list[ScheduleRunInfo]
     count: int
 
 

@@ -3,10 +3,13 @@
 Delegates to shared helpers in ypl.mcp_common.scheduled_agent_call_helpers.
 """
 
+import uuid
 from typing import Any
 
-from ypl.backend.db import retry_db
-from ypl.db.agent_harness import AgentScheduleType
+from sqlmodel import col, select
+
+from ypl.backend.db import get_async_session_read_replica, retry_db
+from ypl.db.agent_harness import AgentScheduleRun, AgentScheduleType
 from ypl.mcp_common.scheduled_agent_call_helpers import (
     cancel_agent_schedule_by_id,
     compute_next_run_for_cron,
@@ -162,3 +165,33 @@ async def trigger_schedule(agent_schedule_id: str, caller_user_id: str) -> dict[
 async def cancel_schedule(agent_schedule_id: str, caller_user_id: str) -> dict[str, Any]:
     """Cancel an agent schedule."""
     return await cancel_agent_schedule_by_id(agent_schedule_id, caller_user_id)
+
+
+@retry_db
+async def list_schedule_runs(agent_schedule_id: str, limit: int = 20) -> list[dict[str, Any]]:
+    """List past runs for a schedule, most recent first."""
+    try:
+        schedule_uuid = uuid.UUID(agent_schedule_id)
+    except ValueError:
+        return []
+
+    async with get_async_session_read_replica() as session:
+        result = await session.exec(
+            select(AgentScheduleRun)
+            .where(col(AgentScheduleRun.agent_schedule_id) == schedule_uuid)
+            .order_by(col(AgentScheduleRun.run_number).desc())
+            .limit(limit)
+        )
+        runs = result.all()
+        return [
+            {
+                "agent_schedule_run_id": str(r.agent_schedule_run_id),
+                "run_number": r.run_number,
+                "status": r.status.value if r.status else "UNKNOWN",
+                "started_at": r.started_at.isoformat() if r.started_at else None,
+                "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+                "session_id": str(r.session_id) if r.session_id else None,
+                "error": r.error,
+            }
+            for r in runs
+        ]

@@ -1,0 +1,21 @@
+{
+  "display_name": "Router",
+  "description": "Lightweight router \u2014 one-shot classification with cheap model.",
+  "default_repo": "yupp-mind",
+  "max_turns": 1,
+  "max_budget_usd": 0.5,
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": false
+  },
+  "executor_config": {
+    "type": "raw",
+    "model": "anthropic/claude-haiku-4-5"
+  },
+  "tool_permissions": {
+    "*": "deny"
+  },
+  "max_steps": 1,
+  "streaming": false,
+  "timeout_s": 36000
+}

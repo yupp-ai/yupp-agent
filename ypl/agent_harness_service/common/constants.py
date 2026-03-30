@@ -68,7 +68,7 @@ def is_personal_agent(agent_name: str) -> bool:
 # Mirrors the SRE agent config — harnessed executor, full tool access, sandbox enabled.
 # Stored as a dict so it can be written to Agent.config JSONB in the DB.
 PERSONAL_AGENT_DEFAULT_CONFIG: dict[str, Any] = {
-    "default_repo": "yupp-agent",
+    "default_repo": "yupp-mind",
     "max_turns": 50,
     "max_budget_usd": 3.0,
     "has_mcp": True,
@@ -217,6 +217,12 @@ DEFAULT_MODEL_MINIMAX = "minimax/MiniMax-M2.5"
 SESSION_STATUS_ACTIVE = "ACTIVE"
 SESSION_STATUS_COMPLETED = "COMPLETED"
 SESSION_STATUS_STALE = "STALE"
+
+# Auto-stale sweep configuration
+# AHS_AUTO_STALE_INTERVAL_S: How often the background sweep runs (default 1800 = 30 min)
+# AHS_SESSION_STALE_TIMEOUT_HOURS: How long a session can be idle before being marked STALE (default 6)
+AHS_AUTO_STALE_INTERVAL_S = int(os.environ.get("AHS_AUTO_STALE_INTERVAL_S", "1800"))
+AHS_SESSION_STALE_TIMEOUT_HOURS = float(os.environ.get("AHS_SESSION_STALE_TIMEOUT_HOURS", "6"))
 
 # Scheduler configuration (for scheduled agent calls)
 # AHS_SCHEDULER_ENABLED: Set to "false" to disable the scheduler

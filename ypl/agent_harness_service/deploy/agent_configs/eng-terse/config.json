@@ -1,0 +1,22 @@
+{
+  "display_name": "Software Engineer",
+  "description": "Software engineer \u2014 concise, direct engineering assistance.",
+  "default_repo": "yupp-mind",
+  "max_turns": 200,
+  "max_budget_usd": 3.0,
+  "has_mcp": true,
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true
+  },
+  "executor_config": {
+    "type": "harnessed"
+  },
+  "tool_permissions": {
+    "*": "allow"
+  },
+  "allowed_subagents": [
+    "eng-worker"
+  ],
+  "timeout_s": 36000
+}

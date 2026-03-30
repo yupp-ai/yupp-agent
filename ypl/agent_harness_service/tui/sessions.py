@@ -197,9 +197,9 @@ class SessionsScreen(Screen[str | None]):
         yield Header()
         with Vertical(id="sessions-container"):
             yield Static("", id="sessions-filter-bar")
-            st: DataTable[str] = DataTable(id="session-list", cursor_type="row")
-            st.can_focus = True
-            yield st
+            session_table: DataTable = DataTable(id="session-list", cursor_type="row")
+            session_table.can_focus = True
+            yield session_table
             detail = RichLog(id="session-detail-pane", markup=True, wrap=True, auto_scroll=False)
             detail.can_focus = True
             yield detail
@@ -377,12 +377,7 @@ class SessionsScreen(Screen[str | None]):
     # --- Actions ---
 
     def action_pop_screen(self) -> None:
-        picker = self.query_one("#trigger-picker-overlay", OptionList)
-        if picker.display:
-            picker.display = False
-            self._picking_agent = False
-            self.query_one("#session-list").focus()
-            return
+        """ESC — always dismiss immediately back to chat."""
         self.dismiss(None)
 
     def action_attach_session(self) -> None:
