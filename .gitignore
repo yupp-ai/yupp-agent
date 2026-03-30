@@ -8,6 +8,7 @@
 
 !.vscode/settings.json
 !.vscode/extensions.json
+!.mcp.json
 !ypl/agent_harness_service/**/*.json
 
 # AHS compiled binaries (rebuild via services/command-handler/build.sh)
