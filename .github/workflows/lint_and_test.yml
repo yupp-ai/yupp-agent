@@ -100,6 +100,20 @@ jobs:
     needs: changes
     if: needs.changes.outputs.has_db_changes == 'true'
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_yadb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -113,6 +127,7 @@ jobs:
       - name: Run alembic tests
         env:
           ENVIRONMENT: test
+          ALEMBIC_TEST_DB_URL: postgresql://postgres:postgres@localhost:5432/test_yadb
         run: |
           if [ -f tests/conftest.py ]; then
             poetry run pytest --test-alembic tests/conftest.py tests/alembic/test_db_datetime_timezone.py
