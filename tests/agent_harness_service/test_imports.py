@@ -143,6 +143,13 @@ def test_projects_imports() -> None:
 ROOT_MODULES = [
     "ypl.agent_harness_service",
     "ypl.agent_harness_service.service",
+    "ypl.agent_harness_service.service.state",
+    "ypl.agent_harness_service.service.resolvers",
+    "ypl.agent_harness_service.service.message_helpers",
+    "ypl.agent_harness_service.service.run_task",
+    "ypl.agent_harness_service.service.session_lifecycle",
+    "ypl.agent_harness_service.service.queries",
+    "ypl.agent_harness_service.service.agent_crud",
     "ypl.agent_harness_service.server",
     "ypl.agent_harness_service.routes",
     "ypl.agent_harness_service.orchestration",
