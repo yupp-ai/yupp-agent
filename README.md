@@ -1,14 +1,46 @@
 # yupp-agent
 
-**Agent Cloud Platform** — the infrastructure that powers Yupp's AI agents. Build, deploy, and operate autonomous agents that live in Slack, run on schedules, manage projects, and expose tools via MCP.
+A multi-agent cloud platform for building, deploying, and operating autonomous AI agents at scale.
 
-Yupp's agents don't just answer questions — they investigate production incidents, review pull requests, run scheduled standups, and sit ready in Slack threads to help engineers move faster. yupp-agent is the platform behind all of it: a cohesive set of services for building, deploying, and operating autonomous agents at scale. Rather than treating agents as one-off scripts, it gives each one a persistent identity, long-term shared memory, sandboxed repo access, and the ability to spawn sub-agents for parallel work. A Slack bridge puts agents where your team already lives; an MCP server surfaces production tools inside every engineer's IDE; and a suite of operational dashboards keeps the whole system visible and debuggable.
+The platform lets teams scale AI usage from a handful of ad-hoc prompts to a fleet of specialized agents working in parallel. Each agent gets a persistent identity, long-term shared memory, sandboxed code execution, cron-based scheduling, and the ability to spawn sub-agents — running as a first-class service with full observability, not a script bolted onto an LLM. New agents are added through configuration, not code, so the system grows organically as teams discover new workflows worth automating.
 
-| Abbreviation | Service |
-|---|---|
-| **AHS** | Agent Harness Service — core agent runtime |
-| **SAG** | Slack Agent Gateway — Slack bot bridge |
-| **MCP** | Model Context Protocol Server — tool server for IDEs |
+yupp-agent is designed for orchestration at scale: manage dozens of agents from a single control plane, coordinate multi-step projects with dependency-aware task execution, and evolve agent capabilities over time through shared memory and iterative feedback. The architecture treats agents as long-lived collaborators that learn and improve, not disposable one-shot tools.
+
+Today, Yupp agents investigate production incidents, review pull requests, ship code, run daily standups, manage multi-week projects with Linear sync, and collaborate in Slack threads alongside the engineering team.
+
+## Architecture
+
+```
+                            Slack               REST API
+                              |                     |
+┌───────────────────────────────────────────────────────────────────┐
+│  Access Points                                                    │
+│    Slack Agent Gateway (SAG)            REST Endpoints             │
+│                                         (streaming / non-streaming)│
+├───────────────────────────────────────────────────────────────────┤
+│  Orchestration                                                    │
+│    Project & Task Management            Scheduled Jobs            │
+│    (Linear sync, dependency DAG)        (cron, health tracking)   │
+├───────────────────────────────────────────────────────────────────┤
+│  Agent Runtime (AHS)                                              │
+│    Harnessed Executors (Claude CLI)     Sub-agent Orchestration   │
+│    Raw Executors (direct API)           Session Management        │
+├───────────────────────────────────────────────────────────────────┤
+│  Skills & Tools                     Memories                      │
+│    Skills, CLAUDE.md instructions     Shared (GCS) + Private      │
+│    MCP Server (tool gateway)          Long-term, cross-session    │
+│    External + Local MCPs                                          │
+├───────────────────────────────────────────────────────────────────┤
+│  Workspace                          Permissions & Auth            │
+│    Sandbox (bubblewrap)               GitHub App OAuth            │
+│    Git worktrees, session history     API keys, RBAC              │
+├───────────────────────────────────────────────────────────────────┤
+│  Infrastructure                                                   │
+│    GCE VM (AHS)    Cloud Run (SAG, MCP, Streamlit)    Cloud SQL   │
+└───────────────────────────────────────────────────────────────────┘
+```
+
+Requests enter through Slack (via SAG) or direct REST API calls. The orchestration layer coordinates multi-step work — scheduling jobs, managing projects, and routing tasks with dependency awareness. Each agent runs inside the AHS runtime with its own sandbox, memory, and tool access. The MCP server sits in the tools layer, exposing platform capabilities (databases, logs, Slack, GitHub) to agents and engineers' IDEs alike. The platform is layered so that adding a new agent, tool, or access point doesn't require changes to the layers above or below it.
 
 ## Services
 
@@ -108,15 +140,110 @@ yupp-agent/
     └── deploy-ahs.yml          # VM deploy (AHS — no Docker needed)
 ```
 
+## Database Tools
+
+### Dump staging agentdb to local
+
+Pull a copy of the staging `agentdb` into your local Postgres for development and debugging. The script auto-fetches credentials from GCP Secret Manager, or prompts interactively if `gcloud` is unavailable.
+
+Prerequisites: `pg_dump` and `psql` on your PATH (`brew install libpq && brew link --force libpq` on macOS).
+
+Dumps are saved to `~/tmp/yadb-dumps/` with timestamps. Before restoring, the script asks for confirmation and then clears the local database (`DROP SCHEMA public CASCADE`).
+
+```bash
+# Dump staging + restore to local (asks before clearing local DB):
+python -m ypl.db.tools.dump_staging_to_local
+
+# Dump only, don't restore yet:
+python -m ypl.db.tools.dump_staging_to_local --no-restore
+
+# List saved dumps:
+python -m ypl.db.tools.dump_staging_to_local --list
+
+# Restore a saved dump by number (from --list):
+python -m ypl.db.tools.dump_staging_to_local --restore 3
+
+# Restore from an arbitrary file:
+python -m ypl.db.tools.dump_staging_to_local --restore-file ./my_dump.sql
+
+# Override the local destination:
+python -m ypl.db.tools.dump_staging_to_local --dest postgresql://user:pass@localhost:5432/mydb
+
+# Dump specific tables:
+python -m ypl.db.tools.dump_staging_to_local --tables agents,agent_sessions
+
+# Schema only / data only:
+python -m ypl.db.tools.dump_staging_to_local --schema-only
+python -m ypl.db.tools.dump_staging_to_local --data-only
+```
+
+Uses the **read replica** by default. Pass `--use-primary` to hit the primary instead. If GCP credentials aren't available, the script prompts for host/port/database/user/password interactively.
+
 ## Deployment
+
+### Overview
 
 | Service | Platform | Workflow | Docker? |
 |---------|----------|----------|---------|
-| AHS | GCE VM | `deploy-ahs.yml` | No — git checkout + systemctl restart |
-| SAG | Cloud Run | `deploy-servers.yml` | Yes — `agent-backend` image |
-| MCP | Cloud Run | `deploy-servers.yml` | Yes — `agent-backend` image |
-| Streamlit | Cloud Run | `deploy-servers.yml` | Yes — `agent-backend` image |
+| AHS | GCE VM (`us-east5-c`) | `deploy-servers-1-build-staging.yml` | No — git checkout + systemctl restart |
+| SAG | Cloud Run | `deploy-servers-1-build-staging.yml` / `deploy-servers-2-deploy.yml` | Yes — `agent-backend` image |
+| MCP | Cloud Run (2 instances: DevToken + OAuth) | `deploy-servers-1-build-staging.yml` / `deploy-servers-2-deploy.yml` | Yes — `agent-backend` image |
+| Streamlit | Cloud Run | `deploy-servers-1-build-staging.yml` / `deploy-servers-2-deploy.yml` | Yes — `agent-backend` image |
 
-Docker images are fully separate from yupp-mind:
-- Base: `gcr.io/yupp-llms/agent-base-py312`
-- App: `gcr.io/yupp-llms/agent-backend`
+### Docker images
+
+Fully separate from yupp-mind:
+- **Base:** `gcr.io/yupp-llms/agent-base-py312` — rebuilt automatically when `pyproject.toml` or `poetry.lock` change
+- **App:** `gcr.io/yupp-llms/agent-backend` — tagged `latest`, `release-candidate`, or `cherry-pick-release-candidate`
+
+### Staging
+
+Staging deploys run **automatically every 12 hours** via `deploy-servers-1-build-staging.yml`, or on manual trigger. The pipeline:
+
+1. Runs Alembic migrations on staging agentdb (admin credentials from `ym-postgres-connection-agentdb-staging-admin`)
+2. Rebuilds base image if `pyproject.toml`/`poetry.lock` changed
+3. Builds and pushes `agent-backend:latest`
+4. Deploys Cloud Run services (SAG, MCP, MCP OAuth, Streamlit)
+5. Deploys AHS via VM script (optional, manual trigger)
+
+### Production
+
+Production deploys use `deploy-servers-2-deploy.yml`:
+
+1. Triggered manually or via workflow_call with `environment: production`
+2. Deploys a **release candidate** image (`release-candidate` or `cherry-pick-release-candidate` tag)
+3. Runs Alembic migrations on production agentdb before deploying
+4. Deploys selected Cloud Run services and/or AHS
+
+### Secrets
+
+All secrets live in **GCP Secret Manager** (project: `yupp-llms`). Naming convention: `ym-<name>-<environment>`.
+
+```bash
+# Pull secrets for local development:
+python -m scripts.gcpsecrets pull-local-secrets
+
+# Add a new secret:
+python -m scripts.gcpsecrets add MY_SECRET --project yupp-llms
+
+# Update an existing secret:
+python -m scripts.gcpsecrets update-value MY_SECRET -e staging -e production
+```
+
+Secret-to-env-var mappings are defined in `data/secret-env-var-map.yml`.
+
+### Database migrations
+
+Alembic manages the `agentdb` schema. Migrations run automatically before each deployment.
+
+```bash
+# Create a new migration:
+alembic -c alembic.ini revision --autogenerate -m "description"
+
+# Run locally:
+alembic -c alembic.ini upgrade head
+```
+
+Cloud SQL instances:
+- **Staging:** `yupp-llms:us-east4:yupp-agent-dev`
+- **Production:** `yupp-llms:us-east4:yupp-agent-prod`
