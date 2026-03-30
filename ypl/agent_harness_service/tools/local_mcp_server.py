@@ -72,6 +72,7 @@ from ypl.agent_harness_service.tools.workspace_tools import (
     BinaryFileResult,
     edit_file,
     fetch_url,
+    get_command_handler_manager,
     list_files,
     read_file,
     run_command,
@@ -2017,7 +2018,7 @@ def mcp_grep(session_id: str, pattern: str, path: str | None = None, glob: str |
         "Output is truncated at 100KB. Timeout default is 120s (max 600s)."
     ),
 )
-def mcp_bash(session_id: str, command: str, timeout: int = 120) -> str:
+async def mcp_bash(session_id: str, command: str, timeout: int = 120) -> str:
     """Run a shell command.
 
     Args:
@@ -2027,6 +2028,14 @@ def mcp_bash(session_id: str, command: str, timeout: int = 120) -> str:
     """
     logger.info("MCP tool: bash", session_id=session_id, command_length=len(command), timeout=timeout)
     _validate_session_id(session_id)
+
+    # Use the BCH warm proxy when registered for this session — avoids a fresh
+    # bwrap spawn per call (~150–400 ms) and reuses the warm process (~5 ms).
+    manager = get_command_handler_manager(session_id)
+    if manager is not None:
+        return await manager.call_tool("Bash", {"command": command, "timeout": timeout})
+
+    # Fallback: original per-call bwrap path.
     stack = _session_sandbox.get(session_id)
     bwrap = stack[-1] if stack else False
     return run_command(session_id, command, timeout, bwrap=bwrap)
