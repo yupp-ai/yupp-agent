@@ -4,6 +4,8 @@ name: "Deploy Servers 2 - Deploy"
 # AHS is in deploy-ahs.yml (VM-based, no Docker).
 
 on:
+  schedule:
+    - cron: '0 * * * *'  # Every 1 hour — auto-deploy to production from release-candidate if changed
   workflow_call:
     inputs:
       environment:
@@ -107,11 +109,12 @@ on:
         default: false
 
 env:
-  ENVIRONMENT: ${{ github.event.inputs.environment || inputs.environment || 'staging' }}
+  # Scheduled runs default to production + release-candidate; other triggers use their inputs.
+  ENVIRONMENT: ${{ github.event.inputs.environment || inputs.environment || (github.event_name == 'schedule' && 'production') || 'staging' }}
   GCP_REGION: 'us-east4'
   GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-  IMAGE_NAME: "gcr.io/yupp-llms/agent-backend:${{ github.event.inputs.image_tag || inputs.image_tag || 'latest' }}"
-  IMAGE_TAG: ${{ github.event.inputs.image_tag || inputs.image_tag || 'latest' }}
+  IMAGE_NAME: "gcr.io/yupp-llms/agent-backend:${{ github.event.inputs.image_tag || inputs.image_tag || (github.event_name == 'schedule' && 'release-candidate') || 'latest' }}"
+  IMAGE_TAG: ${{ github.event.inputs.image_tag || inputs.image_tag || (github.event_name == 'schedule' && 'release-candidate') || 'latest' }}
   REGION: 'us-east4'
   GIT_BRANCH: ${{ github.ref_name }}
   BUILD_GIT_SHA: ${{ inputs.git_sha || github.sha }}
@@ -122,8 +125,70 @@ permissions:
   packages: read
 
 jobs:
+  # For scheduled runs, check if the release-candidate image differs from what's deployed in production.
+  # If identical, skip the deploy. Manual and workflow_call triggers bypass this check.
+  change-detection:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'schedule' }}
+    outputs:
+      has_changes: ${{ steps.check.outputs.has_changes }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: ./.github/actions/gcp-auth
+        with:
+          gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Configure Docker for GCR
+        run: gcloud auth configure-docker gcr.io --quiet
+
+      - name: Compare release-candidate image vs production
+        id: check
+        run: |
+          # Get the digest of the release-candidate image
+          RC_DIGEST=$(gcloud container images describe gcr.io/yupp-llms/agent-backend:release-candidate \
+            --format='value(image_summary.digest)' 2>/dev/null || echo "")
+
+          if [ -z "$RC_DIGEST" ]; then
+            echo "No release-candidate image found. Skipping deploy."
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Get the image currently deployed to mcp-server-production
+          PROD_IMAGE=$(gcloud run services describe mcp-server-production \
+            --region=us-east4 --platform=managed \
+            --format='value(spec.template.spec.containers[0].image)' 2>/dev/null || echo "")
+
+          if [ -z "$PROD_IMAGE" ]; then
+            echo "Could not read production service image. Deploying to be safe."
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Get the digest of the currently deployed production image
+          PROD_DIGEST=$(gcloud container images describe "$PROD_IMAGE" \
+            --format='value(image_summary.digest)' 2>/dev/null || echo "")
+
+          echo "Release-candidate digest: $RC_DIGEST"
+          echo "Production digest:        $PROD_DIGEST"
+
+          if [ "$RC_DIGEST" = "$PROD_DIGEST" ]; then
+            echo "Images are identical. No changes to deploy."
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          else
+            echo "Images differ. Proceeding with production deploy."
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          fi
+
   print-and-validate-inputs:
     runs-on: ubuntu-latest
+    needs: change-detection
+    # Run if: change-detection says deploy, OR it was skipped (manual/workflow_call trigger)
+    if: ${{ always() && (needs.change-detection.result == 'skipped' || needs.change-detection.outputs.has_changes == 'true') }}
     steps:
       - name: Print Workflow Inputs
         run: |
@@ -156,17 +221,17 @@ jobs:
   # Run Alembic migrations on agentdb before deploying services (production only; staging runs it in deploy-servers-1).
   alembic-upgrade:
     needs: [print-and-validate-inputs]
-    if: ${{ always() && needs.print-and-validate-inputs.result == 'success' && (github.event.inputs.environment || inputs.environment || 'staging') != 'staging' }}
+    if: ${{ always() && needs.print-and-validate-inputs.result == 'success' && (github.event_name == 'schedule' || (github.event.inputs.environment || inputs.environment || 'staging') != 'staging') }}
     uses: ./.github/workflows/apply_alembic_migration.yml
     secrets: inherit
     with:
-      environment: ${{ github.event.inputs.environment || inputs.environment || 'staging' }}
+      environment: ${{ github.event.inputs.environment || inputs.environment || (github.event_name == 'schedule' && 'production') || 'staging' }}
       revision_id: 'head'
 
   deploy-mcp-server:
     runs-on: ubuntu-latest
     needs: [print-and-validate-inputs, alembic-upgrade]
-    if: ${{ always() && needs.print-and-validate-inputs.result == 'success' && (needs.alembic-upgrade.result == 'success' || needs.alembic-upgrade.result == 'skipped') && ((github.event.inputs.deploy_all == 'true' || inputs.deploy_all) || (github.event.inputs.deploy_mcp_server == 'true' || inputs.deploy_mcp_server)) }}
+    if: ${{ always() && needs.print-and-validate-inputs.result == 'success' && (needs.alembic-upgrade.result == 'success' || needs.alembic-upgrade.result == 'skipped') && (github.event_name == 'schedule' || (github.event.inputs.deploy_all == 'true' || inputs.deploy_all) || (github.event.inputs.deploy_mcp_server == 'true' || inputs.deploy_mcp_server)) }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -265,7 +330,7 @@ jobs:
   deploy-mcp-server-oauth:
     runs-on: ubuntu-latest
     needs: [print-and-validate-inputs, alembic-upgrade]
-    if: ${{ always() && needs.print-and-validate-inputs.result == 'success' && (needs.alembic-upgrade.result == 'success' || needs.alembic-upgrade.result == 'skipped') && ((github.event.inputs.deploy_all == 'true' || inputs.deploy_all) || (github.event.inputs.deploy_mcp_server_oauth == 'true' || inputs.deploy_mcp_server_oauth)) }}
+    if: ${{ always() && needs.print-and-validate-inputs.result == 'success' && (needs.alembic-upgrade.result == 'success' || needs.alembic-upgrade.result == 'skipped') && (github.event_name == 'schedule' || (github.event.inputs.deploy_all == 'true' || inputs.deploy_all) || (github.event.inputs.deploy_mcp_server_oauth == 'true' || inputs.deploy_mcp_server_oauth)) }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -348,7 +413,7 @@ jobs:
   deploy-slack-agent-gateway:
     runs-on: ubuntu-latest
     needs: [print-and-validate-inputs, alembic-upgrade]
-    if: ${{ always() && needs.print-and-validate-inputs.result == 'success' && (needs.alembic-upgrade.result == 'success' || needs.alembic-upgrade.result == 'skipped') && ((github.event.inputs.deploy_all == 'true' || inputs.deploy_all) || (github.event.inputs.deploy_slack_agent_gateway == 'true' || inputs.deploy_slack_agent_gateway)) }}
+    if: ${{ always() && needs.print-and-validate-inputs.result == 'success' && (needs.alembic-upgrade.result == 'success' || needs.alembic-upgrade.result == 'skipped') && (github.event_name == 'schedule' || (github.event.inputs.deploy_all == 'true' || inputs.deploy_all) || (github.event.inputs.deploy_slack_agent_gateway == 'true' || inputs.deploy_slack_agent_gateway)) }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -442,7 +507,7 @@ jobs:
   deploy-streamlit-server:
     runs-on: ubuntu-latest
     needs: [print-and-validate-inputs, alembic-upgrade]
-    if: ${{ always() && needs.print-and-validate-inputs.result == 'success' && (needs.alembic-upgrade.result == 'success' || needs.alembic-upgrade.result == 'skipped') && ((github.event.inputs.deploy_all == 'true' || inputs.deploy_all) || (github.event.inputs.deploy_streamlit_server == 'true' || inputs.deploy_streamlit_server)) }}
+    if: ${{ always() && needs.print-and-validate-inputs.result == 'success' && (needs.alembic-upgrade.result == 'success' || needs.alembic-upgrade.result == 'skipped') && (github.event_name == 'schedule' || (github.event.inputs.deploy_all == 'true' || inputs.deploy_all) || (github.event.inputs.deploy_streamlit_server == 'true' || inputs.deploy_streamlit_server)) }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -521,7 +586,7 @@ jobs:
   deploy-ahs:
     runs-on: ubuntu-latest
     needs: [print-and-validate-inputs, alembic-upgrade]
-    if: ${{ always() && needs.print-and-validate-inputs.result == 'success' && (needs.alembic-upgrade.result == 'success' || needs.alembic-upgrade.result == 'skipped') && ((github.event.inputs.deploy_all == 'true' || inputs.deploy_all) || (github.event.inputs.deploy_ahs == 'true' || inputs.deploy_ahs)) }}
+    if: ${{ always() && needs.print-and-validate-inputs.result == 'success' && (needs.alembic-upgrade.result == 'success' || needs.alembic-upgrade.result == 'skipped') && (github.event_name == 'schedule' || (github.event.inputs.deploy_all == 'true' || inputs.deploy_all) || (github.event.inputs.deploy_ahs == 'true' || inputs.deploy_ahs)) }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
