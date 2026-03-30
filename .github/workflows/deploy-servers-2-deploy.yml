@@ -521,8 +521,7 @@ jobs:
   deploy-ahs:
     runs-on: ubuntu-latest
     needs: [print-and-validate-inputs, alembic-upgrade]
-    # AHS is opt-in only (not included in deploy_all) since it's VM-based and independent of Docker builds
-    if: ${{ always() && needs.print-and-validate-inputs.result == 'success' && (needs.alembic-upgrade.result == 'success' || needs.alembic-upgrade.result == 'skipped') && (github.event.inputs.deploy_ahs == 'true' || inputs.deploy_ahs) }}
+    if: ${{ always() && needs.print-and-validate-inputs.result == 'success' && (needs.alembic-upgrade.result == 'success' || needs.alembic-upgrade.result == 'skipped') && ((github.event.inputs.deploy_all == 'true' || inputs.deploy_all) || (github.event.inputs.deploy_ahs == 'true' || inputs.deploy_ahs)) }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
