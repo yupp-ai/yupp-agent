@@ -36,6 +36,7 @@ from ypl.agent_harness_service.tools.linear_sync.export_to_linear import (
     _parse_dt,
     _save_issue_ref,
     _upsert_linear_issue,
+    sync_task_links_to_linear,
 )
 from ypl.agent_harness_service.tools.linear_sync.import_from_linear import (
     _ahs_priority,
@@ -499,6 +500,12 @@ async def _apply_ahs_to_linear(
     update_result = (response.get("data") or {}).get("issueUpdate", {})
     if isinstance(update_result, dict) and not update_result.get("success"):
         raise RuntimeError(f"update_issue returned success=False for task '{task.title}'. Response: {response}")
+
+    # Sync PR and session links as attachments (best-effort)
+    try:
+        await sync_task_links_to_linear(task, issue_ref.linear_issue_id)
+    except Exception:
+        logger.warning("Failed to sync links for task", task_id=str(task.agent_task_id), exc_info=True)
 
     updated_ref = LinearIssueRef(
         linear_issue_id=issue_ref.linear_issue_id,

@@ -451,6 +451,30 @@ class LinearClient:
             variables["title"] = title
         return dict(self.post({"query": mutation, "variables": variables}))
 
+    def list_attachments(self, issue_id: str) -> dict[str, Any]:
+        """List URL attachments on a Linear issue.
+
+        Args:
+            issue_id: Issue UUID.
+
+        Returns:
+            GraphQL response with data.issue.attachments.nodes list.
+        """
+        query = """
+            query IssueAttachments($id: String!) {
+                issue(id: $id) {
+                    attachments {
+                        nodes {
+                            id
+                            title
+                            url
+                        }
+                    }
+                }
+            }
+        """
+        return dict(self.post({"query": query, "variables": {"id": issue_id}}))
+
     def get_project(self, project_id: str) -> dict[str, Any]:
         """Fetch a Linear project's metadata by ID.
 
