@@ -22,13 +22,18 @@ No API key is required — the webhook secret is the sole auth mechanism.
 import hashlib
 import hmac
 import json
+from pathlib import Path
+from typing import Any
 
+import sqlalchemy as sa
 from fastapi import APIRouter, HTTPException, Request
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import Response
 
 from ypl.agent_harness_service.common.types import SessionCreateRequest
 from ypl.agent_harness_service.service import create_session
 from ypl.backend.config import settings
+from ypl.backend.db import get_async_session
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -39,6 +44,121 @@ _REVIEWER_AGENT = "dual-reviewer"
 _WEBHOOK_TRIGGER = "webhook"
 _WEBHOOK_SOURCE = "github_webhook"
 
+# ---------------------------------------------------------------------------
+# Skill content (loaded once at import time from .agents/skills/ markdown files)
+# ---------------------------------------------------------------------------
+
+_SKILLS_DIR = Path(__file__).resolve().parent.parent.parent / ".agents" / "skills"
+
+
+def _load_skill(name: str) -> str:
+    """Read a skill SKILL.md, stripping the YAML frontmatter."""
+    path = _SKILLS_DIR / name / "SKILL.md"
+    if not path.exists():
+        return ""
+    text = path.read_text()
+    # Strip YAML frontmatter (--- ... ---)
+    if text.startswith("---"):
+        end = text.find("---", 3)
+        if end != -1:
+            text = text[end + 3 :].lstrip("\n")
+    return text.strip()
+
+
+_SKILL_GENERAL = _load_skill("review-pr-general")
+
+_REPO_SKILLS: dict[str, str] = {
+    "yupp-agent": _load_skill("review-pr-yupp-agent"),
+    "yupp-mind": _load_skill("review-pr-yupp-mind"),
+    "yupp-head": _load_skill("review-pr-yupp-head"),
+    "yupp-soul": _load_skill("review-pr-yupp-soul"),
+}
+
+
+def _build_review_prompt(
+    repo_short: str,
+    pr_number: int,
+    pr_url: str,
+    pr_title: str,
+    author: str,
+    head_ref: str,
+    base_ref: str,
+    action: str,
+    repo_full_name: str,
+) -> str:
+    """Compose the full review prompt from general + repo-specific skills."""
+    repo_skill = _REPO_SKILLS.get(repo_short, "")
+
+    prompt_parts = [
+        f"Review PR #{pr_number} in {repo_full_name}.\n",
+        f"PR URL: {pr_url}",
+        f"Title: {pr_title}",
+        f"Author: @{author}",
+        f"Branch: `{head_ref}` → `{base_ref}`",
+        f"Trigger: {action}",
+        "",
+        "--- REVIEW GUIDELINES ---",
+        "",
+        _SKILL_GENERAL,
+    ]
+
+    if repo_skill:
+        prompt_parts += [
+            "",
+            "--- REPO-SPECIFIC GUIDELINES ---",
+            "",
+            repo_skill,
+        ]
+
+    prompt_parts += [
+        "",
+        "--- END GUIDELINES ---",
+        "",
+        "Fetch the diff, run dual reviews, synthesize findings, and post the result as a GitHub comment on the PR.",
+    ]
+
+    return "\n".join(prompt_parts)
+
+
+# ---------------------------------------------------------------------------
+# PR ↔ review-session lookup
+# ---------------------------------------------------------------------------
+
+
+async def _find_existing_review_session(repo_full_name: str, pr_number: int) -> str | None:
+    """Find an active review session for the given PR via the session context JSONB.
+
+    Returns the session_id (as str) if found, else None.
+    """
+    sql = sa.text("""
+        SELECT s.agent_session_id::text
+        FROM agent_sessions s
+        JOIN agents a ON a.agent_id = s.agent_id
+        WHERE a.agent_id_str = :agent_id
+          AND s.status = 'ACTIVE'
+          AND s.context->>'repo_full_name' = :repo_full_name
+          AND (s.context->>'pr_number')::int = :pr_number
+        ORDER BY s.created_at DESC
+        LIMIT 1
+    """)
+    try:
+        async with get_async_session() as session:
+            db_session: AsyncSession = session
+            result = await db_session.execute(
+                sql,
+                {"agent_id": _REVIEWER_AGENT, "repo_full_name": repo_full_name, "pr_number": pr_number},
+            )
+            row = result.first()
+            return row[0] if row else None
+    except Exception:
+        logger.exception("github_webhook_session_lookup_failed", repo=repo_full_name, pr_number=pr_number)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Signature verification
+# ---------------------------------------------------------------------------
+
 
 def _verify_signature(payload: bytes, signature_header: str | None, secret: str) -> bool:
     """Return True iff the GitHub HMAC-SHA256 signature is valid."""
@@ -46,6 +166,11 @@ def _verify_signature(payload: bytes, signature_header: str | None, secret: str)
         return False
     expected = "sha256=" + hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
     return hmac.compare_digest(signature_header, expected)
+
+
+# ---------------------------------------------------------------------------
+# Webhook endpoint
+# ---------------------------------------------------------------------------
 
 
 @webhook_router.post("/github")
@@ -104,18 +229,33 @@ async def github_webhook(request: Request) -> Response:
     base_ref = pr.get("base", {}).get("ref", "")
     author = pr.get("user", {}).get("login", "")
 
-    message = (
-        f"Review PR #{pr_number} in {repo_full_name}.\n\n"
-        f"PR URL: {pr_url}\n"
-        f"Title: {pr_title}\n"
-        f"Author: @{author}\n"
-        f"Branch: `{head_ref}` → `{base_ref}`\n"
-        f"Trigger: {action}\n\n"
-        f"Fetch the diff, run dual reviews, synthesize findings, and post the "
-        f"result as a GitHub comment on the PR."
+    # Check if there is already an active review session for this PR.
+    existing_session_id = await _find_existing_review_session(repo_full_name, pr_number)
+    if existing_session_id:
+        logger.info(
+            "github_webhook_existing_session",
+            pr_number=pr_number,
+            repo=repo_full_name,
+            session_id=existing_session_id,
+        )
+        return Response(
+            content=json.dumps({"ok": True, "existing_session_id": existing_session_id}),
+            media_type="application/json",
+        )
+
+    message = _build_review_prompt(
+        repo_short=repo_short,
+        pr_number=pr_number,
+        pr_url=pr_url,
+        pr_title=pr_title,
+        author=author,
+        head_ref=head_ref,
+        base_ref=base_ref,
+        action=action,
+        repo_full_name=repo_full_name,
     )
 
-    context: dict = {
+    context: dict[str, Any] = {
         "repo": repo_short,
         "pr_number": pr_number,
         "pr_url": pr_url,
