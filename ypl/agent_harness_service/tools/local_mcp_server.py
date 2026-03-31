@@ -984,7 +984,7 @@ async def _resolve_slack_session_id(harness_session_id: str) -> str | None:
         "Only works for Slack sessions."
     ),
 )
-def request_feedback(session_id: str) -> dict[str, str]:
+async def request_feedback(session_id: str) -> dict[str, str]:
     """Request a feedback survey be posted to the Slack thread.
 
     Args:
@@ -999,7 +999,7 @@ def request_feedback(session_id: str) -> dict[str, str]:
     _validate_session_id(session_id)
 
     # Resolve harness UUID → Slack composite session_id (channel:thread_ts:app_id)
-    slack_session_id = asyncio.run(_resolve_slack_session_id(session_id))
+    slack_session_id = await _resolve_slack_session_id(session_id)
 
     if not slack_session_id:
         return {"status": "error", "error": "No Slack session found for this harness session"}
@@ -1009,7 +1009,7 @@ def request_feedback(session_id: str) -> dict[str, str]:
         return {"status": "error", "error": "Slack gateway not registered"}
 
     try:
-        success = asyncio.run(gateway.request_feedback(slack_session_id))
+        success = await gateway.request_feedback(slack_session_id)
         if not success:
             return {"status": "error", "error": "Gateway rejected feedback request"}
         return {"status": "ok"}
@@ -1030,7 +1030,7 @@ def request_feedback(session_id: str) -> dict[str, str]:
         "Set allow_free_text=True (default) to show a hint that the user can also type a custom answer."
     ),
 )
-def ask_question(
+async def ask_question(
     session_id: str,
     question_id: str,
     text: str,
@@ -1061,7 +1061,7 @@ def ask_question(
         return {"status": "error", "error": "choices must have at most 5 items (Slack limit)"}
 
     # Resolve harness UUID → Slack composite session_id (channel:thread_ts:app_id)
-    slack_session_id = asyncio.run(_resolve_slack_session_id(session_id))
+    slack_session_id = await _resolve_slack_session_id(session_id)
 
     if not slack_session_id:
         return {"status": "error", "error": "No Slack session found for this harness session"}
@@ -1074,14 +1074,12 @@ def ask_question(
     choice_dicts = [{"label": c, "value": c} for c in choices]
 
     try:
-        success = asyncio.run(
-            gateway.send_questionnaire(
-                session_id=slack_session_id,
-                question_id=question_id,
-                text=text,
-                choices=choice_dicts,
-                allow_free_text=allow_free_text,
-            )
+        success = await gateway.send_questionnaire(
+            session_id=slack_session_id,
+            question_id=question_id,
+            text=text,
+            choices=choice_dicts,
+            allow_free_text=allow_free_text,
         )
         if not success:
             return {"status": "error", "error": "Gateway rejected questionnaire request"}
