@@ -51,7 +51,7 @@ def upgrade() -> None:
                 """
                 UPDATE agents
                 SET config = COALESCE(config, '{}'::jsonb)
-                          || jsonb_build_object('required_tools', :tools::jsonb)
+                          || jsonb_build_object('required_tools', CAST(:tools AS jsonb))
                 WHERE name = :name
                 """
             ),
