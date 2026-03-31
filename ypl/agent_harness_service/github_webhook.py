@@ -67,7 +67,7 @@ def _load_skill(name: str) -> str:
     return text.strip()
 
 
-_SKILL_GENERAL = _load_skill("review-pr-general")
+_SKILL_GENERAL = _load_skill("review-pr")
 
 _REPO_SKILLS: dict[str, str] = {
     "yupp-agent": _load_skill("review-pr-yupp-agent"),

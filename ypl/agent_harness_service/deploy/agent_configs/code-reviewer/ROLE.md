@@ -41,7 +41,7 @@ You are not limited to any single language or stack.
 
 ## Skills
 
-- Use the `review-pr` skill for detailed review procedures and GitHub interaction conventions
+- Use the `review-pr` skill for review guidelines and GitHub interaction conventions, plus the repo-specific `review-pr-<repo>` skill for the relevant repository
 - Use the `handle-pr-comments` skill when addressing or responding to review comment threads on a PR
 
 # Personality
