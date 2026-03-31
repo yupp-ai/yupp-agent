@@ -60,6 +60,7 @@ from ypl.agent_harness_service.tools.linear_sync.types import (
     LinearProjectRef,
     SyncResult,
 )
+from ypl.backend.config import settings
 from ypl.backend.db import get_async_session, retry_db
 from ypl.backend.llm.constants import EMAIL_TO_LINEAR_NAME
 from ypl.backend.utils.linear import LinearClient
@@ -276,6 +277,12 @@ async def export_project_to_linear(
                 last_synced_at=now,
             )
             await _save_issue_ref(task_id_str, issue_ref)
+
+            # Sync PR and session links as attachments (best-effort)
+            try:
+                await sync_task_links_to_linear(task, linear_issue_id)
+            except Exception:
+                logger.warning("Failed to sync links for task", task_id=task_id_str, exc_info=True)
 
             if existing_ref:
                 result.updated += 1
@@ -903,3 +910,81 @@ def _parse_dt(value: str | None) -> datetime | None:
         return dt
     except ValueError:
         return None
+
+
+# ---------------------------------------------------------------------------
+# Link attachment sync
+# ---------------------------------------------------------------------------
+
+
+def _get_lit_console_url(session_id: str) -> str:
+    """Construct a Lit Console URL for a session."""
+    if settings.ENVIRONMENT == "production":
+        base = "https://agent-streamlit-server-production-451082535721.us-east4.run.app"
+    else:
+        base = "https://agent-streamlit-server-staging-451082535721.us-east4.run.app"
+    return f"{base}/agent_harness_console?session_id={session_id}"
+
+
+async def sync_task_links_to_linear(task: AgentTask, linear_issue_id: str) -> int:
+    """Attach PR and session links from an AHS task to its Linear issue.
+
+    Fetches existing attachments first to avoid duplicates.  Only attaches
+    links that are not already present (matched by URL).
+
+    Args:
+        task: The AHS task with ``result`` and ``assigned_session_ids``.
+        linear_issue_id: The Linear issue UUID to attach links to.
+
+    Returns:
+        Number of new links attached.
+    """
+    # Collect links to sync
+    links: list[tuple[str, str]] = []  # (url, title)
+
+    # PR link from result
+    result = task.result
+    if isinstance(result, dict):
+        pr_url = result.get("pr_url")
+        if isinstance(pr_url, str) and pr_url.startswith("https://"):
+            pr_num = ""
+            if "/pull/" in pr_url:
+                pr_num = pr_url.split("?")[0].split("#")[0].rstrip("/").split("/")[-1]
+            title = f"PR #{pr_num}" if pr_num.isdigit() else "Pull Request"
+            links.append((pr_url, title))
+
+    # Session links
+    links.extend((_get_lit_console_url(sid), f"Session {sid[:8]}") for sid in task.assigned_session_ids or [])
+
+    if not links:
+        return 0
+
+    client = LinearClient()
+
+    # Fetch existing attachments to deduplicate
+    existing_urls: set[str] = set()
+    try:
+        response = await asyncio.to_thread(client.list_attachments, linear_issue_id)
+        nodes = ((response.get("data") or {}).get("issue") or {}).get("attachments", {}).get("nodes", [])
+        existing_urls = {a.get("url", "") for a in nodes}
+    except Exception:
+        logger.warning("Failed to fetch existing attachments, may create duplicates", issue_id=linear_issue_id)
+
+    attached = 0
+    for url, title in links:
+        if url in existing_urls:
+            continue
+        try:
+            response = await asyncio.to_thread(client.attach_link, linear_issue_id, url, title)
+            attach_result = (response.get("data") or {}).get("attachmentLinkURL", {})
+            if attach_result.get("success"):
+                attached += 1
+            else:
+                logger.warning("attach_link returned success=False", issue_id=linear_issue_id, url=url)
+        except Exception:
+            logger.warning("Failed to attach link to Linear issue", issue_id=linear_issue_id, url=url, exc_info=True)
+
+    if attached > 0:
+        logger.info("Attached links to Linear issue", issue_id=linear_issue_id, count=attached)
+
+    return attached
