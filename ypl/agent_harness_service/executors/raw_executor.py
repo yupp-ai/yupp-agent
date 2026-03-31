@@ -446,6 +446,7 @@ async def _run_anthropic(
     temperature: float | None,
     max_tokens: int = 4096,
     enable_caching: bool = True,
+    model_parameters: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Call the Anthropic Messages API with optional prompt caching."""
     # System prompt: convert to content blocks with cache_control
@@ -477,6 +478,9 @@ async def _run_anthropic(
             kwargs["tools"] = tools
     if temperature is not None:
         kwargs["temperature"] = temperature
+    # Merge extra model parameters (e.g. extended thinking) into the request.
+    if model_parameters:
+        kwargs.update(model_parameters)
 
     response = await client.messages.create(**kwargs)
 
@@ -538,6 +542,7 @@ async def _run_openai(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]],
     temperature: float | None,
+    model_parameters: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Call the OpenAI Chat Completions API."""
     full_messages = [{"role": "system", "content": system_prompt}, *messages]
@@ -550,6 +555,9 @@ async def _run_openai(
         kwargs["tools"] = tools
     if temperature is not None:
         kwargs["temperature"] = temperature
+    # Merge extra model parameters (e.g. thinking mode) into the request.
+    if model_parameters:
+        kwargs["extra_body"] = model_parameters
 
     response = await client.chat.completions.create(**kwargs)
     choice = response.choices[0]
@@ -870,6 +878,7 @@ async def run_raw_executor(
                     tools=tool_schemas,
                     temperature=agent.temperature,
                     enable_caching=True,
+                    model_parameters=agent.model_parameters,
                 )
             elif is_openai_compatible(provider):
                 assert isinstance(client, openai.AsyncOpenAI)
@@ -881,6 +890,7 @@ async def run_raw_executor(
                     messages=messages,
                     tools=tool_schemas,
                     temperature=effective_temperature,
+                    model_parameters=agent.model_parameters,
                 )
             else:
                 return ExecutorResult(text=f"[ERROR] Unsupported provider: {provider}")

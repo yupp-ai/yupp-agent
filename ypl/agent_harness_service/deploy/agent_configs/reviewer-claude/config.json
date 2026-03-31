@@ -1,0 +1,22 @@
+{
+  "display_name": "Reviewer (Claude)",
+  "description": "Code reviewer using Claude Code CLI harness.",
+  "default_repo": "yupp-agent",
+  "max_turns": 100,
+  "max_budget_usd": 5.0,
+  "has_mcp": true,
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true
+  },
+  "executor_config": {
+    "type": "harnessed",
+    "harness": "claude-code-cli"
+  },
+  "tool_permissions": {
+    "*": "allow"
+  },
+  "allowed_subagents": [],
+  "streaming": false,
+  "timeout_s": 36000
+}

@@ -1,7 +1,7 @@
 """GitHub App webhook receiver for Agent Harness Service.
 
 Handles ``pull_request`` events from the yupp-agent-harness GitHub App and
-triggers the dual-reviewer agent on qualifying PRs.
+triggers the master-reviewer agent on qualifying PRs.
 
 Qualifying events
 -----------------
@@ -25,24 +25,26 @@ import json
 from pathlib import Path
 from typing import Any
 
-import sqlalchemy as sa
 from fastapi import APIRouter, HTTPException, Request
-from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import Response
 
 from ypl.agent_harness_service.common.types import SessionCreateRequest
 from ypl.agent_harness_service.service import create_session
 from ypl.backend.config import settings
-from ypl.backend.db import get_async_session
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
 
 webhook_router = APIRouter(prefix="/webhook", tags=["github-webhook"])
 
-_REVIEWER_AGENT = "dual-reviewer"
+_REVIEWER_AGENT = "master-reviewer"
 _WEBHOOK_TRIGGER = "webhook"
 _WEBHOOK_SOURCE = "github_webhook"
+
+# Redis key prefix for PR → session mapping.
+# Value is a JSON blob: {"session_id": "...", "review_round": N}
+_REDIS_PR_KEY_PREFIX = "ahs:webhook:pr-review:"
+_REDIS_PR_KEY_TTL_SECONDS = 30 * 24 * 3600  # 30 days
 
 # ---------------------------------------------------------------------------
 # Skill content (loaded once at import time from .agents/skills/ markdown files)
@@ -85,6 +87,7 @@ def _build_review_prompt(
     base_ref: str,
     action: str,
     repo_full_name: str,
+    review_round: int,
 ) -> str:
     """Compose the full review prompt from general + repo-specific skills."""
     repo_skill = _REPO_SKILLS.get(repo_short, "")
@@ -96,6 +99,7 @@ def _build_review_prompt(
         f"Author: @{author}",
         f"Branch: `{head_ref}` → `{base_ref}`",
         f"Trigger: {action}",
+        f"Review round: {review_round}",
         "",
         "--- REVIEW GUIDELINES ---",
         "",
@@ -114,45 +118,49 @@ def _build_review_prompt(
         "",
         "--- END GUIDELINES ---",
         "",
-        "Fetch the diff, run dual reviews, synthesize findings, and post the result as a GitHub comment on the PR.",
+        "Fetch the diff, review the PR, and post the result as a GitHub comment on the PR.",
     ]
 
     return "\n".join(prompt_parts)
 
 
 # ---------------------------------------------------------------------------
-# PR ↔ review-session lookup
+# Redis-backed PR ↔ session cache
 # ---------------------------------------------------------------------------
 
 
-async def _find_existing_review_session(repo_full_name: str, pr_number: int) -> str | None:
-    """Find an active review session for the given PR via the session context JSONB.
+def _pr_redis_key(repo_full_name: str, pr_number: int) -> str:
+    return f"{_REDIS_PR_KEY_PREFIX}{repo_full_name}#{pr_number}"
 
-    Returns the session_id (as str) if found, else None.
+
+async def _get_pr_review_state(repo_full_name: str, pr_number: int) -> dict[str, Any] | None:
+    """Load cached PR review state from Redis.
+
+    Returns dict with ``session_id`` (str) and ``review_round`` (int), or None.
     """
-    sql = sa.text("""
-        SELECT s.agent_session_id::text
-        FROM agent_sessions s
-        JOIN agents a ON a.agent_id = s.agent_id
-        WHERE a.agent_id_str = :agent_id
-          AND s.status = 'ACTIVE'
-          AND s.context->>'repo_full_name' = :repo_full_name
-          AND (s.context->>'pr_number')::int = :pr_number
-        ORDER BY s.created_at DESC
-        LIMIT 1
-    """)
     try:
-        async with get_async_session() as session:
-            db_session: AsyncSession = session
-            result = await db_session.execute(
-                sql,
-                {"agent_id": _REVIEWER_AGENT, "repo_full_name": repo_full_name, "pr_number": pr_number},
-            )
-            row = result.first()
-            return row[0] if row else None
+        from ypl.db.redis import get_redis_client
+
+        client = await get_redis_client()
+        raw = await client.get(_pr_redis_key(repo_full_name, pr_number))
+        if raw is None:
+            return None
+        return json.loads(raw)  # type: ignore[no-any-return]
     except Exception:
-        logger.exception("github_webhook_session_lookup_failed", repo=repo_full_name, pr_number=pr_number)
+        logger.exception("github_webhook_redis_get_failed", repo=repo_full_name, pr_number=pr_number)
         return None
+
+
+async def _set_pr_review_state(repo_full_name: str, pr_number: int, session_id: str, review_round: int) -> None:
+    """Store PR review state in Redis with TTL."""
+    try:
+        from ypl.db.redis import get_redis_client
+
+        client = await get_redis_client()
+        payload = json.dumps({"session_id": session_id, "review_round": review_round})
+        await client.set(_pr_redis_key(repo_full_name, pr_number), payload, ex=_REDIS_PR_KEY_TTL_SECONDS)
+    except Exception:
+        logger.exception("github_webhook_redis_set_failed", repo=repo_full_name, pr_number=pr_number)
 
 
 # ---------------------------------------------------------------------------
@@ -229,19 +237,9 @@ async def github_webhook(request: Request) -> Response:
     base_ref = pr.get("base", {}).get("ref", "")
     author = pr.get("user", {}).get("login", "")
 
-    # Check if there is already an active review session for this PR.
-    existing_session_id = await _find_existing_review_session(repo_full_name, pr_number)
-    if existing_session_id:
-        logger.info(
-            "github_webhook_existing_session",
-            pr_number=pr_number,
-            repo=repo_full_name,
-            session_id=existing_session_id,
-        )
-        return Response(
-            content=json.dumps({"ok": True, "existing_session_id": existing_session_id}),
-            media_type="application/json",
-        )
+    # Determine review round from Redis cache.
+    cached = await _get_pr_review_state(repo_full_name, pr_number)
+    review_round = (cached["review_round"] + 1) if cached else 1
 
     message = _build_review_prompt(
         repo_short=repo_short,
@@ -253,6 +251,7 @@ async def github_webhook(request: Request) -> Response:
         base_ref=base_ref,
         action=action,
         repo_full_name=repo_full_name,
+        review_round=review_round,
     )
 
     context: dict[str, Any] = {
@@ -265,6 +264,7 @@ async def github_webhook(request: Request) -> Response:
         "author": author,
         "event_action": action,
         "repo_full_name": repo_full_name,
+        "review_round": review_round,
     }
 
     create_req = SessionCreateRequest(
@@ -277,15 +277,21 @@ async def github_webhook(request: Request) -> Response:
 
     try:
         session_resp = await create_session(create_req)
+        session_id = str(session_resp.session_id)
+
+        # Cache the PR → session mapping in Redis.
+        await _set_pr_review_state(repo_full_name, pr_number, session_id, review_round)
+
         logger.info(
             "github_webhook_session_created",
             pr_number=pr_number,
             repo=repo_full_name,
             action=action,
-            session_id=str(session_resp.session_id),
+            session_id=session_id,
+            review_round=review_round,
         )
         return Response(
-            content=json.dumps({"ok": True, "session_id": str(session_resp.session_id)}),
+            content=json.dumps({"ok": True, "session_id": session_id, "review_round": review_round}),
             media_type="application/json",
         )
     except Exception as exc:

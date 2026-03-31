@@ -1,0 +1,30 @@
+{
+  "display_name": "Master Reviewer",
+  "description": "Review coordinator — orchestrates sub-reviewers on first round, self-reviews on subsequent rounds.",
+  "default_repo": "yupp-agent",
+  "max_turns": 200,
+  "max_budget_usd": 15.0,
+  "has_mcp": true,
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true
+  },
+  "executor_config": {
+    "type": "harnessed"
+  },
+  "tool_permissions": {
+    "*": "deny",
+    "@readonly": "allow",
+    "bash": "allow",
+    "route_model": "allow",
+    "new_task": "allow"
+  },
+  "allowed_subagents": [
+    "reviewer-claude",
+    "reviewer-codex",
+    "reviewer-glm",
+    "reviewer-kimi",
+    "reviewer-minimax"
+  ],
+  "timeout_s": 36000
+}

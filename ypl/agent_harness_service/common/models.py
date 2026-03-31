@@ -6,7 +6,7 @@ multi-provider executor configuration.
 
 import time
 import uuid
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -203,6 +203,10 @@ class AgentSpec(BaseModel):
     temperature: float | None = None
     streaming: bool = True
     additional_system_prompt: str | None = None
+    # Extra parameters passed directly to the LLM API (e.g. thinking mode).
+    # For OpenAI-compatible providers these are merged into the request kwargs.
+    # Example: {"thinking": {"type": "enabled"}} for GLM-5 / Kimi K2.5
+    model_parameters: dict[str, Any] | None = None
 
 
 class ExecutorResult(BaseModel):

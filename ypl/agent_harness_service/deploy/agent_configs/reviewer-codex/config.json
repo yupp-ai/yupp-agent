@@ -1,0 +1,21 @@
+{
+  "display_name": "Reviewer (Codex)",
+  "description": "Code reviewer using OpenAI Codex CLI harness.",
+  "default_repo": "yupp-agent",
+  "max_turns": 100,
+  "max_budget_usd": 5.0,
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true
+  },
+  "executor_config": {
+    "type": "harnessed",
+    "model": "codex-cli"
+  },
+  "tool_permissions": {
+    "*": "allow"
+  },
+  "allowed_subagents": [],
+  "streaming": false,
+  "timeout_s": 36000
+}
