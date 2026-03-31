@@ -1525,6 +1525,14 @@ def _render_task_detail(
         if pr_link := _get_pr_link_parts(task.result):
             st.markdown(f"**PR:** [{pr_link[1]}]({pr_link[0]})")
 
+        # Linear issue link
+        task_linear_ref = (task.task_data or {}).get("linear_ref") or {}
+        linear_identifier = task_linear_ref.get("linear_identifier", "")
+        linear_issue_id = task_linear_ref.get("linear_issue_id", "")
+        if linear_identifier and linear_issue_id:
+            linear_issue_url = f"https://linear.app/{_LINEAR_WORKSPACE_SLUG}/issue/{linear_identifier}"
+            st.markdown(f"**Linear:** [{linear_identifier}]({linear_issue_url})")
+
         st.divider()
 
         created_ago = _time_ago(task.created_at)
@@ -1699,7 +1707,7 @@ def _render_project_detail(project_id: uuid.UUID, task_id: str | None) -> None:
             linear_url = _linear_project_url(linear_ref["linear_project_id"])
             last_synced = linear_ref.get("last_synced_at", "")
             synced_label = f" (synced {last_synced[:10]})" if last_synced else ""
-            st.markdown(f"**Linear:** [{linear_ref['linear_project_id'][:8]}...]({linear_url}){synced_label}")
+            st.markdown(f"**Linear:** [{html.escape(project.name)}]({linear_url}){synced_label}")
         else:
             if st.button("Export to Linear", key=f"export_linear_{project.agent_project_id}"):
                 with st.spinner("Exporting project to Linear..."):
