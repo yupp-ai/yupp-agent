@@ -5,6 +5,7 @@ triggers the master-reviewer agent on qualifying PRs.
 
 Qualifying events
 -----------------
+- ``opened``            — PR created directly as ready for review (draft=False).
 - ``ready_for_review``  — PR just moved from draft to ready for review.
 - ``synchronize``       — new commits pushed to a PR that is already ready
                           (draft=False).
@@ -219,9 +220,14 @@ async def github_webhook(request: Request) -> Response:
     pr = payload.get("pull_request", {})
     is_draft = pr.get("draft", False)
 
-    # Only trigger on ready_for_review, or synchronize when PR is already ready.
+    # Only trigger on qualifying PR events:
+    # - opened (non-draft): PR created directly as ready for review
+    # - ready_for_review: PR moved from draft to ready
+    # - synchronize (non-draft): new commits pushed to a ready PR
     if action == "ready_for_review":
         pass  # always trigger
+    elif action == "opened" and not is_draft:
+        pass  # PR created directly as ready for review
     elif action == "synchronize" and not is_draft:
         pass  # new commits to an open, ready PR
     else:
