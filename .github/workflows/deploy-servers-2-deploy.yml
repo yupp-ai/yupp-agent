@@ -1,4 +1,15 @@
 name: "Deploy Servers 2 - Deploy"
+run-name: >-
+  ${{ (github.event.inputs.environment || inputs.environment || (github.event_name == 'schedule' && 'production') || 'staging') == 'production'
+    && 'Production' || 'Staging' }}: ${{ github.event.inputs.image_tag || inputs.image_tag || (github.event_name == 'schedule' && 'release-candidate') || 'latest' }} - ${{ (github.event.inputs.deploy_all == 'true' || inputs.deploy_all == 'true' || github.event_name == 'schedule') && 'all services'
+    || format('{0}{1}{2}{3}{4}',
+      (github.event.inputs.deploy_mcp_server == 'true' || inputs.deploy_mcp_server) && 'mcp ' || '',
+      (github.event.inputs.deploy_mcp_server_oauth == 'true' || inputs.deploy_mcp_server_oauth) && 'mcp-oauth ' || '',
+      (github.event.inputs.deploy_slack_agent_gateway == 'true' || inputs.deploy_slack_agent_gateway) && 'sag ' || '',
+      (github.event.inputs.deploy_streamlit_server == 'true' || inputs.deploy_streamlit_server) && 'streamlit ' || '',
+      (github.event.inputs.deploy_ahs == 'true' || inputs.deploy_ahs) && 'ahs' || ''
+    )
+  }}
 # Deploy Cloud Run services from an already-built image.
 # Can deploy to staging (redeploy without rebuild) or production.
 # AHS is in deploy-ahs.yml (VM-based, no Docker).
