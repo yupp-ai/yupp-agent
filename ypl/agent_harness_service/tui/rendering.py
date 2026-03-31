@@ -5,6 +5,7 @@ from typing import Any
 
 from rich.align import Align
 from rich.markdown import Markdown
+from rich.panel import Panel
 from rich.text import Text
 
 # ---------------------------------------------------------------------------
@@ -96,3 +97,22 @@ def _render_assistant_markdown(content: str) -> Markdown:
 def _render_status_line(markup: str) -> Align:
     """Render a dim status/meta line right-aligned."""
     return Align(Text.from_markup(f"[dim]{markup}[/dim]"), align="right")
+
+
+def _render_session_box(old_sid: str | None, new_sid: str, agent: str) -> Panel:
+    """Render a new-session notice in a left-aligned bordered box."""
+    body = Text()
+    body.append("Previous: ", style="dim")
+    body.append(str(old_sid) if old_sid else "None", style="dim italic")
+    body.append("\n")
+    body.append("New:      ", style="dim")
+    body.append(new_sid, style="dim bold")
+    body.append(f"  (agent: {agent})", style="dim")
+    return Panel(
+        body,
+        title="[dim]New session[/dim]",
+        title_align="left",
+        border_style="dim",
+        expand=False,
+        padding=(0, 1),
+    )
