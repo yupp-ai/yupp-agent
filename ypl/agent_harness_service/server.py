@@ -36,6 +36,7 @@ from ypl.agent_harness_service.core.streaming import init_streaming, shutdown_st
 from ypl.agent_harness_service.core.subagent_queue import register_delivery_callback
 from ypl.agent_harness_service.executors.codex_app_server_runner import shutdown_codex_servers
 from ypl.agent_harness_service.gateway import init_gateways
+from ypl.agent_harness_service.github_webhook import webhook_router
 from ypl.agent_harness_service.orchestration import route_model_stub, run_subagent
 from ypl.agent_harness_service.projects.project_routes import project_router
 from ypl.agent_harness_service.routes import AHSRequestLoggingMiddleware, router
@@ -578,6 +579,7 @@ app.add_middleware(
 app.add_middleware(AHSRequestLoggingMiddleware)
 router.include_router(project_router)
 router.include_router(yuppaste_router, tags=["yuppaste"], dependencies=[Depends(verify_api_key)])
+router.include_router(webhook_router)
 app.include_router(router)
 
 # Mount the MCP server as an HTTP sub-app (streamable-http transport).

@@ -435,6 +435,11 @@ class Settings(BaseSettings):
     # Required when "User-to-server token expiration" is enabled on the GitHub App
     AHS_GITHUB_APP_CLIENT_SECRET: str = ""
 
+    # Shared secret for verifying incoming GitHub App webhook signatures (X-Hub-Signature-256).
+    # Set this to the webhook secret configured on the GitHub App.
+    # Generate with: python -c "import secrets; print(secrets.token_hex(32))"
+    AHS_GITHUB_WEBHOOK_SECRET: str = ""
+
     def _get_gcp_secret(self, secret_name: str) -> str:
         """Retrieve secret from Google Cloud Secret Manager."""
 

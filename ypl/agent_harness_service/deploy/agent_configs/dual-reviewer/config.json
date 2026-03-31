@@ -15,6 +15,7 @@
   "tool_permissions": {
     "*": "deny",
     "@readonly": "allow",
+    "bash": "allow",
     "route_model": "allow",
     "new_task": "allow"
   },
