@@ -219,7 +219,7 @@ class TestClaudeAgentSdkRunnerLoop:
             ),
             patch("ypl.agent_harness_service.tools.mcp_client.MCPToolAccess", mock_mcp_cls),
             patch(
-                "ypl.agent_harness_service.executors.claude_agent_sdk_runner.get_command_handler_manager",
+                "ypl.agent_harness_service.tools.workspace_tools.get_command_handler_manager",
                 return_value=None,
             ),
             patch("ypl.agent_harness_service.executors.claude_agent_sdk_runner.save_session_history"),
@@ -259,7 +259,7 @@ class TestClaudeAgentSdkRunnerLoop:
             ),
             patch("ypl.agent_harness_service.tools.mcp_client.MCPToolAccess", mock_mcp_cls),
             patch(
-                "ypl.agent_harness_service.executors.claude_agent_sdk_runner.get_command_handler_manager",
+                "ypl.agent_harness_service.tools.workspace_tools.get_command_handler_manager",
                 return_value=None,
             ),
             patch("ypl.agent_harness_service.executors.claude_agent_sdk_runner.save_session_history"),
@@ -308,7 +308,7 @@ class TestClaudeAgentSdkRunnerLoop:
             ),
             patch("ypl.agent_harness_service.tools.mcp_client.MCPToolAccess", mock_mcp_cls),
             patch(
-                "ypl.agent_harness_service.executors.claude_agent_sdk_runner.get_command_handler_manager",
+                "ypl.agent_harness_service.tools.workspace_tools.get_command_handler_manager",
                 return_value=mock_bch,
             ),
             patch("ypl.agent_harness_service.executors.claude_agent_sdk_runner.save_session_history"),
@@ -362,7 +362,7 @@ class TestClaudeAgentSdkRunnerLoop:
             ),
             patch("ypl.agent_harness_service.tools.mcp_client.MCPToolAccess", mock_mcp_cls),
             patch(
-                "ypl.agent_harness_service.executors.claude_agent_sdk_runner.get_command_handler_manager",
+                "ypl.agent_harness_service.tools.workspace_tools.get_command_handler_manager",
                 return_value=mock_bch,
             ),
             patch("ypl.agent_harness_service.executors.claude_agent_sdk_runner.save_session_history"),
@@ -408,7 +408,7 @@ class TestClaudeAgentSdkRunnerLoop:
             ),
             patch("ypl.agent_harness_service.tools.mcp_client.MCPToolAccess", mock_mcp_cls),
             patch(
-                "ypl.agent_harness_service.executors.claude_agent_sdk_runner.get_command_handler_manager",
+                "ypl.agent_harness_service.tools.workspace_tools.get_command_handler_manager",
                 return_value=None,
             ),
             patch("ypl.agent_harness_service.executors.claude_agent_sdk_runner.save_session_history"),
@@ -448,7 +448,7 @@ class TestClaudeAgentSdkRunnerLoop:
             ),
             patch("ypl.agent_harness_service.tools.mcp_client.MCPToolAccess", mock_mcp_cls),
             patch(
-                "ypl.agent_harness_service.executors.claude_agent_sdk_runner.get_command_handler_manager",
+                "ypl.agent_harness_service.tools.workspace_tools.get_command_handler_manager",
                 return_value=None,
             ),
             patch("ypl.agent_harness_service.executors.claude_agent_sdk_runner.save_session_history", mock_save),
@@ -501,7 +501,7 @@ class TestCancellation:
             ),
             patch("ypl.agent_harness_service.tools.mcp_client.MCPToolAccess", mock_mcp_cls),
             patch(
-                "ypl.agent_harness_service.executors.claude_agent_sdk_runner.get_command_handler_manager",
+                "ypl.agent_harness_service.tools.workspace_tools.get_command_handler_manager",
                 return_value=None,
             ),
             patch("ypl.agent_harness_service.executors.claude_agent_sdk_runner.save_session_history"),
@@ -544,7 +544,7 @@ class TestCancellation:
             ),
             patch("ypl.agent_harness_service.tools.mcp_client.MCPToolAccess", mock_mcp_cls),
             patch(
-                "ypl.agent_harness_service.executors.claude_agent_sdk_runner.get_command_handler_manager",
+                "ypl.agent_harness_service.tools.workspace_tools.get_command_handler_manager",
                 return_value=None,
             ),
             patch("ypl.agent_harness_service.executors.claude_agent_sdk_runner.save_session_history", mock_save),
@@ -592,7 +592,7 @@ class TestCancellation:
             ),
             patch("ypl.agent_harness_service.tools.mcp_client.MCPToolAccess", mock_mcp_cls),
             patch(
-                "ypl.agent_harness_service.executors.claude_agent_sdk_runner.get_command_handler_manager",
+                "ypl.agent_harness_service.tools.workspace_tools.get_command_handler_manager",
                 return_value=None,
             ),
             patch("ypl.agent_harness_service.executors.claude_agent_sdk_runner.save_session_history"),
@@ -629,23 +629,23 @@ class TestConstantAndFactory:
         assert isinstance(runner, AgentRunner)
 
     def test_service_py_imports_harness_claude_sdk(self) -> None:
-        """service.py must import HARNESS_CLAUDE_SDK — checked via grep on the source."""
+        """run_task.py must import HARNESS_CLAUDE_SDK — checked via grep on the source."""
         import inspect
 
-        import ypl.agent_harness_service.service as svc_module
+        import ypl.agent_harness_service.service.run_task as run_task_module
 
-        src = inspect.getsource(svc_module)
+        src = inspect.getsource(run_task_module)
         assert "HARNESS_CLAUDE_SDK" in src, (
-            "service.py must import and use HARNESS_CLAUDE_SDK for the runner factory dispatch"
+            "run_task.py must import and use HARNESS_CLAUDE_SDK for the runner factory dispatch"
         )
 
     def test_service_py_skips_warm_pool_for_sdk(self) -> None:
-        """service.py pre-spawn condition must exclude HARNESS_CLAUDE_SDK."""
+        """session_lifecycle.py pre-spawn condition must exclude HARNESS_CLAUDE_SDK."""
         import inspect
 
-        import ypl.agent_harness_service.service as svc_module
+        import ypl.agent_harness_service.service.session_lifecycle as lifecycle_module
 
-        src = inspect.getsource(svc_module)
+        src = inspect.getsource(lifecycle_module)
         # The condition must appear somewhere in create_session pre-spawn logic
         assert "HARNESS_CLAUDE_SDK" in src
         # Rudimentary check that the guard appears near pre_spawn logic

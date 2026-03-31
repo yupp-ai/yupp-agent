@@ -68,7 +68,6 @@ from ypl.agent_harness_service.executors.runner import (
     RunContext,
 )
 from ypl.agent_harness_service.executors.system_prompt import build_system_prompt
-from ypl.agent_harness_service.tools.workspace_tools import get_command_handler_manager
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -542,6 +541,8 @@ class ClaudeAgentSdkRunner(AgentRunner):
                     # -------------------------------------------------------- #
                     # Dispatch tool calls                                       #
                     # -------------------------------------------------------- #
+                    from ypl.agent_harness_service.tools.workspace_tools import get_command_handler_manager
+
                     bch_manager = get_command_handler_manager(session_id)
                     tool_result_blocks: list[dict[str, Any]] = []
 
