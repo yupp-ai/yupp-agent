@@ -171,7 +171,7 @@ class CodexRunner(AgentRunner):
         chunks = [chunk async for chunk in proc.stderr]
         return b"".join(chunks).decode("utf-8", errors="replace")
 
-    async def run(self, prompt: str, context: RunContext) -> AsyncIterator[StreamEvent]:
+    async def _run_once(self, prompt: str, context: RunContext) -> AsyncIterator[StreamEvent]:
         """Spawn codex CLI and yield parsed stream events."""
         args = self._build_args(prompt, context)
         cwd = context.workspace
