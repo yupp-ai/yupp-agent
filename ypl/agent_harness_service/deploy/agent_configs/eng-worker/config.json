@@ -1,7 +1,7 @@
 {
   "display_name": "Software Engineer Worker",
   "description": "Software engineer worker \u2014 a specialized agent that helps with specific tasks.",
-  "default_repo": "yupp-mind",
+  "default_repo": "yupp-agent",
   "max_turns": 200,
   "max_budget_usd": 3.0,
   "has_mcp": true,

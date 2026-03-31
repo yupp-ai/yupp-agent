@@ -1,7 +1,7 @@
 {
   "display_name": "SRE",
   "description": "SRE agent \u2014 reliability, incident response, and infrastructure debugging.",
-  "default_repo": "yupp-mind",
+  "default_repo": "yupp-agent",
   "max_turns": 200,
   "max_budget_usd": 3.0,
   "has_mcp": true,

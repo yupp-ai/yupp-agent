@@ -1,7 +1,7 @@
 {
   "display_name": "Fixer",
   "description": "Code fixer \u2014 applies changes based on a review plan.",
-  "default_repo": "yupp-mind",
+  "default_repo": "yupp-agent",
   "max_turns": 200,
   "max_budget_usd": 5.0,
   "has_mcp": true,

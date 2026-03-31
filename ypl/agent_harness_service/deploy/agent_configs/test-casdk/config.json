@@ -1,7 +1,7 @@
 {
   "display_name": "Test Claude Agent SDK",
   "description": "Test agent for Claude Agent SDK executor.",
-  "default_repo": "yupp-mind",
+  "default_repo": "yupp-agent",
   "max_turns": 300,
   "max_budget_usd": 5.0,
   "sandbox": {

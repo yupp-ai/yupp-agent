@@ -51,6 +51,8 @@ _COST_PER_M_TOKENS: dict[str, dict[str, float]] = {
     # MiniMax — cache_read = 0.1x input, cache_write = 1.25x input
     "MiniMax-M2.5": {"input": 0.3, "output": 1.2, "cache_read": 0.03, "cache_write": 0.375},
     "MiniMax-M2.1": {"input": 0.3, "output": 1.2, "cache_read": 0.03, "cache_write": 0.375},
+    # Moonshot — cache_read (cache hit) = $0.10/M, input (cache miss) = $0.60/M, output = $3.00/M
+    "kimi-k2.5": {"input": 0.60, "output": 3.0, "cache_read": 0.10},
 }
 
 # Context window limits (for overflow detection)
@@ -64,6 +66,7 @@ _CONTEXT_LIMITS: dict[str, int] = {
     "glm-5": 128_000,
     "MiniMax-M2.5": 1_000_000,
     "MiniMax-M2.1": 1_000_000,
+    "kimi-k2.5": 262_144,
 }
 
 _RESERVED_BUFFER = 4_000  # Tokens reserved for response
@@ -587,12 +590,21 @@ async def _run_openai(
             reasoning = getattr(completion_details, "reasoning_tokens", 0)
             usage["reasoning_tokens"] = reasoning or 0
 
-    return {
+    result: dict[str, Any] = {
         "text": message.content or "",
         "tool_calls": tool_calls,
         "finish_reason": choice.finish_reason,  # "stop", "tool_calls", etc.
         "usage": usage,
     }
+
+    # Kimi k2.5 (and similar thinking models) return reasoning_content on the
+    # message object.  The API requires it to be echoed back in subsequent
+    # assistant messages, otherwise it rejects the request with a 400 error.
+    reasoning_content = getattr(message, "reasoning_content", None)
+    if reasoning_content:
+        result["reasoning_content"] = reasoning_content
+
+    return result
 
 
 def _create_client(provider: str) -> anthropic.AsyncAnthropic | openai.AsyncOpenAI:
@@ -988,7 +1000,10 @@ async def run_raw_executor(
                 if raw_content:
                     messages.append({"role": "assistant", "content": raw_content})
             elif is_openai_compatible(provider):
-                messages.append({"role": "assistant", "content": final_text or ""})
+                final_msg: dict[str, Any] = {"role": "assistant", "content": final_text or ""}
+                if response.get("reasoning_content"):
+                    final_msg["reasoning_content"] = response["reasoning_content"]
+                messages.append(final_msg)
             break
 
         # Tool calls present — emit any intermediate text before executing tools.
@@ -1016,6 +1031,9 @@ async def run_raw_executor(
                 assistant_msg["content"] = response["text"]
             else:
                 assistant_msg["content"] = None
+            # Kimi k2.5 thinking models require reasoning_content echoed back
+            if response.get("reasoning_content"):
+                assistant_msg["reasoning_content"] = response["reasoning_content"]
             if tool_calls:
                 assistant_msg["tool_calls"] = [
                     {
