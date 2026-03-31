@@ -14,7 +14,6 @@ Usage:
 """
 
 from __future__ import annotations
-
 import argparse
 import asyncio
 import json
@@ -78,7 +77,7 @@ class CodexAppServer:
             self.proc.kill()
             try:
                 await asyncio.wait_for(self.proc.wait(), timeout=5.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
 
 
@@ -118,10 +117,13 @@ class WSClient:
             # Skip notifications during RPC
 
     async def initialize(self) -> dict[str, Any]:
-        result = await self.rpc("initialize", {
-            "clientInfo": {"name": "local-test", "version": "1.0"},
-            "capabilities": {"experimentalApi": False, "optOutNotificationMethods": []},
-        })
+        result = await self.rpc(
+            "initialize",
+            {
+                "clientInfo": {"name": "local-test", "version": "1.0"},
+                "capabilities": {"experimentalApi": False, "optOutNotificationMethods": []},
+            },
+        )
         assert self.ws is not None
         await self.ws.send_str(json.dumps({"method": "initialized"}))
         return result
@@ -139,10 +141,13 @@ class WSClient:
 
     async def start_turn(self, prompt: str) -> dict[str, Any]:
         assert self.thread_id is not None
-        return await self.rpc("turn/start", {
-            "threadId": self.thread_id,
-            "input": [{"type": "text", "text": prompt, "text_elements": []}],
-        })
+        return await self.rpc(
+            "turn/start",
+            {
+                "threadId": self.thread_id,
+                "input": [{"type": "text", "text": prompt, "text_elements": []}],
+            },
+        )
 
     async def stream_turn(self) -> list[dict[str, Any]]:
         """Stream notifications until turn/completed. Auto-accepts server requests."""
@@ -151,7 +156,7 @@ class WSClient:
         for _ in range(200):
             try:
                 raw = await asyncio.wait_for(self.ws.receive(), timeout=MSG_TIMEOUT_S)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 events.append({"_error": "TIMEOUT"})
                 break
             if raw.type != aiohttp.WSMsgType.TEXT:
@@ -300,8 +305,7 @@ async def test_mcp_tool_call(client: WSClient) -> TestResult:
     t0 = time.monotonic()
     try:
         await client.start_turn(
-            "Use the search_agent_memory tool to search for 'test-integration-check'. "
-            "Report the raw result."
+            "Use the search_agent_memory tool to search for 'test-integration-check'. Report the raw result."
         )
         events = await client.stream_turn()
         r.duration_s = time.monotonic() - t0
@@ -318,9 +322,9 @@ async def test_mcp_tool_call(client: WSClient) -> TestResult:
 
         # Verify the MCP tool completed (not failed)
         mcp_completed = [
-            e for e in events
-            if e.get("method") == "item/completed"
-            and e.get("params", {}).get("item", {}).get("type") == "mcpToolCall"
+            e
+            for e in events
+            if e.get("method") == "item/completed" and e.get("params", {}).get("item", {}).get("type") == "mcpToolCall"
         ]
         assert mcp_completed, "No mcpToolCall completion found"
         status = mcp_completed[0].get("params", {}).get("item", {}).get("status", "")
@@ -382,8 +386,10 @@ async def main(skip_mcp: bool = False) -> int:
     has_mcp_token = bool(os.environ.get("YUPPSTER_MCP_TOKEN"))
     if not skip_mcp and has_mcp_token:
         mcp_args = [
-            "-c", 'mcp_servers.yuppster-mcp-server.url="https://yuppster-mcp.yupp.ai/mcp"',
-            "-c", 'mcp_servers.yuppster-mcp-server.bearer_token_env_var="YUPPSTER_MCP_TOKEN"',
+            "-c",
+            'mcp_servers.yuppster-mcp-server.url="https://yuppster-mcp.yupp.ai/mcp"',
+            "-c",
+            'mcp_servers.yuppster-mcp-server.bearer_token_env_var="YUPPSTER_MCP_TOKEN"',
         ]
     elif not skip_mcp and not has_mcp_token:
         print("WARNING: YUPPSTER_MCP_TOKEN not set — skipping MCP tests")
@@ -443,6 +449,7 @@ async def main(skip_mcp: bool = False) -> int:
     except Exception as e:
         print(f"\nFATAL: Unhandled error: {e}")
         import traceback
+
         traceback.print_exc()
     finally:
         await server.stop()

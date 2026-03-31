@@ -69,7 +69,6 @@ _scheduler_task: asyncio.Task | None = None
 _auto_stale_task: asyncio.Task | None = None
 
 
-
 # Create the MCP sub-app once so we can wire its lifespan into the main app.
 # json_response=True: return application/json instead of SSE-wrapped responses.
 # stateless_http=True: no server-side session tracking (session_id is a tool param).

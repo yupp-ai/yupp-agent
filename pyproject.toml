@@ -213,6 +213,7 @@ cache_dir = ".mypy_cache"
 incremental = true
 
 [tool.pytest.ini_options]
+testpaths = ["tests"]
 filterwarnings = [
     "ignore::DeprecationWarning:importlib.*:",
     "ignore:Using extra keyword arguments on `Field` is deprecated:DeprecationWarning",
