@@ -26,6 +26,10 @@ Bidirectional sync:
 * ``sync_project_with_linear`` — synchronise an AHS project with its linked
   Linear project in the specified direction (``'bidirectional'``,
   ``'linear_to_ahs'``, or ``'ahs_to_linear'``).
+
+Attachment tools:
+* ``attach_link_to_linear_issue`` — attach a URL link (PR, session, etc.) to
+  a Linear issue as a sidebar attachment.
 """
 
 from __future__ import annotations
@@ -773,4 +777,57 @@ async def sync_project_with_linear(
         return {"success": False, "error": str(exc)}
     except Exception as exc:
         logger.error("sync_project_with_linear: unexpected error", error=str(exc), exc_info=True)
+        return {"success": False, "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# Attachment tools
+# ---------------------------------------------------------------------------
+
+
+@mcp_server.tool(
+    name="attach_link_to_linear_issue",
+    description=(
+        "Attach a URL link to a Linear issue. The link appears in the issue sidebar "
+        "as a clickable attachment. Use this to link PRs, session consoles, or other "
+        "external resources to a Linear issue. Requires the Linear issue identifier "
+        "(e.g., 'YUP-123') or UUID."
+    ),
+)
+async def attach_link_to_linear_issue(
+    issue_id: str,
+    url: str,
+    title: str | None = None,
+) -> dict[str, Any]:
+    """Attach a URL link to a Linear issue."""
+    try:
+        client = LinearClient()
+        response = await asyncio.to_thread(client.attach_link, issue_id, url, title)
+
+        errors = response.get("errors")
+        if errors:
+            error_msg = errors[0].get("message", str(errors))
+            logger.warning("attach_link_to_linear_issue: API error", error=error_msg)
+            return {"success": False, "error": error_msg}
+
+        result = (response.get("data") or {}).get("attachmentLinkURL", {})
+        if not result.get("success"):
+            return {"success": False, "error": "attachmentLinkURL returned success=False"}
+
+        attachment = result.get("attachment", {})
+        logger.info(
+            "Attached link to Linear issue",
+            issue_id=issue_id,
+            attachment_id=attachment.get("id"),
+            url=url,
+        )
+        return {
+            "success": True,
+            "attachment_id": attachment.get("id"),
+            "title": attachment.get("title"),
+            "url": attachment.get("url"),
+        }
+
+    except Exception as exc:
+        logger.error("attach_link_to_linear_issue: unexpected error", error=str(exc), exc_info=True)
         return {"success": False, "error": str(exc)}

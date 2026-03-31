@@ -421,6 +421,36 @@ class LinearClient:
 
         return dict(self.post({"query": mutation, "variables": {"id": issue_id, "input": issue_input}}))
 
+    def attach_link(self, issue_id: str, url: str, title: str | None = None) -> dict[str, Any]:
+        """Attach a URL link to a Linear issue.
+
+        Creates a link attachment visible in the issue sidebar.
+
+        Args:
+            issue_id: Issue ID or identifier (e.g., 'abc123' or 'ENG-123').
+            url: The URL to attach.
+            title: Display title for the link. Defaults to the URL.
+
+        Returns:
+            GraphQL response with attachmentLinkURL.success and attachment details.
+        """
+        mutation = """
+            mutation AttachmentLinkURL($issueId: String!, $url: String!, $title: String) {
+                attachmentLinkURL(issueId: $issueId, url: $url, title: $title) {
+                    success
+                    attachment {
+                        id
+                        title
+                        url
+                    }
+                }
+            }
+        """
+        variables: dict[str, Any] = {"issueId": issue_id, "url": url}
+        if title is not None:
+            variables["title"] = title
+        return dict(self.post({"query": mutation, "variables": variables}))
+
     def get_project(self, project_id: str) -> dict[str, Any]:
         """Fetch a Linear project's metadata by ID.
 
