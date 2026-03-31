@@ -504,7 +504,7 @@ class CodexAppServerRunner(AgentRunner):
 
     # ── main run loop ─────────────────────────────────────────────────────
 
-    async def run(self, prompt: str, context: RunContext) -> AsyncIterator[StreamEvent]:
+    async def _run_once(self, prompt: str, context: RunContext) -> AsyncIterator[StreamEvent]:
         """Start/reuse a codex app-server, run one turn, yield StreamEvents."""
         model_label = self.config.model or "(codex default)"
         start_time = time.monotonic()

@@ -300,7 +300,7 @@ class ClaudeAgentSdkRunner(AgentRunner):
     def __init__(self, agent_config: AgentConfig) -> None:
         self.config = agent_config
 
-    async def run(self, prompt: str, context: RunContext) -> AsyncIterator[StreamEvent]:
+    async def _run_once(self, prompt: str, context: RunContext) -> AsyncIterator[StreamEvent]:
         """Run the agent loop and yield stream events.
 
         Implements the full agentic loop:
