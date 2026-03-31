@@ -54,6 +54,7 @@ from ypl.agent_harness_service.service.resolvers import (
     _download_attachments_to_workspace,
     _has_inflight_turn,
     _load_agent_config_with_db_fallback,
+    _mark_session_completed,
     _next_turn_number,
     _prepend_attachment_paths,
     _resolve_agent,
@@ -427,6 +428,28 @@ async def deliver_subagent_result_to_parent(parent_session_id: str, result: "Sub
         return
 
     creator_user_id = agent_session_data.get("creator_user_id")
+    trigger = agent_session_data.get("trigger")
+
+    # For non-interactive triggers (CRON/TASK/API/WEBHOOK), skip re-injection entirely.
+    # The result was already delivered inline to the Claude CLI via the MCP tool return
+    # during the parent's turn 1. Re-injecting creates a spurious turn 2 that:
+    #  (a) runs without a BCH manager (torn down after CRON turn 1), and
+    #  (b) is silently dropped on AHS process restart, leaving the session ACTIVE forever.
+    # This is the "hercule-poirot problem" (session 36cc6d2b, 2026-03-30).
+    _NON_INTERACTIVE_TRIGGERS = {
+        AgentSessionTrigger.CRON.value,
+        AgentSessionTrigger.TASK.value,
+        AgentSessionTrigger.API.value,
+        AgentSessionTrigger.WEBHOOK.value,
+    }
+    if trigger in _NON_INTERACTIVE_TRIGGERS:
+        logger.info(
+            "Skipping subagent result re-injection for non-interactive session",
+            parent_session_id=parent_session_id,
+            trigger=trigger,
+            agent_type=result.agent_type,
+        )
+        return
 
     logger.info(
         "Delivering subagent result to parent",
@@ -1317,6 +1340,10 @@ async def stop_session(session_id: str) -> SessionStopResponse:
             error_type=AgentSessionMessageErrorType.NONE,
         )
         session.add(system_msg)
+        # Transition session to COMPLETED so it doesn't linger as ACTIVE.
+        # Without this, the session stays ACTIVE indefinitely until the auto-stale
+        # sweep marks it STALE 6+ hours later (bab9adf8 pattern).
+        await _mark_session_completed(session, agent_session_id)
         await session.commit()
 
     # Clean up session-specific state (auth terminal states, current user tracking,
