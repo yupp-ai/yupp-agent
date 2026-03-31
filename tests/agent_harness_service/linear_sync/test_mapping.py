@@ -27,19 +27,31 @@ from tests.agent_harness_service.linear_sync.conftest import TEAM_STATUSES
 
 
 class TestOmittedStatusMappings:
-    """PENDING and IN_REVIEW are intentionally not in AHS_TO_LINEAR_STATUS."""
+    """PENDING is intentionally not in AHS_TO_LINEAR_STATUS."""
 
     def test_pending_not_in_mapping(self) -> None:
         assert "PENDING" not in AHS_TO_LINEAR_STATUS
 
-    def test_in_review_not_in_mapping(self) -> None:
-        assert "IN_REVIEW" not in AHS_TO_LINEAR_STATUS
-
     def test_map_ahs_status_pending_returns_none(self) -> None:
         assert map_ahs_status_to_linear("PENDING", TEAM_STATUSES) is None
 
-    def test_map_ahs_status_in_review_returns_none(self) -> None:
-        assert map_ahs_status_to_linear("IN_REVIEW", TEAM_STATUSES) is None
+
+class TestInReviewMapping:
+    """IN_REVIEW maps to the 'started' type, preferring 'In Review' state."""
+
+    def test_in_review_in_mapping(self) -> None:
+        assert AHS_TO_LINEAR_STATUS["IN_REVIEW"] == "started"
+
+    def test_in_review_prefers_in_review_state(self) -> None:
+        statuses_with_in_review = [
+            *TEAM_STATUSES,
+            {"id": "state-in-review", "type": "started", "name": "In Review"},
+        ]
+        assert map_ahs_status_to_linear("IN_REVIEW", statuses_with_in_review) == "state-in-review"
+
+    def test_in_review_falls_back_to_first_started(self) -> None:
+        # When no "In Review" state exists, falls back to first "started" state
+        assert map_ahs_status_to_linear("IN_REVIEW", TEAM_STATUSES) == "state-in-progress"
 
 
 # ---------------------------------------------------------------------------
@@ -147,9 +159,10 @@ class TestDuplicateStateTypes:
 
     def test_team_with_only_cancelled_states(self) -> None:
         statuses = [{"id": "c1", "type": "cancelled", "name": "Cancelled"}]
-        assert map_ahs_status_to_linear("FAILED", statuses) == "c1"
         assert map_ahs_status_to_linear("CANCELLED", statuses) == "c1"
         assert map_ahs_status_to_linear("READY", statuses) is None
+        # FAILED maps to "started", not "cancelled"
+        assert map_ahs_status_to_linear("FAILED", statuses) is None
 
 
 # ---------------------------------------------------------------------------
