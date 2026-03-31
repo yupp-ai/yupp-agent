@@ -1029,7 +1029,11 @@ def request_feedback(session_id: str) -> dict[str, str]:
         "Key differences: bold is *text*, italic is _text_, links are <url|label>, "
         "code blocks use ``` with no language tag, no headings (#), no tables, no numbered lists. "
         "Pass project_id to auto-route to the project's updates thread — no manual thread_ts lookup needed. "
-        "If channel is also omitted, the project's slack_channel is used automatically."
+        "If channel is also omitted, the project's slack_channel is used automatically. "
+        "NOTE: In Slack sessions, your text output is automatically relayed to Slack by the harness — "
+        "only call this tool when explicitly instructed to post to a specific channel or thread. "
+        "If you do use it, do not also produce text output with the same content — the harness will relay both, "
+        "causing the user to see duplicates."
     ),
 )
 async def send_slack_message(
