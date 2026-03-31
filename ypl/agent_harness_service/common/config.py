@@ -88,6 +88,14 @@ class AgentConfig(BaseModel):
     # Used by DB-only agents (e.g., personal agents created via create_agent MCP tool).
     additional_system_prompt: str | None = None
 
+    # Deferred MCP tools to pre-load at session start via a Phase 0 ToolSearch call.
+    # When non-empty, build_system_prompt() injects a "## Phase 0: Load Tools" section
+    # that instructs the agent to call ToolSearch(query="select:<tools>") as its very
+    # first action — eliminating per-session tool-discovery turns.
+    # Format: list of fully-qualified tool names, e.g.
+    #   ["mcp__yuppster-mcp-server__query_agentdb", "mcp__harness__send_slack_message"]
+    required_tools: list[str] = Field(default_factory=list)
+
 
 _SAFE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
@@ -186,6 +194,7 @@ def load_agent_config(name: str) -> AgentConfig | None:
         timeout_s=raw.get("timeout_s", DEFAULT_TIMEOUT_S),
         allowed_subagents=raw.get("allowed_subagents", []),
         allowed_gateways=raw.get("allowed_gateways", ["*"]),
+        required_tools=raw.get("required_tools", []),
     )
 
     logger.info("Loaded agent config", name=name, model=config.model, max_turns=config.max_turns)
@@ -238,6 +247,7 @@ def load_agent_config_from_db(agent: Any) -> AgentConfig:
         allowed_subagents=raw.get("allowed_subagents", []),
         allowed_gateways=raw.get("allowed_gateways", ["*"]),
         additional_system_prompt=agent.additional_system_prompt,
+        required_tools=raw.get("required_tools", []),
     )
 
 

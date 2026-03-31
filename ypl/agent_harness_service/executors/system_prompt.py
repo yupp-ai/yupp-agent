@@ -47,6 +47,19 @@ def _read_skill_content(skill_name: str) -> str | None:
 
 SESSION_CONTEXT_TEMPLATE = "Your harness session ID is {session_id} and your agent name is {name}.\n"
 
+# Template for Phase 0 tool pre-loading instruction.
+# Placed at the very end of the system prompt (highest recency) so it is
+# the last instruction the agent sees before the first user turn.
+_PHASE0_TEMPLATE = (
+    "## Phase 0: Load Required Tools\n\n"
+    "**Before doing anything else**, call ToolSearch once with all tools you need "
+    "in a single batch — do not defer or split across multiple calls:\n\n"
+    "```\n"
+    'ToolSearch(query="{query}")\n'
+    "```\n\n"
+    "This is your first action. Load the tools, then proceed with the task."
+)
+
 SLACK_CONTEXT_TEMPLATE = (
     "## Slack Thread Context\n"
     "This session was triggered from a Slack thread.\n"
@@ -107,6 +120,7 @@ def build_system_prompt(
     session_context: dict[str, Any] | None = None,
     additional_system_prompt: str | None = None,
     has_native_skills: bool = True,
+    required_tools: list[str] | None = None,
 ) -> str:
     """Assemble the system prompt from identity files.
 
@@ -120,6 +134,7 @@ def build_system_prompt(
     7. Session context metadata (channel, user info from creation)
     8. Session context (if session_id provided)
     9. Slack thread context (if slack_session_id provided)
+    10. Phase 0 ToolSearch instruction (if required_tools is non-empty)
 
     Args:
         name: Agent name
@@ -134,6 +149,9 @@ def build_system_prompt(
             When True, slimmed shared files with skill pointers are used.
             When False (raw executor), full content from skill SKILL.md files
             is inlined since those executors load skills via the load_skill() MCP tool.
+        required_tools: Optional list of deferred MCP tool names to pre-load.
+            When non-empty, a Phase 0 section is appended at the end of the prompt
+            instructing the agent to call ToolSearch with all tools in a single batch.
 
     Returns:
         Assembled system prompt string.
@@ -296,6 +314,13 @@ def build_system_prompt(
                 "Malformed slack_session_id, expected channel:thread_ts:app_id",
                 slack_session_id=slack_session_id,
             )
+
+    # Inject Phase 0 ToolSearch instruction as the very last section so it
+    # has highest recency in the context window and is followed first.
+    if required_tools:
+        query = "select:" + ",".join(required_tools)
+        parts.append(_PHASE0_TEMPLATE.format(query=query))
+        part_labels.append("phase0_toolsearch")
 
     prompt = "\n\n".join(parts)
     logger.info(
