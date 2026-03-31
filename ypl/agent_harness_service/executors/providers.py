@@ -54,7 +54,7 @@ PROVIDERS: dict[str, ProviderConfig] = {
         default_model=DEFAULT_MODEL_MINIMAX,
     ),
     PROVIDER_MOONSHOT: ProviderConfig(
-        api_base="https://api.moonshot.cn/v1",
+        api_base="https://api.moonshot.ai/v1",
         env_key="MOONSHOT_API_KEY",
         sdk="openai",
         default_model=DEFAULT_MODEL_MOONSHOT,

@@ -155,6 +155,10 @@ cryptography = ">=43.0.0"
 
 # LLM providers
 anthropic = ">=0.49.0"
+# Claude Agent SDK — in-process runner for AHS executor v2 (Section 3.2 of design doc).
+# Declared as a dependency so the package is available at runtime; the runner
+# implementation uses the ``anthropic`` SDK directly for its well-known API.
+claude-agent-sdk = ">=0.0.1"
 langchain-core = ">=0.3.0"
 openai = ">=1.30.0"
 tiktoken = ">=0.7.0"

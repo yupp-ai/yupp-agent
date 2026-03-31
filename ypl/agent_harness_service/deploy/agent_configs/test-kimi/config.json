@@ -1,6 +1,6 @@
 {
-  "display_name": "Raw Test",
-  "description": "Test agent for raw executor loop with GLM-5.",
+  "display_name": "Test Kimi",
+  "description": "Test agent for Moonshot Kimi 2.5 on raw executor.",
   "default_repo": "yupp-mind",
   "max_turns": 300,
   "max_budget_usd": 1.0,
@@ -11,7 +11,7 @@
   },
   "executor_config": {
     "type": "raw",
-    "model": "zai/glm-5"
+    "model": "moonshot/kimi-k2.5"
   },
   "tool_permissions": {
     "*": "allow"
