@@ -21,6 +21,7 @@ from ypl.agent_harness_service.common.constants import (
     AHS_REPOS_DIR,
     AHS_SESSIONS_DIR,
     EXECUTOR_TYPE_RAW,
+    HARNESS_CLAUDE_SDK,
     HARNESS_CODEX_CLI,
 )
 from ypl.agent_harness_service.common.types import (
@@ -780,6 +781,8 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
                 _spawn_cfg
                 and _spawn_cfg.executor_config.type != EXECUTOR_TYPE_RAW
                 and _spawn_cfg.executor_config.model != HARNESS_CODEX_CLI
+                # SDK runner makes a direct HTTPS API call — no subprocess to pre-warm.
+                and _spawn_cfg.executor_config.model != HARNESS_CLAUDE_SDK
             ):
                 _spawn_context = RunContext(
                     session_id=str(agent_session.agent_session_id),

@@ -18,6 +18,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from ypl.agent_harness_service.common.constants import (
     CONTEXT_OVERFLOW_NOTICE,
     EXECUTOR_TYPE_RAW,
+    HARNESS_CLAUDE_SDK,
     HARNESS_CODEX_CLI,
     TURN_LIMIT_NOTICE,
 )
@@ -313,6 +314,14 @@ async def _run_agent_task(
         elif exec_cfg.model == HARNESS_CODEX_CLI:
             runner = CodexAppServerRunner(agent_config)
             # Codex runner uses a different CLI — cancel the Claude CLI pre-spawn.
+            if pre_proc_task is not None:
+                pre_proc_task.cancel()
+                pre_proc_task = None
+        elif exec_cfg.model == HARNESS_CLAUDE_SDK:
+            from ypl.agent_harness_service.executors.claude_agent_sdk_runner import ClaudeAgentSdkRunner
+
+            runner = ClaudeAgentSdkRunner(agent_config)
+            # SDK runner makes a direct HTTPS call — no subprocess to pre-warm.
             if pre_proc_task is not None:
                 pre_proc_task.cancel()
                 pre_proc_task = None

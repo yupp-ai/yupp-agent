@@ -68,6 +68,9 @@ _CONTEXT_LIMITS: dict[str, int] = {
 
 _RESERVED_BUFFER = 4_000  # Tokens reserved for response
 
+# Models that reject sampling parameters (temperature, top_p, etc.)
+_MODELS_NO_SAMPLING_PARAMS: set[str] = {"kimi-k2.5"}
+
 
 def truncate_tool_result(text: str, max_chars: int, max_lines: int) -> str:
     """Truncate a tool result if it exceeds line or character limits.
@@ -858,13 +861,14 @@ async def run_raw_executor(
                 )
             elif is_openai_compatible(provider):
                 assert isinstance(client, openai.AsyncOpenAI)
+                effective_temperature = None if model_id in _MODELS_NO_SAMPLING_PARAMS else agent.temperature
                 response = await _run_openai(
                     client=client,
                     model_id=model_id,
                     system_prompt=system_prompt,
                     messages=messages,
                     tools=tool_schemas,
-                    temperature=agent.temperature,
+                    temperature=effective_temperature,
                 )
             else:
                 return ExecutorResult(text=f"[ERROR] Unsupported provider: {provider}")
