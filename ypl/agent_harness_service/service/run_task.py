@@ -19,6 +19,7 @@ from ypl.agent_harness_service.common.constants import (
     CONTEXT_OVERFLOW_NOTICE,
     EXECUTOR_TYPE_RAW,
     HARNESS_CLAUDE_SDK,
+    HARNESS_CODEX_APP_SERVER,
     HARNESS_CODEX_CLI,
     TURN_LIMIT_NOTICE,
 )
@@ -311,9 +312,9 @@ async def _run_agent_task(
             if pre_proc_task is not None:
                 pre_proc_task.cancel()
                 pre_proc_task = None
-        elif exec_cfg.model == HARNESS_CODEX_CLI:
+        elif exec_cfg.model in (HARNESS_CODEX_CLI, HARNESS_CODEX_APP_SERVER):
             runner = CodexAppServerRunner(agent_config)
-            # Codex runner uses a different CLI — cancel the Claude CLI pre-spawn.
+            # Codex app-server runner uses WebSocket — cancel the Claude CLI pre-spawn.
             if pre_proc_task is not None:
                 pre_proc_task.cancel()
                 pre_proc_task = None
