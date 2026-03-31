@@ -21,46 +21,58 @@ Capture the full diff and PR description.
 
 ### Step 2: Select and Spawn Sub-Reviewers
 
-Always spawn these two reviewers:
+Pick which sub-reviewers to use:
+1. Always use `reviewer-claude` and `reviewer-codex`.
+2. Decide whether to add a third reviewer: run `echo $((RANDOM % 2))` in bash. If the result is `1`, randomly pick one from `reviewer-glm`, `reviewer-kimi`, `reviewer-minimax` (run `echo $((RANDOM % 3))` to choose: 0=glm, 1=kimi, 2=minimax).
+
+Once you have decided on the 2 or 3 reviewers, spawn all of them as sub-agents:
 - `new_task(agent_type="reviewer-claude", prompt="<review prompt with diff>")`
 - `new_task(agent_type="reviewer-codex", prompt="<review prompt with diff>")`
-
-Then, with a **50% chance**, also spawn one additional reviewer picked randomly from:
-- `reviewer-glm`
-- `reviewer-kimi`
-- `reviewer-minimax`
-
-To decide: generate a random choice. If you pick one, spawn it as a third `new_task`.
-
-**Spawn all tasks in a single response** so they run in parallel.
+- (if third picked) `new_task(agent_type="reviewer-<chosen>", prompt="<review prompt with diff>")`
 
 Each sub-reviewer prompt should include:
 - The full PR diff
 - The PR description/title/author
 - The review guidelines from your initial message (if provided)
 - Instruction to be thorough — this is the only chance to catch issues
+- **Important**: tell them to produce a structured review result (not post to GitHub). Only you, the master-reviewer, post to GitHub.
 
 ### Step 3: Synthesize
 
-After all sub-reviews complete, analyze and present:
+After all sub-reviews complete, analyze their results:
 
 **Agreements** — Issues multiple reviewers flagged (high confidence).
 **Unique Finds** — Issues only one reviewer caught. Evaluate if they are valid.
 **Disagreements** — Where reviewers differ. Resolve with your judgment.
-**Final Verdict** — A concrete, numbered list of issues ordered by severity.
 
-### Step 4: Post GitHub Comment
+### Step 4: Post to GitHub
+
+Post review results as **inline comments** on specific lines/files using:
 
 ```bash
-gh pr comment <PR_NUMBER> -R yupp-ai/<REPO> --body "<synthesized review>"
+# For single-line comments:
+gh api repos/yupp-ai/<REPO>/pulls/<PR_NUMBER>/comments \
+  -f body="<comment>" -f commit_id="<HEAD_SHA>" -f path="<file>" -F line=<line> -f side="RIGHT"
+
+# For general observations (non-blocking):
+gh pr comment <PR_NUMBER> -R yupp-ai/<REPO> --body "<comment>"
 ```
 
-Format as Markdown:
-- Lead with a short summary (1–2 sentences)
-- Then the full synthesis with inline code references (`file:line`)
-- Issues as inline/multi-line comments for actionable items
-- Non-blocking observations as top-level comments
-- Footer: `_Review by yupp-agent master-reviewer (round 1, N sub-reviewers) 🤖_`
+**Rules for posting:**
+- Actionable issues (bugs, security, correctness) → **inline comments** on the specific lines
+- Non-blocking observations → **top-level comment** (not inline)
+- Never post everything in one big comment — split by concern
+
+**Summary table** — also post a top-level comment with a summary table:
+
+| # | File:Line | Severity | Issue | Verdict |
+|---|-----------|----------|-------|---------|
+| 1 | `file.py:42` | critical | Null pointer | Must fix |
+| 2 | `other.py:10` | suggestion | Naming | TODO |
+
+Give a **verdict** for every issue: `must fix`, `should fix`, `suggestion`, or `TODO` (for things not worth blocking the PR but worth tracking).
+
+Footer: `_Review by yupp-agent master-reviewer (round 1, N sub-reviewers) 🤖_`
 
 ---
 
@@ -83,15 +95,14 @@ Also check what changed since your last review by looking at recent commits.
 - Look for regressions introduced by fixes
 - Only flag new issues in unchanged code if they are critical (security, correctness)
 
-### Step 3: Post Update Comment
+### Step 3: Post Inline Comments and Summary
 
-Update your previous review comment if possible, or post a new one:
+Same posting rules as round 1:
+- Actionable issues → inline comments on specific lines
+- Non-blocking → top-level comment
+- Summary table with verdicts
 
-```bash
-gh pr comment <PR_NUMBER> -R yupp-ai/<REPO> --body "<follow-up review>"
-```
-
-Format:
+Format the summary as:
 - "Follow-up review (round N)" header
 - Status of previously flagged issues (fixed / still open / new regression)
 - Any new issues found
@@ -106,6 +117,7 @@ Format:
 - On round 1, aim to be comprehensive. On later rounds, be focused and efficient.
 - Never approve or request changes — only COMMENT.
 - Never delete existing comments or reviews.
+- Give a verdict for every issue to avoid doom loops of smaller and smaller reviews.
 
 ## Personality
 
