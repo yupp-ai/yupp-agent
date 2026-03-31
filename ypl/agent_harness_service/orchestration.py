@@ -29,6 +29,7 @@ from ypl.agent_harness_service.common.constants import (
     DEFAULT_TIMEOUT_S,
     EXECUTOR_TYPE_HARNESSED,
     EXECUTOR_TYPE_RAW,
+    HARNESS_CODEX_APP_SERVER,
     HARNESS_CODEX_CLI,
     PERM_DENY,
 )
@@ -775,7 +776,7 @@ async def _execute_harnessed(
     try:
         # Determine which runner to use
         runner: CodexAppServerRunner | ClaudeCodeRunner
-        if runner_config.executor_config.model == HARNESS_CODEX_CLI:
+        if runner_config.executor_config.model in (HARNESS_CODEX_CLI, HARNESS_CODEX_APP_SERVER):
             runner = CodexAppServerRunner(runner_config)
         else:
             runner = ClaudeCodeRunner(runner_config)
