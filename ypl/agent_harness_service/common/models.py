@@ -203,6 +203,8 @@ class AgentSpec(BaseModel):
     temperature: float | None = None
     streaming: bool = True
     additional_system_prompt: str | None = None
+    # Deferred MCP tools to pre-load via Phase 0 ToolSearch — see AgentConfig.required_tools.
+    required_tools: list[str] = Field(default_factory=list)
     # Extra parameters passed directly to the LLM API (e.g. thinking mode).
     # For OpenAI-compatible providers these are merged into the request kwargs.
     # Example: {"thinking": {"type": "enabled"}} for GLM-5 / Kimi K2.5

@@ -406,6 +406,7 @@ class ClaudeAgentSdkRunner(AgentRunner):
             # SDK runner inlines skill content (same as raw executor) because
             # there is no native /skill command for this executor type.
             has_native_skills=False,
+            required_tools=self.config.required_tools or None,
         )
 
         # ------------------------------------------------------------------ #

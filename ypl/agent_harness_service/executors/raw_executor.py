@@ -356,6 +356,7 @@ def _build_system_prompt(
         session_context=session_context,
         additional_system_prompt=combined_additional or None,
         has_native_skills=False,  # Raw executor uses load_skill() MCP tool
+        required_tools=agent.required_tools or None,
     )
 
     # Everything below is session-specific and intentionally placed after the

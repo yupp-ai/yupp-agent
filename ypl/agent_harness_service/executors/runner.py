@@ -608,6 +608,7 @@ class ClaudeCodeRunner(AgentRunner):
             is_task=context.is_task,
             session_context=context.session_context,
             additional_system_prompt=self.config.additional_system_prompt,
+            required_tools=self.config.required_tools or None,
         )
 
         args = [
@@ -1049,6 +1050,7 @@ class RawExecutorRunner(AgentRunner):
             timeout_s=self.config.timeout_s,
             streaming=False,
             additional_system_prompt=self.config.additional_system_prompt,
+            required_tools=self.config.required_tools,
         )
 
         # Resolve permissions from context (with fail-secure defaults).
