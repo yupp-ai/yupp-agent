@@ -91,6 +91,7 @@ def _load_agent_spec(name: str, config_path: str) -> AgentSpec | None:
             temperature=raw.get("temperature"),
             streaming=raw.get("streaming", True),
             model_parameters=raw.get("model_parameters"),
+            required_tools=raw.get("required_tools", []),
         )
     except (ValidationError, ValueError) as e:
         logger.error("Invalid agent spec", name=name, error=str(e))
@@ -209,6 +210,7 @@ def _db_agent_to_spec(name: str, config_jsonb: dict[str, Any], description: str 
             timeout_s=config_jsonb.get("timeout_s", DEFAULT_TIMEOUT_S),
             temperature=config_jsonb.get("temperature"),
             streaming=config_jsonb.get("streaming", True),
+            required_tools=config_jsonb.get("required_tools", []),
         )
     except (ValidationError, ValueError) as e:
         logger.error("Invalid agent spec from DB", name=name, error=str(e))
