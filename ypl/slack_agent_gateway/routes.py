@@ -27,6 +27,7 @@ from ypl.slack_agent_gateway.callbacks import (
     add_reply,
     request_feedback,
     send_message,
+    send_questionnaire,
     send_status_update,
     update_reply,
 )
@@ -44,6 +45,8 @@ from ypl.slack_agent_gateway.types import (
     RequestFeedbackResponse,
     SendMessageRequest,
     SendMessageResponse,
+    SendQuestionnaireRequest,
+    SendQuestionnaireResponse,
     SendStatusUpdateRequest,
     SendStatusUpdateResponse,
     SlackSessionInfoResponse,
@@ -185,6 +188,24 @@ async def post_request_feedback(request_body: RequestFeedbackRequest) -> Request
         RequestFeedbackResponse with success status and message_ts
     """
     return await request_feedback(request_body)
+
+
+@router.post("/sessions/questionnaire", dependencies=[Depends(verify_api_key)])
+async def post_questionnaire(request_body: SendQuestionnaireRequest) -> SendQuestionnaireResponse:
+    """Post a multiple-choice questionnaire to the Slack thread for a session.
+
+    AHS calls this endpoint to ask the user a question with selectable button choices.
+    When the user clicks a button (or types a reply), SAG forwards the answer back
+    to AHS as a new session message.
+    Requires X-API-Key header for authentication.
+
+    Args:
+        request_body: Request containing session_id, question_id, text, and choices
+
+    Returns:
+        SendQuestionnaireResponse with success status and message_ts
+    """
+    return await send_questionnaire(request_body)
 
 
 @router.post("/sessions/status", dependencies=[Depends(verify_api_key)])

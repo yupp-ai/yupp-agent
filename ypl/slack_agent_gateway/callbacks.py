@@ -43,6 +43,8 @@ from ypl.slack_agent_gateway.types import (
     RequestFeedbackResponse,
     SendMessageRequest,
     SendMessageResponse,
+    SendQuestionnaireRequest,
+    SendQuestionnaireResponse,
     SendStatusUpdateRequest,
     SendStatusUpdateResponse,
     UpdateReplyRequest,
@@ -349,6 +351,128 @@ async def request_feedback(request: RequestFeedbackRequest) -> RequestFeedbackRe
         )
         await release_feedback_claim(request.session_id)
         return RequestFeedbackResponse(success=False, error=str(e))
+
+
+def _build_questionnaire_blocks(request: SendQuestionnaireRequest) -> list[dict]:
+    """Build Slack Block Kit blocks for a multiple-choice questionnaire.
+
+    Renders the question as a section block and each choice as an action button.
+    Buttons carry the session_id as their value; the question_id is encoded in
+    the action_id so the interaction handler can route the response.
+
+    Args:
+        request: The questionnaire request.
+
+    Returns:
+        List of Slack block dicts.
+    """
+    # Sanitize question_id: keep only alphanumeric and underscores so it's safe
+    # to embed in a Slack action_id (which must be <= 255 chars, no special chars).
+    safe_qid = "".join(c if c.isalnum() or c == "_" else "_" for c in request.question_id)[:50]
+
+    elements: list[dict] = [
+        {
+            "type": "button",
+            "action_id": f"questionnaire_{safe_qid}_{i}",
+            "text": {"type": "plain_text", "text": choice.label},
+            # Session ID in value so the interaction handler can look up the session
+            "value": request.session_id,
+        }
+        for i, choice in enumerate(request.choices)
+    ]
+
+    blocks: list[dict] = [
+        {
+            "type": "section",
+            "block_id": "questionnaire_question",
+            "text": {"type": "mrkdwn", "text": request.text},
+        },
+        {
+            "type": "actions",
+            "block_id": "questionnaire_buttons",
+            "elements": elements,
+        },
+    ]
+
+    if request.allow_free_text:
+        blocks.append(
+            {
+                "type": "context",
+                "block_id": "questionnaire_hint",
+                "elements": [
+                    {"type": "mrkdwn", "text": "_or type your answer in the thread_"},
+                ],
+            }
+        )
+
+    return blocks
+
+
+async def send_questionnaire(request: SendQuestionnaireRequest) -> SendQuestionnaireResponse:
+    """Post a multiple-choice questionnaire to the Slack thread for a session.
+
+    Renders the question with action buttons. When the user clicks a button,
+    SAG forwards the selected label to AHS as a new session message so the
+    agent can continue its turn.
+
+    Args:
+        request: Request containing session_id, question_id, text, and choices.
+
+    Returns:
+        SendQuestionnaireResponse with success status and message_ts.
+    """
+    session = await get_session(request.session_id)
+    if not session:
+        return SendQuestionnaireResponse(success=False, error="Session not found")
+
+    client = await _get_slack_client(session)
+    if not client:
+        return SendQuestionnaireResponse(success=False, error="Failed to get Slack client")
+
+    blocks = _build_questionnaire_blocks(request)
+
+    try:
+        response = await client.chat_postMessage(
+            channel=session.channel_id,
+            thread_ts=session.thread_ts,
+            blocks=blocks,
+            text=request.text,
+        )
+
+        message_ts = str(response.get("ts", ""))
+        if not message_ts:
+            return SendQuestionnaireResponse(success=False, error="Slack response missing message timestamp")
+
+        logger.info(
+            "Posted questionnaire to Slack",
+            session_id=request.session_id,
+            question_id=request.question_id,
+            message_ts=message_ts,
+            num_choices=len(request.choices),
+        )
+
+        # Store reply mapping so the interaction handler can resolve the session
+        # when a button is clicked.
+        try:
+            await store_reply_mapping(session.channel_id, message_ts, request.session_id)
+        except Exception as e:
+            logger.error(
+                "Failed to store reply mapping for questionnaire",
+                session_id=request.session_id,
+                message_ts=message_ts,
+                error=str(e),
+            )
+
+        return SendQuestionnaireResponse(success=True, message_ts=message_ts)
+
+    except Exception as e:
+        logger.error(
+            "Failed to post questionnaire to Slack",
+            session_id=request.session_id,
+            error=str(e),
+            exc_info=True,
+        )
+        return SendQuestionnaireResponse(success=False, error=str(e))
 
 
 async def update_reply(request: UpdateReplyRequest) -> UpdateReplyResponse:
