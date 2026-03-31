@@ -37,6 +37,10 @@ from ypl.streamlit_server.auth import is_auth_configured, require_auth
 from ypl.streamlit_server.permissions import Permission, get_current_user_email, has_permission
 from ypl.structured_logger import get_logger
 
+# Linear workspace slug used to build project URLs
+_LINEAR_WORKSPACE_SLUG = "yupp"
+_LINEAR_TEAM_ID_YUP = "75eb453f-2fed-478c-989e-e96e2cf1024d"
+
 logger = get_logger()
 
 
@@ -505,6 +509,20 @@ async def update_project_creator(project_id: uuid.UUID, user_id: str | None) -> 
         session.add(project)
         await session.commit()
         return True
+
+
+def _get_linear_project_ref(project: AgentProject) -> dict[str, str] | None:
+    """Extract the ``linear_ref`` dict from ``project_data``, if present."""
+    data = project.project_data or {}
+    ref = data.get("linear_ref")
+    if not isinstance(ref, dict) or not ref.get("linear_project_id"):
+        return None
+    return ref
+
+
+def _linear_project_url(linear_project_id: str) -> str:
+    """Build a Linear project URL from a project UUID."""
+    return f"https://linear.app/{_LINEAR_WORKSPACE_SLUG}/project/{linear_project_id}"
 
 
 @retry_db
@@ -1674,6 +1692,36 @@ def _render_project_detail(project_id: uuid.UUID, task_id: str | None) -> None:
         st.markdown(f"**Created:** {_to_local(project.created_at)} ({created_ago})")
         if project.slack_channel:
             st.markdown(f"**Slack:** #{project.slack_channel}")
+
+        # Linear project link or export button
+        linear_ref = _get_linear_project_ref(project)
+        if linear_ref:
+            linear_url = _linear_project_url(linear_ref["linear_project_id"])
+            last_synced = linear_ref.get("last_synced_at", "")
+            synced_label = f" (synced {last_synced[:10]})" if last_synced else ""
+            st.markdown(f"**Linear:** [{linear_ref['linear_project_id'][:8]}...]({linear_url}){synced_label}")
+        else:
+            if st.button("Export to Linear", key=f"export_linear_{project.agent_project_id}"):
+                with st.spinner("Exporting project to Linear..."):
+                    try:
+                        from ypl.agent_harness_service.tools.linear_sync.export_to_linear import (
+                            export_project_to_linear,
+                        )
+
+                        linear_project_id, sync_result = run_coroutine_in_lit_worker(
+                            export_project_to_linear(
+                                project_id=str(project.agent_project_id),
+                                linear_team_id=_LINEAR_TEAM_ID_YUP,
+                            ),
+                            timeout=120,
+                        )
+                        st.success(
+                            f"Exported to Linear! Created: {sync_result.created}, "
+                            f"Updated: {sync_result.updated}, Errors: {sync_result.errors}"
+                        )
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Export failed: {e}")
 
         # Inline default agent selector (label and dropdown on same line)
         try:
