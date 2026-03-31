@@ -1,7 +1,7 @@
 name: "Deploy Servers 1 - Build & Staging"
 run-name: >-
   Staging: ${{ github.event_name == 'push'
-    && github.event.head_commit.message
+    && format('PR - {0}', github.event.head_commit.message)
     || format('{0} - {1}',
         github.event.inputs.deployment_type,
         github.event.inputs.deploy_all == 'true' && 'all services'
