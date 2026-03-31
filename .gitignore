@@ -103,7 +103,7 @@ temp/
 *.rdb
 
 # Streamlit
-.srteamlit/
+.streamlit/
 
 # Weight and Biases
 wandb/
