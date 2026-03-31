@@ -90,6 +90,7 @@ def _load_agent_spec(name: str, config_path: str) -> AgentSpec | None:
             timeout_s=raw.get("timeout_s", 300),
             temperature=raw.get("temperature"),
             streaming=raw.get("streaming", True),
+            model_parameters=raw.get("model_parameters"),
         )
     except (ValidationError, ValueError) as e:
         logger.error("Invalid agent spec", name=name, error=str(e))

@@ -1,6 +1,6 @@
 {
   "display_name": "Reviewer (MiniMax)",
-  "description": "Code reviewer using MiniMax M2.5 on raw executor.",
+  "description": "Code reviewer using MiniMax M2.5 on raw executor with reasoning.",
   "default_repo": "yupp-agent",
   "max_turns": 100,
   "max_budget_usd": 1.0,
@@ -18,5 +18,8 @@
   },
   "allowed_subagents": [],
   "streaming": false,
-  "timeout_s": 36000
+  "timeout_s": 36000,
+  "model_parameters": {
+    "reasoning_split": true
+  }
 }
