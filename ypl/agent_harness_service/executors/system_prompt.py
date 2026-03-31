@@ -191,6 +191,15 @@ def build_system_prompt(
                 parts.append(content)
                 part_labels.append(f"shared/subagent/{os.path.basename(md_path)}")
 
+    # Include shared reviewer prompts for reviewer-* agents
+    if name.startswith("reviewer-"):
+        reviewer_dir = os.path.join(AHS_SHARED_DIR, "reviewer")
+        for md_path in sorted(glob.glob(os.path.join(reviewer_dir, "*.md"))):
+            content = read_file_if_exists(md_path)
+            if content:
+                parts.append(content)
+                part_labels.append(f"shared/reviewer/{os.path.basename(md_path)}")
+
     # Include personal agent prompts for yuppclaw-* agents
     if is_personal_agent(name):
         pa_dir = os.path.join(AHS_SHARED_DIR, "personal_agent")
