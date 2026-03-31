@@ -717,7 +717,6 @@ class AHSTui(App[None]):
     async def _cmd_attach(self, target_sid: str, log: RichLog) -> None:
         """Stop current session and attach to another one."""
         old_sid = self._session_id
-        log.write(f"[dim]Current session: {old_sid}[/dim]")
 
         # Validate target session exists before mutating state
         try:
@@ -751,14 +750,8 @@ class AHSTui(App[None]):
         msg_count = await self._load_history()
 
         log.write(
-            _render_status_line(
-                f"Attached to session [bold white]{target_sid}[/bold white]"
-                f" | Agent [bold white]{self._agent_name}[/bold white]"
-            )
+            _render_session_box(old_sid, target_sid, self._agent_name, title="Switch session", msg_count=msg_count)
         )
-        if msg_count is not None:
-            msg_label = f"{msg_count} previous messages" if msg_count else "No previous messages"
-            log.write(_render_status_line(msg_label))
         log.write("")
 
         self._update_subtitle()

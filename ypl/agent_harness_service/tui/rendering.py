@@ -99,18 +99,32 @@ def _render_status_line(markup: str) -> Align:
     return Align(Text.from_markup(f"[dim]{markup}[/dim]"), align="right")
 
 
-def _render_session_box(old_sid: str | None, new_sid: str, agent: str) -> Panel:
-    """Render a new-session notice in a left-aligned bordered box."""
-    body = Text()
+def _render_session_box(
+    old_sid: str | None,
+    new_sid: str,
+    agent: str,
+    *,
+    title: str = "New session",
+    msg_count: int | None = None,
+) -> Panel:
+    """Render a session-transition notice in a left-aligned bordered box.
+
+    Displays the full session IDs (never truncated) along with the agent name
+    and, optionally, the number of pre-existing messages in the session.
+    """
+    body = Text(overflow="fold", no_wrap=False)
     body.append("Previous: ", style="dim")
     body.append(str(old_sid) if old_sid else "None", style="dim italic")
     body.append("\n")
     body.append("New:      ", style="dim")
     body.append(new_sid, style="dim bold")
     body.append(f"  (agent: {agent})", style="dim")
+    if msg_count is not None:
+        label = f"{msg_count} previous message{'s' if msg_count != 1 else ''}" if msg_count else "No previous messages"
+        body.append(f"\n{label}", style="dim italic")
     return Panel(
         body,
-        title="[dim]New session[/dim]",
+        title=f"[dim]{title}[/dim]",
         title_align="left",
         border_style="dim",
         expand=False,
