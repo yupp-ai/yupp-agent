@@ -4,7 +4,7 @@
     "type": "raw",
     "model": "mock"
   },
-  "default_repo": "yupp-mind",
+  "default_repo": "yupp-agent",
   "max_turns": 10,
   "max_budget_usd": 0.0,
   "tool_permissions": {

@@ -3,8 +3,8 @@
 from __future__ import annotations
 from typing import Any
 
+from rich.align import Align
 from rich.markdown import Markdown
-from rich.panel import Panel
 from rich.text import Text
 
 # ---------------------------------------------------------------------------
@@ -74,20 +74,25 @@ def _escape_markup(text: str) -> str:
     return text.replace("[", r"\[")
 
 
-def _render_user_label() -> Panel:
-    """Render the 'You' label in a box."""
-    return Panel(Text("\u25b6 You", style="bold steel_blue1"), expand=False, border_style="steel_blue1", padding=(0, 1))
+def _render_user_label() -> Text:
+    """Render an empty placeholder (user label is now inline with message)."""
+    return Text("")
 
 
 def _render_user_message(content: str) -> Text:
-    """Render user message content in the same blue as the 'You' label."""
-    return Text(content, style="steel_blue1")
+    """Render user message with a subtle background highlight, like Claude Code."""
+    return Text(f" {content} ", style="on grey23")
 
 
-def _render_assistant_label() -> Panel:
-    """Render the 'Assistant' label in a box."""
-    return Panel(Text("\u25c0 Assistant", style="bold green"), expand=False, border_style="green", padding=(0, 1))
+def _render_assistant_label() -> Text:
+    """No-op — assistant messages have no label, they just appear."""
+    return Text("")
 
 
 def _render_assistant_markdown(content: str) -> Markdown:
     return Markdown(content)
+
+
+def _render_status_line(markup: str) -> Align:
+    """Render a dim status/meta line right-aligned."""
+    return Align(Text.from_markup(f"[dim]{markup}[/dim]"), align="right")

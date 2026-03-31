@@ -1,7 +1,7 @@
 {
   "display_name": "Data Scientist",
   "description": "Data science agent \u2014 leaderboard analysis, model performance, engagement metrics.",
-  "default_repo": "yupp-mind",
+  "default_repo": "yupp-agent",
   "max_turns": 200,
   "max_budget_usd": 5.0,
   "has_mcp": true,

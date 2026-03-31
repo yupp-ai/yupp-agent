@@ -15,6 +15,7 @@ from textual.events import Key
 from textual.message import Message
 from textual.widgets import Footer, Header, LoadingIndicator, RichLog, TextArea
 
+from ypl.agent_harness_service.tui.agents import AgentsScreen
 from ypl.agent_harness_service.tui.config import (
     _http_request,
     _save_session_id,
@@ -27,6 +28,7 @@ from ypl.agent_harness_service.tui.rendering import (
     _format_tokens,
     _render_assistant_label,
     _render_assistant_markdown,
+    _render_status_line,
     _render_tool_completed,
     _render_tool_started,
     _render_user_label,
@@ -148,6 +150,7 @@ class AHSTui(App[None]):
     BINDINGS = [
         Binding("ctrl+x", "quit", "Quit", show=True),
         Binding("escape", "stop_turn", "Stop", show=False),
+        Binding("ctrl+a", "open_agents", "Agents", show=True),
         Binding("ctrl+o", "open_projects", "Projects", show=True),
         Binding("ctrl+s", "open_sessions", "Sessions", show=True),
         Binding("ctrl+h", "open_schedules", "Schedules", show=True),
@@ -239,16 +242,19 @@ class AHSTui(App[None]):
         except Exception:
             pass
 
-        # Show clean session header
+        # Show clean session header (right-aligned)
         host_display = get_http_base()
         log.write(
-            f"[dim]Session [bold white]{self._session_id}[/bold white]"
-            f" | Agent [bold white]{self._agent_name}[/bold white]"
-            f" | Host [bold white]{host_display}[/bold white]"
-            f"{executor_label}[/dim]"
+            _render_status_line(
+                f"Session [bold white]{self._session_id}[/bold white]"
+                f" | Agent [bold white]{self._agent_name}[/bold white]"
+                f" | Host [bold white]{host_display}[/bold white]"
+                f"{executor_label}"
+            )
         )
         if msg_count is not None:
-            log.write(f"[dim]{msg_count} previous messages[/dim]" if msg_count else "[dim]No previous messages[/dim]")
+            msg_label = f"{msg_count} previous messages" if msg_count else "No previous messages"
+            log.write(_render_status_line(msg_label))
         log.write("")
 
         has_no_history = not self._initial_message and (msg_count is None or msg_count == 0)
@@ -381,7 +387,7 @@ class AHSTui(App[None]):
 
             self._connected = False
             self._update_subtitle("\u25cb disconnected")
-            log.write(f"[dim]Reconnecting in {retry_delay:.0f}s...[/dim]")
+            log.write(_render_status_line(f"Reconnecting in {retry_delay:.0f}s..."))
             await asyncio.sleep(retry_delay)
             retry_delay = min(retry_delay * 2, 30.0)
 
@@ -632,15 +638,37 @@ class AHSTui(App[None]):
                 log.write("[dim]No agents found.[/dim]")
                 return
             log.write("")
-            header = f"{'NAME':<20} {'DISPLAY':<15} {'MODEL':<20} {'TURNS':<6} {'BUDGET':<8}"
+            header = (
+                f"{'NAME':<20} {'TYPE':<10} {'MODEL':<25} {'TOOLS':<8} {'SUBAGENTS':<10} {'TURNS':<6} {'BUDGET':<7}"
+            )
             log.write(f"[bold white]{header}[/bold white]")
-            log.write(f"[dim]{'-' * 72}[/dim]")
+            log.write(f"[dim]{'-' * 90}[/dim]")
             for a in agents:
                 model = a.get("executor_model") or a.get("llm_model") or "-"
+                exec_type = a.get("executor_type", "-")
+                # Summarize tool permissions
+                perms = a.get("tool_permissions", {})
+                if perms.get("*") == "allow":
+                    tools_str = "all"
+                elif perms.get("*") == "deny":
+                    allowed = [k for k, v in perms.items() if k != "*" and v == "allow"]
+                    tools_str = str(len(allowed)) if allowed else "none"
+                else:
+                    tools_str = "-"
+                # Summarize allowed subagents
+                subs = a.get("allowed_subagents", [])
+                if subs == ["*"]:
+                    subs_str = "all"
+                elif subs:
+                    subs_str = str(len(subs))
+                else:
+                    subs_str = "none"
                 line = (
                     f"{a['name'][:20]:<20} "
-                    f"{(a.get('display_name') or '-')[:15]:<15} "
-                    f"{model[:20]:<20} "
+                    f"{exec_type[:10]:<10} "
+                    f"{model[:25]:<25} "
+                    f"{tools_str:<8} "
+                    f"{subs_str:<10} "
                     f"{str(a.get('max_turns', '-')):<6} "
                     f"${a.get('max_budget_usd', 0):.1f}"
                 )
@@ -663,9 +691,9 @@ class AHSTui(App[None]):
 
             old_sid = self._session_id
             log.write("")
-            log.write("[dim]\u2500\u2500\u2500 New session \u2500\u2500\u2500[/dim]")
-            log.write(f"[dim]Previous: {old_sid}[/dim]")
-            log.write(f"[dim]New: {new_sid} (agent: {agent})[/dim]")
+            log.write(_render_status_line("\u2500\u2500\u2500 New session \u2500\u2500\u2500"))
+            log.write(_render_status_line(f"Previous: {old_sid}"))
+            log.write(_render_status_line(f"New: {new_sid} (agent: {agent})"))
 
             # Switch to new session
             self._session_id = new_sid
@@ -724,11 +752,14 @@ class AHSTui(App[None]):
         msg_count = await self._load_history()
 
         log.write(
-            f"[dim]Attached to session [bold white]{target_sid}[/bold white]"
-            f" | Agent [bold white]{self._agent_name}[/bold white][/dim]"
+            _render_status_line(
+                f"Attached to session [bold white]{target_sid}[/bold white]"
+                f" | Agent [bold white]{self._agent_name}[/bold white]"
+            )
         )
         if msg_count is not None:
-            log.write(f"[dim]{msg_count} previous messages[/dim]" if msg_count else "[dim]No previous messages[/dim]")
+            msg_label = f"{msg_count} previous messages" if msg_count else "No previous messages"
+            log.write(_render_status_line(msg_label))
         log.write("")
 
         self._update_subtitle()
@@ -737,6 +768,14 @@ class AHSTui(App[None]):
     async def _cmd_projects(self, log: RichLog) -> None:
         """Open the projects screen."""
         self._open_projects_screen()
+
+    def action_open_agents(self) -> None:
+        """Ctrl+A handler to open agents screen."""
+        self._open_agents_screen()
+
+    @work(thread=False)
+    async def _open_agents_screen(self) -> None:
+        await self.push_screen_wait(AgentsScreen())
 
     def action_open_projects(self) -> None:
         """Ctrl+O handler to open projects screen."""
