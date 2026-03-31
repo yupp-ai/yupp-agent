@@ -81,9 +81,9 @@ class TestMapAhsStatusToLinear:
         result = map_ahs_status_to_linear("COMPLETED", TEAM_STATUSES)
         assert result == "state-done"
 
-    def test_failed_maps_to_cancelled(self) -> None:
+    def test_failed_maps_to_started(self) -> None:
         result = map_ahs_status_to_linear("FAILED", TEAM_STATUSES)
-        assert result == "state-cancelled"
+        assert result == "state-in-progress"
 
     def test_cancelled_maps_to_cancelled(self) -> None:
         result = map_ahs_status_to_linear("CANCELLED", TEAM_STATUSES)
