@@ -1,5 +1,19 @@
 name: "Deploy Servers 1 - Build & Staging"
-run-name: "Staging: ${{ github.event.head_commit.message || github.event.inputs.deployment_type || 'manual' }} (${{ github.sha }})"
+run-name: >-
+  Staging: ${{ github.event_name == 'push'
+    && format('PR - {0}', github.event.head_commit.message)
+    || format('{0} - {1}',
+        github.event.inputs.deployment_type,
+        github.event.inputs.deploy_all == 'true' && 'all services'
+        || format('{0}{1}{2}{3}{4}',
+          github.event.inputs.deploy_mcp_server == 'true' && 'mcp ' || '',
+          github.event.inputs.deploy_mcp_server_oauth == 'true' && 'mcp-oauth ' || '',
+          github.event.inputs.deploy_slack_agent_gateway == 'true' && 'sag ' || '',
+          github.event.inputs.deploy_streamlit_server == 'true' && 'streamlit ' || '',
+          github.event.inputs.deploy_ahs == 'true' && 'ahs' || ''
+        )
+      )
+  }}
 # Build the Docker image and deploy to staging. To deploy to production, use "Deploy Servers 2 - Production".
 
 on:
