@@ -14,9 +14,11 @@ import os
 import pathlib
 import platform
 import shlex
+import threading
 import time
 import uuid
 from abc import ABC, abstractmethod
+from collections import deque
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
@@ -35,11 +37,62 @@ from ypl.agent_harness_service.common.types import SessionPermissions
 from ypl.agent_harness_service.common.types import StreamEvent as StreamEvent  # re-export for compat
 from ypl.agent_harness_service.executors.mcp_config import ensure_workspace_mcp_config
 from ypl.agent_harness_service.executors.system_prompt import build_system_prompt
+from ypl.backend.utils.monitoring import metric_inc, metric_record_with_labels
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
 
 AGENT_RESPONSE_DEBUG = os.environ.get("AGENT_RESPONSE_DEBUG", "").lower() in ("1", "true", "yes")
+
+# ---------------------------------------------------------------------------
+# Queue bottleneck detection
+# ---------------------------------------------------------------------------
+# Tracks sessions with queue_wait_ms > 30 s using a module-level sliding-window
+# deque (monotonic timestamps). When ≥3 events fall within a 5-minute window,
+# a structured logger.error fires with alert_type="session_queue_bottleneck" so
+# that a Cloud Logging log-based alert can route the incident to Slack.
+_QUEUE_BOTTLENECK_THRESHOLD_MS: int = 30_000  # 30 s
+_QUEUE_BOTTLENECK_WINDOW_S: float = 300.0  # 5 minutes
+_QUEUE_BOTTLENECK_MIN_COUNT: int = 3
+
+_queue_bottleneck_lock: threading.Lock = threading.Lock()
+_queue_bottleneck_events: deque[float] = deque()  # monotonic timestamps of over-threshold events
+
+
+def _check_queue_bottleneck(queue_wait_ms: int, session_id: str) -> None:
+    """Detect and log session_queue_bottleneck alerts.
+
+    Fires logger.error exactly when the in-process count first reaches
+    _QUEUE_BOTTLENECK_MIN_COUNT within a _QUEUE_BOTTLENECK_WINDOW_S rolling
+    window.  Subsequent over-threshold events in the same window do NOT
+    re-fire to prevent alert storms — the alert re-arms after the window clears.
+    """
+    if queue_wait_ms <= _QUEUE_BOTTLENECK_THRESHOLD_MS:
+        return
+
+    metric_inc("ahs/session_queue_bottleneck_event")
+
+    now = time.monotonic()
+    with _queue_bottleneck_lock:
+        _queue_bottleneck_events.append(now)
+        # Evict events that have aged out of the rolling window
+        cutoff = now - _QUEUE_BOTTLENECK_WINDOW_S
+        while _queue_bottleneck_events and _queue_bottleneck_events[0] < cutoff:
+            _queue_bottleneck_events.popleft()
+        count = len(_queue_bottleneck_events)
+
+    # Fire exactly at the threshold crossing (not on every subsequent event)
+    if count == _QUEUE_BOTTLENECK_MIN_COUNT:
+        logger.error(
+            "session_queue_bottleneck",
+            session_id=session_id,
+            queue_wait_ms=queue_wait_ms,
+            bottleneck_count_in_window=count,
+            window_seconds=int(_QUEUE_BOTTLENECK_WINDOW_S),
+            alert_type="session_queue_bottleneck",
+        )
+        metric_inc("ahs/session_queue_bottleneck_alert")
+
 
 # ---------------------------------------------------------------------------
 # Pipe buffer tuning
@@ -736,6 +789,8 @@ class ClaudeCodeRunner(AgentRunner):
                 session_id=context.session_id,
                 queue_wait_ms=_queue_wait_ms,
             )
+            metric_record_with_labels("ahs/queue_wait_ms", int(_queue_wait_ms), {"agent": self.config.name})
+            _check_queue_bottleneck(int(_queue_wait_ms), context.session_id)
 
         # Use a pre-spawned process if one was started concurrently with DB writes
         # in create_session() (first-turn optimization).  Fall back to a fresh spawn
@@ -857,6 +912,11 @@ class ClaudeCodeRunner(AgentRunner):
                         cli_startup_ms=cli_startup_ms,
                         slow_startup=slow,
                     )
+                    metric_record_with_labels(
+                        "ahs/cli_startup_ms",
+                        cli_startup_ms,
+                        {"agent": self.config.name, "slow": str(slow).lower()},
+                    )
 
                 # Track first_token_ms: time from CLI launch → first text content event.
                 # Only fires on assistant events with actual text (excludes tool_use and
@@ -867,6 +927,11 @@ class ClaudeCodeRunner(AgentRunner):
                         "First token received",
                         session_id=context.session_id,
                         first_token_ms=_first_token_ms,
+                    )
+                    metric_record_with_labels(
+                        "ahs/first_token_ms",
+                        int(_first_token_ms),
+                        {"agent": self.config.name},
                     )
 
                 # Always log to session file
@@ -929,6 +994,11 @@ class ClaudeCodeRunner(AgentRunner):
                     slow_startup=slow,
                     system_event_received=False,
                     returncode=proc.returncode,
+                )
+                metric_record_with_labels(
+                    "ahs/cli_startup_ms",
+                    cli_startup_ms,
+                    {"agent": self.config.name, "slow": str(slow).lower(), "abnormal": "true"},
                 )
 
             # Kill subprocess on any exit (including CancelledError from timeout)
