@@ -110,13 +110,17 @@ class _FakeWS:
             return msg
         return aiohttp.WSMessage(aiohttp.WSMsgType.CLOSED, None, None)
 
+    @property
+    def closed(self) -> bool:
+        return False
+
     async def close(self) -> None:
         pass
 
     def __aiter__(self) -> _FakeWSIter:
         return _FakeWSIter(self)
 
-    # Context-manager support for `async with http.ws_connect(...) as ws:`
+    # Context-manager support (kept for backwards compat with any remaining uses)
     async def __aenter__(self) -> _FakeWS:
         return self
 
@@ -410,19 +414,17 @@ class TestBuildArgs:
 
 
 def _make_aiohttp_mock(fake_ws: _FakeWS) -> tuple[Any, Any]:
-    """Return (mock_session_cm, mock_cls) for patching aiohttp.ClientSession."""
-    ws_cm = MagicMock()
-    ws_cm.__aenter__ = AsyncMock(return_value=fake_ws)
-    ws_cm.__aexit__ = AsyncMock(return_value=False)
+    """Return (mock_session, mock_cls) for patching aiohttp.ClientSession.
 
+    _get_or_connect_ws calls ``aiohttp.ClientSession()`` (no CM) then
+    ``await http_session.ws_connect(url, ...)``.
+    """
     mock_session = MagicMock()
-    mock_session.ws_connect.return_value = ws_cm
+    mock_session.ws_connect = AsyncMock(return_value=fake_ws)
+    mock_session.closed = False
+    mock_session.close = AsyncMock()
 
-    mock_session_cm = MagicMock()
-    mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session_cm.__aexit__ = AsyncMock(return_value=False)
-
-    mock_cls = MagicMock(return_value=mock_session_cm)
+    mock_cls = MagicMock(return_value=mock_session)
     return mock_session, mock_cls
 
 
@@ -568,36 +570,32 @@ class TestTurnLifecycle:
         assert state.thread_id == "t-warm"
 
     @pytest.mark.asyncio
-    async def test_warm_server_skips_thread_start(self) -> None:
-        """If state already has a thread_id, thread/start is not sent (warm-server path)."""
-        # Pre-warm: state already has a thread_id
-        state = _make_server_state(thread_id="t-existing")
-
-        # Warm turn messages: no thread/start or thread/started — skip straight to turn/start
+    async def test_warm_ws_skips_thread_start(self) -> None:
+        """If state already has a persistent WS + thread_id, no initialize/thread/start is sent."""
+        # Warm turn messages: only turn/start response + turn/completed (no handshake)
         messages_warm: list[dict[str, Any]] = [
-            {"id": 0, "result": {}},  # initialize
-            {"id": 1, "result": {}},  # turn/start (req_id=1 because no thread/start bump)
+            {"id": 3, "result": {}},  # turn/start (req_id=3 from prior turns)
             {"method": "turn/completed", "params": {"turn": {"status": "completed"}}},
         ]
         fake_ws = _FakeWS(messages_warm)
-        mock_session, mock_cls = _make_aiohttp_mock(fake_ws)
+
+        # Pre-warm: state already has ws + thread_id (persistent connection from prior turn)
+        state = _make_server_state(thread_id="t-existing")
+        state.ws = fake_ws  # type: ignore[assignment]
+        state.req_id = 3
 
         runner = CodexAppServerRunner(_make_config())
         with (
             patch.object(runner, "_get_or_start_server", return_value=state),
-            patch(
-                "ypl.agent_harness_service.executors.codex_app_server_runner.aiohttp.ClientSession",
-                mock_cls,
-            ),
             _patch_file_logger(),
             _patch_system_prompt(),
         ):
             collected = [e async for e in runner._run_once("turn 2", _make_context())]
 
-        # Check that no thread/start was sent (only initialize + turn/start)
+        # No initialize or thread/start — only turn/start
         sent_methods = [json.loads(m).get("method") for m in fake_ws.sent]
         assert "thread/start" not in sent_methods
-        assert "initialize" in sent_methods
+        assert "initialize" not in sent_methods
         assert "turn/start" in sent_methods
 
         result_events = [e for e in collected if e.type == "result"]

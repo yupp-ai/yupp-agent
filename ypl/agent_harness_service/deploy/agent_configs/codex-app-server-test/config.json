@@ -1,0 +1,20 @@
+{
+  "display_name": "Codex App-Server Test",
+  "description": "Test agent for the CodexAppServerRunner (codex app-server WebSocket JSON-RPC 2.0 executor). Used to validate C3 smoke tests.",
+  "default_repo": "yupp-agent",
+  "max_turns": 20,
+  "max_budget_usd": 0.5,
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true
+  },
+  "executor_config": {
+    "type": "harnessed",
+    "model": "codex-app-server"
+  },
+  "tool_permissions": {
+    "*": "allow"
+  },
+  "allowed_subagents": [],
+  "timeout_s": 3600
+}
