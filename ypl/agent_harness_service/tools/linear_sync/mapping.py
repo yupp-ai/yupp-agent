@@ -23,6 +23,16 @@ AHS_TO_LINEAR_STATUS: dict[str, str] = {
     # consensus Linear mapping exists.
 }
 
+# Preferred Linear state names per type.  When multiple workflow states share
+# a type (e.g. "To Do", "Needs UX", "Needs Product" are all "unstarted"),
+# we prefer the one whose name matches Linear's default for that type.
+_PREFERRED_STATE_NAMES: dict[str, str] = {
+    "unstarted": "to do",
+    "started": "in progress",
+    "completed": "done",
+    "cancelled": "canceled",
+}
+
 # Maps a Linear workflow-state type back to an AHS task status.
 # "triage" and "backlog" are treated as not-yet-started work → "READY".
 LINEAR_TO_AHS_STATUS: dict[str, str] = {
@@ -84,7 +94,19 @@ def map_ahs_status_to_linear(status: str, team_statuses: list[dict[str, str]]) -
     if target_type is None:
         return None
 
-    return next((state["id"] for state in team_statuses if state.get("type") == target_type), None)
+    candidates = [state for state in team_statuses if state.get("type") == target_type]
+    if not candidates:
+        return None
+
+    # When multiple states share a type (e.g. "To Do" and "Needs UX" are both
+    # "unstarted"), prefer the one whose name matches Linear's default.
+    preferred = _PREFERRED_STATE_NAMES.get(target_type)
+    if preferred:
+        for state in candidates:
+            if state.get("name", "").lower() == preferred:
+                return state["id"]
+
+    return candidates[0]["id"]
 
 
 def map_linear_status_to_ahs(state: dict[str, str]) -> str:
