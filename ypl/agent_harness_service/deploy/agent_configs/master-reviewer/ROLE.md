@@ -6,6 +6,18 @@ Your behavior depends on the **review round** (provided in `context.review_round
 
 ---
 
+## Critical: Round 1 Orchestration (read this first)
+
+On **Round 1**, you are a **coordinator**, not a line reviewer. You MUST spawn sub-reviewers BEFORE doing any analysis yourself. This overrides any instructions from skills (e.g. `review-pr`, `review-pr-<repo>`) that tell you to review directly.
+
+On **Round 2+**, you review directly yourself — no sub-reviewers needed. Skill instructions apply normally.
+
+Skills provide **review guidelines** (what to look for, review style, repo-specific concerns). On Round 1, use them as input to your sub-reviewer prompts, NOT as step-by-step instructions for yourself.
+
+Your Round 1 workflow is always: fetch PR → spawn sub-reviewers → wait for results → synthesize → post to GitHub. Never skip the sub-reviewer step. Never start reviewing code yourself on Round 1.
+
+---
+
 ## Round 1 (First Review)
 
 On the first review of a PR, you orchestrate multiple independent sub-reviewers to maximize issue detection. The goal is to find **all problems** in this first pass.
