@@ -10,7 +10,8 @@
     "autoAllowBashIfSandboxed": true
   },
   "executor_config": {
-    "type": "harnessed"
+    "type": "harnessed",
+    "model": "claude-agent-sdk"
   },
   "tool_permissions": {
     "*": "allow"
