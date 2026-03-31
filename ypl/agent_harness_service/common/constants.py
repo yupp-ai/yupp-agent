@@ -58,6 +58,16 @@ AHS_MEMORIES_DIR = os.environ.get("AHS_MEMORIES_DIR", os.path.join(AHS_DATA_DIR,
 # The next call_tool() transparently restarts it (Go binary restarts in ~2 ms).
 AHS_BCH_IDLE_TIMEOUT_SECONDS: int = int(os.environ.get("AHS_BCH_IDLE_TIMEOUT_SECONDS", "3600"))
 
+# ---------------------------------------------------------------------------
+# Codex App Server settings
+# ---------------------------------------------------------------------------
+
+# TCP port for the supervisord-managed `codex app-server` sidecar.
+# Used by the health monitoring background task in server.py.
+# Note: CodexAppServerRunner spawns per-session servers on dynamic ports;
+# this port is for the C1 supervisord-managed shared sidecar health check.
+CODEX_APP_SERVER_PORT: int = int(os.environ.get("CODEX_APP_SERVER_PORT", "8765"))
+
 # GCS bucket and prefix for persisting agent memory directories.
 # Layout: gs://{bucket}/{prefix}/{agent_name}/...
 AHS_GCS_MEMORY_BUCKET = os.environ.get("AHS_GCS_MEMORY_BUCKET", "yupp-agents")
@@ -119,6 +129,8 @@ EXECUTOR_TYPE_HARNESSED = "harnessed"
 # When type="harnessed", the model field specifies which CLI wrapper to use.
 HARNESS_CLAUDE_CODE_CLI = "claude-code-cli"
 HARNESS_CODEX_CLI = "codex-cli"
+# Codex app-server runner: connects to a persistent `codex app-server` sidecar via WebSocket.
+HARNESS_CODEX_APP_SERVER = "codex-app-server"
 # In-process SDK runner: no subprocess, uses Anthropic Python SDK directly.
 HARNESS_CLAUDE_SDK = "claude-agent-sdk"
 
