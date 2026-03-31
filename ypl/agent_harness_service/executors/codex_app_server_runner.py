@@ -80,6 +80,21 @@ class _CodexServerState:
     thread_id: str | None = None
     last_used: float = field(default_factory=time.monotonic)
     active_turns: int = 0  # number of turns currently executing against this server
+    # Persistent WS connection — reused across turns within the same session.
+    http_session: aiohttp.ClientSession | None = None
+    ws: aiohttp.ClientWebSocketResponse | None = None
+    req_id: int = 0
+
+    async def close_ws(self) -> None:
+        """Close the WebSocket and HTTP session, resetting connection state."""
+        self.thread_id = None
+        self.req_id = 0
+        ws, self.ws = self.ws, None
+        http_session, self.http_session = self.http_session, None
+        if ws and not ws.closed:
+            await ws.close()
+        if http_session and not http_session.closed:
+            await http_session.close()
 
 
 # session_id → running server state
@@ -110,6 +125,7 @@ async def _eviction_loop() -> None:
                 continue
             _servers.pop(sid, None)
             _server_locks.pop(sid, None)
+            await state.close_ws()
             if state.proc.returncode is None:
                 logger.info(
                     "Evicting idle codex app-server",
@@ -505,18 +521,69 @@ class CodexAppServerRunner(AgentRunner):
 
     # ── main run loop ─────────────────────────────────────────────────────
 
+    async def _get_or_connect_ws(
+        self, state: _CodexServerState, context: RunContext
+    ) -> aiohttp.ClientWebSocketResponse:
+        """Return the persistent WS connection, creating one if needed.
+
+        On the first turn this creates an ``aiohttp.ClientSession``, opens a
+        WebSocket, performs the JSON-RPC ``initialize`` handshake, and starts a
+        codex thread.  Subsequent turns reuse the same connection and thread.
+
+        If the existing connection is dead (closed / server restarted), it is
+        torn down and a fresh one is established transparently.
+        """
+        ws = state.ws
+        if ws is not None and not ws.closed:
+            return ws
+
+        # Connection lost or first call — (re)connect.
+        await state.close_ws()
+
+        ws_url = f"ws://127.0.0.1:{state.port}"
+        logger.info(
+            "Opening persistent WS to codex app-server",
+            session_id=context.session_id,
+            ws_url=ws_url,
+        )
+
+        http_session = aiohttp.ClientSession()
+        try:
+            ws = await http_session.ws_connect(ws_url, heartbeat=30)
+        except Exception:
+            await http_session.close()
+            raise
+
+        state.http_session = http_session
+        state.ws = ws
+
+        # Handshake
+        state.req_id = await self._initialize_ws(ws, 0)
+
+        # Create a codex thread on this connection.
+        result = await _rpc(ws, "thread/start", self._build_thread_params(context), state.req_id)
+        state.req_id += 1
+        thread_id = result.get("thread", {}).get("id") or result.get("id") or ""
+        if not thread_id:
+            await state.close_ws()
+            raise ValueError("thread/start returned no thread id")
+        state.thread_id = thread_id
+        logger.info("codex thread created", session_id=context.session_id, thread_id=thread_id)
+        await _drain_until_notification(ws, "thread/started")
+
+        return ws
+
     async def _run_once(self, prompt: str, context: RunContext) -> AsyncIterator[StreamEvent]:
         """Start/reuse a codex app-server, run one turn, yield StreamEvents."""
         model_label = self.config.model or "(codex default)"
         start_time = time.monotonic()
 
         state = await self._get_or_start_server(context)
-        ws_url = f"ws://127.0.0.1:{state.port}"
 
         logger.info(
-            "Connecting to codex app-server",
+            "Starting codex turn",
             session_id=context.session_id,
-            ws_url=ws_url,
+            port=state.port,
             model=model_label,
         )
 
@@ -525,71 +592,50 @@ class CodexAppServerRunner(AgentRunner):
         state.active_turns += 1
 
         try:
-            async with aiohttp.ClientSession() as http, http.ws_connect(ws_url, heartbeat=30) as ws:
-                req_id = 0
+            ws = await self._get_or_connect_ws(state, context)
+            thread_id = state.thread_id
+            assert thread_id is not None  # guaranteed by _get_or_connect_ws
 
-                # Handshake
-                req_id = await self._initialize_ws(ws, req_id)
+            # Start the turn.
+            await _rpc(
+                ws,
+                "turn/start",
+                {
+                    "threadId": thread_id,
+                    "input": [{"type": "text", "text": prompt, "text_elements": []}],
+                },
+                state.req_id,
+            )
+            state.req_id += 1
 
-                # Obtain (or re-use) the codex thread.
-                # TODO: On warm-server miss (new server after eviction/restart), consider
-                # attempting to resume from context.llm_session_id before creating a fresh
-                # thread, to restore prior conversation context. Requires investigating
-                # whether codex app-server exposes a thread-resume/attach API.
-                thread_id = state.thread_id
-                if thread_id is None:
-                    result = await _rpc(ws, "thread/start", self._build_thread_params(context), req_id)
-                    req_id += 1
-                    thread_id = result.get("thread", {}).get("id") or result.get("id") or ""
-                    if not thread_id:
-                        raise ValueError("thread/start returned no thread id")
-                    state.thread_id = thread_id
+            # Stream notifications until turn/completed.
+            async for method, params in _iter_notifications(ws):
+                if method == "item/completed" and params.get("item", {}).get("type") == "agentMessage":
+                    message_count += 1
+
+                event = _notification_to_event(method, params, thread_id, message_count, start_time)
+                if event is None:
+                    continue
+
+                excerpt = extract_excerpt(event)
+                file_logger.log(model_label, event.type, excerpt, llm_session_id=thread_id)
+
+                if AGENT_RESPONSE_DEBUG:
                     logger.info(
-                        "codex thread created",
+                        f"Received message from {model_label}: [{event.type}] {excerpt}",
                         session_id=context.session_id,
-                        thread_id=thread_id,
                     )
-                    # Consume the thread/started notification.
-                    await _drain_until_notification(ws, "thread/started")
 
-                # Start the turn.
-                await _rpc(
-                    ws,
-                    "turn/start",
-                    {
-                        "threadId": thread_id,
-                        "input": [{"type": "text", "text": prompt, "text_elements": []}],
-                    },
-                    req_id,
-                )
-                req_id += 1
+                yield event
 
-                # Stream notifications until turn/completed.
-                async for method, params in _iter_notifications(ws):
-                    if method == "item/completed" and params.get("item", {}).get("type") == "agentMessage":
-                        message_count += 1
-
-                    event = _notification_to_event(method, params, thread_id, message_count, start_time)
-                    if event is None:
-                        continue
-
-                    excerpt = extract_excerpt(event)
-                    file_logger.log(model_label, event.type, excerpt, llm_session_id=thread_id)
-
-                    if AGENT_RESPONSE_DEBUG:
-                        logger.info(
-                            f"Received message from {model_label}: [{event.type}] {excerpt}",
-                            session_id=context.session_id,
-                        )
-
-                    yield event
-
-                    if method == "turn/completed":
-                        break
+                if method == "turn/completed":
+                    break
 
             state.last_used = time.monotonic()
 
         except Exception as e:
+            # Connection error — tear down the WS so the next turn reconnects.
+            await state.close_ws()
             logger.error(
                 "Error during codex app-server turn",
                 session_id=context.session_id,
@@ -603,6 +649,7 @@ class CodexAppServerRunner(AgentRunner):
             # If the server process has died, remove it from the registry.
             # Guard by identity to avoid removing a newer server started by another coroutine.
             if state.proc.returncode is not None and _servers.get(context.session_id) is state:
+                await state.close_ws()
                 _servers.pop(context.session_id, None)
                 _server_locks.pop(context.session_id, None)
                 logger.warning(
@@ -666,6 +713,7 @@ async def shutdown_codex_servers() -> None:
         except asyncio.CancelledError:
             pass
     for sid, state in list(_servers.items()):
+        await state.close_ws()
         if state.proc.returncode is None:
             logger.info("Shutting down codex app-server", session_id=sid, pid=state.proc.pid)
             try:
@@ -688,19 +736,11 @@ async def _iter_notifications(
             continue
         data: dict[str, Any] = json.loads(msg.data)
         method = data.get("method", "")
-        # Server-requests (approval prompts) have both "method" and "id".
-        # We're running with approvalPolicy="never" so we should never see them,
-        # but guard defensively — decline and continue.
+        # Server-requests (e.g. mcpServer/elicitation/request for MCP tool
+        # approval) have both "method" and "id".  Auto-accept so MCP tool
+        # calls proceed without manual approval.
         if "id" in data and method:
-            await ws.send_str(
-                json.dumps(
-                    {
-                        "method": "serverRequest/response",
-                        "id": data["id"],
-                        "params": {"response": "decline"},
-                    }
-                )
-            )
+            await ws.send_str(json.dumps({"id": data["id"], "result": {"action": "accept"}}))
             continue
         # Skip pure responses (they have "id" but no "method").
         if not method:
