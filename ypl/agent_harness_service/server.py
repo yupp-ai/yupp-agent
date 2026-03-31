@@ -30,7 +30,6 @@ from ypl.agent_harness_service.common.constants import (
     AHS_AUTO_STALE_INTERVAL_S,
     AHS_MCP_SECRET,
     AHS_SESSION_STALE_TIMEOUT_HOURS,
-    CODEX_APP_SERVER_PORT,
     mcp_session_id_var,
 )
 from ypl.agent_harness_service.core.streaming import init_streaming, shutdown_streaming
@@ -68,35 +67,6 @@ logger = get_logger()
 # Module-level task references to prevent GC
 _scheduler_task: asyncio.Task | None = None
 _auto_stale_task: asyncio.Task | None = None
-_codex_health_task: asyncio.Task | None = None
-
-
-async def _poll_codex_app_server_health() -> None:
-    """Background task: TCP-ping the supervisord-managed codex app-server sidecar every 10 s.
-
-    The sidecar is managed by supervisord (set up in C1) and listens on
-    CODEX_APP_SERVER_PORT (default 8765).  A TCP connect check is cheaper
-    than an HTTP health endpoint and sufficient to detect process death.
-
-    Unreachable sidecar emits a WARNING — it does not block startup and does
-    not affect other executor types (claude-code-cli, raw, claude-agent-sdk).
-    CodexAppServerRunner sessions will fail with a clear error until the sidecar
-    is restarted by supervisord (~1 s).
-    """
-    while True:
-        await asyncio.sleep(10)
-        try:
-            _, writer = await asyncio.wait_for(
-                asyncio.open_connection("127.0.0.1", CODEX_APP_SERVER_PORT),
-                timeout=2.0,
-            )
-            writer.close()
-            await writer.wait_closed()
-        except (OSError, TimeoutError, ConnectionRefusedError):
-            logger.warning(
-                "codex app-server sidecar unreachable — codex-app-server sessions may fail",
-                port=CODEX_APP_SERVER_PORT,
-            )
 
 
 # Create the MCP sub-app once so we can wire its lifespan into the main app.
@@ -519,9 +489,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Start background auto-stale sweep for hung ACTIVE sessions
     _auto_stale_task = asyncio.create_task(_auto_stale_inactive_sessions(), name="auto-stale-sweep")
 
-    # Start background health check for codex app-server sidecar
-    _codex_health_task = asyncio.create_task(_poll_codex_app_server_health(), name="codex-app-server-health")
-
     # Initialize the MCP app's lifespan (required by FastMCP).
     async with mcp_app.lifespan(mcp_app):
         yield
@@ -550,14 +517,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             except asyncio.CancelledError:
                 pass
             logger.info("Auto-stale sweep stopped")
-
-        # Cancel codex app-server health monitor
-        if _codex_health_task and not _codex_health_task.done():
-            _codex_health_task.cancel()
-            try:
-                await _codex_health_task
-            except asyncio.CancelledError:
-                pass
 
         # Shutdown scheduler INSIDE MCP lifespan so in-flight tasks can still use MCP tools
         if _scheduler_task and not _scheduler_task.done():
