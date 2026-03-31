@@ -15,7 +15,7 @@ from slack_sdk.errors import SlackApiError
 from slack_sdk.web.async_client import AsyncWebClient
 
 from ypl.backend.utils.slack_utils import resolve_slack_user_to_yupp_user_id
-from ypl.slack_agent_gateway.agent_client import send_feedback
+from ypl.slack_agent_gateway.agent_client import send_feedback, send_questionnaire_answer_to_agent
 from ypl.slack_agent_gateway.bot_father import handle_approval, handle_denial, request_bot_creation
 from ypl.slack_agent_gateway.bot_father_types import BotCreationRequest
 from ypl.slack_agent_gateway.commands import CREATE_AGENT_MODAL_CALLBACK_ID
@@ -35,6 +35,9 @@ _SURVEY_ACTION_TO_RATING: dict[str, str | None] = {
 
 # Bot Father action IDs
 _BOT_FATHER_ACTIONS = frozenset({"bot_father_approve", "bot_father_deny"})
+
+# Prefix for questionnaire choice action IDs (format: "questionnaire_{question_id}")
+_QUESTIONNAIRE_ACTION_PREFIX = "questionnaire_"
 
 
 async def _handle_survey_action(payload: dict[str, Any]) -> JSONResponse:
@@ -315,6 +318,94 @@ async def _handle_create_agent_submission(payload: dict[str, Any]) -> JSONRespon
         )
 
 
+async def _handle_questionnaire_action(payload: dict[str, Any]) -> JSONResponse:
+    """Handle a questionnaire choice button click.
+
+    Extracts the selected choice label from the button text and the session_id
+    from the button value, then forwards the answer to AHS as a session message
+    so the agent can continue processing.
+
+    Args:
+        payload: The parsed Slack interaction payload.
+
+    Returns:
+        JSONResponse acknowledging the action.
+    """
+    actions = payload.get("actions", [])
+    if not actions:
+        return JSONResponse(status_code=200, content={"status": "no_actions"})
+
+    action = actions[0]
+    action_id = action.get("action_id", "")
+    # The session_id is stored directly as the button value
+    session_id = action.get("value", "")
+    # The displayed choice label is the button text
+    choice_label = action.get("text", {}).get("text", "")
+
+    if not session_id:
+        logger.warning("Questionnaire action missing session_id in value", action_id=action_id)
+        return JSONResponse(status_code=200, content={"status": "missing_session_id"})
+
+    if not choice_label:
+        logger.warning("Questionnaire action missing choice label in button text", action_id=action_id)
+        return JSONResponse(status_code=200, content={"status": "missing_choice_label"})
+
+    # Extract the question_id from the action_id suffix (after "questionnaire_")
+    question_id = action_id[len(_QUESTIONNAIRE_ACTION_PREFIX) :]
+
+    slack_user_id = payload.get("user", {}).get("id", "")
+    message_channel = payload.get("channel", {}).get("id", "")
+    message_ts = payload.get("message", {}).get("ts", "")
+
+    logger.info(
+        "Processing questionnaire answer",
+        session_id=session_id,
+        question_id=question_id,
+        choice_label=choice_label,
+        slack_user_id=slack_user_id,
+    )
+
+    # Forward the selected choice to AHS as a session message
+    result = await send_questionnaire_answer_to_agent(
+        session_id=session_id,
+        answer_text=choice_label,
+        slack_user_id=slack_user_id,
+        slack_ts=message_ts,
+    )
+
+    if result is None:
+        logger.error(
+            "Failed to forward questionnaire answer to AHS",
+            session_id=session_id,
+            question_id=question_id,
+        )
+        # Keep the buttons visible so the user can retry
+        return JSONResponse(status_code=200, content={"status": "forwarding_failed"})
+
+    # Replace the questionnaire message with a confirmation showing the selection
+    if message_channel and message_ts:
+        try:
+            api_app_id = payload.get("api_app_id", "")
+            app_config = await get_agent_config_by_app_id(api_app_id)
+            if app_config:
+                client = AsyncWebClient(token=app_config.bot_token)
+                confirmation_text = f"_You selected: {choice_label}_"
+                await client.chat_update(
+                    channel=message_channel,
+                    ts=message_ts,
+                    text=confirmation_text,
+                    blocks=[],
+                )
+        except SlackApiError as e:
+            logger.warning(
+                "Failed to update questionnaire message with confirmation",
+                session_id=session_id,
+                error=str(e),
+            )
+
+    return JSONResponse(status_code=200, content={"status": "answer_forwarded"})
+
+
 async def handle_interaction(payload: dict[str, Any]) -> JSONResponse:
     """Handle a Slack interaction payload.
 
@@ -348,6 +439,8 @@ async def handle_interaction(payload: dict[str, Any]) -> JSONResponse:
             return await _handle_survey_action(payload)
         if action_id in _BOT_FATHER_ACTIONS:
             return await _handle_bot_father_action(payload)
+        if action_id.startswith(_QUESTIONNAIRE_ACTION_PREFIX):
+            return await _handle_questionnaire_action(payload)
 
     logger.info("Unhandled block_actions", action_ids=[a.get("action_id") for a in actions])
     return JSONResponse(status_code=200, content={"status": "unhandled_action"})

@@ -567,6 +567,93 @@ async def attach_slack_to_session(
         return None
 
 
+async def send_questionnaire_answer_to_agent(
+    session_id: str,
+    answer_text: str,
+    slack_user_id: str,
+    slack_ts: str,
+) -> dict | None:
+    """Forward a questionnaire button-click answer to AHS as a session message.
+
+    Called when a user clicks a questionnaire choice button in Slack.
+    The selected label is sent to AHS as a regular session message so the
+    agent can process it and continue the conversation.
+
+    Args:
+        session_id: SAG composite session identifier (channel:thread_ts:app_id)
+        answer_text: The choice label the user selected
+        slack_user_id: Slack user ID who clicked the button
+        slack_ts: Slack timestamp of the questionnaire message
+
+    Returns:
+        Response dict from AHS, or None on failure
+    """
+    base_url = get_agent_service_url()
+    if not base_url:
+        logger.error("Agent Harness Service URL not configured")
+        return None
+
+    yupp_user_id: str | None = None
+    if slack_user_id:
+        try:
+            yupp_user_id = await resolve_slack_user_to_yupp_user_id(slack_user_id)
+        except Exception:
+            logger.warning("Failed to resolve Slack user to Yupp user_id", slack_user_id=slack_user_id)
+
+    payload: dict[str, Any] = {
+        "session_id": session_id,
+        "message": answer_text,
+        "slack_ts": slack_ts,
+        "slack_user_id": slack_user_id,
+        "source": "slack_gateway",
+    }
+    if yupp_user_id is not None:
+        payload["user_id"] = yupp_user_id
+
+    url = f"{base_url}/ahs/session/message"
+    _log_outbound_payload("/ahs/session/message (questionnaire answer)", payload)
+
+    try:
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            response = await client.post(url, json=payload, headers=_get_ahs_headers())
+            response.raise_for_status()
+
+            logger.info(
+                "Forwarded questionnaire answer to AHS",
+                session_id=session_id,
+                answer_length=len(answer_text),
+                status_code=response.status_code,
+            )
+            result: dict = response.json()
+            return result
+
+    except httpx.TimeoutException as e:
+        logger.error(
+            "Timeout forwarding questionnaire answer to AHS",
+            session_id=session_id,
+            error=str(e),
+        )
+        return None
+
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "HTTP error forwarding questionnaire answer to AHS",
+            session_id=session_id,
+            status_code=e.response.status_code,
+            error=str(e),
+        )
+        return None
+
+    except Exception as e:
+        logger.error(
+            "Error forwarding questionnaire answer to AHS",
+            session_id=session_id,
+            error=str(e),
+            exc_info=True,
+        )
+        return None
+
+
 async def is_agent_service_healthy() -> bool:
     """Check if the Agent Harness Service is healthy.
 

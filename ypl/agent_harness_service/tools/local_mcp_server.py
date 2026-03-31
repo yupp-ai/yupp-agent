@@ -984,7 +984,7 @@ async def _resolve_slack_session_id(harness_session_id: str) -> str | None:
         "Only works for Slack sessions."
     ),
 )
-def request_feedback(session_id: str) -> dict[str, str]:
+async def request_feedback(session_id: str) -> dict[str, str]:
     """Request a feedback survey be posted to the Slack thread.
 
     Args:
@@ -999,7 +999,7 @@ def request_feedback(session_id: str) -> dict[str, str]:
     _validate_session_id(session_id)
 
     # Resolve harness UUID → Slack composite session_id (channel:thread_ts:app_id)
-    slack_session_id = asyncio.run(_resolve_slack_session_id(session_id))
+    slack_session_id = await _resolve_slack_session_id(session_id)
 
     if not slack_session_id:
         return {"status": "error", "error": "No Slack session found for this harness session"}
@@ -1009,10 +1009,81 @@ def request_feedback(session_id: str) -> dict[str, str]:
         return {"status": "error", "error": "Slack gateway not registered"}
 
     try:
-        success = asyncio.run(gateway.request_feedback(slack_session_id))
+        success = await gateway.request_feedback(slack_session_id)
         if not success:
             return {"status": "error", "error": "Gateway rejected feedback request"}
         return {"status": "ok"}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool(
+    name="ask_question",
+    description=(
+        "Ask the user a multiple-choice question in the Slack thread. "
+        "Renders a question with clickable answer buttons so the user can respond "
+        "without typing. The selected choice (or a typed reply) is returned to you "
+        "as the next message in the conversation. "
+        "Use this to gather structured input, clarify intent, or present options — "
+        "for example: asking which environment to deploy to, or which topic to focus on. "
+        "Only works for Slack sessions. Max 5 choices. "
+        "Set allow_free_text=True (default) to show a hint that the user can also type a custom answer."
+    ),
+)
+async def ask_question(
+    session_id: str,
+    question_id: str,
+    text: str,
+    choices: list[str],
+    allow_free_text: bool = True,
+) -> dict[str, str]:
+    """Post a multiple-choice question to the Slack thread.
+
+    Args:
+        session_id: Your harness session ID (provided in the system prompt).
+        question_id: A short alphanumeric identifier for this question (e.g. "deploy_env", "topic").
+                     Used internally to route the response; not shown to the user.
+        text: The question text shown to the user (Slack mrkdwn supported).
+        choices: List of choice labels (plain text, max 5). Each becomes a button.
+        allow_free_text: If True (default), show a hint that the user can type a free answer.
+
+    Returns:
+        Dict with status and optional error message.
+    """
+    from ypl.agent_harness_service.gateway import GatewayRegistry
+
+    logger.info("MCP tool: ask_question", session_id=session_id, question_id=question_id, num_choices=len(choices))
+    _validate_session_id(session_id)
+
+    if not choices:
+        return {"status": "error", "error": "choices must not be empty"}
+    if len(choices) > 5:
+        return {"status": "error", "error": "choices must have at most 5 items (Slack limit)"}
+
+    # Resolve harness UUID → Slack composite session_id (channel:thread_ts:app_id)
+    slack_session_id = await _resolve_slack_session_id(session_id)
+
+    if not slack_session_id:
+        return {"status": "error", "error": "No Slack session found for this harness session"}
+
+    gateway = GatewayRegistry.get_instance().get("slack")
+    if not gateway:
+        return {"status": "error", "error": "Slack gateway not registered"}
+
+    # Convert plain-text choice labels into the {label, value} dicts SAG expects
+    choice_dicts = [{"label": c, "value": c} for c in choices]
+
+    try:
+        success = await gateway.send_questionnaire(
+            session_id=slack_session_id,
+            question_id=question_id,
+            text=text,
+            choices=choice_dicts,
+            allow_free_text=allow_free_text,
+        )
+        if not success:
+            return {"status": "error", "error": "Gateway rejected questionnaire request"}
+        return {"status": "ok", "message": "Question posted. Awaiting user response."}
     except Exception as e:
         return {"status": "error", "error": str(e)}
 

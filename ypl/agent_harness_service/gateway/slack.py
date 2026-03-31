@@ -281,6 +281,67 @@ class SlackGateway(Gateway):
             return GatewaySendResult(success=False, error="Unexpected error", destination=destination)
 
     # ------------------------------------------------------------------
+    # send_questionnaire (interactive multiple-choice prompt — Slack-only)
+    # ------------------------------------------------------------------
+
+    async def send_questionnaire(
+        self,
+        session_id: str,
+        question_id: str,
+        text: str,
+        choices: list[dict[str, str]],
+        allow_free_text: bool = True,
+    ) -> bool:
+        """Ask the gateway to post a multiple-choice questionnaire to the Slack thread."""
+        url = f"{self._base_url}/slack-agent-gateway/sessions/questionnaire"
+
+        payload: dict = {
+            "session_id": session_id,
+            "question_id": question_id,
+            "text": text,
+            "choices": choices,
+            "allow_free_text": allow_free_text,
+        }
+
+        logger.info(
+            "Calling gateway /sessions/questionnaire",
+            session_id=session_id,
+            question_id=question_id,
+            num_choices=len(choices),
+        )
+
+        try:
+            resp = await self._get_client().post(url, json=payload, headers=self._headers())
+            resp.raise_for_status()
+            data = resp.json()
+            if not data.get("success"):
+                logger.error(
+                    "Gateway rejected questionnaire request",
+                    session_id=session_id,
+                    error=data.get("error"),
+                )
+                return False
+            logger.info(
+                "Gateway accepted questionnaire",
+                session_id=session_id,
+                message_ts=data.get("message_ts"),
+            )
+            return True
+        except httpx.TimeoutException:
+            logger.error("Timeout calling gateway /sessions/questionnaire", session_id=session_id)
+            return False
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                "HTTP error calling gateway /sessions/questionnaire",
+                session_id=session_id,
+                status_code=e.response.status_code,
+            )
+            return False
+        except Exception:
+            logger.error("Error calling gateway /sessions/questionnaire", session_id=session_id, exc_info=True)
+            return False
+
+    # ------------------------------------------------------------------
     # send_status_update (live tool-use hints — Slack-only)
     # ------------------------------------------------------------------
 
