@@ -1,7 +1,7 @@
 {
   "display_name": "Router",
   "description": "Lightweight router \u2014 one-shot classification with cheap model.",
-  "default_repo": "yupp-mind",
+  "default_repo": "yupp-agent",
   "max_turns": 1,
   "max_budget_usd": 0.5,
   "sandbox": {

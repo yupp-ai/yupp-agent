@@ -1,8 +1,8 @@
 {
   "display_name": "Dual Reviewer",
   "description": "Review coordinator \u2014 spawns two reviewers, synthesizes, then fixes.",
-  "default_repo": "yupp-mind",
-  "max_turns": 10,
+  "default_repo": "yupp-agent",
+  "max_turns": 200,
   "max_budget_usd": 10.0,
   "has_mcp": true,
   "sandbox": {
@@ -19,8 +19,7 @@
     "new_task": "allow"
   },
   "allowed_subagents": [
-    "reviewer",
-    "fixer"
+    "reviewer"
   ],
   "timeout_s": 36000
 }

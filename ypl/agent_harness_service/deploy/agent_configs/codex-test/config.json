@@ -1,7 +1,7 @@
 {
   "display_name": "Codex Test",
   "description": "Test agent for OpenAI Codex CLI harness.",
-  "default_repo": "yupp-mind",
+  "default_repo": "yupp-agent",
   "max_turns": 100,
   "max_budget_usd": 0.5,
   "sandbox": {

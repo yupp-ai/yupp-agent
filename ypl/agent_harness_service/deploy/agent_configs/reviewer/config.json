@@ -1,7 +1,7 @@
 {
   "display_name": "Reviewer",
-  "description": "Code reviewer \u2014 read-only, thorough analysis.",
-  "default_repo": "yupp-mind",
+  "description": "Code reviewer: read-only, thorough analysis.",
+  "default_repo": "yupp-agent",
   "max_turns": 100,
   "max_budget_usd": 5.0,
   "has_mcp": true,
@@ -10,8 +10,7 @@
     "autoAllowBashIfSandboxed": false
   },
   "executor_config": {
-    "type": "raw",
-    "model": "anthropic/claude-sonnet-4-6"
+    "type": "harnessed"
   },
   "tool_permissions": {
     "*": "allow"

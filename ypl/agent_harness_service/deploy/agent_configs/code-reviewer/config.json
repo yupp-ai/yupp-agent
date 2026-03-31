@@ -1,7 +1,7 @@
 {
   "display_name": "Code Reviewer",
   "description": "Code reviewer agent \u2014 thorough review with read-only file access.",
-  "default_repo": "yupp-mind",
+  "default_repo": "yupp-agent",
   "max_turns": 200,
   "max_budget_usd": 2.0,
   "has_mcp": true,

@@ -1,7 +1,7 @@
 {
   "display_name": "Risk Analyst",
   "description": "Risk analyst agent \u2014 security risk assessment, code vulnerability analysis, and threat modeling.",
-  "default_repo": "yupp-mind",
+  "default_repo": "yupp-agent",
   "max_turns": 40,
   "max_budget_usd": 3.0,
   "timeout_s": 36000,
