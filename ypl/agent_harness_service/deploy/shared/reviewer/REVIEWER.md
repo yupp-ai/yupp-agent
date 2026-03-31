@@ -38,4 +38,10 @@ Severity levels:
 
 ### Verdict
 
-Overall assessment: no issues found, minor suggestions only, or significant issues that need fixing.
+Use exactly one of these labels, followed by a one-line reason:
+
+- **CLEAN** — No issues found.
+- **MINOR** — Only suggestions or style nits; safe to merge as-is.
+- **NEEDS_FIXES** — Has warnings or critical issues that should be addressed before merge.
+
+Example: `NEEDS_FIXES — Two critical issues: missing null check in handler and SQL injection risk in query builder.`
