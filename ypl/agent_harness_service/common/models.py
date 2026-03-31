@@ -108,6 +108,36 @@ class HistoryConfig(BaseModel):
     enabled: bool = True
 
 
+class RetryConfig(BaseModel):
+    """Auto-retry configuration for silent CLI crashes.
+
+    A "silent crash" is when the CLI subprocess exits with a non-zero return code
+    and produces *zero meaningful stream events* — i.e. the only event emitted (if
+    any) was the synthetic ``"error"`` event injected by the runner itself, with no
+    real ``system``, ``assistant``, ``user``, or ``result`` events.  This pattern
+    occurs during transient Anthropic API errors or network blips where the Claude
+    Code CLI exits cleanly (code 1) without writing anything to stdout or stderr.
+
+    The retry spawns a fresh subprocess with identical prompt and context.  Any
+    pre-spawn optimisation from the first attempt has already been consumed, so the
+    retry always uses the normal spawn path.  Error events from failed attempts are
+    suppressed (not forwarded to the session consumer) so the DB only records the
+    outcome of the final attempt.
+
+    Attributes:
+        max_retries: Maximum number of retry attempts after the initial run.
+            ``0`` disables retries entirely.  Defaults to ``1`` so that a single
+            transient silent crash does not permanently fail the session.
+        on_empty_result: When ``True`` (the default), only retry when the run
+            produced zero meaningful events (pure silent crash).  Set to ``False``
+            to disable the trigger condition check and never auto-retry (equivalent
+            to ``max_retries=0`` but kept separate for future trigger modes).
+    """
+
+    max_retries: int = 1
+    on_empty_result: bool = True
+
+
 class ExecutorConfig(BaseModel):
     """How an agent executes: raw (direct API) or harnessed (CLI wrapper).
 
@@ -135,6 +165,8 @@ class ExecutorConfig(BaseModel):
     compaction: CompactionConfig = CompactionConfig()
     # Context management (Phase 3): cross-turn session history persistence
     history: HistoryConfig = HistoryConfig()
+    # Auto-retry on silent CLI crashes (exit code != 0, zero meaningful stdout events)
+    retry: RetryConfig = Field(default_factory=RetryConfig)
 
     @model_validator(mode="after")
     def _set_defaults(self) -> "ExecutorConfig":

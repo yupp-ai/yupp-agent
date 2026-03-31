@@ -30,7 +30,7 @@ from ypl.agent_harness_service.common.constants import (
     BLOCKED_HARNESS_TOOLS,
     HARNESS_TO_CLI_TOOL_MAP,
 )
-from ypl.agent_harness_service.common.models import tool_permissions_to_cli_flags
+from ypl.agent_harness_service.common.models import RetryConfig, tool_permissions_to_cli_flags
 from ypl.agent_harness_service.common.types import SessionPermissions
 from ypl.agent_harness_service.common.types import StreamEvent as StreamEvent  # re-export for compat
 from ypl.agent_harness_service.executors.mcp_config import ensure_workspace_mcp_config
@@ -289,8 +289,12 @@ class AgentRunner(ABC):
     """Abstract base for agent runners."""
 
     @abstractmethod
-    def run(self, prompt: str, context: RunContext) -> AsyncIterator[StreamEvent]:
-        """Run the agent and yield stream events.
+    def _run_once(self, prompt: str, context: RunContext) -> AsyncIterator[StreamEvent]:
+        """Run the agent once and yield stream events.
+
+        Subclasses implement this method.  The public ``run()`` method wraps it
+        with auto-retry logic — do not call ``_run_once()`` directly from outside
+        the runner hierarchy.
 
         Args:
             prompt: The enriched prompt (message + memory context)
@@ -300,6 +304,91 @@ class AgentRunner(ABC):
             StreamEvent objects parsed from the agent output.
         """
         ...
+
+    async def run(self, prompt: str, context: RunContext) -> AsyncIterator[StreamEvent]:
+        """Run the agent with auto-retry on silent CLI crashes.
+
+        Wraps ``_run_once()`` in a retry loop.  A "silent crash" is detected when
+        the entire run produces zero *meaningful* events — the only event emitted
+        (if any) is the synthetic ``"error"`` event the runner itself injects on a
+        non-zero subprocess exit, with no real ``system``, ``assistant``, ``user``,
+        or ``result`` events.  This matches the pattern where the Claude Code CLI
+        exits with code 1 and empty stderr/stdout due to transient API issues.
+
+        Streaming behaviour: events are buffered until the first non-error event
+        arrives.  Once a meaningful event is seen the buffer is flushed and all
+        subsequent events stream directly to the consumer — so a successful run
+        incurs virtually no extra latency (only the first ``system`` event is
+        briefly buffered, typically <100 ms).  If the run ends with only error
+        events the buffer is either discarded (retry available) or forwarded
+        (final attempt), ensuring the consumer never sees intermediate failures.
+
+        Retry configuration is read from ``self.config.executor_config.retry``
+        (accessed via ``getattr`` so runners without a ``config`` attribute
+        degrade gracefully to zero retries).
+
+        Args:
+            prompt: The enriched prompt (message + memory context)
+            context: Run context with session info and workspace
+
+        Yields:
+            StreamEvent objects from the final (or only) run attempt.
+        """
+        retry_cfg: RetryConfig | None = None
+        cfg = getattr(self, "config", None)
+        exec_cfg = getattr(cfg, "executor_config", None)
+        if exec_cfg is not None:
+            retry_cfg = getattr(exec_cfg, "retry", None)
+        max_retries: int = retry_cfg.max_retries if retry_cfg is not None else 0
+        on_empty: bool = retry_cfg.on_empty_result if retry_cfg is not None else True
+
+        for attempt in range(max_retries + 1):
+            # Buffer events until we see the first non-error event.  Once a
+            # meaningful event arrives we flush and switch to direct streaming.
+            # This lets us suppress intermediate error events from failed attempts
+            # without adding latency to successful runs.
+            buffer: list[StreamEvent] = []
+            streaming = False  # True once a non-error event has been observed
+            only_errors = True  # False as soon as any non-error event is seen
+
+            async for event in self._run_once(prompt, context):
+                if streaming:
+                    yield event
+                else:
+                    buffer.append(event)
+                    if event.type != "error":
+                        only_errors = False
+                        # First meaningful event: flush buffer and stream directly
+                        streaming = True
+                        for buffered in buffer:
+                            yield buffered
+                        buffer.clear()
+
+            # Determine whether to retry.
+            is_empty_result = only_errors and on_empty
+            has_retries_left = attempt < max_retries
+
+            if not is_empty_result or not has_retries_left:
+                # Successful run or retries exhausted — yield any remaining
+                # buffered events (the last attempt's error events if all crashed).
+                if is_empty_result and not has_retries_left and attempt > 0:
+                    logger.error(
+                        "CLI silent crash persisted after all retries",
+                        session_id=context.session_id,
+                        total_attempts=attempt + 1,
+                    )
+                for buffered in buffer:
+                    yield buffered
+                break
+
+            # Silent crash on a non-final attempt: discard buffered error events
+            # and retry with a fresh spawn.
+            logger.warning(
+                "CLI silent crash detected (zero meaningful events), retrying",
+                session_id=context.session_id,
+                attempt=attempt + 1,
+                max_retries=max_retries,
+            )
 
 
 def extract_excerpt(event: StreamEvent, max_len: int = 200) -> str:
@@ -628,7 +717,7 @@ class ClaudeCodeRunner(AgentRunner):
         chunks = [chunk async for chunk in proc.stderr]
         return b"".join(chunks).decode("utf-8", errors="replace")
 
-    async def run(self, prompt: str, context: RunContext) -> AsyncIterator[StreamEvent]:
+    async def _run_once(self, prompt: str, context: RunContext) -> AsyncIterator[StreamEvent]:
         """Spawn claude CLI and yield parsed stream events."""
         args = self._build_args(prompt, context)
         cwd = context.workspace
@@ -863,7 +952,7 @@ class RawExecutorRunner(AgentRunner):
     def __init__(self, agent_config: AgentConfig) -> None:
         self.config = agent_config
 
-    async def run(self, prompt: str, context: RunContext) -> AsyncIterator[StreamEvent]:
+    async def _run_once(self, prompt: str, context: RunContext) -> AsyncIterator[StreamEvent]:
         """Run the raw executor and yield stream events.
 
         Wires an on_event callback into run_raw_executor so that every step
@@ -1081,7 +1170,7 @@ class MockRunner(AgentRunner):
     def __init__(self, agent_config: AgentConfig) -> None:
         self.config = agent_config
 
-    async def run(self, prompt: str, context: RunContext) -> AsyncIterator[StreamEvent]:
+    async def _run_once(self, prompt: str, context: RunContext) -> AsyncIterator[StreamEvent]:
         """Log the prompt and yield fake events simulating a successful run."""
         mock_session_id = f"mock-{uuid.uuid4()}"
 
