@@ -102,5 +102,8 @@ temp/
 # Redis
 *.rdb
 
+# Streamlit
+.srteamlit/
+
 # Weight and Biases
 wandb/
