@@ -13,24 +13,25 @@ AHS_TO_LINEAR_STATUS: dict[str, str] = {
     "READY": "unstarted",
     "IN_PROGRESS": "started",
     "COMPLETED": "completed",
-    "FAILED": "cancelled",
+    "FAILED": "started",  # failed tasks may be retried; keep visible as in-flight
     "CANCELLED": "cancelled",
     "BLOCKED": "started",  # still in-flight; no dedicated Linear type
+    "IN_REVIEW": "started",  # maps to "In Review" via _PREFERRED_STATE_NAMES
     # "PENDING" is intentionally omitted: tasks awaiting execution have not
     # yet been claimed and do not yet need a Linear issue created for them.
-    # "IN_REVIEW" is intentionally omitted: not yet part of the stable AHS
-    # task status set; add here once the status is fully landed and a
-    # consensus Linear mapping exists.
 }
 
-# Preferred Linear state names per type.  When multiple workflow states share
-# a type (e.g. "To Do", "Needs UX", "Needs Product" are all "unstarted"),
-# we prefer the one whose name matches Linear's default for that type.
+# Preferred Linear state names per AHS status.  When multiple Linear workflow
+# states share a type (e.g. "To Do", "Needs UX", "Needs Product" are all
+# "unstarted"), we prefer the one whose name matches the expected default.
 _PREFERRED_STATE_NAMES: dict[str, str] = {
-    "unstarted": "to do",
-    "started": "in progress",
-    "completed": "done",
-    "cancelled": "canceled",
+    "READY": "to do",
+    "IN_PROGRESS": "in progress",
+    "IN_REVIEW": "in review",
+    "BLOCKED": "in progress",
+    "COMPLETED": "done",
+    "FAILED": "in progress",
+    "CANCELLED": "canceled",
 }
 
 # Maps a Linear workflow-state type back to an AHS task status.
@@ -99,8 +100,9 @@ def map_ahs_status_to_linear(status: str, team_statuses: list[dict[str, str]]) -
         return None
 
     # When multiple states share a type (e.g. "To Do" and "Needs UX" are both
-    # "unstarted"), prefer the one whose name matches Linear's default.
-    preferred = _PREFERRED_STATE_NAMES.get(target_type)
+    # "unstarted"), prefer the one whose name matches the expected default
+    # for this specific AHS status.
+    preferred = _PREFERRED_STATE_NAMES.get(status.upper())
     if preferred:
         for state in candidates:
             if state.get("name", "").lower() == preferred:
