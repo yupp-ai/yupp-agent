@@ -373,12 +373,12 @@ def _build_questionnaire_blocks(request: SendQuestionnaireRequest) -> list[dict]
     elements: list[dict] = [
         {
             "type": "button",
-            "action_id": f"questionnaire_{safe_qid}",
+            "action_id": f"questionnaire_{safe_qid}_{i}",
             "text": {"type": "plain_text", "text": choice.label},
             # Session ID in value so the interaction handler can look up the session
             "value": request.session_id,
         }
-        for choice in request.choices
+        for i, choice in enumerate(request.choices)
     ]
 
     blocks: list[dict] = [
