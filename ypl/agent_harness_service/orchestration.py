@@ -667,7 +667,14 @@ async def _execute_subagent(
 
     # Harnessed executor path
     return await _execute_harnessed(
-        agent_spec, fs_config, prompt, model, session, workspace, effective_session_id, session_context,
+        agent_spec,
+        fs_config,
+        prompt,
+        model,
+        session,
+        workspace,
+        effective_session_id,
+        session_context,
         param_model=param_model,
     )
 
