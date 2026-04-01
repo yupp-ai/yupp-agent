@@ -459,6 +459,7 @@ async def run_subagent(
             workspace=parent_workspace,
             effective_session_id=effective_session_id,
             session_context=subagent_context,
+            param_model=model,
         )
     )
     if db_session_id:
@@ -638,12 +639,17 @@ async def _execute_subagent(
     workspace: str | None,
     effective_session_id: str | None = None,
     session_context: dict | None = None,
+    param_model: str | None = None,
 ) -> ExecutorResult:
     """Execute a subagent using the appropriate runner.
 
     Routing logic:
     - Raw executor (agent_spec.executor.type == "raw") → direct API calls
     - Harnessed executor → Claude Code CLI or Codex CLI subprocess
+
+    Args:
+        param_model: Explicit model override from new_task() call (not a fallback).
+            Used by harnessed executors to avoid inheriting parent LLM models.
     """
     # Check if this should use the raw executor
     if agent_spec and agent_spec.executor.type == EXECUTOR_TYPE_RAW:
@@ -661,7 +667,15 @@ async def _execute_subagent(
 
     # Harnessed executor path
     return await _execute_harnessed(
-        agent_spec, fs_config, prompt, model, session, workspace, effective_session_id, session_context
+        agent_spec,
+        fs_config,
+        prompt,
+        model,
+        session,
+        workspace,
+        effective_session_id,
+        session_context,
+        param_model=param_model,
     )
 
 
@@ -753,6 +767,7 @@ async def _execute_harnessed(
     workspace: str | None,
     effective_session_id: str | None = None,
     session_context: dict | None = None,
+    param_model: str | None = None,
 ) -> ExecutorResult:
     """Execute a subagent via a harnessed executor (CLI subprocess)."""
     from ypl.agent_harness_service.tools.local_mcp_server import (
@@ -763,7 +778,7 @@ async def _execute_harnessed(
     )
 
     # Build a filesystem-compatible AgentConfig for the runner
-    runner_config = _build_runner_config(agent_spec, fs_config, model)
+    runner_config = _build_runner_config(agent_spec, fs_config, model, param_model=param_model)
 
     # Register bwrap sandbox setting for harnessed subagents too.
     # When has_mcp=True, the agent can call mcp__harness__bash which looks up
@@ -841,13 +856,24 @@ def _build_runner_config(
     agent_spec: AgentSpec | None,
     fs_config: AgentConfig | None,
     model: str,
+    param_model: str | None = None,
 ) -> AgentConfig:
-    """Build a runner-compatible AgentConfig from agent spec or filesystem config."""
+    """Build a runner-compatible AgentConfig from agent spec or filesystem config.
+
+    Args:
+        agent_spec: Resolved agent specification (from spec registry).
+        fs_config: Filesystem agent configuration (from config.json).
+        model: Resolved model string (always set, may be a fallback).
+        param_model: Explicit model override from new_task() call, if any.
+            For harnessed executors, only param_model is used (not fallback model).
+    """
     if fs_config:
-        # Use filesystem config directly, override the LLM model if specified
+        # Use filesystem config directly, override the LLM model if specified.
+        # For harnessed executors, only use explicit param_model (not fallback).
         config = fs_config.model_copy()
-        if model:
-            _, model_id = parse_model_string(model)
+        _effective = param_model if config.executor_config.type == EXECUTOR_TYPE_HARNESSED else model
+        if _effective:
+            _, model_id = parse_model_string(_effective)
             config.llm_model = model_id
         return config
 
@@ -855,9 +881,16 @@ def _build_runner_config(
         # Convert agent spec to runner-compatible AgentConfig.
         # executor_config.model is the CLI name for harnessed executors;
         # the LLM model goes in llm_model.
+        #
+        # For harnessed executors, only set llm_model if the model was explicitly
+        # requested (param_model from new_task). Fallback models (parent_model,
+        # default_model) are LLM model strings (e.g., "anthropic/claude-sonnet-4-6")
+        # that are meaningless to CLI harnesses like codex-cli — passing them causes
+        # the Codex API to reject unsupported models.
         llm_model_id: str | None = None
-        if model:
-            _, llm_model_id = parse_model_string(model)
+        _effective_model = param_model if agent_spec.executor.type == EXECUTOR_TYPE_HARNESSED else model
+        if _effective_model:
+            _, llm_model_id = parse_model_string(_effective_model)
 
         return AgentConfig(
             name=agent_spec.name,
