@@ -97,6 +97,30 @@ async def _build_slack_context(
     }
 
 
+async def get_available_models() -> dict | None:
+    """Fetch the list of available models from AHS GET /ahs/models.
+
+    Returns a dict with ``harnessed`` and ``raw`` lists, or None on failure.
+    Harnessed values are CLI wrapper names (e.g. 'claude-code-cli').
+    Raw values are ``provider/model_id`` strings (e.g. 'anthropic/claude-sonnet-4-6').
+    """
+    base_url = get_agent_service_url()
+    if not base_url:
+        logger.error("Agent Harness Service URL not configured")
+        return None
+
+    url = f"{base_url}/ahs/models"
+    try:
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            response = await client.get(url, headers=_get_ahs_headers())
+            response.raise_for_status()
+            result: dict = response.json()
+            return result
+    except Exception as e:
+        logger.error("Failed to fetch available models from AHS", error=str(e))
+        return None
+
+
 async def create_agent_session(
     agent_name: str,
     session_id: str,
@@ -105,6 +129,7 @@ async def create_agent_session(
     thread_ts: str,
     channel_name: str | None = None,
     slack_name: str | None = None,
+    force_model: str | None = None,
 ) -> dict | None:
     """Create a new session with the Agent Harness Service.
 
@@ -114,6 +139,7 @@ async def create_agent_session(
     - message: The initial message text
     - session_id: The Slack composite session ID (channel:thread_ts:app_id)
     - context: Slack metadata (user info, timestamps, slack_agent_name)
+    - force_model: Optional model override (harness name or provider/model_id)
 
     Args:
         agent_name: AHS agent name (e.g., 'sre', 'data-scientist')
@@ -123,6 +149,7 @@ async def create_agent_session(
         thread_ts: Slack thread timestamp
         channel_name: Optional human-readable channel name
         slack_name: Slack bot name (e.g., 'giladovski') for agent persona context
+        force_model: Override the agent's default model for this session.
 
     Returns:
         Response dict from AHS, or None on failure
@@ -156,6 +183,8 @@ async def create_agent_session(
     }
     if message.attachments:
         payload["attachments"] = [a.model_dump() for a in message.attachments]
+    if force_model:
+        payload["force_model"] = force_model
 
     url = f"{base_url}/ahs/session/create"
     _log_outbound_payload("/ahs/session/create", payload)
