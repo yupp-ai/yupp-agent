@@ -52,7 +52,7 @@ _cached_webhook_user_id: str | None = None
 
 async def _get_webhook_user_id() -> str:
     """Look up the system webhook user by email, caching the result."""
-    global _cached_webhook_user_id  # noqa: PLW0603
+    global _cached_webhook_user_id
     if _cached_webhook_user_id is not None:
         return _cached_webhook_user_id
 
@@ -65,6 +65,7 @@ async def _get_webhook_user_id() -> str:
             raise RuntimeError(f"Webhook system user not found: {_WEBHOOK_USER_EMAIL}")
         _cached_webhook_user_id = user.user_id
         return _cached_webhook_user_id
+
 
 # Redis key prefix for PR → session mapping.
 # Value is a JSON blob: {"session_id": "...", "review_round": N}
