@@ -28,11 +28,13 @@ from typing import Any
 from urllib.parse import parse_qs
 
 from fastapi import APIRouter, HTTPException, Request
+from sqlmodel import select
 from starlette.responses import Response
 
 from ypl.agent_harness_service.common.types import SessionCreateRequest
 from ypl.agent_harness_service.service import create_session
 from ypl.backend.config import settings
+from ypl.db.users import User
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -42,6 +44,28 @@ webhook_router = APIRouter(prefix="/webhook", tags=["github-webhook"])
 _REVIEWER_AGENT = "master-reviewer"
 _WEBHOOK_TRIGGER = "webhook"
 _WEBHOOK_SOURCE = "github_webhook"
+_WEBHOOK_USER_EMAIL = "system-github-webhook@yupp.ai"
+
+# Cached webhook user_id — looked up once from DB, then reused.
+_cached_webhook_user_id: str | None = None
+
+
+async def _get_webhook_user_id() -> str:
+    """Look up the system webhook user by email, caching the result."""
+    global _cached_webhook_user_id
+    if _cached_webhook_user_id is not None:
+        return _cached_webhook_user_id
+
+    from ypl.backend.db import get_async_session
+
+    async with get_async_session() as session:
+        result = await session.execute(select(User).where(User.email == _WEBHOOK_USER_EMAIL))
+        user = result.scalar_one_or_none()
+        if not user:
+            raise RuntimeError(f"Webhook system user not found: {_WEBHOOK_USER_EMAIL}")
+        _cached_webhook_user_id = user.user_id
+        return _cached_webhook_user_id
+
 
 # Redis key prefix for PR → session mapping.
 # Value is a JSON blob: {"session_id": "...", "review_round": N}
@@ -301,12 +325,19 @@ async def github_webhook(request: Request) -> Response:
         "review_round": review_round,
     }
 
+    try:
+        webhook_user_id = await _get_webhook_user_id()
+    except Exception as exc:
+        logger.exception("github_webhook_user_lookup_failed")
+        raise HTTPException(status_code=500, detail=f"Failed to resolve webhook user: {exc}") from exc
+
     create_req = SessionCreateRequest(
         agent_id=_REVIEWER_AGENT,
         trigger=_WEBHOOK_TRIGGER,
         message=message,
         context=context,
         source=_WEBHOOK_SOURCE,
+        user_id=webhook_user_id,
     )
 
     try:
