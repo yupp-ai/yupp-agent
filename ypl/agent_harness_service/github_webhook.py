@@ -25,6 +25,7 @@ import hmac
 import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs
 
 from fastapi import APIRouter, HTTPException, Request
 from starlette.responses import Response
@@ -206,13 +207,29 @@ async def github_webhook(request: Request) -> Response:
     # Acknowledge ping events GitHub sends on webhook creation.
     if event_type == "ping":
         logger.info("github_webhook_ping_received")
-        return Response(content='{"ok":true,"pong":true}', media_type="application/json")
+        return Response(
+            content=json.dumps({"ok": True, "event": "ping"}),
+            media_type="application/json",
+        )
 
     if event_type != "pull_request":
-        return Response(content='{"ok":true,"skipped":true}', media_type="application/json")
+        return Response(
+            content=json.dumps({"ok": True, "skipped": True, "event": event_type, "reason": "unhandled_event_type"}),
+            media_type="application/json",
+        )
 
+    # Parse the payload — handle both application/json and
+    # application/x-www-form-urlencoded (GitHub default).
+    content_type = request.headers.get("Content-Type", "")
     try:
-        payload = json.loads(raw_body)
+        if "application/x-www-form-urlencoded" in content_type:
+            form_data = parse_qs(raw_body.decode())
+            payload_str = form_data.get("payload", [None])[0]
+            if payload_str is None:
+                raise HTTPException(status_code=400, detail="Missing 'payload' field in form-encoded body")
+            payload: dict[str, Any] = json.loads(payload_str)
+        else:
+            payload = json.loads(raw_body)
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
 
@@ -231,7 +248,18 @@ async def github_webhook(request: Request) -> Response:
     elif action == "synchronize" and not is_draft:
         pass  # new commits to an open, ready PR
     else:
-        return Response(content='{"ok":true,"skipped":true}', media_type="application/json")
+        return Response(
+            content=json.dumps(
+                {
+                    "ok": True,
+                    "skipped": True,
+                    "event": event_type,
+                    "action": action,
+                    "reason": "draft" if is_draft else f"unhandled_action:{action}",
+                }
+            ),
+            media_type="application/json",
+        )
 
     repo = payload.get("repository", {})
     repo_full_name = repo.get("full_name", "")  # e.g. "yupp-ai/yupp-agent"
@@ -297,7 +325,18 @@ async def github_webhook(request: Request) -> Response:
             review_round=review_round,
         )
         return Response(
-            content=json.dumps({"ok": True, "session_id": session_id, "review_round": review_round}),
+            content=json.dumps(
+                {
+                    "ok": True,
+                    "event": event_type,
+                    "action": action,
+                    "agent": _REVIEWER_AGENT,
+                    "session_id": session_id,
+                    "review_round": review_round,
+                    "pr_number": pr_number,
+                    "repo": repo_full_name,
+                }
+            ),
             media_type="application/json",
         )
     except Exception as exc:
