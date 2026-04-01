@@ -667,7 +667,8 @@ async def _execute_subagent(
 
     # Harnessed executor path
     return await _execute_harnessed(
-        agent_spec, fs_config, prompt, model, session, workspace, effective_session_id, session_context
+        agent_spec, fs_config, prompt, model, session, workspace, effective_session_id, session_context,
+        param_model=param_model,
     )
 
 
@@ -759,6 +760,7 @@ async def _execute_harnessed(
     workspace: str | None,
     effective_session_id: str | None = None,
     session_context: dict | None = None,
+    param_model: str | None = None,
 ) -> ExecutorResult:
     """Execute a subagent via a harnessed executor (CLI subprocess)."""
     from ypl.agent_harness_service.tools.local_mcp_server import (
@@ -769,7 +771,7 @@ async def _execute_harnessed(
     )
 
     # Build a filesystem-compatible AgentConfig for the runner
-    runner_config = _build_runner_config(agent_spec, fs_config, model)
+    runner_config = _build_runner_config(agent_spec, fs_config, model, param_model=param_model)
 
     # Register bwrap sandbox setting for harnessed subagents too.
     # When has_mcp=True, the agent can call mcp__harness__bash which looks up
