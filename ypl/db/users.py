@@ -22,6 +22,7 @@ class UserStatus(enum.Enum):
 class UserType(enum.Enum):
     HUMAN = "HUMAN"
     AGENT = "AGENT"
+    SYSTEM = "SYSTEM"
 
 
 class User(BaseModel, table=True):
