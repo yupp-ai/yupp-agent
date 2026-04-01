@@ -849,13 +849,24 @@ def _build_runner_config(
     agent_spec: AgentSpec | None,
     fs_config: AgentConfig | None,
     model: str,
+    param_model: str | None = None,
 ) -> AgentConfig:
-    """Build a runner-compatible AgentConfig from agent spec or filesystem config."""
+    """Build a runner-compatible AgentConfig from agent spec or filesystem config.
+
+    Args:
+        agent_spec: Resolved agent specification (from spec registry).
+        fs_config: Filesystem agent configuration (from config.json).
+        model: Resolved model string (always set, may be a fallback).
+        param_model: Explicit model override from new_task() call, if any.
+            For harnessed executors, only param_model is used (not fallback model).
+    """
     if fs_config:
-        # Use filesystem config directly, override the LLM model if specified
+        # Use filesystem config directly, override the LLM model if specified.
+        # For harnessed executors, only use explicit param_model (not fallback).
         config = fs_config.model_copy()
-        if model:
-            _, model_id = parse_model_string(model)
+        _effective = param_model if config.executor_config.type == EXECUTOR_TYPE_HARNESSED else model
+        if _effective:
+            _, model_id = parse_model_string(_effective)
             config.llm_model = model_id
         return config
 
@@ -863,9 +874,16 @@ def _build_runner_config(
         # Convert agent spec to runner-compatible AgentConfig.
         # executor_config.model is the CLI name for harnessed executors;
         # the LLM model goes in llm_model.
+        #
+        # For harnessed executors, only set llm_model if the model was explicitly
+        # requested (param_model from new_task). Fallback models (parent_model,
+        # default_model) are LLM model strings (e.g., "anthropic/claude-sonnet-4-6")
+        # that are meaningless to CLI harnesses like codex-cli — passing them causes
+        # the Codex API to reject unsupported models.
         llm_model_id: str | None = None
-        if model:
-            _, llm_model_id = parse_model_string(model)
+        _effective_model = param_model if agent_spec.executor.type == EXECUTOR_TYPE_HARNESSED else model
+        if _effective_model:
+            _, llm_model_id = parse_model_string(_effective_model)
 
         return AgentConfig(
             name=agent_spec.name,
