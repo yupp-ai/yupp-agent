@@ -724,8 +724,24 @@ async def handle_app_mention(
     model_directive, cleaned_text = _extract_model_directive(raw_text)
     force_model: str | None = None
 
-    if model_directive:
-        # Validate the model against the AHS-known list before creating the session.
+    # Fire-and-forget: ack emoji should never block the main flow
+    create_background_task(_add_ack_reaction(app_config, channel_id, ts))
+
+    logger.info(
+        "Received app_mention event",
+        agent_name=app_config.agent_name,
+        channel_id=channel_id,
+        user_id=user_id,
+        thread_ts=thread_ts,
+    )
+
+    # Check if this thread was initiated by an agent and has an existing AHS session.
+    # If so, route the message to that session instead of creating a new one.
+    existing_ahs_session_id = await get_ahs_session_for_thread(channel_id, thread_ts)
+
+    # Validate the /model: directive only for new sessions. For existing sessions the
+    # directive is silently ignored — the message is forwarded as-is (using cleaned_text).
+    if model_directive and not existing_ahs_session_id:
         available = await get_available_models()
         if available is None:
             # AHS unreachable — let the normal flow continue without override
@@ -759,21 +775,6 @@ async def handle_app_mention(
                 agent_name=app_config.agent_name,
                 channel_id=channel_id,
             )
-
-    # Fire-and-forget: ack emoji should never block the main flow
-    create_background_task(_add_ack_reaction(app_config, channel_id, ts))
-
-    logger.info(
-        "Received app_mention event",
-        agent_name=app_config.agent_name,
-        channel_id=channel_id,
-        user_id=user_id,
-        thread_ts=thread_ts,
-    )
-
-    # Check if this thread was initiated by an agent and has an existing AHS session.
-    # If so, route the message to that session instead of creating a new one.
-    existing_ahs_session_id = await get_ahs_session_for_thread(channel_id, thread_ts)
 
     # Get or create SAG session (for Slack tracking: placeholder, buffer, reply mapping)
     session, is_new = await get_or_create_session(
