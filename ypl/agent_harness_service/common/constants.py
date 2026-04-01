@@ -134,6 +134,14 @@ HARNESS_CODEX_APP_SERVER = "codex-app-server"
 # In-process SDK runner: no subprocess, uses Anthropic Python SDK directly.
 HARNESS_CLAUDE_SDK = "claude-agent-sdk"
 
+# All harnessed executor model identifiers (used for validation & listing).
+HARNESSED_MODELS: tuple[str, ...] = (
+    HARNESS_CLAUDE_CODE_CLI,
+    HARNESS_CLAUDE_SDK,
+    HARNESS_CODEX_CLI,
+    HARNESS_CODEX_APP_SERVER,
+)
+
 # Tool permission values
 PERM_ALLOW = "allow"
 PERM_DENY = "deny"

@@ -176,6 +176,15 @@ class SessionCreateRequest(BaseModel):
         "api",
         description="Request source: slack_gateway, cli, tui, websocket, scheduler, orchestration, api",
     )
+    force_model: str | None = Field(
+        None,
+        description=(
+            "Override the agent's default model for this session. "
+            "Use a harness name (e.g., 'claude-code-cli', 'codex-cli') or a raw model in "
+            "'provider/model_id' format (e.g., 'anthropic/claude-sonnet-4-6'). "
+            "Stored in session context and applied on every turn."
+        ),
+    )
 
 
 class SessionMessageRequest(BaseModel):
@@ -255,6 +264,26 @@ class SessionCreateResponse(BaseModel):
 
     session_id: str = Field(..., description="Session UUID")
     status: str = Field(..., description="Session status")
+
+
+class ModelsListResponse(BaseModel):
+    """Response for GET /ahs/models — all selectable models grouped by executor type.
+
+    Harnessed models are CLI wrapper names; agents run inside a managed subprocess.
+    Raw models are LLM identifiers in ``provider/model_id`` format; agents call the
+    provider API directly.
+    """
+
+    harnessed: list[str] = Field(
+        ...,
+        description="Harnessed executor names (e.g., 'claude-code-cli'). Agent runs inside a CLI wrapper.",
+    )
+    raw: list[str] = Field(
+        ...,
+        description=(
+            "Raw LLM models in provider/model_id format (e.g., 'anthropic/claude-sonnet-4-6'). Direct API calls."
+        ),
+    )
 
 
 class SessionStopResponse(BaseModel):
