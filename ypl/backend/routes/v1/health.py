@@ -23,10 +23,8 @@ async def health() -> dict[str, str]:
     logger.info("Processing started for health")
     try:
         async with get_async_session() as session:
-            result = await session.exec(text("SELECT version_num FROM alembic_version"))  # type: ignore
-            version = result.scalar()
-
-            return {"status": "ok", "db_version": version or ""}
+            await session.exec(text("SELECT 1"))  # type: ignore
+            return {"status": "ok"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
