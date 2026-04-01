@@ -430,17 +430,18 @@ async def deliver_subagent_result_to_parent(parent_session_id: str, result: "Sub
     creator_user_id = agent_session_data.get("creator_user_id")
     trigger = agent_session_data.get("trigger")
 
-    # For non-interactive triggers (CRON/TASK/API/WEBHOOK), skip re-injection entirely.
-    # The result was already delivered inline to the Claude CLI via the MCP tool return
-    # during the parent's turn 1. Re-injecting creates a spurious turn 2 that:
-    #  (a) runs without a BCH manager (torn down after CRON turn 1), and
-    #  (b) is silently dropped on AHS process restart, leaving the session ACTIVE forever.
-    # This is the "hercule-poirot problem" (session 36cc6d2b, 2026-03-30).
+    # For single-turn non-interactive triggers (CRON/TASK), skip re-injection entirely.
+    # These triggers tear down their BCH manager after turn 1, so a re-injected turn 2
+    # would run without a BCH manager and be silently dropped on AHS restart, leaving
+    # the session ACTIVE forever ("hercule-poirot problem", session 36cc6d2b, 2026-03-30).
+    #
+    # WEBHOOK and API sessions are NOT included: they use fire-and-forget subagents
+    # (new_task) whose results arrive asynchronously via the subagent queue and must be
+    # re-injected as follow-up turns. The MCP tool only returns status="spawned" — the
+    # actual result is never delivered inline.
     _NON_INTERACTIVE_TRIGGERS = {
         AgentSessionTrigger.CRON.value,
         AgentSessionTrigger.TASK.value,
-        AgentSessionTrigger.API.value,
-        AgentSessionTrigger.WEBHOOK.value,
     }
     if trigger in _NON_INTERACTIVE_TRIGGERS:
         logger.info(
