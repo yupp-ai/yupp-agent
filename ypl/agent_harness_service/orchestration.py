@@ -459,6 +459,7 @@ async def run_subagent(
             workspace=parent_workspace,
             effective_session_id=effective_session_id,
             session_context=subagent_context,
+            param_model=model,
         )
     )
     if db_session_id:
@@ -638,12 +639,17 @@ async def _execute_subagent(
     workspace: str | None,
     effective_session_id: str | None = None,
     session_context: dict | None = None,
+    param_model: str | None = None,
 ) -> ExecutorResult:
     """Execute a subagent using the appropriate runner.
 
     Routing logic:
     - Raw executor (agent_spec.executor.type == "raw") → direct API calls
     - Harnessed executor → Claude Code CLI or Codex CLI subprocess
+
+    Args:
+        param_model: Explicit model override from new_task() call (not a fallback).
+            Used by harnessed executors to avoid inheriting parent LLM models.
     """
     # Check if this should use the raw executor
     if agent_spec and agent_spec.executor.type == EXECUTOR_TYPE_RAW:
