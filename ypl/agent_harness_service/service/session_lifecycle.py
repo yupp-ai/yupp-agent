@@ -21,10 +21,10 @@ from ypl.agent_harness_service.common.constants import (
     AHS_REPOS_DIR,
     AHS_SESSIONS_DIR,
     EXECUTOR_TYPE_RAW,
-    HARNESS_CLAUDE_CODE_CLI,
     HARNESS_CLAUDE_SDK,
     HARNESS_CODEX_APP_SERVER,
     HARNESS_CODEX_CLI,
+    HARNESSED_MODELS,
 )
 from ypl.agent_harness_service.common.types import (
     AHSValidationError,
@@ -537,9 +537,7 @@ async def _maybe_update_task_completion(
 # ---------------------------------------------------------------------------
 
 # All valid harness names (executor_config.model when type="harnessed").
-_KNOWN_HARNESSED_MODELS: frozenset[str] = frozenset(
-    [HARNESS_CLAUDE_CODE_CLI, HARNESS_CLAUDE_SDK, HARNESS_CODEX_CLI, HARNESS_CODEX_APP_SERVER]
-)
+_KNOWN_HARNESSED_MODELS: frozenset[str] = frozenset(HARNESSED_MODELS)
 
 # All valid raw models (provider/model_id format).
 _KNOWN_RAW_MODELS: frozenset[str] = frozenset(KNOWN_MODELS)

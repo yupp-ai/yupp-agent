@@ -19,10 +19,10 @@ from ypl.agent_harness_service.common.constants import (
     CONTEXT_OVERFLOW_NOTICE,
     EXECUTOR_TYPE_HARNESSED,
     EXECUTOR_TYPE_RAW,
-    HARNESS_CLAUDE_CODE_CLI,
     HARNESS_CLAUDE_SDK,
     HARNESS_CODEX_APP_SERVER,
     HARNESS_CODEX_CLI,
+    HARNESSED_MODELS,
     TURN_LIMIT_NOTICE,
 )
 from ypl.agent_harness_service.core.memory_persistence import sync_agent_memory_to_gcs
@@ -288,12 +288,7 @@ async def _run_agent_task(
         # Switches the executor type + model without mutating the shared agent config.
         _force_model: str | None = (session_context or {}).get("force_model")
         if _force_model:
-            _is_harness = _force_model in (
-                HARNESS_CLAUDE_CODE_CLI,
-                HARNESS_CLAUDE_SDK,
-                HARNESS_CODEX_CLI,
-                HARNESS_CODEX_APP_SERVER,
-            )
+            _is_harness = _force_model in HARNESSED_MODELS
             _forced_type = EXECUTOR_TYPE_HARNESSED if _is_harness else EXECUTOR_TYPE_RAW
             exec_cfg = exec_cfg.model_copy(update={"type": _forced_type, "model": _force_model})
             agent_config = agent_config.model_copy(update={"executor_config": exec_cfg})

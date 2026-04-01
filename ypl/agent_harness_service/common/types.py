@@ -281,8 +281,7 @@ class ModelsListResponse(BaseModel):
     raw: list[str] = Field(
         ...,
         description=(
-            "Raw LLM models in provider/model_id format (e.g., 'anthropic/claude-sonnet-4-6'). "
-            "Direct API calls."
+            "Raw LLM models in provider/model_id format (e.g., 'anthropic/claude-sonnet-4-6'). Direct API calls."
         ),
     )
 
