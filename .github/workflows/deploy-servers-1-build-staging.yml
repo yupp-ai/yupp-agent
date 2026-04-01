@@ -146,6 +146,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
     - name: Authenticate to Google Cloud
       uses: ./.github/actions/gcp-auth
@@ -234,6 +236,7 @@ jobs:
 
     - name: Print image info
       run: |
+        DEPLOYMENT_TYPE="${{ github.event.inputs.deployment_type || 'normal staging deployment' }}"
         {
           echo "## Docker Image Built"
           echo "| Setting | Value |"
@@ -241,6 +244,73 @@ jobs:
           echo "| Tags | \`${{ steps.tags.outputs.tags }}\` |"
           echo "| Deploy tag | \`${{ steps.tags.outputs.deploy_tag }}\` |"
           echo "| Git SHA | \`${{ github.sha }}\` |"
+          if [ "$DEPLOYMENT_TYPE" = "create staging release candidate" ] || [ "$DEPLOYMENT_TYPE" = "create cherry-pick release candidate" ]; then
+            TAG_LABEL="release-candidate"
+            if [ "$DEPLOYMENT_TYPE" = "create cherry-pick release candidate" ]; then
+              TAG_LABEL="cherry-pick-release-candidate"
+            fi
+            echo ""
+            echo "### Release Candidate Created"
+            echo "Tagged \`${{ github.sha }}\` as \`${TAG_LABEL}\`"
+
+            # Print annotated changelog since oldest production tag
+            git fetch --tags --force
+
+            # Collect all production tag SHAs
+            OLDEST_SHA=""
+            OLDEST_DEPTH=0
+            declare -A TAG_BY_SHA
+            PROD_TAGS="latest-agent-harness-service-production latest-mcp-server-production latest-slack-agent-gateway-production latest-mcp-server-oauth-production latest-streamlit-server-production"
+            TAG_LIST=""
+            for TAG in $PROD_TAGS; do
+              SHA=$(git rev-parse "$TAG" 2>/dev/null || echo "")
+              if [ -n "$SHA" ]; then
+                SHORT_SHA="${SHA:0:12}"
+                # Append tag name (a SHA can have multiple tags)
+                if [ -n "${TAG_BY_SHA[$SHORT_SHA]:-}" ]; then
+                  TAG_BY_SHA[$SHORT_SHA]="${TAG_BY_SHA[$SHORT_SHA]}, ${TAG}"
+                else
+                  TAG_BY_SHA[$SHORT_SHA]="$TAG"
+                fi
+                # Track the oldest (most commits behind HEAD)
+                DEPTH=$(git rev-list --count "${SHA}..${{ github.sha }}" 2>/dev/null || echo "0")
+                if [ "$DEPTH" -gt "$OLDEST_DEPTH" ]; then
+                  OLDEST_DEPTH=$DEPTH
+                  OLDEST_SHA="$SHA"
+                fi
+                TAG_LIST="${TAG_LIST}\n| \`${TAG}\` | \`${SHA:0:7}\` | ${DEPTH} commits behind |"
+              fi
+            done
+
+            if [ -n "$OLDEST_SHA" ]; then
+              echo ""
+              echo "### Production tags"
+              echo "| Tag | SHA | Distance |"
+              echo "|-----|-----|----------|"
+              echo -e "$TAG_LIST"
+              echo ""
+              echo "### Changelog (oldest production tag → release candidate)"
+              echo ""
+              # List commits with inline tag annotations
+              git log --oneline --reverse "${OLDEST_SHA}..${{ github.sha }}" | while read -r line; do
+                COMMIT_SHA="${line%% *}"
+                # Pad to 12 chars for lookup
+                FULL_SHA=$(git rev-parse "$COMMIT_SHA" 2>/dev/null || echo "")
+                SHORT_FULL="${FULL_SHA:0:12}"
+                TAGS="${TAG_BY_SHA[$SHORT_FULL]:-}"
+                if [ -n "$TAGS" ]; then
+                  echo "- \`${line}\` ← **${TAGS}**"
+                else
+                  echo "- \`${line}\`"
+                fi
+              done
+              # Mark the current commit
+              echo "- \`${{ github.sha }}\` ← **${TAG_LABEL}** (this build)"
+            else
+              echo ""
+              echo "_No production tags found — cannot show changelog_"
+            fi
+          fi
         } >> $GITHUB_STEP_SUMMARY
 
     outputs:

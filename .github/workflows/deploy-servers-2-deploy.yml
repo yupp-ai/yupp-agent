@@ -15,8 +15,8 @@ run-name: >-
 # AHS is in deploy-ahs.yml (VM-based, no Docker).
 
 on:
-  schedule:
-    - cron: '0 * * * *'  # Every 1 hour — auto-deploy to production from release-candidate if changed
+  # schedule:
+  #   - cron: '0 * * * *'  # Every 1 hour — auto-deploy to production from release-candidate if changed
   workflow_call:
     inputs:
       environment:
