@@ -45,6 +45,7 @@ from ypl.agent_harness_service.common.types import (
     AgentListResponse,
     AHSValidationError,
     FeedbackResponse,
+    ModelsListResponse,
     RecurringScheduleCreateRequest,
     ResolveUserRequest,
     ResolveUserResponse,
@@ -310,6 +311,28 @@ async def session_history(
         return await get_session_history(session_id, limit=limit, offset=offset)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from None
+
+
+@router.get(
+    "/models",
+    dependencies=[Depends(verify_api_key)],
+)
+async def list_models_route() -> ModelsListResponse:
+    """List all selectable models, grouped by executor type.
+
+    Harnessed models are CLI wrapper names — the agent process runs inside a managed
+    subprocess (e.g., Claude Code CLI, Codex CLI).  Raw models are LLM identifiers in
+    ``provider/model_id`` format — the agent calls the provider API directly.
+
+    Use the returned values as the ``force_model`` field in POST /ahs/session/create.
+    """
+    from ypl.agent_harness_service.common.constants import HARNESSED_MODELS
+    from ypl.agent_harness_service.executors.providers import KNOWN_MODELS
+
+    return ModelsListResponse(
+        harnessed=list(HARNESSED_MODELS),
+        raw=list(KNOWN_MODELS),
+    )
 
 
 @router.get(

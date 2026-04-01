@@ -31,6 +31,7 @@ from ypl.backend.utils.slack_utils import get_channel_name_by_id, resolve_slack_
 from ypl.slack_agent_gateway.agent_client import (
     attach_slack_to_session,
     create_agent_session,
+    get_available_models,
     get_session_info,
     send_feedback,
     send_message_to_agent,
@@ -269,6 +270,44 @@ def _extract_command(text: str) -> tuple[str, str] | None:
         args = stripped.split(None, 1)[1] if " " in stripped else ""
         return ("attach", args.strip())
     return None
+
+
+def _extract_model_directive(text: str) -> tuple[str | None, str]:
+    """Extract an optional ``/model:<spec>`` directive from the message text.
+
+    The directive must be the *first* word after the @mention, e.g.:
+        ``@raccoon /model:anthropic/claude-sonnet-4-6 please review this PR``
+
+    Returns:
+        ``(model_spec, cleaned_text)`` where ``model_spec`` is the value after
+        ``/model:`` (e.g. ``"anthropic/claude-sonnet-4-6"``) and ``cleaned_text``
+        is the message with the @mention and directive stripped.  If no directive
+        is present, ``model_spec`` is ``None`` and ``cleaned_text`` is the
+        @mention-stripped text unchanged.
+    """
+    stripped = _MENTION_PATTERN.sub("", text).strip()
+    words = stripped.split(None, 1)
+    if words and words[0].lower().startswith("/model:"):
+        spec = words[0][len("/model:") :]
+        rest = words[1].strip() if len(words) > 1 else ""
+        return spec, rest
+    return None, stripped
+
+
+def _format_models_list(models: dict) -> str:
+    """Format the models dict from AHS into a human-readable Slack mrkdwn block."""
+    harnessed: list[str] = models.get("harnessed", [])
+    raw: list[str] = models.get("raw", [])
+    lines = [
+        "*Harnessed executors* (agent runs inside a managed CLI wrapper):",
+        *[f"• `{m}`" for m in harnessed],
+        "",
+        "*Raw LLM models* (direct API calls, no CLI wrapper):",
+        *[f"• `{m}`" for m in raw],
+        "",
+        "_Usage:_ `@agent /model:provider/modelname your message here`",
+    ]
+    return "\n".join(lines)
 
 
 def _matches_any_pattern(channel_name: str, patterns: list[str]) -> bool:
@@ -680,6 +719,11 @@ async def handle_app_mention(
                 channel_name=channel_name,
             )
 
+    # Check for /model:<spec> directive — must be the first word after the @mention.
+    # Only applies to NEW sessions (existing threads ignore it).
+    model_directive, cleaned_text = _extract_model_directive(raw_text)
+    force_model: str | None = None
+
     # Fire-and-forget: ack emoji should never block the main flow
     create_background_task(_add_ack_reaction(app_config, channel_id, ts))
 
@@ -695,6 +739,43 @@ async def handle_app_mention(
     # If so, route the message to that session instead of creating a new one.
     existing_ahs_session_id = await get_ahs_session_for_thread(channel_id, thread_ts)
 
+    # Validate the /model: directive only for new sessions. For existing sessions the
+    # directive is silently ignored — the message is forwarded as-is (using cleaned_text).
+    if model_directive and not existing_ahs_session_id:
+        available = await get_available_models()
+        if available is None:
+            # AHS unreachable — let the normal flow continue without override
+            logger.warning("Could not fetch model list from AHS; ignoring /model: directive")
+        else:
+            all_valid = set(available.get("harnessed", [])) | set(available.get("raw", []))
+            if model_directive not in all_valid:
+                # Invalid model — post an error listing valid choices and bail out.
+                client = AsyncWebClient(token=app_config.bot_token)
+                models_text = _format_models_list(available)
+                error_msg = f":x: Model `{model_directive}` not found.\n\n{models_text}"
+                try:
+                    await client.chat_postMessage(
+                        channel=channel_id,
+                        thread_ts=thread_ts,
+                        text=error_msg,
+                    )
+                except Exception as post_err:
+                    logger.warning("Failed to post model-not-found message", error=str(post_err))
+                return {
+                    "status": "model_not_found",
+                    "model": model_directive,
+                    "channel_id": channel_id,
+                    "thread_ts": thread_ts,
+                }
+            # Valid model — remember it; will be passed to create_agent_session.
+            force_model = model_directive
+            logger.info(
+                "Force model directive parsed",
+                model=force_model,
+                agent_name=app_config.agent_name,
+                channel_id=channel_id,
+            )
+
     # Get or create SAG session (for Slack tracking: placeholder, buffer, reply mapping)
     session, is_new = await get_or_create_session(
         channel_id=channel_id,
@@ -703,6 +784,18 @@ async def handle_app_mention(
         agent_name=app_config.agent_name,
         user_id=user_id,
     )
+
+    # Post model-override confirmation for new sessions so the user knows it took effect.
+    if force_model and is_new and not existing_ahs_session_id:
+        try:
+            client = AsyncWebClient(token=app_config.bot_token)
+            await client.chat_postMessage(
+                channel=channel_id,
+                thread_ts=thread_ts,
+                text=f":white_check_mark: Using model `{force_model}` for this session.",
+            )
+        except Exception as confirm_err:
+            logger.warning("Failed to post force_model confirmation", error=str(confirm_err))
 
     # Post a placeholder "Thinking..." message for immediate user feedback.
     # The first add_reply callback will update this message in-place instead of posting a new one.
@@ -718,8 +811,14 @@ async def handle_app_mention(
             bot_token=app_config.bot_token,
         )
 
-    # Build message from event
-    message = build_message_from_event(event, attachments=attachments)
+    # Build message from cleaned text (directive stripped) or raw event for non-new sessions.
+    if model_directive and is_new and not existing_ahs_session_id:
+        # Use a shallow copy of the event with the directive stripped from text
+        event_for_message = dict(event)
+        event_for_message["text"] = cleaned_text
+        message = build_message_from_event(event_for_message, attachments=attachments)
+    else:
+        message = build_message_from_event(event, attachments=attachments)
 
     # Forward to Agent Service
     if existing_ahs_session_id:
@@ -762,6 +861,7 @@ async def handle_app_mention(
             channel_id=channel_id,
             thread_ts=thread_ts,
             slack_name=app_config.slack_name,
+            force_model=force_model,
         )
     else:
         # Existing session - send message

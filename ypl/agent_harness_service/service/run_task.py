@@ -17,10 +17,12 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ypl.agent_harness_service.common.constants import (
     CONTEXT_OVERFLOW_NOTICE,
+    EXECUTOR_TYPE_HARNESSED,
     EXECUTOR_TYPE_RAW,
     HARNESS_CLAUDE_SDK,
     HARNESS_CODEX_APP_SERVER,
     HARNESS_CODEX_CLI,
+    HARNESSED_MODELS,
     TURN_LIMIT_NOTICE,
 )
 from ypl.agent_harness_service.core.memory_persistence import sync_agent_memory_to_gcs
@@ -281,6 +283,22 @@ async def _run_agent_task(
         reset_turn_websearch_count(str(agent_session_id))
 
         exec_cfg = agent_config.executor_config
+
+        # Apply force_model override from session context (set at session creation time).
+        # Switches the executor type + model without mutating the shared agent config.
+        _force_model: str | None = (session_context or {}).get("force_model")
+        if _force_model:
+            _is_harness = _force_model in HARNESSED_MODELS
+            _forced_type = EXECUTOR_TYPE_HARNESSED if _is_harness else EXECUTOR_TYPE_RAW
+            exec_cfg = exec_cfg.model_copy(update={"type": _forced_type, "model": _force_model})
+            agent_config = agent_config.model_copy(update={"executor_config": exec_cfg})
+            logger.info(
+                "force_model override applied",
+                session_id=str(agent_session_id),
+                force_model=_force_model,
+                executor_type=_forced_type,
+            )
+
         logger.info(
             "Agent config loaded for task",
             session_id=str(agent_session_id),

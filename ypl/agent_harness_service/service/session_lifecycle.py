@@ -24,6 +24,7 @@ from ypl.agent_harness_service.common.constants import (
     HARNESS_CLAUDE_SDK,
     HARNESS_CODEX_APP_SERVER,
     HARNESS_CODEX_CLI,
+    HARNESSED_MODELS,
 )
 from ypl.agent_harness_service.common.types import (
     AHSValidationError,
@@ -43,6 +44,7 @@ from ypl.agent_harness_service.core.streaming import (
     get_pubsub,
 )
 from ypl.agent_harness_service.executors.command_handler import CommandHandlerManager
+from ypl.agent_harness_service.executors.providers import KNOWN_MODELS
 from ypl.agent_harness_service.executors.runner import (
     ClaudeCodeRunner,
     RunContext,
@@ -534,6 +536,24 @@ async def _maybe_update_task_completion(
 # Session lifecycle
 # ---------------------------------------------------------------------------
 
+# All valid harness names (executor_config.model when type="harnessed").
+_KNOWN_HARNESSED_MODELS: frozenset[str] = frozenset(HARNESSED_MODELS)
+
+# All valid raw models (provider/model_id format).
+_KNOWN_RAW_MODELS: frozenset[str] = frozenset(KNOWN_MODELS)
+
+
+def _validate_force_model(force_model: str) -> None:
+    """Validate a force_model value against known harness names and raw models.
+
+    Raises:
+        AHSValidationError: If the model is not in either known set.
+    """
+    if force_model in _KNOWN_HARNESSED_MODELS or force_model in _KNOWN_RAW_MODELS:
+        return
+    all_models = sorted(_KNOWN_HARNESSED_MODELS) + sorted(_KNOWN_RAW_MODELS)
+    raise AHSValidationError(f"Unknown model {force_model!r}. Valid models: {', '.join(all_models)}")
+
 
 async def create_session(request: SessionCreateRequest) -> SessionCreateResponse:
     """Create a new session or resume an existing one.
@@ -582,6 +602,13 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
     # look up the channel name via Slack conversations.info API and cache the
     # mapping (channel_id → channel_name) so subsequent sessions reuse it.
     context = request.context or {}
+
+    # Validate and store force_model override so the task runner can apply it on
+    # every turn without re-parsing the request.  Validated early (before DB work)
+    # so callers get a fast 400 on bad model names.
+    if request.force_model:
+        _validate_force_model(request.force_model)
+        context["force_model"] = request.force_model
 
     # Resolve user_id FIRST so it's available for personal agent resolution.
     # Priority: top-level request.user_id (preferred) → context fallbacks (backward compat).

@@ -46,25 +46,11 @@ Use the appropriate commands throughout Phases 5 and 9 based on this preference.
 
 ---
 
-## Phase 0: Choose Automation Level
+## Phase 0: Automation Level
 
-Before starting, present the user with a menu of automation levels. Use `AskQuestion` with a structured multiple-choice prompt:
+Always use **Level 1 (Full auto)**: Fix → Commit → Rebase → Push → Reply & Resolve — no human confirmation at any step. Do not ask the user to choose an automation level.
 
-> I'll review PR #<PR_NUMBER>, address comments, and fix CI failures.
-> **How much autonomy should I have?**
-
-| Level | Name | Behavior |
-|-------|------|----------|
-| 1 | **Full auto** | Fix → Commit → Rebase → Push → Reply & Resolve — no human confirmation at any step. |
-| 2 | **Confirm before commit** | Fix code → **[ASK HUMAN]** → Commit → Rebase → Push → Reply & Resolve (rest is automatic). |
-| 3 | **Confirm before reply** | Fix code → Commit → Rebase → Push → **[ASK HUMAN]** → Reply & Resolve. |
-| 4 | **Confirm every step** | Fix code → **[ASK HUMAN]** → Commit → Rebase → Push → **[ASK HUMAN]** → Reply & Resolve. |
-
-Store the answer as `AUTOMATION_LEVEL` (1–4) for the rest of the session. Default to **Level 2** if the user doesn't choose.
-
-**Gate behavior reference** (used throughout later phases):
-- **CODE_GATE**: Active at Levels 2 and 4. After all code fixes are made, show the user a summary of changed files and what was fixed, then wait for confirmation before committing.
-- **REPLY_GATE**: Active at Levels 3 and 4. After push succeeds, show the user the list of replies to be posted (comment ID, verdict, reply text), then wait for confirmation before replying/resolving.
+`AUTOMATION_LEVEL` is always **1**. CODE_GATE and REPLY_GATE are never active.
 
 ---
 
