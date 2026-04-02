@@ -6,7 +6,6 @@ This server handles:
 - Background buffer flush manager
 """
 
-import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -14,9 +13,9 @@ from fastapi import FastAPI
 from fastapi.responses import ORJSONResponse, PlainTextResponse
 
 from ypl.backend.routes.v1.health import public_router as health_router
-from ypl.slack_agent_gateway.buffer import run_flush_manager
+from ypl.slack_agent_gateway.lifespan import sag_shutdown, sag_startup
 from ypl.slack_agent_gateway.routes import router
-from ypl.structured_logger import get_logger, setup_asyncio_logging
+from ypl.structured_logger import get_logger
 
 logger = get_logger()
 
@@ -24,21 +23,9 @@ logger = get_logger()
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage application lifecycle."""
-    setup_asyncio_logging()
-    logger.info("Starting Slack Agent Gateway server")
-
-    # Start the background flush manager
-    flush_task = asyncio.create_task(run_flush_manager())
-
+    state = await sag_startup()
     yield
-
-    # Cleanup
-    logger.info("Shutting down Slack Agent Gateway server")
-    flush_task.cancel()
-    try:
-        await flush_task
-    except asyncio.CancelledError:
-        pass
+    await sag_shutdown(state)
 
 
 app = FastAPI(
