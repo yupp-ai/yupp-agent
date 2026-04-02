@@ -76,7 +76,11 @@ def _parse_env_int(env_var: str, default: int) -> int:
 
 # Configuration from environment
 TASK_EXECUTOR_ENABLED = os.environ.get("AHS_TASK_EXECUTOR_ENABLED", "true").lower() == "true"
-TASK_EXECUTOR_BATCH_SIZE = _parse_env_int("AHS_TASK_EXECUTOR_BATCH_SIZE", 1)
+# Raised from 1 → 5: the original default of 1 caused serial dispatch (one task
+# per 10-second poll cycle), so a project with 10 ready tasks needed 100s just
+# for dispatch.  5 tasks per cycle keeps dispatch overhead ≤ 10s for typical
+# project sizes while remaining within MAX_CONCURRENT_TASKS_PER_PROJECT limits.
+TASK_EXECUTOR_BATCH_SIZE = _parse_env_int("AHS_TASK_EXECUTOR_BATCH_SIZE", 5)
 TASK_EXECUTOR_STALE_TIMEOUT_MINUTES = _parse_env_int("AHS_TASK_EXECUTOR_STALE_TIMEOUT_MINUTES", 30)
 TASK_EXECUTOR_RATE_LIMIT = _parse_env_int("AHS_TASK_EXECUTOR_RATE_LIMIT", 60)
 MAX_CONCURRENT_TASKS_PER_PROJECT = _parse_env_int("AHS_MAX_CONCURRENT_TASKS_PER_PROJECT", 6)

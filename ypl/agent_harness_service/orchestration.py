@@ -9,6 +9,7 @@ import os
 import random
 import time
 import uuid
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -40,6 +41,7 @@ from ypl.agent_harness_service.executors.codex_app_server_runner import CodexApp
 from ypl.agent_harness_service.executors.providers import KNOWN_MODELS, parse_model_string, resolve_model
 from ypl.agent_harness_service.executors.raw_executor import run_raw_executor
 from ypl.agent_harness_service.executors.runner import ClaudeCodeRunner, RunContext
+from ypl.agent_harness_service.service.state import MAX_CONCURRENT_API_SUBAGENTS, get_api_subagent_semaphore
 from ypl.agent_harness_service.tools.mcp_client import MCPToolAccess
 from ypl.backend.db import get_async_session
 from ypl.db.agent_harness import (
@@ -448,20 +450,49 @@ async def run_subagent(
     # Falls back to in-memory session.id if DB insert failed.
     effective_session_id = str(db_session_id) if db_session_id else session.id
 
-    # Wrap the execution in a trackable task so cancel_subagent_tasks() can cancel it.
-    execute_task = asyncio.ensure_future(
-        _execute_subagent(
-            agent_spec=agent_spec,
-            fs_config=fs_config,
-            prompt=prompt,
-            model=resolved_model,
-            session=session,
-            workspace=parent_workspace,
-            effective_session_id=effective_session_id,
-            session_context=subagent_context,
-            param_model=model,
-        )
-    )
+    # Record when the DB session was created so _execute_harnessed() can compute
+    # queue_wait_ms (time from session creation to CLI launch) for observability.
+    session_creation_time = datetime.now(UTC)
+
+    # Wrap the execution in a concurrency-gated coroutine that:
+    # 1. Acquires the global API subagent semaphore before starting
+    # 2. Logs how long it waited (if > 0.5s) so queue pressure is visible in GCP logs
+    # 3. Releases the semaphore slot on completion (success, error, or cancellation)
+    #
+    # This caps the number of concurrent subagent CLI processes to
+    # AHS_MAX_CONCURRENT_API_SUBAGENTS (default 12), preventing resource exhaustion
+    # when multiple master-reviewer sessions each spawn 3-5 sub-reviewers simultaneously.
+    # Without this cap, 15-20 concurrent claude-code-cli processes compete for CPU/memory,
+    # ballooning individual review times from ~31s to 150-300s.
+    async def _gated_execute() -> ExecutorResult:
+        semaphore = get_api_subagent_semaphore()
+        queue_start = time.monotonic()
+        async with semaphore:
+            wait_s = time.monotonic() - queue_start
+            if wait_s > 0.5:
+                logger.info(
+                    "Subagent waited for concurrency slot",
+                    agent_type=agent_type,
+                    wait_s=round(wait_s, 2),
+                    session_id=effective_session_id,
+                    parent_session_id=parent_session_id,
+                    max_concurrent=MAX_CONCURRENT_API_SUBAGENTS,
+                )
+            return await _execute_subagent(
+                agent_spec=agent_spec,
+                fs_config=fs_config,
+                prompt=prompt,
+                model=resolved_model,
+                session=session,
+                workspace=parent_workspace,
+                effective_session_id=effective_session_id,
+                session_context=subagent_context,
+                param_model=model,
+                session_created_at=session_creation_time,
+            )
+
+    # Wrap the gated execution in a trackable task so cancel_subagent_tasks() can cancel it.
+    execute_task = asyncio.ensure_future(_gated_execute())
     if db_session_id:
         _active_subagent_tasks[db_session_id] = execute_task
 
@@ -640,6 +671,7 @@ async def _execute_subagent(
     effective_session_id: str | None = None,
     session_context: dict | None = None,
     param_model: str | None = None,
+    session_created_at: datetime | None = None,
 ) -> ExecutorResult:
     """Execute a subagent using the appropriate runner.
 
@@ -650,6 +682,8 @@ async def _execute_subagent(
     Args:
         param_model: Explicit model override from new_task() call (not a fallback).
             Used by harnessed executors to avoid inheriting parent LLM models.
+        session_created_at: UTC timestamp of DB session creation, propagated to
+            the harnessed runner so it can compute and log queue_wait_ms.
     """
     # Check if this should use the raw executor
     if agent_spec and agent_spec.executor.type == EXECUTOR_TYPE_RAW:
@@ -676,6 +710,7 @@ async def _execute_subagent(
         effective_session_id,
         session_context,
         param_model=param_model,
+        session_created_at=session_created_at,
     )
 
 
@@ -768,6 +803,7 @@ async def _execute_harnessed(
     effective_session_id: str | None = None,
     session_context: dict | None = None,
     param_model: str | None = None,
+    session_created_at: datetime | None = None,
 ) -> ExecutorResult:
     """Execute a subagent via a harnessed executor (CLI subprocess)."""
     from ypl.agent_harness_service.tools.local_mcp_server import (
@@ -798,10 +834,14 @@ async def _execute_harnessed(
 
         # Use effective_session_id (DB session UUID) so nested subagents can resolve
         # parent context via DB lookup. Falls back to in-memory session.id.
+        # Pass session_created_at so ClaudeCodeRunner can log queue_wait_ms =
+        # (time of CLI launch) − (time of DB session creation), matching the
+        # same metric collected for top-level sessions.
         run_context = RunContext(
             session_id=sid,
             workspace=workspace,
             session_context=session_context,
+            session_created_at=session_created_at,
         )
 
         # Collect output and raw events for DB persistence
