@@ -8,7 +8,7 @@ Example .env::
 
     PORT=8090
     GATEWAY_SLACK_ENABLED=true
-    GATEWAY_GITHUB_ENABLED=false
+    GATEWAY_GITHUB_ENABLED=true
 """
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -22,8 +22,7 @@ class MonoConfig(BaseSettings):
         gateway_slack_enabled:  Enable the Slack Agent Gateway and mount its
                                 router at ``/gw/slack``.  Default ``True``.
         gateway_github_enabled: Enable the GitHub webhook gateway and mount it
-                                at ``/gw/github``.  Default ``False`` (stub,
-                                not yet implemented).
+                                at ``/gw/github``.  Default ``True``.
     """
 
     model_config = SettingsConfigDict(
@@ -37,4 +36,4 @@ class MonoConfig(BaseSettings):
 
     port: int = 8090
     gateway_slack_enabled: bool = True
-    gateway_github_enabled: bool = False
+    gateway_github_enabled: bool = True

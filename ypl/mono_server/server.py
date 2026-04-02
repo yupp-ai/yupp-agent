@@ -4,11 +4,12 @@ Composes AHS, SAG, and MCP into a single FastAPI application with a
 combined lifespan, enabling the entire agent platform to run as one process.
 
 Route layout:
-  /ahs/*          — Agent Harness Service (router already carries /ahs prefix)
-  /mcp/harness/*  — Harness MCP server (FastMCP, for agents)
-  /mcp/*          — Yuppster MCP server (FastMCP, for developers)
-  /gw/slack/*     — Slack gateway (SAG; toggled by GATEWAY_SLACK_ENABLED)
-  /health         — Liveness probe — always 200 OK
+  /ahs/*            — Agent Harness Service (router already carries /ahs prefix)
+  /mcp/harness/*    — Harness MCP server (FastMCP, for agents)
+  /mcp/yuppster/*   — Yuppster MCP server (FastMCP, for developers)
+  /gw/slack/*       — Slack gateway (SAG; toggled by GATEWAY_SLACK_ENABLED)
+  /gw/github/*      — GitHub webhook gateway (toggled by GATEWAY_GITHUB_ENABLED)
+  /health           — Liveness probe — always 200 OK
 
 Startup order:
   1. AHS (registers orchestration callbacks, warms process pool, etc.)
@@ -66,9 +67,9 @@ harness_mcp_app = harness_mcp.http_app(
 harness_mcp_app.add_middleware(McpTokenAuthMiddleware)
 
 # Yuppster MCP app — created with path="/" so it can be cleanly mounted at
-# /mcp in the parent FastAPI app (Starlette strips the /mcp prefix before
-# dispatching to the sub-app).  Tools are already registered above via the
-# mcp_tools side-effect import.
+# /mcp/yuppster in the parent FastAPI app (Starlette strips the mount prefix
+# before dispatching to the sub-app).  Tools are already registered above via
+# the mcp_tools side-effect import.
 yuppster_mcp_http_app = yuppster_mcp_server.http_app(
     path="/",
     transport="streamable-http",
@@ -143,21 +144,24 @@ async def combined_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         try:
             # --- 3 & 4. Yuppster MCP ------------------------------------------
             await mcp_startup()
-            async with yuppster_mcp_http_app.lifespan(yuppster_mcp_http_app):
-                # --- 5. Gateways ----------------------------------------------
-                sag_state: SAGState | None = None
-                if config.gateway_slack_enabled:
-                    sag_state = await sag_startup()
+            try:
+                async with yuppster_mcp_http_app.lifespan(yuppster_mcp_http_app):
+                    # --- 5. Gateways ------------------------------------------
+                    sag_state: SAGState | None = None
+                    if config.gateway_slack_enabled:
+                        sag_state = await sag_startup()
 
-                try:
-                    yield
-                finally:
-                    # Shutdown in reverse order
-                    if sag_state is not None:
-                        await sag_shutdown(sag_state)
-
-            # Yuppster MCP teardown (batch-system flush, Sentry close, GCP log flush)
-            await mcp_shutdown()
+                    try:
+                        yield
+                    finally:
+                        # Shutdown in reverse order
+                        if sag_state is not None:
+                            await sag_shutdown(sag_state)
+            finally:
+                # Yuppster MCP teardown (batch-system flush, Sentry close, GCP log
+                # flush).  The finally block ensures mcp_shutdown runs even if
+                # sag_startup() raises or the yuppster MCP lifespan __aexit__ raises.
+                await mcp_shutdown()
         finally:
             # AHS teardown — inside harness MCP lifespan so in-flight tasks
             # that call MCP tools during scheduler drain can still complete.
@@ -217,11 +221,18 @@ def create_app() -> FastAPI:
     # local / personal deployments where all callers on the network are trusted.
     # For shared or remote deployments, place the monolith behind a
     # network-layer auth proxy (e.g. Cloud IAP or an nginx auth_request).
-    application.mount("/mcp", yuppster_mcp_http_app)
+    application.mount("/mcp/yuppster", yuppster_mcp_http_app)
 
     # --- Slack gateway (pluggable) -------------------------------------------
     if config.gateway_slack_enabled:
         application.include_router(sag_router, prefix="/gw/slack")
+
+    # --- GitHub webhook gateway (pluggable) ----------------------------------
+    # Also registered at /ahs/webhook/* via _setup_ahs_router() for backward
+    # compatibility.  The /gw/github/* alias lets you point GitHub App webhook
+    # URLs here without the /ahs prefix.
+    if config.gateway_github_enabled:
+        application.include_router(webhook_router, prefix="/gw/github")
 
     # --- Health check (always registered, no auth) ---------------------------
     @application.get("/health", tags=["health"])
