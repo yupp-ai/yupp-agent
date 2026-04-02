@@ -24,6 +24,23 @@ class SAGState:
     flush_task: asyncio.Task[None]
 
 
+def _on_flush_task_done(task: "asyncio.Task[None]") -> None:
+    """Clear the module-level state guard if the flush task exits unexpectedly.
+
+    Handles the edge case where ``run_flush_manager()`` crashes on its own
+    (before ``sag_shutdown()`` is called).  Without this, ``_sag_state`` would
+    remain non-None, causing any subsequent ``sag_startup()`` call — including
+    in tests — to hit the double-startup RuntimeError even though nothing is
+    actually running.
+    """
+    global _sag_state
+    if not task.cancelled():
+        exc = task.exception()
+        if exc is not None:
+            logger.critical("Flush manager exited unexpectedly — clearing state guard", exc_info=exc)
+            _sag_state = None
+
+
 async def sag_startup() -> SAGState:
     """Initialise the Slack Agent Gateway subsystem.
 
@@ -45,6 +62,7 @@ async def sag_startup() -> SAGState:
     logger.info("Starting Slack Agent Gateway")
     flush_task: asyncio.Task[None] = asyncio.create_task(run_flush_manager())
     _sag_state = SAGState(flush_task=flush_task)
+    flush_task.add_done_callback(_on_flush_task_done)
     return _sag_state
 
 
