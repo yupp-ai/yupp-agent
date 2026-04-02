@@ -87,7 +87,7 @@ yuppster_mcp_http_app = yuppster_mcp_server.http_app(
 _ahs_router_setup_done = False
 
 
-def _setup_ahs_router() -> None:
+def _setup_ahs_router(config: MonoConfig) -> None:
     """Add sub-routers to the AHS router.  Idempotent — safe to call multiple times."""
     global _ahs_router_setup_done
     if _ahs_router_setup_done:
@@ -98,7 +98,8 @@ def _setup_ahs_router() -> None:
         tags=["yuppaste"],
         dependencies=[Depends(verify_api_key)],
     )
-    ahs_router.include_router(webhook_router)
+    if config.gateway_github_enabled:
+        ahs_router.include_router(webhook_router)
     _ahs_router_setup_done = True
 
 
@@ -134,28 +135,35 @@ async def combined_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Enter via the unentered context manager stored in ahs_state so real
     # exception info is forwarded to __aexit__ on a crash (same pattern as the
     # standalone AHS server).
+    # TODO: Expose a public property on AHSState for the MCP lifespan context
+    # manager so callers don't need to access the private _mcp_lifespan_ctx
+    # field directly.  The pattern is intentional (see AHSState docstring) but
+    # the underscore prefix signals an abstraction boundary.
     async with ahs_state._mcp_lifespan_ctx:
-        # --- 3 & 4. Yuppster MCP ----------------------------------------------
-        await mcp_startup()
-        async with yuppster_mcp_http_app.lifespan(yuppster_mcp_http_app):
-            # --- 5. Gateways --------------------------------------------------
-            sag_state: SAGState | None = None
-            if config.gateway_slack_enabled:
-                sag_state = await sag_startup()
+        try:
+            # --- 3 & 4. Yuppster MCP ------------------------------------------
+            await mcp_startup()
+            async with yuppster_mcp_http_app.lifespan(yuppster_mcp_http_app):
+                # --- 5. Gateways ----------------------------------------------
+                sag_state: SAGState | None = None
+                if config.gateway_slack_enabled:
+                    sag_state = await sag_startup()
 
-            try:
-                yield
-            finally:
-                # Shutdown in reverse order
-                if sag_state is not None:
-                    await sag_shutdown(sag_state)
+                try:
+                    yield
+                finally:
+                    # Shutdown in reverse order
+                    if sag_state is not None:
+                        await sag_shutdown(sag_state)
 
-        # Yuppster MCP teardown (batch-system flush, Sentry close, GCP log flush)
-        await mcp_shutdown()
-
-        # AHS teardown — inside harness MCP lifespan so in-flight tasks that
-        # call MCP tools during scheduler drain can still complete
-        await ahs_shutdown(ahs_state)
+            # Yuppster MCP teardown (batch-system flush, Sentry close, GCP log flush)
+            await mcp_shutdown()
+        finally:
+            # AHS teardown — inside harness MCP lifespan so in-flight tasks
+            # that call MCP tools during scheduler drain can still complete.
+            # The finally block ensures ahs_shutdown runs even if mcp_startup()
+            # or the yuppster MCP lifespan raises.
+            await ahs_shutdown(ahs_state)
 
 
 # ---------------------------------------------------------------------------
@@ -198,13 +206,17 @@ def create_app() -> FastAPI:
     application.add_middleware(AHSRequestLoggingMiddleware)
 
     # --- AHS routes (/ahs/* prefix already on router) ------------------------
-    _setup_ahs_router()
+    _setup_ahs_router(config)
     application.include_router(ahs_router)
 
     # --- Harness MCP (agents connect here) -----------------------------------
     application.mount("/mcp/harness", harness_mcp_app)
 
     # --- Yuppster MCP (developers/IDEs connect here) -------------------------
+    # No auth middleware on this mount by design: the monolith is intended for
+    # local / personal deployments where all callers on the network are trusted.
+    # For shared or remote deployments, place the monolith behind a
+    # network-layer auth proxy (e.g. Cloud IAP or an nginx auth_request).
     application.mount("/mcp", yuppster_mcp_http_app)
 
     # --- Slack gateway (pluggable) -------------------------------------------
