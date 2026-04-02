@@ -43,7 +43,13 @@ from ypl.agent_harness_service.executors.codex_app_server_runner import shutdown
 from ypl.agent_harness_service.gateway import init_gateways
 from ypl.agent_harness_service.orchestration import route_model_stub, run_subagent
 from ypl.agent_harness_service.scheduler import SCHEDULER_ENABLED, run_scheduler, wait_for_in_flight_tasks
-from ypl.agent_harness_service.service import send_slack_restart_courtesy, send_slack_shutdown_courtesy
+from ypl.agent_harness_service.service import (
+    create_agent as service_create_agent,
+)
+from ypl.agent_harness_service.service import (
+    send_slack_restart_courtesy,
+    send_slack_shutdown_courtesy,
+)
 from ypl.agent_harness_service.task_executor import (
     TASK_EXECUTOR_ENABLED,
     wait_for_in_flight_task_executions,
@@ -419,7 +425,7 @@ async def ahs_startup(app: FastAPI, mcp_app: Any) -> AHSState:
         logger.warning("Failed to ensure ~/.claude.json — CLI may show startup warnings", exc_info=True)
 
     # Wire orchestration callbacks into MCP tools (dependency injection)
-    register_orchestration_callbacks(run_subagent, route_model_stub)
+    register_orchestration_callbacks(run_subagent, route_model_stub, service_create_agent)
 
     # Register subagent result delivery callback
     from ypl.agent_harness_service.service import deliver_subagent_result_to_parent
