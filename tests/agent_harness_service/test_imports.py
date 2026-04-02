@@ -152,6 +152,8 @@ ROOT_MODULES = [
     "ypl.agent_harness_service.service.agent_crud",
     "ypl.agent_harness_service.server",
     "ypl.agent_harness_service.routes",
+    "ypl.agent_harness_service.lifespan",
+    "ypl.agent_harness_service.middleware",
     "ypl.agent_harness_service.orchestration",
     "ypl.agent_harness_service.task_executor",
     "ypl.agent_harness_service.scheduler",
