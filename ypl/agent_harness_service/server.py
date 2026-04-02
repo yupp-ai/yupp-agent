@@ -39,10 +39,14 @@ mcp_app.add_middleware(McpTokenAuthMiddleware)
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage application lifecycle."""
     state: AHSState = await ahs_startup(app, mcp_app)
-    try:
-        yield
-    finally:
-        await ahs_shutdown(state)
+    # Use `async with` so that real exception info (exc_type, exc_val, exc_tb)
+    # is forwarded to the MCP lifespan's __aexit__, rather than always passing
+    # (None, None, None).  ahs_shutdown() does NOT call __aexit__ itself.
+    async with state._mcp_lifespan_ctx:
+        try:
+            yield
+        finally:
+            await ahs_shutdown(state)
 
 
 def create_app() -> FastAPI:
