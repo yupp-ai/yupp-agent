@@ -33,14 +33,10 @@ Capture the full diff and PR description.
 
 ### Step 2: Select and Spawn Sub-Reviewers
 
-Pick which sub-reviewers to use:
-1. Always use `reviewer-claude` and `reviewer-codex`.
-2. Decide whether to add a third reviewer: run `echo $((RANDOM % 2))` in bash. If the result is `1`, randomly pick one from `reviewer-glm`, `reviewer-kimi`, `reviewer-minimax` (run `echo $((RANDOM % 3))` to choose: 0=glm, 1=kimi, 2=minimax).
+We always use both `reviewer-claude` and `reviewer-codex` to review our code, use 'new_task' tool to start subagents for the independent review.
 
-Once you have decided on the 2 or 3 reviewers, spawn all of them as sub-agents:
 - `new_task(agent_type="reviewer-claude", prompt="<review prompt with diff>")`
 - `new_task(agent_type="reviewer-codex", prompt="<review prompt with diff>")`
-- (if third picked) `new_task(agent_type="reviewer-<chosen>", prompt="<review prompt with diff>")`
 
 Each sub-reviewer prompt should include:
 - The full PR diff
