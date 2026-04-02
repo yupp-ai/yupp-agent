@@ -58,9 +58,14 @@ async def mcp_shutdown() -> None:
         logger.warning("Error flushing buffers during shutdown", exc_info=True)
 
     # Close Sentry aiohttp session.
-    from ypl.mcp_server.tools.sentry import close_sentry_session
+    # Guard with try/except so a Sentry error never prevents the GCP log flush
+    # from running (pre-existing latent bug, fixed here on extraction).
+    try:
+        from ypl.mcp_server.tools.sentry import close_sentry_session
 
-    await close_sentry_session()
+        await close_sentry_session()
+    except Exception:
+        logger.warning("Error closing Sentry session during shutdown", exc_info=True)
 
     # Flush and close Google Cloud Logging.
     flush_and_close_google_cloud_logging()
