@@ -262,13 +262,11 @@ async def github_webhook(request: Request) -> Response:
     is_draft = pr.get("draft", False)
 
     # Only trigger on qualifying PR events:
-    # - opened (non-draft): PR created directly as ready for review
+    # - opened: PR created (draft or non-draft)
     # - ready_for_review: PR moved from draft to ready
     # - synchronize (non-draft): new commits pushed to a ready PR
-    if action == "ready_for_review":
-        pass  # always trigger
-    elif action == "opened" and not is_draft:
-        pass  # PR created directly as ready for review
+    if action in ("opened", "ready_for_review"):
+        pass  # always trigger on open (including draft) or when marked ready
     elif action == "synchronize" and not is_draft:
         pass  # new commits to an open, ready PR
     else:
@@ -279,7 +277,7 @@ async def github_webhook(request: Request) -> Response:
                     "skipped": True,
                     "event": event_type,
                     "action": action,
-                    "reason": "draft" if is_draft else f"unhandled_action:{action}",
+                    "reason": f"unhandled_action:{action}",
                 }
             ),
             media_type="application/json",
