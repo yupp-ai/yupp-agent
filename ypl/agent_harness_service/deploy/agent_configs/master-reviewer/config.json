@@ -21,10 +21,7 @@
   },
   "allowed_subagents": [
     "reviewer-claude",
-    "reviewer-codex",
-    "reviewer-glm",
-    "reviewer-kimi",
-    "reviewer-minimax"
+    "reviewer-codex"
   ],
   "timeout_s": 36000
 }
