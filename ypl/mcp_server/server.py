@@ -10,7 +10,6 @@ Authentication mode is controlled by MCP_SERVER_MODE setting:
 - OAUTH: Google OAuth via FastMCP's GoogleProvider
 """
 
-import asyncio
 import contextlib
 import json
 import logging
@@ -30,15 +29,13 @@ from starlette.routing import Mount, Route
 from structlog.contextvars import bind_contextvars, clear_contextvars
 
 from ypl.backend.config import settings
-from ypl.backend.utils.batch_utils import initialize_batch_system, stop_batch_system
-from ypl.logger import flush_and_close_google_cloud_logging
-from ypl.loggers.config import flush_and_close_google_logging_client
 from ypl.mcp_server.context_vars import mcp_request_id_var, request_context
 from ypl.mcp_server.core import mcp_server
+from ypl.mcp_server.lifespan import mcp_shutdown, mcp_startup
 
 # Import mcp_tools to register tools via decorators
 from ypl.mcp_server.mcp_tools import execute_tool, format_tool_result
-from ypl.structured_logger import get_logger, setup_asyncio_logging
+from ypl.structured_logger import get_logger
 
 logger = get_logger()
 
@@ -267,14 +264,12 @@ async def lifespan(app: Starlette) -> AsyncGenerator[None, None]:
     """Lifespan context manager for the MCP server.
 
     Combines our app initialization with FastMCP's session manager lifespan.
+    Startup and shutdown logic is delegated to :func:`mcp_startup` /
+    :func:`mcp_shutdown` (``ypl.mcp_server.lifespan``) so the monolith can
+    reuse them without pulling in the standalone Starlette app.
     """
     logger.info("MCP Server starting up...", mode=settings.MCP_SERVER_MODE)
-
-    setup_asyncio_logging()
-
-    # Initialize batch system
-    logger.info("APP INIT: Initializing batch system...")
-    await initialize_batch_system()
+    await mcp_startup()
 
     # Run FastMCP's lifespan to initialize session manager
     logger.info("APP INIT: Starting FastMCP session manager...")
@@ -282,28 +277,7 @@ async def lifespan(app: Starlette) -> AsyncGenerator[None, None]:
         logger.info("APP INIT: MCP Server ready", mode=settings.MCP_SERVER_MODE)
         yield
 
-    # Cleanup on shutdown
-    logger.info("MCP Server shutting down...")
-
-    # Ensure buffers are flushed within 5 seconds during shutdown
-    try:
-        async with asyncio.timeout(5):
-            await stop_batch_system()
-    except TimeoutError:
-        logger.warning("Timed out waiting for buffers flush during shutdown")
-    except Exception:
-        logger.warning("Error flushing buffers during shutdown", exc_info=True)
-
-    # Close Sentry aiohttp session
-    from ypl.mcp_server.tools.sentry import close_sentry_session
-
-    await close_sentry_session()
-
-    # Flush and close Google Cloud logging
-    flush_and_close_google_cloud_logging()
-    flush_and_close_google_logging_client()
-
-    logger.info("MCP Server shut down complete.")
+    await mcp_shutdown()
 
 
 # --- Mode-based middleware selection ---
