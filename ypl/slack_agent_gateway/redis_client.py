@@ -27,6 +27,7 @@ from ypl.slack_agent_gateway.constants import (
     REDIS_KEY_PREFIX_STATUS_RATELIMIT,
     REDIS_KEY_PREFIX_SURVEY_RESPONSE,
     REDIS_KEY_PREFIX_THREAD_SESSION,
+    REDIS_KEY_PREFIX_TOOL_CLUSTER_PENDING,
     REDIS_KEY_PREFIX_TOOL_ENTRIES,
     REPLY_MAPPING_TTL_SECONDS,
     SESSION_REDIS_TTL_SECONDS,
@@ -482,6 +483,53 @@ async def peek_pending_status(session_id: str) -> str | None:
     key = f"{REDIS_KEY_PREFIX_STATUS_PENDING}:{session_id}"
     result: str | None = await redis.get(key)
     return result
+
+
+async def set_tool_cluster_pending(session_id: str) -> None:
+    """Signal that tool entries were updated and a cluster flush is needed.
+
+    Mirrors set_pending_status but for the tool-cluster path, so the two
+    signals use separate Redis keys and cannot collide.
+
+    Args:
+        session_id: The session ID
+    """
+    redis = await get_redis_client()
+    key = f"{REDIS_KEY_PREFIX_TOOL_CLUSTER_PENDING}:{session_id}"
+    await redis.set(key, "1", ex=STATUS_PENDING_TTL_SECONDS)
+
+
+async def get_and_clear_tool_cluster_pending(session_id: str) -> bool:
+    """Atomically read and delete the tool-cluster-pending flag.
+
+    Args:
+        session_id: The session ID
+
+    Returns:
+        True if a tool-cluster flush was pending, False otherwise
+    """
+    redis = await get_redis_client()
+    key = f"{REDIS_KEY_PREFIX_TOOL_CLUSTER_PENDING}:{session_id}"
+    result: str | None = await redis.getdel(key)
+    return result is not None
+
+
+async def peek_tool_cluster_pending(session_id: str) -> bool:
+    """Check whether a tool-cluster flush is pending without consuming the flag.
+
+    Used after a flush completes to detect whether a new tool event arrived
+    in the window, so the caller can reschedule if needed.
+
+    Args:
+        session_id: The session ID
+
+    Returns:
+        True if a tool-cluster flush is pending, False otherwise
+    """
+    redis = await get_redis_client()
+    key = f"{REDIS_KEY_PREFIX_TOOL_CLUSTER_PENDING}:{session_id}"
+    result: str | None = await redis.get(key)
+    return result is not None
 
 
 async def schedule_status_flush(session_id: str, flush_at: float) -> None:

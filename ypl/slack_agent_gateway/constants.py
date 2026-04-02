@@ -63,6 +63,7 @@ REDIS_KEY_PREFIX_STATUS_PENDING = "slack_agent_gw:status_pending"
 REDIS_KEY_PREFIX_STATUS_RATELIMIT = "slack_agent_gw:status_ratelimit"
 REDIS_KEY_PREFIX_STATUS_FLUSH_SCHEDULE = "slack_agent_gw:status_flush_schedule"
 REDIS_KEY_PREFIX_TOOL_ENTRIES = "slack_agent_gw:tool_entries"
+REDIS_KEY_PREFIX_TOOL_CLUSTER_PENDING = "slack_agent_gw:tool_cluster_pending"
 
 # Redis TTL for thread→AHS-session mapping (24 hours, matching session TTL)
 THREAD_SESSION_MAPPING_TTL_SECONDS = 24 * 60 * 60
