@@ -173,6 +173,8 @@ After setting `IN_REVIEW`, send a **new top-level message** (not threaded) to th
 
 Send it with `send_slack_message(channel=<slack_channel>, text=<message>, ahs_session_id=<your_session_id>)` — the `ahs_session_id` ensures that replies in this thread route back to your session.
 
+> **Important:** Do NOT pass `project_id` here. Passing `project_id` without an explicit `channel` auto-routes the message into the project updates thread. For top-level messages (PR review, checkpoint), always use `channel=` instead of `project_id=`.
+
 **What happens next:** A human will review and either:
 - Transition the task to `COMPLETED` if approved
 - Transition the task to `FAILED` with feedback if changes are needed (the task can then be transitioned to `READY` for a retry attempt with the feedback incorporated)
@@ -226,13 +228,18 @@ Always include the session link so humans can inspect the session's full history
 
 The scheduler automatically initializes the project updates thread and posts start/completion/failure notices. **You do not need to post routine status updates or bootstrap the thread yourself.**
 
-To send a custom update to the project thread (e.g. a mid-task progress note):
+To send a custom update **inside** the project updates thread (e.g. a mid-task progress note):
 
 ```
 send_slack_message(project_id=<your_project_id>, text=<message>)
 ```
 
 The tool auto-resolves the correct channel and thread from the project — no manual `updates_thread_ts` lookup needed.
+
+> **Routing rules:**
+> - `send_slack_message(project_id=...)` — routes into the project updates thread (reply).
+> - `send_slack_message(channel=..., ...)` — always a new top-level message (never threaded).
+> - Do **not** mix `channel=` + `project_id=` when you want a threaded update; omit `channel` and let `project_id` resolve it.
 
 **For reference — the scheduler posts these automatically (inside the updates thread):**
 
