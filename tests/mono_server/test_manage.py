@@ -5,9 +5,7 @@ Covers module import, CLI argument parsing, and the command handlers
 """
 
 from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock, patch
-
 
 # ---------------------------------------------------------------------------
 # Import smoke tests
@@ -48,8 +46,8 @@ class TestBuildParser:
         return build_parser()
 
     def test_add_user_required_args(self) -> None:
-        from ypl.mono_server.manage import build_parser
         import pytest
+        from ypl.mono_server.manage import build_parser
 
         parser = build_parser()
         # Missing --name should fail
@@ -192,7 +190,7 @@ class TestCmdAddRole:
 
         with (
             patch("ypl.mono_server.manage._get_async_engine", return_value=_mock_engine()),
-            patch("ypl.mono_server.manage._make_session_factory", return_value=MagicMock(return_value=mock_ctx)),
+            patch("ypl.mono_server.manage.make_session_factory", return_value=MagicMock(return_value=mock_ctx)),
         ):
             result = await cmd_add_role("nobody@example.com", "ENGINEER")
 
@@ -271,7 +269,7 @@ class TestCmdListUsers:
 
         with (
             patch("ypl.mono_server.manage._get_async_engine", return_value=_mock_engine()),
-            patch("ypl.mono_server.manage._make_session_factory", return_value=MagicMock(return_value=mock_ctx)),
+            patch("ypl.mono_server.manage.make_session_factory", return_value=MagicMock(return_value=mock_ctx)),
         ):
             result = await cmd_list_users(limit=5)
 
@@ -282,7 +280,7 @@ class TestCmdListUsers:
 
         with (
             patch("ypl.mono_server.manage._get_async_engine", return_value=_mock_engine()),
-            patch("ypl.mono_server.manage._make_session_factory", side_effect=RuntimeError("db error")),
+            patch("ypl.mono_server.manage.make_session_factory", side_effect=RuntimeError("db error")),
         ):
             result = await cmd_list_users()
 
@@ -297,7 +295,6 @@ class TestCmdListUsers:
 def test_get_async_engine_returns_engine_instance() -> None:
     """_get_async_engine builds an AsyncEngine when settings are reachable."""
     from sqlalchemy.ext.asyncio import AsyncEngine
-
     from ypl.mono_server.manage import _get_async_engine
 
     # Patch settings.db_url_for to return a valid-looking (but fake) URL so

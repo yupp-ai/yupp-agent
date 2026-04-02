@@ -20,7 +20,6 @@ import os
 import secrets
 import subprocess
 import sys
-import uuid
 from base64 import urlsafe_b64encode
 from pathlib import Path
 
@@ -28,15 +27,32 @@ import sqlalchemy.engine.url
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
-from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
-from sqlmodel import select
-from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlalchemy.ext.asyncio import create_async_engine
 
 import ypl.db.all_models  # noqa: F401 — register all SQLModel mappers before any query
-from ypl.db.mcp import MCPDevToken, MCPTokenStatus
-from ypl.db.rbac import Permission, Role, RoleName, RolePermission, UserRoleAssociation
-from ypl.db.users import User, UserStatus, UserType
-from ypl.mcp_server.auth_dev_token import generate_token, get_token_lookup_key, hash_token
+from ypl.db.rbac import RoleName
+from ypl.db.users import UserType
+from ypl.mono_server.db import (
+    ROLE_DESCRIPTIONS,
+    ROLE_PERMISSIONS,
+    create_mcp_dev_token,
+    create_user_with_role,
+    seed_roles,
+)
+
+# Re-export so that callers that previously imported these from setup continue to work.
+__all__ = [
+    "ROLE_DESCRIPTIONS",
+    "ROLE_PERMISSIONS",
+    "build_async_db_url",
+    "build_postgres_connection_json",
+    "create_mcp_dev_token",
+    "create_user_with_role",
+    "generate_env_content",
+    "generate_fernet_key",
+    "generate_secret",
+    "seed_roles",
+]
 
 console = Console()
 
@@ -44,30 +60,6 @@ console = Console()
 _HERE = Path(__file__).parent
 ENV_TEMPLATE_PATH = _HERE / ".env.template"
 
-# ---------------------------------------------------------------------------
-# Role definitions
-# ---------------------------------------------------------------------------
-
-ROLE_PERMISSIONS: dict[RoleName, list[Permission]] = {
-    RoleName.ADMIN: list(Permission),
-    RoleName.ENGINEER: [
-        Permission.MANAGE_AGENTS,
-        Permission.MANAGE_AGENT_SCHEDULES,
-        Permission.MANAGE_AGENT_PROJECTS,
-        Permission.MANAGE_AGENT_SESSIONS,
-        Permission.CREATE_AGENT,
-        Permission.USE_MCP,
-        Permission.READ_YUPPASTE,
-        Permission.WRITE_YUPPASTE,
-    ],
-    RoleName.MCP_USER: [Permission.USE_MCP],
-}
-
-ROLE_DESCRIPTIONS: dict[RoleName, str] = {
-    RoleName.ADMIN: "Full administrative access — all permissions",
-    RoleName.ENGINEER: "Agent operations and MCP tool access",
-    RoleName.MCP_USER: "MCP tool usage only",
-}
 
 # ---------------------------------------------------------------------------
 # Pure helper functions (fully testable without I/O)
@@ -99,14 +91,15 @@ def build_async_db_url(user: str, password: str, host: str, database: str) -> st
     if not host_part:
         # No colon → entire string is hostname, no explicit port
         host_part, port_str = port_str, ""
-    return sqlalchemy.engine.url.URL.create(
+    url = sqlalchemy.engine.url.URL.create(
         drivername="postgresql+asyncpg",
         username=user,
         password=password,
         host=host_part,
         port=int(port_str) if port_str else 5432,
         database=database,
-    ).render_as_string(hide_password=False)
+    )
+    return url.render_as_string(hide_password=False)  # type: ignore[no-any-return]
 
 
 def generate_env_content(params: dict[str, str]) -> str:
@@ -117,7 +110,8 @@ def generate_env_content(params: dict[str, str]) -> str:
 
             postgres_user, postgres_password, postgres_host, postgres_database,
             redis_url, secret_key, x_api_key, ahs_api_key,
-            mcp_jwt_key, mcp_enc_key, slack_enc_key, base_url
+            mcp_jwt_key, mcp_enc_key, slack_enc_key, base_url,
+            ahs_token_emails
 
     Returns:
         Complete ``.env`` file content as a string.
@@ -129,6 +123,7 @@ def generate_env_content(params: dict[str, str]) -> str:
         params.get("postgres_database", "yupp_agent"),
     )
     base_url = params.get("base_url", "http://localhost:8090")
+    ahs_token_emails = params.get("ahs_token_emails", "")
     return f"""\
 # =========================================================================
 # Yupp Agent Platform — One-Box Deployment Configuration
@@ -166,7 +161,9 @@ MCP_SERVER_BASE_URL={base_url}
 # MCP Authentication
 # ---------------------------------------------------------------------------
 MCP_SERVER_MODE=DEV_TOKEN
-AHS_SERVICE_TOKEN_EMAILS=
+# SECURITY: comma-separated admin emails allowed to create agent sessions via
+# service tokens.  Keep this list minimal — treat it like a root-access list.
+AHS_SERVICE_TOKEN_EMAILS={ahs_token_emails}
 MCP_OAUTH_GOOGLE_CLIENT_ID=
 MCP_OAUTH_GOOGLE_CLIENT_SECRET=
 MCP_OAUTH_JWT_SIGNING_KEY={params.get("mcp_jwt_key", "")}
@@ -243,7 +240,7 @@ async def check_redis_connectivity(url: str) -> bool:
     import redis.asyncio as aioredis  # local import
 
     try:
-        r = aioredis.from_url(url, socket_timeout=5)  # type: ignore[no-untyped-call]
+        r = aioredis.from_url(url, socket_timeout=5)
         await r.ping()
         await r.aclose()
         return True
@@ -262,8 +259,9 @@ def run_alembic_upgrade() -> bool:
     Alembic reads POSTGRES_CONNECTION_AGENTDB from the environment / .env file,
     so the caller must ensure .env has been written before calling this.
     """
+    alembic_ini = _HERE.parent.parent / "alembic.ini"
     result = subprocess.run(
-        [sys.executable, "-m", "alembic", "-c", "alembic.ini", "upgrade", "head"],
+        [sys.executable, "-m", "alembic", "-c", str(alembic_ini), "upgrade", "head"],
         capture_output=False,
         text=True,
     )
@@ -271,141 +269,26 @@ def run_alembic_upgrade() -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Database operations (async, take an AsyncEngine directly — no Settings dep)
+# Private helpers for the wizard
 # ---------------------------------------------------------------------------
 
 
-def _make_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
-    return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+def _read_db_url_from_env(env_path: Path) -> str:
+    """Parse POSTGRES_CONNECTION_AGENTDB from an existing .env and return asyncpg URL.
 
-
-async def seed_roles(engine: AsyncEngine) -> None:
-    """Seed ADMIN, ENGINEER, and MCP_USER roles with their permissions.
-
-    Idempotent — existing roles are left untouched.
-
-    Args:
-        engine: Async SQLAlchemy engine connected to the agent database.
+    Raises:
+        ValueError: If POSTGRES_CONNECTION_AGENTDB is not found in the file.
     """
-    factory = _make_session_factory(engine)
-    async with factory() as session:
-        for role_name, permissions in ROLE_PERMISSIONS.items():
-            existing = (await session.exec(select(Role).where(Role.name == role_name))).first()
-            if existing is not None:
-                console.print(f"  [dim]Role {role_name.value} already exists — skipped.[/dim]")
-                continue
-
-            role = Role(name=role_name, description=ROLE_DESCRIPTIONS[role_name])
-            session.add(role)
-            await session.flush()  # obtain role_id before inserting permissions
-
-            for perm in permissions:
-                session.add(RolePermission(role_id=role.role_id, permission=perm))
-
-            console.print(f"  [green]Created role[/green] {role_name.value} ({len(permissions)} permissions)")
-
-        await session.commit()
-
-
-async def create_user_with_role(
-    engine: AsyncEngine,
-    *,
-    email: str,
-    name: str,
-    user_type: UserType = UserType.HUMAN,
-    role_name: RoleName | None = None,
-) -> User:
-    """Create a user and optionally assign a role.
-
-    Idempotent — if a user with the given email already exists it is returned
-    unchanged (role assignment is still applied if the association is absent).
-
-    Args:
-        engine:     Async engine connected to the agent database.
-        email:      User's email address (used as the unique identifier).
-        name:       Display name.
-        user_type:  HUMAN, AGENT, or SYSTEM.
-        role_name:  Role to assign, or None to skip role assignment.
-
-    Returns:
-        The persisted User instance.
-    """
-    factory = _make_session_factory(engine)
-    async with factory() as session:
-        existing = (await session.exec(select(User).where(User.email == email.lower()))).first()
-
-        if existing is None:
-            user = User(
-                user_id=str(uuid.uuid4()),
-                name=name,
-                email=email.lower(),
-                status=UserStatus.ACTIVE,
-                user_type=user_type,
-            )
-            session.add(user)
-            await session.flush()
-            console.print(f"  [green]Created user[/green] {email} ({user_type.value})")
-        else:
-            user = existing
-            console.print(f"  [dim]User {email} already exists — skipped creation.[/dim]")
-
-        if role_name is not None:
-            # Look up the role
-            role = (await session.exec(select(Role).where(Role.name == role_name))).first()
-            if role is None:
-                console.print(f"  [yellow]⚠ Role {role_name.value} not found — skipping assignment.[/yellow]")
-            else:
-                assoc_exists = (
-                    await session.exec(
-                        select(UserRoleAssociation).where(
-                            UserRoleAssociation.user_id == user.user_id,
-                            UserRoleAssociation.role_id == role.role_id,
-                        )
-                    )
-                ).first()
-                if assoc_exists is None:
-                    session.add(UserRoleAssociation(user_id=user.user_id, role_id=role.role_id))
-                    console.print(f"  [green]Assigned role[/green] {role_name.value} → {email}")
-
-        await session.commit()
-        await session.refresh(user)
-        return user
-
-
-async def create_mcp_dev_token(
-    engine: AsyncEngine,
-    *,
-    email: str,
-    description: str = "Initial dev token",
-) -> str:
-    """Create an MCP developer token and persist it to the database.
-
-    Args:
-        engine:      Async engine connected to the agent database.
-        email:       Email address to associate with the token.
-        description: Human-readable description for the token.
-
-    Returns:
-        The plaintext token string (``yupp_dev_*``). Store it now — it cannot
-        be retrieved later.
-    """
-    token = generate_token()
-    lookup_key = get_token_lookup_key(token)
-    token_hash = hash_token(token)
-
-    factory = _make_session_factory(engine)
-    async with factory() as session:
-        dev_token = MCPDevToken(
-            email=email,
-            token_lookup_key=lookup_key,
-            token_hash=token_hash,
-            description=description,
-            status=MCPTokenStatus.ACTIVE,
-        )
-        session.add(dev_token)
-        await session.commit()
-
-    return token
+    for line in env_path.read_text().splitlines():
+        line = line.strip()
+        if line.startswith("POSTGRES_CONNECTION_AGENTDB="):
+            raw = line[len("POSTGRES_CONNECTION_AGENTDB="):]
+            pg = json.loads(raw)
+            return build_async_db_url(pg["user"], pg["password"], pg["host"], pg["database"])
+    raise ValueError(
+        "POSTGRES_CONNECTION_AGENTDB not found in existing .env — "
+        "re-run setup without skipping overwrite to regenerate."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -428,81 +311,100 @@ async def setup_interactive() -> int:
     )
 
     env_path = Path(".env")
+    skip_env_write = False
+
     if env_path.exists():
         console.print(f"\n[yellow]⚠  .env already exists at {env_path.resolve()}[/yellow]")
         if not Confirm.ask("Overwrite it?", default=False):
             console.print("[dim]Keeping existing .env.  Re-running migrations and seeding roles…[/dim]\n")
+            skip_env_write = True
 
-    # ------------------------------------------------------------------
-    # Step 1 — Collect database credentials
-    # ------------------------------------------------------------------
-    console.print("\n[bold]Step 1 / 7 — PostgreSQL connection[/bold]")
-    pg_host = Prompt.ask("  Postgres host[:port]", default="localhost:5432")
-    pg_user = Prompt.ask("  Postgres user", default="postgres")
-    pg_password = Prompt.ask("  Postgres password", default="postgres", password=True)
-    pg_database = Prompt.ask("  Database name", default="yupp_agent")
-
-    console.print("  Checking Postgres connectivity…", end=" ")
-    if not await check_postgres_connectivity(pg_user, pg_password, pg_host, pg_database):
-        console.print("[red]FAILED[/red]")
-        console.print(
-            f"[red]Cannot connect to Postgres at {pg_host} (db={pg_database}, user={pg_user}).[/red]\n"
-            "Ensure Postgres is running and the credentials are correct."
-        )
-        return 1
-    console.print("[green]OK[/green]")
-
-    # ------------------------------------------------------------------
-    # Step 2 — Collect Redis URL
-    # ------------------------------------------------------------------
-    console.print("\n[bold]Step 2 / 7 — Redis connection[/bold]")
-    redis_url = Prompt.ask("  Redis URL", default="redis://localhost:6379/1")
-
-    console.print("  Checking Redis connectivity…", end=" ")
-    if not await check_redis_connectivity(redis_url):
-        console.print("[yellow]UNREACHABLE[/yellow]")
-        if not Confirm.ask("  Redis is not reachable — continue anyway?", default=False):
+    if skip_env_write:
+        # Read the DB URL from the existing file — do NOT touch secrets.
+        try:
+            db_url = _read_db_url_from_env(env_path)
+        except (ValueError, KeyError, json.JSONDecodeError) as exc:
+            console.print(f"[red]✗ Cannot read DB credentials from existing .env: {exc}[/red]")
             return 1
     else:
+        # ------------------------------------------------------------------
+        # Step 1 — Collect database credentials
+        # ------------------------------------------------------------------
+        console.print("\n[bold]Step 1 / 7 — PostgreSQL connection[/bold]")
+        pg_host = Prompt.ask("  Postgres host[:port]", default="localhost:5432")
+        pg_user = Prompt.ask("  Postgres user", default="postgres")
+        pg_password = Prompt.ask("  Postgres password", default="postgres", password=True)
+        pg_database = Prompt.ask("  Database name", default="yupp_agent")
+
+        console.print("  Checking Postgres connectivity…", end=" ")
+        if not await check_postgres_connectivity(pg_user, pg_password, pg_host, pg_database):
+            console.print("[red]FAILED[/red]")
+            console.print(
+                f"[red]Cannot connect to Postgres at {pg_host} (db={pg_database}, user={pg_user}).[/red]\n"
+                "Ensure Postgres is running and the credentials are correct."
+            )
+            return 1
         console.print("[green]OK[/green]")
 
-    # ------------------------------------------------------------------
-    # Step 3 — Collect public base URL
-    # ------------------------------------------------------------------
-    console.print("\n[bold]Step 3 / 7 — Service base URL[/bold]")
-    base_url = Prompt.ask(
-        "  Public base URL (used in token emails and gateway callbacks)",
-        default="http://localhost:8090",
-    )
+        # ------------------------------------------------------------------
+        # Step 2 — Collect Redis URL
+        # ------------------------------------------------------------------
+        console.print("\n[bold]Step 2 / 7 — Redis connection[/bold]")
+        redis_url = Prompt.ask("  Redis URL", default="redis://localhost:6379/1")
 
-    # ------------------------------------------------------------------
-    # Step 4 — Auto-generate secrets, write .env
-    # ------------------------------------------------------------------
-    console.print("\n[bold]Step 4 / 7 — Generating secrets & writing .env[/bold]")
-    params: dict[str, str] = {
-        "postgres_user": pg_user,
-        "postgres_password": pg_password,
-        "postgres_host": pg_host,
-        "postgres_database": pg_database,
-        "redis_url": redis_url,
-        "base_url": base_url,
-        "secret_key": generate_secret(),
-        "x_api_key": generate_secret(),
-        "ahs_api_key": generate_secret(),
-        "mcp_jwt_key": generate_fernet_key(),
-        "mcp_enc_key": generate_fernet_key(),
-        "slack_enc_key": generate_fernet_key(),
-    }
+        console.print("  Checking Redis connectivity…", end=" ")
+        if not await check_redis_connectivity(redis_url):
+            console.print("[yellow]UNREACHABLE[/yellow]")
+            if not Confirm.ask("  Redis is not reachable — continue anyway?", default=False):
+                return 1
+        else:
+            console.print("[green]OK[/green]")
 
-    env_content = generate_env_content(params)
-    env_path.write_text(env_content)
-    console.print(f"  [green]✓ Written to {env_path.resolve()}[/green]")
-    console.print("  [dim]Propagating env vars into current process for alembic…[/dim]")
+        # ------------------------------------------------------------------
+        # Step 3 — Collect public base URL + admin email for service token
+        # ------------------------------------------------------------------
+        console.print("\n[bold]Step 3 / 7 — Service base URL & admin email[/bold]")
+        base_url = Prompt.ask(
+            "  Public base URL (used in token emails and gateway callbacks)",
+            default="http://localhost:8090",
+        )
+        admin_email_for_env = Prompt.ask(
+            "  Admin email for AHS_SERVICE_TOKEN_EMAILS\n"
+            "  [dim](grants server-to-server access — keep this list minimal)[/dim]"
+        )
 
-    # Propagate the new values so alembic (subprocess) picks them up.
-    os.environ.setdefault(
-        "POSTGRES_CONNECTION_AGENTDB", build_postgres_connection_json(pg_user, pg_password, pg_host, pg_database)
-    )
+        # ------------------------------------------------------------------
+        # Step 4 — Auto-generate secrets, write .env
+        # ------------------------------------------------------------------
+        console.print("\n[bold]Step 4 / 7 — Generating secrets & writing .env[/bold]")
+        params: dict[str, str] = {
+            "postgres_user": pg_user,
+            "postgres_password": pg_password,
+            "postgres_host": pg_host,
+            "postgres_database": pg_database,
+            "redis_url": redis_url,
+            "base_url": base_url,
+            "ahs_token_emails": admin_email_for_env,
+            "secret_key": generate_secret(),
+            "x_api_key": generate_secret(),
+            "ahs_api_key": generate_secret(),
+            "mcp_jwt_key": generate_fernet_key(),
+            "mcp_enc_key": generate_fernet_key(),
+            "slack_enc_key": generate_fernet_key(),
+        }
+
+        env_content = generate_env_content(params)
+        env_path.write_text(env_content)
+        env_path.chmod(0o600)  # restrict to owner — file contains plaintext secrets
+        console.print(f"  [green]✓ Written to {env_path.resolve()} (mode 0o600)[/green]")
+        console.print("  [dim]Propagating env vars into current process for alembic…[/dim]")
+
+        # Overwrite unconditionally — setdefault would silently keep stale creds.
+        os.environ["POSTGRES_CONNECTION_AGENTDB"] = build_postgres_connection_json(
+            pg_user, pg_password, pg_host, pg_database
+        )
+
+        db_url = build_async_db_url(pg_user, pg_password, pg_host, pg_database)
 
     # ------------------------------------------------------------------
     # Step 5 — Run alembic upgrade head
@@ -519,7 +421,6 @@ async def setup_interactive() -> int:
     # Step 6 — Seed roles
     # ------------------------------------------------------------------
     console.print("\n[bold]Step 6 / 7 — Seeding roles[/bold]")
-    db_url = build_async_db_url(pg_user, pg_password, pg_host, pg_database)
     engine = create_async_engine(db_url, pool_pre_ping=True)
     try:
         await seed_roles(engine)

@@ -1,32 +1,31 @@
-"""Tests for ypl.mono_server.setup.
+"""Tests for ypl.mono_server.setup and ypl.mono_server.db.
 
 Covers pure helper functions, DB-seeding functions (mocked), and the module
 import surface.  All tests run without a live database or Redis.
 """
 
 from __future__ import annotations
-
 import json
 import re
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from ypl.db.rbac import Permission, RoleName
 from ypl.db.users import UserType
-from ypl.mono_server.setup import (
+from ypl.mono_server.db import (
     ROLE_DESCRIPTIONS,
     ROLE_PERMISSIONS,
-    build_async_db_url,
-    build_postgres_connection_json,
     create_mcp_dev_token,
     create_user_with_role,
+    seed_roles,
+)
+from ypl.mono_server.setup import (
+    build_async_db_url,
+    build_postgres_connection_json,
     generate_env_content,
     generate_fernet_key,
     generate_secret,
-    seed_roles,
 )
-
 
 # ---------------------------------------------------------------------------
 # Pure helpers
@@ -113,6 +112,7 @@ class TestGenerateEnvContent:
         "mcp_enc_key": "my_enc_key",
         "slack_enc_key": "my_slack_key",
         "base_url": "http://localhost:8090",
+        "ahs_token_emails": "admin@example.com",
     }
 
     def test_contains_postgres_connection(self) -> None:
@@ -167,6 +167,15 @@ class TestGenerateEnvContent:
     def test_mcp_server_mode_dev_token(self) -> None:
         content = generate_env_content(self._PARAMS)
         assert "MCP_SERVER_MODE=DEV_TOKEN" in content
+
+    def test_contains_ahs_token_emails(self) -> None:
+        content = generate_env_content(self._PARAMS)
+        assert "AHS_SERVICE_TOKEN_EMAILS=admin@example.com" in content
+
+    def test_ahs_token_emails_defaults_empty(self) -> None:
+        params = {k: v for k, v in self._PARAMS.items() if k != "ahs_token_emails"}
+        content = generate_env_content(params)
+        assert "AHS_SERVICE_TOKEN_EMAILS=" in content
 
 
 # ---------------------------------------------------------------------------
@@ -257,7 +266,7 @@ class TestSeedRoles:
         mock_session, added = _make_mock_session(existing_result=None)
         mock_ctx = _make_mock_ctx(mock_session)
 
-        with patch("ypl.mono_server.setup._make_session_factory", return_value=MagicMock(return_value=mock_ctx)):
+        with patch("ypl.mono_server.db.make_session_factory", return_value=MagicMock(return_value=mock_ctx)):
             await seed_roles(_mock_engine())
 
         # Added items: 3 Role objects + sum of all permissions
@@ -269,12 +278,25 @@ class TestSeedRoles:
         assert len(perm_items) == sum(len(p) for p in ROLE_PERMISSIONS.values())
 
     async def test_seed_roles_skips_existing(self) -> None:
-        """seed_roles should not add a Role if one already exists."""
-        # All roles "already exist" — first() returns a non-None mock
-        mock_session, added = _make_mock_session(existing_result=MagicMock())
-        mock_ctx = _make_mock_ctx(mock_session)
+        """seed_roles should not add anything when all roles and permissions already exist."""
+        from ypl.db.rbac import RolePermission
 
-        with patch("ypl.mono_server.setup._make_session_factory", return_value=MagicMock(return_value=mock_ctx)):
+        # Simulate every permission already present (covers all three roles)
+        all_perms = list({p for perms in ROLE_PERMISSIONS.values() for p in perms})
+        perm_mocks = [MagicMock(spec=RolePermission, permission=p) for p in all_perms]
+
+        mock_result = MagicMock()
+        mock_result.first.return_value = MagicMock(role_id="existing-role-id")
+        mock_result.all.return_value = perm_mocks
+
+        added: list[object] = []
+        mock_session = AsyncMock()
+        mock_session.exec.return_value = mock_result
+        mock_session.add = MagicMock(side_effect=added.append)
+        mock_session.commit = AsyncMock()
+
+        mock_ctx = _make_mock_ctx(mock_session)
+        with patch("ypl.mono_server.db.make_session_factory", return_value=MagicMock(return_value=mock_ctx)):
             await seed_roles(_mock_engine())
 
         # Nothing should have been added
@@ -287,7 +309,7 @@ class TestCreateUserWithRole:
         mock_session, added = _make_mock_session(existing_result=None)
         mock_ctx = _make_mock_ctx(mock_session)
 
-        with patch("ypl.mono_server.setup._make_session_factory", return_value=MagicMock(return_value=mock_ctx)):
+        with patch("ypl.mono_server.db.make_session_factory", return_value=MagicMock(return_value=mock_ctx)):
             await create_user_with_role(
                 _mock_engine(),
                 email="alice@example.com",
@@ -307,7 +329,7 @@ class TestCreateUserWithRole:
         mock_session, added = _make_mock_session(existing_result=None)
         mock_ctx = _make_mock_ctx(mock_session)
 
-        with patch("ypl.mono_server.setup._make_session_factory", return_value=MagicMock(return_value=mock_ctx)):
+        with patch("ypl.mono_server.db.make_session_factory", return_value=MagicMock(return_value=mock_ctx)):
             await create_user_with_role(
                 _mock_engine(), email="Alice@EXAMPLE.COM", name="Alice", user_type=UserType.HUMAN
             )
@@ -323,7 +345,7 @@ class TestCreateUserWithRole:
         mock_session, added = _make_mock_session(existing_result=MagicMock(user_id="existing-id"))
         mock_ctx = _make_mock_ctx(mock_session)
 
-        with patch("ypl.mono_server.setup._make_session_factory", return_value=MagicMock(return_value=mock_ctx)):
+        with patch("ypl.mono_server.db.make_session_factory", return_value=MagicMock(return_value=mock_ctx)):
             await create_user_with_role(
                 _mock_engine(), email="alice@example.com", name="Alice", user_type=UserType.HUMAN
             )
@@ -334,23 +356,51 @@ class TestCreateUserWithRole:
         assert user_items == []
 
 
+def _make_mock_session_with_use_mcp() -> tuple[AsyncMock, list[object]]:
+    """Build a mock session that passes all create_mcp_dev_token policy checks.
+
+    Simulates: user exists, has a role, and that role has USE_MCP permission.
+    exec() is called three times in that order.
+    """
+    added: list[object] = []
+
+    # Call 1: user lookup
+    user_result = MagicMock()
+    user_result.first.return_value = MagicMock(user_id="user-id-123")
+
+    # Call 2: UserRoleAssociation lookup
+    role_assoc_result = MagicMock()
+    role_assoc_result.all.return_value = [MagicMock(role_id="role-id-456")]
+
+    # Call 3: RolePermission USE_MCP check
+    perm_result = MagicMock()
+    perm_result.first.return_value = MagicMock(permission=Permission.USE_MCP)
+
+    mock_session = AsyncMock()
+    mock_session.exec.side_effect = [user_result, role_assoc_result, perm_result]
+    mock_session.add = MagicMock(side_effect=added.append)
+    mock_session.commit = AsyncMock()
+
+    return mock_session, added
+
+
 class TestCreateMcpDevToken:
     async def test_returns_yupp_dev_prefixed_token(self) -> None:
         """Token must follow the ``yupp_dev_*`` format."""
-        mock_session, _ = _make_mock_session()
+        mock_session, _ = _make_mock_session_with_use_mcp()
         mock_ctx = _make_mock_ctx(mock_session)
 
-        with patch("ypl.mono_server.setup._make_session_factory", return_value=MagicMock(return_value=mock_ctx)):
+        with patch("ypl.mono_server.db.make_session_factory", return_value=MagicMock(return_value=mock_ctx)):
             token = await create_mcp_dev_token(_mock_engine(), email="dev@example.com")
 
         assert token.startswith("yupp_dev_")
 
     async def test_persists_mcp_dev_token_record(self) -> None:
         """An MCPDevToken should be added to the session."""
-        mock_session, added = _make_mock_session()
+        mock_session, added = _make_mock_session_with_use_mcp()
         mock_ctx = _make_mock_ctx(mock_session)
 
-        with patch("ypl.mono_server.setup._make_session_factory", return_value=MagicMock(return_value=mock_ctx)):
+        with patch("ypl.mono_server.db.make_session_factory", return_value=MagicMock(return_value=mock_ctx)):
             await create_mcp_dev_token(_mock_engine(), email="dev@example.com", description="test token")
 
         from ypl.db.mcp import MCPDevToken
@@ -365,16 +415,50 @@ class TestCreateMcpDevToken:
         tokens: list[str] = []
 
         for _ in range(2):
-            mock_session, _ = _make_mock_session()
+            mock_session, _ = _make_mock_session_with_use_mcp()
             mock_ctx = _make_mock_ctx(mock_session)
-            with patch("ypl.mono_server.setup._make_session_factory", return_value=MagicMock(return_value=mock_ctx)):
+            with patch("ypl.mono_server.db.make_session_factory", return_value=MagicMock(return_value=mock_ctx)):
                 tokens.append(await create_mcp_dev_token(_mock_engine(), email="x@y.com"))
 
         assert tokens[0] != tokens[1]
 
+    async def test_raises_for_missing_user(self) -> None:
+        """create_mcp_dev_token raises ValueError when user does not exist."""
+        mock_session, _ = _make_mock_session(existing_result=None)
+        mock_ctx = _make_mock_ctx(mock_session)
+
+        with (
+            patch("ypl.mono_server.db.make_session_factory", return_value=MagicMock(return_value=mock_ctx)),
+            pytest.raises(ValueError, match="No user found"),
+        ):
+            await create_mcp_dev_token(_mock_engine(), email="nobody@example.com")
+
+    async def test_raises_for_missing_use_mcp_permission(self) -> None:
+        """create_mcp_dev_token raises ValueError when user lacks USE_MCP permission."""
+        user_result = MagicMock()
+        user_result.first.return_value = MagicMock(user_id="user-id-123")
+
+        role_assoc_result = MagicMock()
+        role_assoc_result.all.return_value = [MagicMock(role_id="role-id-456")]
+
+        no_perm_result = MagicMock()
+        no_perm_result.first.return_value = None  # no USE_MCP permission found
+
+        mock_session = AsyncMock()
+        mock_session.exec.side_effect = [user_result, role_assoc_result, no_perm_result]
+        mock_session.add = MagicMock()
+        mock_session.commit = AsyncMock()
+
+        mock_ctx = _make_mock_ctx(mock_session)
+        with (
+            patch("ypl.mono_server.db.make_session_factory", return_value=MagicMock(return_value=mock_ctx)),
+            pytest.raises(ValueError, match="USE_MCP"),
+        ):
+            await create_mcp_dev_token(_mock_engine(), email="noperm@example.com")
+
 
 # ---------------------------------------------------------------------------
-# Module import smoke test
+# Module import smoke tests
 # ---------------------------------------------------------------------------
 
 
@@ -387,7 +471,7 @@ def test_setup_module_importable() -> None:
 
 
 def test_setup_exposes_public_api() -> None:
-    """Key public symbols are exposed at module level."""
+    """Key public symbols are exposed at module level on setup."""
     from ypl.mono_server import setup
 
     for attr in (
@@ -396,6 +480,7 @@ def test_setup_exposes_public_api() -> None:
         "build_postgres_connection_json",
         "build_async_db_url",
         "generate_env_content",
+        # Re-exported from db.py:
         "seed_roles",
         "create_user_with_role",
         "create_mcp_dev_token",
@@ -403,3 +488,11 @@ def test_setup_exposes_public_api() -> None:
         "ROLE_DESCRIPTIONS",
     ):
         assert hasattr(setup, attr), f"Missing attribute: {attr}"
+
+
+def test_db_module_importable() -> None:
+    """ypl.mono_server.db is importable without errors."""
+    import importlib
+
+    mod = importlib.import_module("ypl.mono_server.db")
+    assert mod is not None

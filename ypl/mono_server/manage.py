@@ -26,10 +26,10 @@ from sqlmodel import select
 import ypl.db.all_models  # noqa: F401 — register all SQLModel mappers
 from ypl.db.rbac import Role, RoleName, UserRoleAssociation
 from ypl.db.users import User, UserType
-from ypl.mono_server.setup import (
-    _make_session_factory,
+from ypl.mono_server.db import (
     create_mcp_dev_token,
     create_user_with_role,
+    make_session_factory,
     seed_roles,
 )
 
@@ -103,7 +103,7 @@ async def cmd_list_users(limit: int = 20) -> int:
     """Print a table of users, most recently created first."""
     engine = _get_async_engine()
     try:
-        factory = _make_session_factory(engine)
+        factory = make_session_factory(engine)
         async with factory() as session:
             users = (
                 await session.exec(
@@ -147,7 +147,7 @@ async def cmd_add_role(email: str, role: str) -> int:
 
     engine = _get_async_engine()
     try:
-        factory = _make_session_factory(engine)
+        factory = make_session_factory(engine)
         async with factory() as session:
             user = (await session.exec(select(User).where(User.email == email.lower()))).first()
             if user is None:
