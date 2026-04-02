@@ -15,7 +15,7 @@ from typing import Any
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 from structlog.contextvars import bind_contextvars, unbind_contextvars
 
 from ypl.agent_harness_service.common.constants import AHS_MCP_SECRET, mcp_session_id_var
@@ -170,7 +170,7 @@ class McpTokenAuthMiddleware(BaseHTTPMiddleware):
                         session_id = bearer_session_id
 
         if token != AHS_MCP_SECRET:
-            return Response(content="Unauthorized", status_code=401)
+            return JSONResponse(content={"detail": "Unauthorized"}, status_code=401)
         # Propagate session identity so MCP tools can enforce access control.
         mcp_session_id_var.set(session_id)
         return await call_next(request)
