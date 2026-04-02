@@ -42,6 +42,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Use `async with` so that real exception info (exc_type, exc_val, exc_tb)
     # is forwarded to the MCP lifespan's __aexit__, rather than always passing
     # (None, None, None).  ahs_shutdown() does NOT call __aexit__ itself.
+    # TODO: If state._mcp_lifespan_ctx.__aenter__() raises (extremely unlikely),
+    # ahs_shutdown() will not be called and startup resources (scheduler task,
+    # auto-stale sweep, DB connections) will leak.  This is a pre-existing
+    # non-regression edge case; harden if FastMCP's lifespan becomes more complex.
     async with state._mcp_lifespan_ctx:
         try:
             yield
