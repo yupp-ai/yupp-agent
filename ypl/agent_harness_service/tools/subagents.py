@@ -14,9 +14,16 @@ from sqlalchemy import text
 
 from ypl.agent_harness_service.common.agent_registry import get_agent_spec, list_predefined_agents
 from ypl.agent_harness_service.common.config import load_agent_config
-from ypl.agent_harness_service.common.constants import is_personal_agent, mcp_session_id_var
-from ypl.agent_harness_service.tools.gateway_tools import _resolve_parent_session
+from ypl.agent_harness_service.common.constants import (
+    PERSONAL_AGENT_DEFAULT_CONFIG,
+    PERSONAL_AGENT_PREFIXES,
+    is_personal_agent,
+    mcp_session_id_var,
+)
+from ypl.agent_harness_service.common.types import AgentCreateRequest, ExecutorConfigRequest, SandboxConfigRequest
 from ypl.agent_harness_service.tools.mcp_instance import (
+    _create_agent_fn,
+    _resolve_parent_session,
     _route_model_stub_fn,
     _run_subagent_fn,
     _validate_session_id,
@@ -335,9 +342,11 @@ async def create_agent_tool(
     Returns:
         Dict with success status, agent name, and instructions to share with the user.
     """
-    from ypl.agent_harness_service.common.constants import PERSONAL_AGENT_DEFAULT_CONFIG, PERSONAL_AGENT_PREFIXES
-    from ypl.agent_harness_service.common.types import AgentCreateRequest, ExecutorConfigRequest, SandboxConfigRequest
-    from ypl.agent_harness_service.service import create_agent as service_create_agent
+    if _create_agent_fn is None:
+        return {
+            "error": "create_agent callback not registered"
+            " — server.py must call register_orchestration_callbacks() at startup."
+        }
 
     if not user_id:
         return {"error": "user_id is required to create a personal agent"}
@@ -422,7 +431,7 @@ async def create_agent_tool(
     )
 
     try:
-        create_result = await service_create_agent(request)
+        create_result = await _create_agent_fn(request)
         return {
             "success": True,
             "name": create_result.name,

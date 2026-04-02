@@ -6,55 +6,16 @@ post multiple-choice questions, and send proactive messages to channels.
 
 from __future__ import annotations
 import uuid as _uuid_mod
-from typing import Any
 
 from sqlalchemy import text
 
 from ypl.agent_harness_service.common.constants import mcp_session_id_var
-from ypl.agent_harness_service.tools.mcp_instance import _validate_session_id, mcp
+from ypl.agent_harness_service.tools.mcp_instance import _resolve_parent_session, _validate_session_id, mcp
 from ypl.backend.db import get_async_session
 from ypl.db.agent_harness import AgentProject, AgentSession
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
-
-
-# ---------------------------------------------------------------------------
-# Private helpers
-# ---------------------------------------------------------------------------
-
-
-async def _resolve_parent_session(harness_session_id: str) -> dict[str, Any]:
-    """Look up parent session metadata for subagent spawning.
-
-    Args:
-        harness_session_id: The harness session UUID.
-
-    Returns:
-        Dict with agent_name, model, workspace, and permissions (any may be None).
-    """
-    async with get_async_session() as db:
-        result = await db.execute(
-            text(
-                "SELECT a.name, s.model, s.workspace, s.context FROM agent_sessions s "
-                "JOIN agents a ON s.agent_id = a.agent_id "
-                "WHERE s.agent_session_id = :sid"
-            ),
-            {"sid": harness_session_id},
-        )
-        row = result.fetchone()
-        if not row:
-            return {"agent_name": None, "model": None, "workspace": None, "permissions": None}
-        context = row[3] or {}
-        permissions: dict[str, Any] | None = context.get("permissions")
-        subagent_depth: int = context.get("subagent_depth", 0)
-        return {
-            "agent_name": row[0],
-            "model": row[1],
-            "workspace": row[2],
-            "permissions": permissions,
-            "subagent_depth": subagent_depth,
-        }
 
 
 async def _resolve_slack_session_id(harness_session_id: str) -> str | None:

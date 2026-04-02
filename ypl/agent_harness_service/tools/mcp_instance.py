@@ -13,6 +13,7 @@ from collections.abc import Callable
 from typing import Any
 
 from fastmcp import FastMCP
+from sqlalchemy import text
 from sqlmodel import select
 
 from ypl.backend.db import get_async_session
@@ -35,16 +36,19 @@ mcp = FastMCP("harness")
 
 _run_subagent_fn: Callable[..., Any] | None = None
 _route_model_stub_fn: Callable[..., list[str]] | None = None
+_create_agent_fn: Callable[..., Any] | None = None
 
 
 def register_orchestration_callbacks(
     run_subagent: Callable[..., Any],
     route_model_stub: Callable[..., list[str]],
+    create_agent: Callable[..., Any] | None = None,
 ) -> None:
     """Called by server.py at startup to wire orchestration functions."""
-    global _run_subagent_fn, _route_model_stub_fn
+    global _run_subagent_fn, _route_model_stub_fn, _create_agent_fn
     _run_subagent_fn = run_subagent
     _route_model_stub_fn = route_model_stub
+    _create_agent_fn = create_agent
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +133,47 @@ async def _get_current_message_user_id(session_id: str) -> str | None:
             select(AgentSession.creator_user_id).where(AgentSession.agent_session_id == session_uuid)
         )
         return result.scalar_one_or_none()
+
+
+# ---------------------------------------------------------------------------
+# Session metadata lookup
+# Shared helper for subagent spawning and gateway tools.
+# Lives here (not in gateway_tools or subagents) so both can import it without
+# creating a cross-Layer-1-module dependency.
+# ---------------------------------------------------------------------------
+
+
+async def _resolve_parent_session(harness_session_id: str) -> dict[str, Any]:
+    """Look up parent session metadata for subagent spawning.
+
+    Args:
+        harness_session_id: The harness session UUID.
+
+    Returns:
+        Dict with agent_name, model, workspace, and permissions (any may be None).
+    """
+    async with get_async_session() as db:
+        result = await db.execute(
+            text(
+                "SELECT a.name, s.model, s.workspace, s.context FROM agent_sessions s "
+                "JOIN agents a ON s.agent_id = a.agent_id "
+                "WHERE s.agent_session_id = :sid"
+            ),
+            {"sid": harness_session_id},
+        )
+        row = result.fetchone()
+        if not row:
+            return {"agent_name": None, "model": None, "workspace": None, "permissions": None}
+        context = row[3] or {}
+        permissions: dict[str, Any] | None = context.get("permissions")
+        subagent_depth: int = context.get("subagent_depth", 0)
+        return {
+            "agent_name": row[0],
+            "model": row[1],
+            "workspace": row[2],
+            "permissions": permissions,
+            "subagent_depth": subagent_depth,
+        }
 
 
 # ---------------------------------------------------------------------------
