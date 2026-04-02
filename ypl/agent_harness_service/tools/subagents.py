@@ -12,6 +12,7 @@ from typing import Any
 
 from sqlalchemy import text
 
+import ypl.agent_harness_service.tools.mcp_instance as _mcp_instance
 from ypl.agent_harness_service.common.agent_registry import get_agent_spec, list_predefined_agents
 from ypl.agent_harness_service.common.config import load_agent_config
 from ypl.agent_harness_service.common.constants import (
@@ -22,10 +23,7 @@ from ypl.agent_harness_service.common.constants import (
 )
 from ypl.agent_harness_service.common.types import AgentCreateRequest, ExecutorConfigRequest, SandboxConfigRequest
 from ypl.agent_harness_service.tools.mcp_instance import (
-    _create_agent_fn,
     _resolve_parent_session,
-    _route_model_stub_fn,
-    _run_subagent_fn,
     _validate_session_id,
     mcp,
 )
@@ -205,7 +203,7 @@ async def new_task(
 
     parent_permissions = parent_info.get("permissions") if effective_session_id else None
 
-    if _run_subagent_fn is None:
+    if _mcp_instance._run_subagent_fn is None:
         return {
             "error": (
                 "orchestration callbacks not registered"
@@ -220,7 +218,7 @@ async def new_task(
 
     # Fire-and-forget: run subagent in background; result delivered via subagent queue
     _subagent_task = asyncio.ensure_future(
-        _run_subagent_fn(
+        _mcp_instance._run_subagent_fn(
             agent_type=agent_type,
             prompt=prompt,
             description=description,
@@ -284,9 +282,9 @@ def route_model(
         List of model IDs (e.g., ['anthropic/claude-sonnet-4-6', 'openai/gpt-4o']).
     """
     logger.info("MCP tool: route_model", task=task_description, count=count)
-    if _route_model_stub_fn is None:
+    if _mcp_instance._route_model_stub_fn is None:
         return ["ERROR: orchestration callbacks not registered"]
-    return _route_model_stub_fn(task_description, count, candidates)
+    return _mcp_instance._route_model_stub_fn(task_description, count, candidates)
 
 
 @mcp.tool(
@@ -342,7 +340,7 @@ async def create_agent_tool(
     Returns:
         Dict with success status, agent name, and instructions to share with the user.
     """
-    if _create_agent_fn is None:
+    if _mcp_instance._create_agent_fn is None:
         return {
             "error": "create_agent callback not registered"
             " — server.py must call register_orchestration_callbacks() at startup."
@@ -431,7 +429,7 @@ async def create_agent_tool(
     )
 
     try:
-        create_result = await _create_agent_fn(request)
+        create_result = await _mcp_instance._create_agent_fn(request)
         return {
             "success": True,
             "name": create_result.name,

@@ -210,9 +210,13 @@ def _validate_session_id(session_id: str) -> str:
 def clear_session_state(session_id: str) -> None:
     """Clear all session-specific state when session ends.
 
-    Cleans up auth terminal states, current user tracking, and polling tasks.
+    Cleans up all in-memory state keyed by session_id: sandbox stack,
+    websearch counters, auth terminal states, current user tracking,
+    and polling tasks.
     Note: User GitHub tokens persist across sessions (keyed by user_id, not session_id).
     """
+    clear_session_sandbox(session_id)
+    clear_session_websearch_count(session_id)
     _session_auth_terminal_states.pop(session_id, None)
     _session_current_user.pop(session_id, None)
     task = _session_polling_tasks.pop(session_id, None)
