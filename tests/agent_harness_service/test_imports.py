@@ -105,6 +105,17 @@ TOOLS_MODULES = [
     "ypl.agent_harness_service.tools.repo_manager",
     "ypl.agent_harness_service.tools.mcp_client",
     "ypl.agent_harness_service.tools.github_token_storage",
+    # Decomposed MCP tool modules (Stage 1.2)
+    "ypl.agent_harness_service.tools.mcp_instance",
+    "ypl.agent_harness_service.tools.workspace",
+    "ypl.agent_harness_service.tools.github_auth",
+    "ypl.agent_harness_service.tools.gateway_tools",
+    "ypl.agent_harness_service.tools.subagents",
+    "ypl.agent_harness_service.tools.scheduling",
+    "ypl.agent_harness_service.tools.sandboxed_ops",
+    "ypl.agent_harness_service.tools.linear",
+    "ypl.agent_harness_service.tools.skills",
+    "ypl.agent_harness_service.tools.self_management",
 ]
 
 
