@@ -570,4 +570,3 @@ async def check_github_auth_status(session_id: str) -> dict[str, str]:
         return {"status": terminal_state}
 
     return {"status": "pending"}
-
