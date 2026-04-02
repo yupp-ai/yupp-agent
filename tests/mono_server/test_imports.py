@@ -28,7 +28,7 @@ def test_config_importable() -> None:
     cfg = MonoConfig()
     assert cfg.port == 8090
     assert cfg.gateway_slack_enabled is True
-    assert cfg.gateway_github_enabled is False
+    assert cfg.gateway_github_enabled is True
 
 
 def test_server_exports_app() -> None:
