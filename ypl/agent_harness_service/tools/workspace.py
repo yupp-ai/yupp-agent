@@ -9,6 +9,9 @@ import os
 from typing import Any
 
 from ypl.agent_harness_service.common.constants import AHS_SESSIONS_DIR, SESSION_INFRA_DIRS
+
+# TODO: Expose a narrow public function in github_auth.py (e.g. get_or_initiate_github_token)
+# to replace these private imports and make the module boundary explicit.
 from ypl.agent_harness_service.tools.github_auth import _get_valid_github_token, _initiate_device_flow
 from ypl.agent_harness_service.tools.mcp_instance import _get_current_message_user_id, _validate_session_id, mcp
 from ypl.agent_harness_service.tools.repo_manager import create_worktree, push_and_create_pr
