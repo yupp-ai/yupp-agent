@@ -541,9 +541,12 @@ async def _run_agent_task(
                     # Fire a structured tool-start event to the gateway for each
                     # tool invocation so SAG can render the live cluster display.
                     if gateway and gateway_session_id:
-                        for block in tool_start_blocks_in_event:
+                        # tool_call_count is already incremented by len(tool_start_blocks_in_event)
+                        # above, so compute per-block anon IDs by working backwards from the end.
+                        _anon_base = eager.tool_call_count - len(tool_start_blocks_in_event)
+                        for _i, block in enumerate(tool_start_blocks_in_event):
                             _name = block.get("name", "unknown")
-                            _tool_use_id = block.get("id") or f"anon_{eager.tool_call_count}"
+                            _tool_use_id = block.get("id") or f"anon_{_anon_base + _i + 1}"
                             _command = _format_tool_command(_name, block.get("input") or {})
                             try:
                                 _t = asyncio.create_task(
