@@ -13,10 +13,12 @@ Usage in server.py::
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         state = await ahs_startup(app, mcp_app)
-        try:
-            yield
-        finally:
-            await ahs_shutdown(state)
+        # Caller owns the MCP lifespan context so exception info is forwarded.
+        async with state._mcp_lifespan_ctx:
+            try:
+                yield
+            finally:
+                await ahs_shutdown(state)
 """
 
 import asyncio
@@ -91,9 +93,11 @@ class AHSState:
                            session sweep.
         mcp_app:           The FastMCP HTTP sub-application (needed so
                            ahs_shutdown() can exit its lifespan context).
-        _mcp_lifespan_ctx: The entered async context manager for mcp_app's
-                           lifespan.  Set by ahs_startup(); exited by
-                           ahs_shutdown().
+        _mcp_lifespan_ctx: The *unentered* async context manager for mcp_app's
+                           lifespan.  Created by ahs_startup() but entered and
+                           exited by the caller (server.py lifespan()) via
+                           ``async with state._mcp_lifespan_ctx`` so that real
+                           exception info is forwarded to ``__aexit__``.
     """
 
     scheduler_task: asyncio.Task[None] | None
@@ -490,9 +494,10 @@ async def ahs_startup(app: FastAPI, mcp_app: Any) -> AHSState:
     # Start background auto-stale sweep for hung ACTIVE sessions
     auto_stale_task: asyncio.Task[None] = asyncio.create_task(_auto_stale_inactive_sessions(), name="auto-stale-sweep")
 
-    # Enter the MCP app's lifespan (required by FastMCP).
+    # Build the MCP app's lifespan context manager but do NOT enter it here.
+    # server.py uses `async with state._mcp_lifespan_ctx:` so that real
+    # exception information is forwarded to __aexit__ if the server crashes.
     mcp_lifespan_ctx = mcp_app.lifespan(mcp_app)
-    await mcp_lifespan_ctx.__aenter__()
 
     return AHSState(
         scheduler_task=scheduler_task,
@@ -551,16 +556,19 @@ async def ahs_shutdown(state: AHSState) -> None:
         if cancelled_count > 0:
             logger.warning("Some schedule execution tasks were cancelled during shutdown", count=cancelled_count)
 
-        # Wait for in-flight task executions to complete gracefully
-        if TASK_EXECUTOR_ENABLED:
-            task_cancelled_count = await wait_for_in_flight_task_executions(timeout_seconds=30.0)
-            if task_cancelled_count > 0:
-                logger.warning("Some task execution tasks were cancelled during shutdown", count=task_cancelled_count)
-
         logger.info("Scheduler shutdown complete")
 
-    # Exit the MCP app's lifespan context
-    await state._mcp_lifespan_ctx.__aexit__(None, None, None)
+    # Wait for in-flight task executions regardless of whether the scheduler was enabled.
+    # TASK_EXECUTOR_ENABLED is independent of SCHEDULER_ENABLED — skipping this block when
+    # the scheduler is disabled would silently abandon in-flight task executor work.
+    if TASK_EXECUTOR_ENABLED:
+        task_cancelled_count = await wait_for_in_flight_task_executions(timeout_seconds=30.0)
+        if task_cancelled_count > 0:
+            logger.warning("Some task execution tasks were cancelled during shutdown", count=task_cancelled_count)
+
+    # NOTE: The MCP app's lifespan context (__aexit__) is handled by the
+    # caller (server.py) via `async with state._mcp_lifespan_ctx:` so that
+    # real exception info is forwarded.  Do NOT call __aexit__ here.
 
     # Shut down WebSocket streaming
     await shutdown_streaming()
