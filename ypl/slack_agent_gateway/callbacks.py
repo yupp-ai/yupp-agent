@@ -939,6 +939,13 @@ async def flush_status_update(session_id: str, session: AgentSession | None = No
         # posting (it would have called schedule_status_flush because the
         # rate-limit gate was held by us).  If so, reschedule a flush so the
         # new text is eventually delivered.
+        #
+        # Also: if the tool-cluster path ran but raw_pending was also set
+        # (e.g. a max-turn notice fired during an active tool session),
+        # restore it so it isn't silently dropped — the reschedule below
+        # will carry it on the next flush.
+        if is_tool_cluster_flush and raw_pending:
+            await set_pending_status(session_id, raw_pending)
         await remove_from_status_flush_schedule(session_id)
         new_pending = await peek_pending_status(session_id)
         new_tool_cluster = await peek_tool_cluster_pending(session_id)
