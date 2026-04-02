@@ -1,0 +1,590 @@
+"""Interactive one-box setup wizard for the Yupp Agent Platform.
+
+Bootstraps a fresh deployment by:
+  1. Checking connectivity to Postgres and Redis
+  2. Generating .env from template with prompted values + auto-generated secrets
+  3. Running ``alembic upgrade head``
+  4. Seeding roles: ADMIN (all perms), ENGINEER (agent + MCP perms), MCP_USER (USE_MCP only)
+  5. Creating the first admin user (prompted) and the system user (system@yupp.ai)
+  6. Optionally creating an MCP developer token
+
+Usage::
+
+    python -m ypl.mono_server.setup
+"""
+
+from __future__ import annotations
+import asyncio
+import json
+import os
+import secrets
+import subprocess
+import sys
+import uuid
+from base64 import urlsafe_b64encode
+from pathlib import Path
+
+import sqlalchemy.engine.url
+from rich.console import Console
+from rich.panel import Panel
+from rich.prompt import Confirm, Prompt
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
+from sqlmodel import select
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+import ypl.db.all_models  # noqa: F401 — register all SQLModel mappers before any query
+from ypl.db.mcp import MCPDevToken, MCPTokenStatus
+from ypl.db.rbac import Permission, Role, RoleName, RolePermission, UserRoleAssociation
+from ypl.db.users import User, UserStatus, UserType
+from ypl.mcp_server.auth_dev_token import generate_token, get_token_lookup_key, hash_token
+
+console = Console()
+
+# Path to the .env template bundled next to this file
+_HERE = Path(__file__).parent
+ENV_TEMPLATE_PATH = _HERE / ".env.template"
+
+# ---------------------------------------------------------------------------
+# Role definitions
+# ---------------------------------------------------------------------------
+
+ROLE_PERMISSIONS: dict[RoleName, list[Permission]] = {
+    RoleName.ADMIN: list(Permission),
+    RoleName.ENGINEER: [
+        Permission.MANAGE_AGENTS,
+        Permission.MANAGE_AGENT_SCHEDULES,
+        Permission.MANAGE_AGENT_PROJECTS,
+        Permission.MANAGE_AGENT_SESSIONS,
+        Permission.CREATE_AGENT,
+        Permission.USE_MCP,
+        Permission.READ_YUPPASTE,
+        Permission.WRITE_YUPPASTE,
+    ],
+    RoleName.MCP_USER: [Permission.USE_MCP],
+}
+
+ROLE_DESCRIPTIONS: dict[RoleName, str] = {
+    RoleName.ADMIN: "Full administrative access — all permissions",
+    RoleName.ENGINEER: "Agent operations and MCP tool access",
+    RoleName.MCP_USER: "MCP tool usage only",
+}
+
+# ---------------------------------------------------------------------------
+# Pure helper functions (fully testable without I/O)
+# ---------------------------------------------------------------------------
+
+
+def generate_secret() -> str:
+    """Generate a URL-safe random secret string (~43 chars)."""
+    return secrets.token_urlsafe(32)
+
+
+def generate_fernet_key() -> str:
+    """Generate a base64url-encoded 32-byte Fernet-compatible key."""
+    return urlsafe_b64encode(secrets.token_bytes(32)).decode()
+
+
+def build_postgres_connection_json(user: str, password: str, host: str, database: str) -> str:
+    """Build the JSON value expected by POSTGRES_CONNECTION_AGENTDB."""
+    return json.dumps({"user": user, "password": password, "host": host, "database": database})
+
+
+def build_async_db_url(user: str, password: str, host: str, database: str) -> str:
+    """Build a SQLAlchemy asyncpg connection URL from raw components.
+
+    ``host`` may be ``"hostname:port"`` or just ``"hostname"`` (port defaults to 5432).
+    Passwords with special characters are properly URL-encoded.
+    """
+    host_part, _, port_str = host.rpartition(":")
+    if not host_part:
+        # No colon → entire string is hostname, no explicit port
+        host_part, port_str = port_str, ""
+    return sqlalchemy.engine.url.URL.create(
+        drivername="postgresql+asyncpg",
+        username=user,
+        password=password,
+        host=host_part,
+        port=int(port_str) if port_str else 5432,
+        database=database,
+    ).render_as_string(hide_password=False)
+
+
+def generate_env_content(params: dict[str, str]) -> str:
+    """Generate a complete ``.env`` file string from setup parameters.
+
+    Args:
+        params: Mapping of parameter names to values.  Required keys::
+
+            postgres_user, postgres_password, postgres_host, postgres_database,
+            redis_url, secret_key, x_api_key, ahs_api_key,
+            mcp_jwt_key, mcp_enc_key, slack_enc_key, base_url
+
+    Returns:
+        Complete ``.env`` file content as a string.
+    """
+    pg_json = build_postgres_connection_json(
+        params.get("postgres_user", "postgres"),
+        params.get("postgres_password", "changethis"),
+        params.get("postgres_host", "localhost:5432"),
+        params.get("postgres_database", "yupp_agent"),
+    )
+    base_url = params.get("base_url", "http://localhost:8090")
+    return f"""\
+# =========================================================================
+# Yupp Agent Platform — One-Box Deployment Configuration
+# Generated by: python -m ypl.mono_server.setup
+# =========================================================================
+
+ENVIRONMENT=local
+DEFAULT_DB=agentdb
+
+# ---------------------------------------------------------------------------
+# Database
+# ---------------------------------------------------------------------------
+POSTGRES_CONNECTION_AGENTDB={pg_json}
+
+# ---------------------------------------------------------------------------
+# Redis
+# ---------------------------------------------------------------------------
+REDIS_URL={params.get("redis_url", "redis://localhost:6379/1")}
+
+# ---------------------------------------------------------------------------
+# Security
+# ---------------------------------------------------------------------------
+SECRET_KEY={params.get("secret_key", "")}
+X_API_KEY={params.get("x_api_key", "")}
+AGENT_HARNESS_SERVICE_API_KEY={params.get("ahs_api_key", "")}
+
+# ---------------------------------------------------------------------------
+# Service URLs
+# ---------------------------------------------------------------------------
+AGENT_HARNESS_SERVICE_BASE_URL={base_url}
+GATEWAY_BASE_URL={base_url}
+MCP_SERVER_BASE_URL={base_url}
+
+# ---------------------------------------------------------------------------
+# MCP Authentication
+# ---------------------------------------------------------------------------
+MCP_SERVER_MODE=DEV_TOKEN
+AHS_SERVICE_TOKEN_EMAILS=
+MCP_OAUTH_GOOGLE_CLIENT_ID=
+MCP_OAUTH_GOOGLE_CLIENT_SECRET=
+MCP_OAUTH_JWT_SIGNING_KEY={params.get("mcp_jwt_key", "")}
+MCP_OAUTH_STORAGE_ENCRYPTION_KEY={params.get("mcp_enc_key", "")}
+
+# ---------------------------------------------------------------------------
+# Gateway Toggles
+# ---------------------------------------------------------------------------
+GATEWAY_SLACK_ENABLED=true
+GATEWAY_GITHUB_ENABLED=false
+
+# ---------------------------------------------------------------------------
+# Slack Agent Gateway
+# ---------------------------------------------------------------------------
+SLACK_AGENT_GATEWAY_AGENTS=
+SLACK_AGENT_GW_ENCRYPTION_KEY={params.get("slack_enc_key", "")}
+
+# ---------------------------------------------------------------------------
+# GCS / Cloud Storage (optional)
+# ---------------------------------------------------------------------------
+GCS_BUCKET_NAME=
+AGENT_MEMORY_BUCKET=
+
+# ---------------------------------------------------------------------------
+# LLM Provider API Keys
+# ---------------------------------------------------------------------------
+ANTHROPIC_API_KEY=
+OPENAI_API_KEY=
+GOOGLE_API_KEY=
+
+# ---------------------------------------------------------------------------
+# Optional integrations
+# ---------------------------------------------------------------------------
+LINEAR_API_KEY=
+READ_COMMIT_HISTORY_GITHUB_TOKEN=
+
+# ---------------------------------------------------------------------------
+# Observability
+# ---------------------------------------------------------------------------
+USE_GOOGLE_CLOUD_LOGGING=false
+DISABLE_WRITE_GOOGLE_CLOUD_METRICS=true
+"""
+
+
+# ---------------------------------------------------------------------------
+# Connectivity checks
+# ---------------------------------------------------------------------------
+
+
+async def check_postgres_connectivity(user: str, password: str, host: str, database: str) -> bool:
+    """Attempt a real connection to Postgres and return True on success."""
+    import asyncpg  # local import to avoid top-level cost when not needed
+
+    host_part, _, port_str = host.rpartition(":")
+    if not host_part:
+        host_part, port_str = port_str, ""
+    try:
+        conn: asyncpg.Connection[asyncpg.Record] = await asyncpg.connect(
+            host=host_part,
+            port=int(port_str) if port_str else 5432,
+            user=user,
+            password=password,
+            database=database,
+            timeout=5.0,
+        )
+        await conn.close()
+        return True
+    except Exception:
+        return False
+
+
+async def check_redis_connectivity(url: str) -> bool:
+    """Ping Redis and return True on success."""
+    import redis.asyncio as aioredis  # local import
+
+    try:
+        r = aioredis.from_url(url, socket_timeout=5)  # type: ignore[no-untyped-call]
+        await r.ping()
+        await r.aclose()
+        return True
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Alembic migration
+# ---------------------------------------------------------------------------
+
+
+def run_alembic_upgrade() -> bool:
+    """Run ``alembic upgrade head`` in a subprocess and return True on success.
+
+    Alembic reads POSTGRES_CONNECTION_AGENTDB from the environment / .env file,
+    so the caller must ensure .env has been written before calling this.
+    """
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", "-c", "alembic.ini", "upgrade", "head"],
+        capture_output=False,
+        text=True,
+    )
+    return result.returncode == 0
+
+
+# ---------------------------------------------------------------------------
+# Database operations (async, take an AsyncEngine directly — no Settings dep)
+# ---------------------------------------------------------------------------
+
+
+def _make_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
+    return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+
+async def seed_roles(engine: AsyncEngine) -> None:
+    """Seed ADMIN, ENGINEER, and MCP_USER roles with their permissions.
+
+    Idempotent — existing roles are left untouched.
+
+    Args:
+        engine: Async SQLAlchemy engine connected to the agent database.
+    """
+    factory = _make_session_factory(engine)
+    async with factory() as session:
+        for role_name, permissions in ROLE_PERMISSIONS.items():
+            existing = (await session.exec(select(Role).where(Role.name == role_name))).first()
+            if existing is not None:
+                console.print(f"  [dim]Role {role_name.value} already exists — skipped.[/dim]")
+                continue
+
+            role = Role(name=role_name, description=ROLE_DESCRIPTIONS[role_name])
+            session.add(role)
+            await session.flush()  # obtain role_id before inserting permissions
+
+            for perm in permissions:
+                session.add(RolePermission(role_id=role.role_id, permission=perm))
+
+            console.print(f"  [green]Created role[/green] {role_name.value} ({len(permissions)} permissions)")
+
+        await session.commit()
+
+
+async def create_user_with_role(
+    engine: AsyncEngine,
+    *,
+    email: str,
+    name: str,
+    user_type: UserType = UserType.HUMAN,
+    role_name: RoleName | None = None,
+) -> User:
+    """Create a user and optionally assign a role.
+
+    Idempotent — if a user with the given email already exists it is returned
+    unchanged (role assignment is still applied if the association is absent).
+
+    Args:
+        engine:     Async engine connected to the agent database.
+        email:      User's email address (used as the unique identifier).
+        name:       Display name.
+        user_type:  HUMAN, AGENT, or SYSTEM.
+        role_name:  Role to assign, or None to skip role assignment.
+
+    Returns:
+        The persisted User instance.
+    """
+    factory = _make_session_factory(engine)
+    async with factory() as session:
+        existing = (await session.exec(select(User).where(User.email == email.lower()))).first()
+
+        if existing is None:
+            user = User(
+                user_id=str(uuid.uuid4()),
+                name=name,
+                email=email.lower(),
+                status=UserStatus.ACTIVE,
+                user_type=user_type,
+            )
+            session.add(user)
+            await session.flush()
+            console.print(f"  [green]Created user[/green] {email} ({user_type.value})")
+        else:
+            user = existing
+            console.print(f"  [dim]User {email} already exists — skipped creation.[/dim]")
+
+        if role_name is not None:
+            # Look up the role
+            role = (await session.exec(select(Role).where(Role.name == role_name))).first()
+            if role is None:
+                console.print(f"  [yellow]⚠ Role {role_name.value} not found — skipping assignment.[/yellow]")
+            else:
+                assoc_exists = (
+                    await session.exec(
+                        select(UserRoleAssociation).where(
+                            UserRoleAssociation.user_id == user.user_id,
+                            UserRoleAssociation.role_id == role.role_id,
+                        )
+                    )
+                ).first()
+                if assoc_exists is None:
+                    session.add(UserRoleAssociation(user_id=user.user_id, role_id=role.role_id))
+                    console.print(f"  [green]Assigned role[/green] {role_name.value} → {email}")
+
+        await session.commit()
+        await session.refresh(user)
+        return user
+
+
+async def create_mcp_dev_token(
+    engine: AsyncEngine,
+    *,
+    email: str,
+    description: str = "Initial dev token",
+) -> str:
+    """Create an MCP developer token and persist it to the database.
+
+    Args:
+        engine:      Async engine connected to the agent database.
+        email:       Email address to associate with the token.
+        description: Human-readable description for the token.
+
+    Returns:
+        The plaintext token string (``yupp_dev_*``). Store it now — it cannot
+        be retrieved later.
+    """
+    token = generate_token()
+    lookup_key = get_token_lookup_key(token)
+    token_hash = hash_token(token)
+
+    factory = _make_session_factory(engine)
+    async with factory() as session:
+        dev_token = MCPDevToken(
+            email=email,
+            token_lookup_key=lookup_key,
+            token_hash=token_hash,
+            description=description,
+            status=MCPTokenStatus.ACTIVE,
+        )
+        session.add(dev_token)
+        await session.commit()
+
+    return token
+
+
+# ---------------------------------------------------------------------------
+# Interactive wizard
+# ---------------------------------------------------------------------------
+
+
+async def setup_interactive() -> int:
+    """Run the interactive setup wizard.
+
+    Returns:
+        Exit code (0 = success, 1 = aborted or error).
+    """
+    console.print(
+        Panel.fit(
+            "[bold cyan]Yupp Agent Platform — One-Box Setup Wizard[/bold cyan]\n"
+            "[dim]Sets up Postgres, Redis, roles, and the initial admin user.[/dim]",
+            border_style="cyan",
+        )
+    )
+
+    env_path = Path(".env")
+    if env_path.exists():
+        console.print(f"\n[yellow]⚠  .env already exists at {env_path.resolve()}[/yellow]")
+        if not Confirm.ask("Overwrite it?", default=False):
+            console.print("[dim]Keeping existing .env.  Re-running migrations and seeding roles…[/dim]\n")
+
+    # ------------------------------------------------------------------
+    # Step 1 — Collect database credentials
+    # ------------------------------------------------------------------
+    console.print("\n[bold]Step 1 / 7 — PostgreSQL connection[/bold]")
+    pg_host = Prompt.ask("  Postgres host[:port]", default="localhost:5432")
+    pg_user = Prompt.ask("  Postgres user", default="postgres")
+    pg_password = Prompt.ask("  Postgres password", default="postgres", password=True)
+    pg_database = Prompt.ask("  Database name", default="yupp_agent")
+
+    console.print("  Checking Postgres connectivity…", end=" ")
+    if not await check_postgres_connectivity(pg_user, pg_password, pg_host, pg_database):
+        console.print("[red]FAILED[/red]")
+        console.print(
+            f"[red]Cannot connect to Postgres at {pg_host} (db={pg_database}, user={pg_user}).[/red]\n"
+            "Ensure Postgres is running and the credentials are correct."
+        )
+        return 1
+    console.print("[green]OK[/green]")
+
+    # ------------------------------------------------------------------
+    # Step 2 — Collect Redis URL
+    # ------------------------------------------------------------------
+    console.print("\n[bold]Step 2 / 7 — Redis connection[/bold]")
+    redis_url = Prompt.ask("  Redis URL", default="redis://localhost:6379/1")
+
+    console.print("  Checking Redis connectivity…", end=" ")
+    if not await check_redis_connectivity(redis_url):
+        console.print("[yellow]UNREACHABLE[/yellow]")
+        if not Confirm.ask("  Redis is not reachable — continue anyway?", default=False):
+            return 1
+    else:
+        console.print("[green]OK[/green]")
+
+    # ------------------------------------------------------------------
+    # Step 3 — Collect public base URL
+    # ------------------------------------------------------------------
+    console.print("\n[bold]Step 3 / 7 — Service base URL[/bold]")
+    base_url = Prompt.ask(
+        "  Public base URL (used in token emails and gateway callbacks)",
+        default="http://localhost:8090",
+    )
+
+    # ------------------------------------------------------------------
+    # Step 4 — Auto-generate secrets, write .env
+    # ------------------------------------------------------------------
+    console.print("\n[bold]Step 4 / 7 — Generating secrets & writing .env[/bold]")
+    params: dict[str, str] = {
+        "postgres_user": pg_user,
+        "postgres_password": pg_password,
+        "postgres_host": pg_host,
+        "postgres_database": pg_database,
+        "redis_url": redis_url,
+        "base_url": base_url,
+        "secret_key": generate_secret(),
+        "x_api_key": generate_secret(),
+        "ahs_api_key": generate_secret(),
+        "mcp_jwt_key": generate_fernet_key(),
+        "mcp_enc_key": generate_fernet_key(),
+        "slack_enc_key": generate_fernet_key(),
+    }
+
+    env_content = generate_env_content(params)
+    env_path.write_text(env_content)
+    console.print(f"  [green]✓ Written to {env_path.resolve()}[/green]")
+    console.print("  [dim]Propagating env vars into current process for alembic…[/dim]")
+
+    # Propagate the new values so alembic (subprocess) picks them up.
+    os.environ.setdefault(
+        "POSTGRES_CONNECTION_AGENTDB", build_postgres_connection_json(pg_user, pg_password, pg_host, pg_database)
+    )
+
+    # ------------------------------------------------------------------
+    # Step 5 — Run alembic upgrade head
+    # ------------------------------------------------------------------
+    console.print("\n[bold]Step 5 / 7 — Running database migrations[/bold]")
+    console.print("  [dim]$ alembic upgrade head[/dim]\n")
+    if not run_alembic_upgrade():
+        console.print("[red]✗ alembic upgrade head failed.[/red]")
+        console.print("Check the output above for details.")
+        return 1
+    console.print("[green]✓ Migrations applied.[/green]")
+
+    # ------------------------------------------------------------------
+    # Step 6 — Seed roles
+    # ------------------------------------------------------------------
+    console.print("\n[bold]Step 6 / 7 — Seeding roles[/bold]")
+    db_url = build_async_db_url(pg_user, pg_password, pg_host, pg_database)
+    engine = create_async_engine(db_url, pool_pre_ping=True)
+    try:
+        await seed_roles(engine)
+
+        # Create the system user (system@yupp.ai) for internal webhook calls.
+        await create_user_with_role(
+            engine,
+            email="system@yupp.ai",
+            name="System",
+            user_type=UserType.SYSTEM,
+            role_name=None,
+        )
+    finally:
+        await engine.dispose()
+
+    # ------------------------------------------------------------------
+    # Step 7 — Create first admin user
+    # ------------------------------------------------------------------
+    console.print("\n[bold]Step 7 / 7 — First admin user[/bold]")
+    admin_email = Prompt.ask("  Admin email")
+    admin_name = Prompt.ask("  Admin display name", default=admin_email.split("@")[0].title())
+
+    engine = create_async_engine(db_url, pool_pre_ping=True)
+    try:
+        await create_user_with_role(
+            engine,
+            email=admin_email,
+            name=admin_name,
+            user_type=UserType.HUMAN,
+            role_name=RoleName.ADMIN,
+        )
+
+        # Optionally create a dev token
+        if Confirm.ask("\n  Create an MCP developer token for this admin?", default=True):
+            token = await create_mcp_dev_token(engine, email=admin_email, description="Initial admin token")
+            console.print(
+                Panel(
+                    f"[bold green]{token}[/bold green]\n\n"
+                    "[dim]Store this token securely — it cannot be retrieved later.\n"
+                    "Use it as a Bearer token when connecting to the MCP server.[/dim]",
+                    title="[bold]MCP Dev Token[/bold]",
+                    border_style="green",
+                )
+            )
+    finally:
+        await engine.dispose()
+
+    # ------------------------------------------------------------------
+    # Done
+    # ------------------------------------------------------------------
+    console.print(
+        Panel.fit(
+            "[bold green]✓ Setup complete![/bold green]\n\n"
+            "Start the server:  [cyan]uvicorn ypl.mono_server.server:app --port 8090[/cyan]\n"
+            "Manage users:      [cyan]python -m ypl.mono_server.manage --help[/cyan]",
+            border_style="green",
+        )
+    )
+    return 0
+
+
+def main() -> None:
+    """Entry point for ``python -m ypl.mono_server.setup``."""
+    sys.exit(asyncio.run(setup_interactive()))
+
+
+if __name__ == "__main__":
+    main()
