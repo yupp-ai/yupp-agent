@@ -166,8 +166,11 @@ async def ask_question(
         "IMPORTANT: The text parameter must be in Slack mrkdwn format, NOT standard Markdown. "
         "Key differences: bold is *text*, italic is _text_, links are <url|label>, "
         "code blocks use ``` with no language tag, no headings (#), no tables, no numbered lists. "
-        "Pass project_id to auto-route to the project's updates thread — no manual thread_ts lookup needed. "
+        "Pass project_id (without channel) to auto-route to the project's updates thread — "
+        "no manual thread_ts lookup needed. "
         "If channel is also omitted, the project's slack_channel is used automatically. "
+        "If you provide channel alongside project_id, the message is a new top-level post "
+        "in that channel (project_id never auto-fills thread_ts when channel is explicit). "
         "NOTE: In Slack sessions, your text output is automatically relayed to Slack by the harness — "
         "only call this tool when explicitly instructed to post to a specific channel or thread. "
         "If you do use it, do not also produce text output with the same content — the harness will relay both, "
@@ -187,11 +190,16 @@ async def send_slack_message(
         text: Message content in Slack mrkdwn format (not standard Markdown).
         channel: Slack channel name or ID (e.g., 'alert-backend', '#general', or 'C123ABC').
             Optional when project_id is given — the project's slack_channel is used instead.
+            If you provide channel explicitly, the message is always a new top-level message
+            in that channel (thread_ts is never auto-filled from the project in this case).
         thread_ts: Optional thread timestamp to reply in an existing thread.
-            Optional when project_id is given — the project's updates_thread_ts is used instead.
-        project_id: AHS project UUID. When provided and thread_ts is omitted, the tool
-            auto-routes to the project's updates thread (reads updates_thread_ts from
-            project shared_state). Also provides the channel if channel is omitted.
+        project_id: AHS project UUID. Controls auto-routing:
+            - project_id only (no channel, no thread_ts): auto-resolves the project's
+              slack_channel AND updates_thread_ts, posting inside the project updates thread.
+            - project_id + channel: channel is used as-is; thread_ts is NOT auto-filled
+              (the message is a new top-level post in the specified channel).
+            - project_id + thread_ts: posts to project's channel (if channel omitted)
+              in the given thread.
         session_id: The calling agent's harness session ID, used to resolve the agent name.
 
     Returns:
@@ -220,9 +228,16 @@ async def send_slack_message(
                 channel_from_project = not effective_channel and bool(project.slack_channel)
                 if channel_from_project:
                     effective_channel = project.slack_channel
-                # Only auto-fill thread_ts when channel was also resolved from the project,
-                # otherwise we'd try to reply in a thread that belongs to a different channel.
-                if not effective_thread_ts and (channel_from_project or effective_channel == project.slack_channel):
+                # Only auto-fill thread_ts when channel was ALSO resolved from the project
+                # (i.e. the caller did not provide channel explicitly).
+                # If the caller provided channel, they want a top-level message — do not
+                # route it into the project updates thread.  The previous condition also
+                # included `or effective_channel == project.slack_channel` which caused
+                # PR/checkpoint messages (which correctly pass channel but also pass
+                # project_id) to land in the updates thread once updates_thread_ts was set,
+                # creating the inconsistency where those messages were sometimes top-level
+                # (before the thread existed) and sometimes threaded (after).
+                if not effective_thread_ts and channel_from_project:
                     effective_thread_ts = (project.shared_state or {}).get("updates_thread_ts")
         except Exception:
             logger.warning(
