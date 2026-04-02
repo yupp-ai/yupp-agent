@@ -41,7 +41,12 @@ from ypl.agent_harness_service.executors.codex_app_server_runner import CodexApp
 from ypl.agent_harness_service.executors.providers import KNOWN_MODELS, parse_model_string, resolve_model
 from ypl.agent_harness_service.executors.raw_executor import run_raw_executor
 from ypl.agent_harness_service.executors.runner import ClaudeCodeRunner, RunContext
-from ypl.agent_harness_service.service.state import MAX_CONCURRENT_API_SUBAGENTS, get_api_subagent_semaphore
+from ypl.agent_harness_service.service.state import (
+    MAX_CONCURRENT_CLAUDE_CODE,
+    MAX_CONCURRENT_CODEX,
+    get_claude_code_semaphore,
+    get_codex_semaphore,
+)
 from ypl.agent_harness_service.tools.mcp_client import MCPToolAccess
 from ypl.backend.db import get_async_session
 from ypl.db.agent_harness import (
@@ -454,45 +459,55 @@ async def run_subagent(
     # queue_wait_ms (time from session creation to CLI launch) for observability.
     session_creation_time = datetime.now(UTC)
 
-    # Wrap the execution in a concurrency-gated coroutine that:
-    # 1. Acquires the global API subagent semaphore before starting
-    # 2. Logs how long it waited (if > 0.5s) so queue pressure is visible in GCP logs
-    # 3. Releases the semaphore slot on completion (success, error, or cancellation)
+    # Acquire a per-CLI-type concurrency semaphore BEFORE creating the execution
+    # task and BEFORE asyncio.wait_for starts — so queue wait time does NOT eat
+    # into timeout_s.  Released in the finally block below.
     #
-    # This caps the number of concurrent subagent CLI processes to
-    # AHS_MAX_CONCURRENT_API_SUBAGENTS (default 12), preventing resource exhaustion
-    # when multiple master-reviewer sessions each spawn 3-5 sub-reviewers simultaneously.
-    # Without this cap, 15-20 concurrent claude-code-cli processes compete for CPU/memory,
-    # ballooning individual review times from ~31s to 150-300s.
-    async def _gated_execute() -> ExecutorResult:
-        semaphore = get_api_subagent_semaphore()
+    # Harnessed executors spawn a CLI subprocess (claude-code-cli or codex-cli)
+    # which consumes real CPU/memory.  Two independent semaphores allow tuning
+    # each CLI type separately: Codex is lighter and faster so it gets a higher
+    # cap.  Raw executors (HTTP API calls, no subprocess) are not gated here.
+    _acquired_semaphore: asyncio.Semaphore | None = None
+    if session.executor_type == EXECUTOR_TYPE_HARNESSED:
+        cli_model = (
+            agent_spec.executor.model if agent_spec else (fs_config.executor_config.model if fs_config else None)
+        )
+        if cli_model in (HARNESS_CODEX_CLI, HARNESS_CODEX_APP_SERVER):
+            _cli_sem = get_codex_semaphore()
+            _cli_label, _max_concurrent = "codex", MAX_CONCURRENT_CODEX
+        else:
+            _cli_sem = get_claude_code_semaphore()
+            _cli_label, _max_concurrent = "claude-code", MAX_CONCURRENT_CLAUDE_CODE
         queue_start = time.monotonic()
-        async with semaphore:
-            wait_s = time.monotonic() - queue_start
-            if wait_s > 0.5:
-                logger.info(
-                    "Subagent waited for concurrency slot",
-                    agent_type=agent_type,
-                    wait_s=round(wait_s, 2),
-                    session_id=effective_session_id,
-                    parent_session_id=parent_session_id,
-                    max_concurrent=MAX_CONCURRENT_API_SUBAGENTS,
-                )
-            return await _execute_subagent(
-                agent_spec=agent_spec,
-                fs_config=fs_config,
-                prompt=prompt,
-                model=resolved_model,
-                session=session,
-                workspace=parent_workspace,
-                effective_session_id=effective_session_id,
-                session_context=subagent_context,
-                param_model=model,
-                session_created_at=session_creation_time,
+        await _cli_sem.acquire()
+        _acquired_semaphore = _cli_sem  # only set after acquire succeeds
+        wait_s = time.monotonic() - queue_start
+        if wait_s > 0.5:
+            logger.info(
+                "Subagent waited for concurrency slot",
+                agent_type=agent_type,
+                cli=_cli_label,
+                wait_s=round(wait_s, 2),
+                session_id=effective_session_id,
+                parent_session_id=parent_session_id,
+                max_concurrent=_max_concurrent,
             )
 
-    # Wrap the gated execution in a trackable task so cancel_subagent_tasks() can cancel it.
-    execute_task = asyncio.ensure_future(_gated_execute())
+    # Wrap execution in a trackable task so cancel_subagent_tasks() can cancel it.
+    execute_task = asyncio.ensure_future(
+        _execute_subagent(
+            agent_spec=agent_spec,
+            fs_config=fs_config,
+            prompt=prompt,
+            model=resolved_model,
+            session=session,
+            workspace=parent_workspace,
+            effective_session_id=effective_session_id,
+            session_context=subagent_context,
+            param_model=model,
+            session_created_at=session_creation_time,
+        )
+    )
     if db_session_id:
         _active_subagent_tasks[db_session_id] = execute_task
 
@@ -608,6 +623,8 @@ async def run_subagent(
     finally:
         if db_session_id:
             _active_subagent_tasks.pop(db_session_id, None)
+        if _acquired_semaphore is not None:
+            _acquired_semaphore.release()
 
     elapsed_ms = int((time.monotonic() - start_time) * 1000)
     session.status = "completed"

@@ -53,46 +53,57 @@ def _parse_env_int(env_var: str, default: int) -> int:
         return default
 
 
-# Raised from 20 → 40: the original default was set conservatively before
-# multi-master-reviewer workloads existed.  Under a 15-PR sprint each master
-# spawns 3-5 sub-reviewers, so we need headroom for ~20 concurrent automated
-# turns.  40 gives 2× headroom while staying well within Cloud Run memory.
-MAX_CONCURRENT_EXECUTIONS = _parse_env_int("AHS_MAX_CONCURRENT_EXECUTIONS", 40)
+MAX_CONCURRENT_EXECUTIONS = _parse_env_int("AHS_MAX_CONCURRENT_EXECUTIONS", 20)
 
 # ---------------------------------------------------------------------------
-# API subagent concurrency — caps concurrent new_task subagent processes.
+# Per-CLI concurrency caps — limit concurrent subprocess executions by CLI type.
 #
-# Without this cap, multiple simultaneous master-reviewer sessions each spawn
+# Without these caps, multiple simultaneous master-reviewer sessions each spawn
 # 3-5 sub-reviewers (reviewer-claude, reviewer-codex, reviewer-glm), quickly
 # creating 15-20+ concurrent CLI subprocesses on the same instance.  Resource
-# contention under that load balloons reviewer-claude from a ~31s solo baseline
-# to 90-300s.  Capping to MAX_CONCURRENT_API_SUBAGENTS (default 12) ensures
-# excess sessions queue until a slot opens, keeping each individual execution
-# at near-solo speed.  With 12 slots and 15 pending subagents:
-#   - First 12 start immediately, each finishing in ~30-35s
-#   - Last 3 start once the first wave completes — total wait ≈ 65s worst case
-# This is better than letting all 15 contend and each taking 150-300s.
+# contention under that load balloons reviewer-claude from ~31s to 150-300s.
 #
-# Separate from MAX_CONCURRENT_EXECUTIONS (which gates the scheduler/task
-# executor) to avoid starving CRON/SLACK/TASK sessions when master-reviewer
-# sprints are active.
+# Two separate semaphores allow independent tuning per CLI type:
+#   - Claude Code / SDK (claude-code-cli, claude-agent-sdk): heavy, ~31s solo
+#   - Codex (codex-cli, codex-app-server): lighter, faster (~5s P50)
+#
+# Raw executors (HTTP API calls, no subprocess) are NOT gated here — they have
+# no per-process resource cost and are bounded by provider rate limits.
+#
+# Both pools are intentionally separate from MAX_CONCURRENT_EXECUTIONS (which
+# gates the scheduler/task-executor) so master-reviewer sprints don't starve
+# CRON/SLACK/TASK sessions.
 # ---------------------------------------------------------------------------
-MAX_CONCURRENT_API_SUBAGENTS = _parse_env_int("AHS_MAX_CONCURRENT_API_SUBAGENTS", 12)
+MAX_CONCURRENT_CLAUDE_CODE = _parse_env_int("AHS_MAX_CONCURRENT_CLAUDE_CODE", 10)
+MAX_CONCURRENT_CODEX = _parse_env_int("AHS_MAX_CONCURRENT_CODEX", 15)
 
-# Lazily initialized to avoid creating the Semaphore before the event loop starts.
-_api_subagent_semaphore: asyncio.Semaphore | None = None
+# Lazily initialized to avoid creating Semaphores before the event loop starts.
+_claude_code_semaphore: asyncio.Semaphore | None = None
+_codex_semaphore: asyncio.Semaphore | None = None
 
 
-def get_api_subagent_semaphore() -> asyncio.Semaphore:
-    """Return the global semaphore that caps concurrent API subagent executions.
+def get_claude_code_semaphore() -> asyncio.Semaphore:
+    """Return the global semaphore capping concurrent Claude Code / SDK subprocesses.
 
     Lazily initialized on first call so it is always created inside a running
     event loop (required by asyncio.Semaphore in Python ≤ 3.9; safe in 3.10+).
     """
-    global _api_subagent_semaphore
-    if _api_subagent_semaphore is None:
-        _api_subagent_semaphore = asyncio.Semaphore(MAX_CONCURRENT_API_SUBAGENTS)
-    return _api_subagent_semaphore
+    global _claude_code_semaphore
+    if _claude_code_semaphore is None:
+        _claude_code_semaphore = asyncio.Semaphore(MAX_CONCURRENT_CLAUDE_CODE)
+    return _claude_code_semaphore
+
+
+def get_codex_semaphore() -> asyncio.Semaphore:
+    """Return the global semaphore capping concurrent Codex CLI subprocesses.
+
+    Lazily initialized on first call so it is always created inside a running
+    event loop (required by asyncio.Semaphore in Python ≤ 3.9; safe in 3.10+).
+    """
+    global _codex_semaphore
+    if _codex_semaphore is None:
+        _codex_semaphore = asyncio.Semaphore(MAX_CONCURRENT_CODEX)
+    return _codex_semaphore
 
 
 def get_active_turn_count() -> int:

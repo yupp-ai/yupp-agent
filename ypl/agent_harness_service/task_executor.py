@@ -127,9 +127,17 @@ def _decrement_project_in_flight(project_id: uuid.UUID) -> None:
         _project_in_flight[project_id] = count
 
 
-def has_project_capacity(project_id: uuid.UUID) -> bool:
-    """Check if a project has capacity to start another task."""
-    current = _project_in_flight.get(project_id, 0)
+def has_project_capacity(project_id: uuid.UUID, extra_in_flight: int = 0) -> bool:
+    """Check if a project has capacity to start another task.
+
+    Args:
+        project_id: The project to check.
+        extra_in_flight: Additional tasks already dispatched this poll cycle that
+            have not yet incremented _project_in_flight inside execute_task().
+            Pass this when batch-dispatching to avoid a TOCTOU race where all
+            tasks in a batch see the same stale counter before any task starts.
+    """
+    current = _project_in_flight.get(project_id, 0) + extra_in_flight
     if current < MAX_CONCURRENT_TASKS_PER_PROJECT:
         return True
     logger.info(
@@ -942,6 +950,11 @@ async def poll_and_execute_ready_tasks() -> None:
     # that requires releasing the task if rate-limited. (see PR #10907)
     scheduled_count = 0
     now = time.monotonic()
+    # Track tasks dispatched in this cycle per project.  execute_task() increments
+    # _project_in_flight only after claiming the task (inside the background task),
+    # so multiple tasks for the same project dispatched in one batch would all see
+    # the same stale counter if we relied on _project_in_flight alone.
+    dispatched_this_cycle: dict[uuid.UUID, int] = {}
     for task in ready_tasks:
         # Check rate limit per project (project_id is the bucket identifier)
         project_id_str = str(task.agent_project_id)
@@ -1005,8 +1018,11 @@ async def poll_and_execute_ready_tasks() -> None:
         # denial (if any) starts fresh from the base cooldown.
         _rate_limited_projects.pop(project_id_str, None)
 
-        # Check per-project parallelism limit
-        if not has_project_capacity(task.agent_project_id):
+        # Check per-project parallelism limit.  Pass extra_in_flight so tasks
+        # dispatched earlier in this same batch are counted even though their
+        # _increment_project_in_flight() call hasn't run yet.
+        pending_this_cycle = dispatched_this_cycle.get(task.agent_project_id, 0)
+        if not has_project_capacity(task.agent_project_id, extra_in_flight=pending_this_cycle):
             # Continue to next task - other projects may have capacity
             continue
 
@@ -1021,6 +1037,7 @@ async def poll_and_execute_ready_tasks() -> None:
         bg_task = create_background_task(execute_task(task.agent_task_id))
         _task_execution_tasks.add(bg_task)
         bg_task.add_done_callback(_task_done_callback)
+        dispatched_this_cycle[task.agent_project_id] = pending_this_cycle + 1
         scheduled_count += 1
 
         # Stop once we've scheduled enough tasks
