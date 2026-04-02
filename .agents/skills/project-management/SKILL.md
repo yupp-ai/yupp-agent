@@ -51,7 +51,8 @@ When the user shares a discussion (Slack thread, meeting notes) or a design doc 
 Read the source material and identify:
 - **Project name**: Short, descriptive (e.g. "Q3 model migration", "Fix routing latency")
 - **Description**: 1-3 sentences covering the goal and what "done" looks like
-- **Slack channel**: Required for progress updates and human confirmations. Defaults to `#agentic-projects` if the user doesn't specify one. Always ask: "Which Slack channel should I use for project updates? (default: #agentic-projects)". The corresponding Slack bot must already be a member of the chosen channel — remind the user to verify this.
+- **Slack channel**: Required for progress updates and human confirmations. Defaults to `agentic-projects` if the user doesn't specify one. Always ask: "Which Slack channel should I use for project updates? (default: agentic-projects)". Do NOT include the `#` prefix — the UI adds it automatically. The corresponding Slack bot must already be a member of the chosen channel — remind the user to verify this.
+- **Default agent**: Required for task execution. The scheduler uses this agent for any task that doesn't have its own `agent_name` set. Always ask: "Which agent should execute tasks in this project? (default: sre)". If the user is unsure, call `list_ahs_agents` to show available agents. If the user doesn't specify, use `sre`.
 
 Before creating, check for duplicates using `list_projects` or `get_project(name=...)`.
 
@@ -60,7 +61,8 @@ Present the project identity to the user for confirmation:
 I'd like to create the following project:
   Name: <project name>
   Description: <description>
-  Slack channel: <channel> (default: #agentic-projects)
+  Slack channel: <channel> (default: agentic-projects)
+  Default agent: <agent> (default: sre)
 
 Note: The project will be created in PAUSED status. Set it to ACTIVE when you're ready to start execution.
 Please verify the Slack bot is a member of the channel above.
@@ -150,11 +152,11 @@ Break the work into tasks following these principles:
 - The user has final say on which tasks get checkpoints — always ask during planning
 
 **Agent assignment rules:**
-- The user should specify which agent to assign to each task, or leave it unassigned
-- If the user is unsure, call `list_ahs_agents` to show available agents and let the user pick
-- Do not auto-assign agents — always let the user decide
+- The project's `default_agent_name` is used for any task without an explicit `agent_name`. This is set during project creation (default: `sre`).
+- Individual tasks can override the project default by setting `agent_name` explicitly.
+- If the user wants different agents for different tasks, set `agent_name` per task. Otherwise, the project default covers everything.
 - Different agents have different capabilities (e.g. harnessed executors with code access vs. raw executors for investigations)
-- If no agent is assigned, the task can still be created — assignment can happen later via `update_task`
+- **IMPORTANT:** Tasks without an `agent_name` AND without a project `default_agent_name` will FAIL immediately when the scheduler picks them up. Always ensure at least the project default is set.
 
 ### Step 3: Present the Plan
 
@@ -182,7 +184,7 @@ Shall I create these?
 ### Step 4: Create the Project and Tasks
 
 After user approval:
-1. Call `add_project` with the agreed name, description, and `slack_channel` (default `#agentic-projects`)
+1. Call `add_project` with the agreed name, description, `slack_channel` (default `agentic-projects` — no `#` prefix), and `default_agent_name` (default `sre`)
 2. Call `add_tasks` with the full task list, using `name` fields for local dependency references
 3. Seed project shared state with creator context:
    - `set_project_state(project_id, "creator_slack_user_id", '"<slack_user_id>"')` — the Slack user ID of the project owner, used by executor agents for @mentions in human checkpoints
