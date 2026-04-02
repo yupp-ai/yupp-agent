@@ -3,6 +3,7 @@
 Handles session storage, event deduplication, append buffering, and message queuing.
 """
 
+import json
 from datetime import UTC, datetime, timedelta
 
 from ypl.db.redis import get_redis_client
@@ -26,14 +27,16 @@ from ypl.slack_agent_gateway.constants import (
     REDIS_KEY_PREFIX_STATUS_RATELIMIT,
     REDIS_KEY_PREFIX_SURVEY_RESPONSE,
     REDIS_KEY_PREFIX_THREAD_SESSION,
+    REDIS_KEY_PREFIX_TOOL_ENTRIES,
     REPLY_MAPPING_TTL_SECONDS,
     SESSION_REDIS_TTL_SECONDS,
     STATUS_PENDING_TTL_SECONDS,
     STATUS_RATELIMIT_SECONDS,
     SURVEY_RESPONSE_TTL_SECONDS,
     THREAD_SESSION_MAPPING_TTL_SECONDS,
+    TOOL_ENTRIES_TTL_SECONDS,
 )
-from ypl.slack_agent_gateway.types import AgentSession, Message, SessionStatus
+from ypl.slack_agent_gateway.types import AgentSession, Message, SessionStatus, ToolResultStatus, ToolUseEntry
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -520,6 +523,87 @@ async def remove_from_status_flush_schedule(session_id: str) -> None:
     """
     redis = await get_redis_client()
     await redis.zrem(REDIS_KEY_PREFIX_STATUS_FLUSH_SCHEDULE, session_id)
+
+
+# Tool entry operations (structured tool-use tracking for the cluster display)
+
+
+async def append_tool_entry(session_id: str, entry: ToolUseEntry) -> None:
+    """Append a new tool-use entry to the session's ordered list.
+
+    Creates the list if it does not exist.  TTL is reset on every append so the
+    list outlives the session's soft-expiration window.
+
+    Args:
+        session_id: The session ID
+        entry: The tool-use entry to append
+    """
+    redis = await get_redis_client()
+    key = f"{REDIS_KEY_PREFIX_TOOL_ENTRIES}:{session_id}"
+    raw: str | None = await redis.get(key)
+    entries: list[dict] = json.loads(raw) if raw else []
+    entries.append(entry.model_dump())
+    await redis.set(key, json.dumps(entries), ex=TOOL_ENTRIES_TTL_SECONDS)
+
+
+async def update_tool_result(
+    session_id: str,
+    tool_use_id: str,
+    result_status: ToolResultStatus,
+    error_msg: str | None = None,
+) -> None:
+    """Update the result status of an existing tool entry identified by tool_use_id.
+
+    No-op if the session has no entries or the ID is not found.
+
+    Args:
+        session_id: The session ID
+        tool_use_id: Identifier matching the original tool_use event
+        result_status: New status (done / empty / failed)
+        error_msg: Short error text (only meaningful for FAILED)
+    """
+    redis = await get_redis_client()
+    key = f"{REDIS_KEY_PREFIX_TOOL_ENTRIES}:{session_id}"
+    raw: str | None = await redis.get(key)
+    if not raw:
+        return
+    entries: list[dict] = json.loads(raw)
+    for entry in entries:
+        if entry.get("tool_use_id") == tool_use_id:
+            entry["result_status"] = result_status
+            entry["error_msg"] = error_msg
+            break
+    await redis.set(key, json.dumps(entries), ex=TOOL_ENTRIES_TTL_SECONDS)
+
+
+async def get_tool_entries(session_id: str) -> list[ToolUseEntry]:
+    """Return all tool-use entries for a session in insertion order.
+
+    Args:
+        session_id: The session ID
+
+    Returns:
+        List of ToolUseEntry (empty if none recorded yet)
+    """
+    redis = await get_redis_client()
+    key = f"{REDIS_KEY_PREFIX_TOOL_ENTRIES}:{session_id}"
+    raw: str | None = await redis.get(key)
+    if not raw:
+        return []
+    return [ToolUseEntry.model_validate(e) for e in json.loads(raw)]
+
+
+async def clear_tool_entries(session_id: str) -> None:
+    """Delete all tool-use entries for a session.
+
+    Called when a real text reply arrives and the tool cluster is finalised.
+
+    Args:
+        session_id: The session ID
+    """
+    redis = await get_redis_client()
+    key = f"{REDIS_KEY_PREFIX_TOOL_ENTRIES}:{session_id}"
+    await redis.delete(key)
 
 
 async def get_next_status_flush_time() -> float | None:

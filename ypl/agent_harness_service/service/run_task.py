@@ -215,6 +215,71 @@ async def _eager_persist_agent_msg(
         )
 
 
+# ---------------------------------------------------------------------------
+# Gateway tool-event helpers
+# ---------------------------------------------------------------------------
+
+# Keys tried in order to extract the most meaningful "command" string from a
+# tool input dict for display in the Slack tool-cluster block.
+_TOOL_COMMAND_KEYS = ["command", "pattern", "file_path", "path", "query", "text", "prompt", "message"]
+
+
+def _format_tool_command(name: str, input_dict: Any) -> str:
+    """Return a short display string for a tool call's primary argument.
+
+    Tries well-known field names in priority order, then falls back to the
+    first non-empty string value.  Always capped at 200 characters.
+
+    Args:
+        name: Tool name (not currently used for dispatch, reserved for future).
+        input_dict: Raw ``input`` dict from the tool_use event.
+
+    Returns:
+        Formatted command string, or empty string if nothing useful found.
+    """
+    if not isinstance(input_dict, dict) or not input_dict:
+        return ""
+    for key in _TOOL_COMMAND_KEYS:
+        raw_val = input_dict.get(key)
+        if raw_val and isinstance(raw_val, str):
+            return str(raw_val)[:200]
+    # Fallback: first non-empty string value in the dict
+    for raw_val in input_dict.values():
+        if isinstance(raw_val, str) and raw_val:
+            return str(raw_val)[:200]
+    return ""
+
+
+def _determine_result_status(output: Any, is_error: bool) -> tuple[str, str | None]:
+    """Classify a tool result as 'done', 'empty', or 'failed'.
+
+    Args:
+        output: Raw output from the tool_result event (str, list, or None).
+        is_error: True if the tool call returned an error.
+
+    Returns:
+        Tuple of (result_status, error_msg).  error_msg is only set for 'failed'.
+    """
+    if is_error:
+        # Extract text from the error output for a short error message.
+        if isinstance(output, str):
+            err = output.strip()
+        elif isinstance(output, list):
+            err = " ".join(str(b.get("text", "")) for b in output if isinstance(b, dict) and b.get("text")).strip()
+        else:
+            err = str(output).strip() if output is not None else ""
+        return "failed", (err[:50] if err else None)
+
+    # Not an error — check if output is empty.
+    if output is None:
+        return "empty", None
+    if isinstance(output, str) and not output.strip():
+        return "empty", None
+    if isinstance(output, list) and not output:
+        return "empty", None
+    return "done", None
+
+
 async def _run_agent_task(
     agent_session_id: uuid.UUID,
     turn_number: int,
@@ -403,9 +468,6 @@ async def _run_agent_task(
         last_text_time_ns: int | None = None
         eager = EagerPersistState()
         model_name = exec_cfg.model or "__unknown__"
-        # Tracks the in-flight status-hint task so we can cancel stale ones
-        # before starting newer ones, preserving per-session ordering.
-        _status_task: asyncio.Task[bool] | None = None
 
         # WebSocket streaming: set up translation state and publish channel
         translation_state = TranslationState(str(agent_session_id), turn_number)
@@ -452,17 +514,19 @@ async def _run_agent_task(
                     turn_number=turn_number,
                 )
 
-                # --- Eager persist: track tool calls ---
+                # --- Eager persist + gateway tool-start events ---
                 # RawExecutor emits separate "tool_use" events; CLI runner embeds
                 # tool_use blocks inside "assistant" events.
-                tool_names_in_event: list[str] = []
+                tool_start_blocks_in_event: list[dict[str, Any]] = []
                 if event.type == "tool_use":
-                    tool_names_in_event = [event.raw.get("name", "unknown")]
+                    tool_start_blocks_in_event = [event.raw]
                 elif event.type == "assistant":
                     content_blocks = event.raw.get("message", {}).get("content", [])
-                    tool_names_in_event = [
-                        b.get("name", "unknown") for b in content_blocks if b.get("type") == "tool_use"
+                    tool_start_blocks_in_event = [
+                        b for b in content_blocks if isinstance(b, dict) and b.get("type") == "tool_use"
                     ]
+
+                tool_names_in_event = [b.get("name", "unknown") for b in tool_start_blocks_in_event]
 
                 if tool_names_in_event:
                     eager.tool_call_count += len(tool_names_in_event)
@@ -474,34 +538,64 @@ async def _run_agent_task(
                     if should_persist:
                         await _eager_persist_agent_msg(eager, events, agent_session_id, turn_number, model_name)
 
-                    # Push a live status hint to the gateway (Slack shows it as a
-                    # small muted context block that updates in-place).
+                    # Fire a structured tool-start event to the gateway for each
+                    # tool invocation so SAG can render the live cluster display.
                     if gateway and gateway_session_id:
+                        for block in tool_start_blocks_in_event:
+                            _name = block.get("name", "unknown")
+                            _tool_use_id = block.get("id") or f"anon_{eager.tool_call_count}"
+                            _command = _format_tool_command(_name, block.get("input") or {})
+                            try:
+                                _t = asyncio.create_task(
+                                    gateway.send_tool_event(
+                                        gateway_session_id,
+                                        kind="start",
+                                        tool_use_id=_tool_use_id,
+                                        name=_name,
+                                        command=_command,
+                                    )
+                                )
+                                _t.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+                            except Exception:
+                                logger.debug(
+                                    "Failed to fire tool start event to gateway",
+                                    session_id=str(agent_session_id),
+                                    exc_info=True,
+                                )
+
+                # --- Gateway tool-result events ---
+                # RawExecutor: standalone "tool_result" event.
+                # CLI runner: tool_result blocks embedded inside "user" events.
+                if gateway and gateway_session_id:
+                    tool_result_blocks_in_event: list[dict[str, Any]] = []
+                    if event.type == "tool_result":
+                        tool_result_blocks_in_event = [event.raw]
+                    elif event.type == "user":
+                        _user_content = event.raw.get("message", {}).get("content", [])
+                        tool_result_blocks_in_event = [
+                            b for b in _user_content if isinstance(b, dict) and b.get("type") == "tool_result"
+                        ]
+                    for block in tool_result_blocks_in_event:
+                        _tool_use_id = block.get("tool_use_id") or ""
+                        if not _tool_use_id:
+                            continue
+                        _is_error = block.get("is_error", False)
+                        _output = block.get("output") or block.get("content", "")
+                        _result_status, _error_msg = _determine_result_status(_output, _is_error)
                         try:
-                            total = eager.tool_call_count
-                            # Show only the last few tool names to keep the hint concise.
-                            recent = eager.pending_tool_names[-5:]
-                            tool_list = ", ".join(recent)
-                            if total > len(recent):
-                                tool_list += f" (+{total - len(recent)} more)"
-                            plural = "s" if total != 1 else ""
-                            status_text = f"🔧 {total} tool{plural} used: {tool_list}"
-                            # Fire-and-forget: don't block the hot event-loop path on the
-                            # gateway RPC (a slow/degraded SAG would add N * timeout latency).
-                            # Cancel any in-flight status task first to preserve per-session
-                            # ordering — an older task that arrives after a newer one would
-                            # overwrite status_pending with stale content.
-                            if _status_task is not None and not _status_task.done():
-                                _status_task.cancel()
-                            _status_task = asyncio.create_task(
-                                gateway.send_status_update(gateway_session_id, status_text)
+                            _t = asyncio.create_task(
+                                gateway.send_tool_event(
+                                    gateway_session_id,
+                                    kind="result",
+                                    tool_use_id=_tool_use_id,
+                                    result_status=_result_status,
+                                    error_msg=_error_msg,
+                                )
                             )
-                            # Retrieve the exception via callback to suppress the
-                            # "Task exception was never retrieved" warning.
-                            _status_task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+                            _t.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
                         except Exception:
                             logger.debug(
-                                "Failed to schedule tool status update to gateway",
+                                "Failed to fire tool result event to gateway",
                                 session_id=str(agent_session_id),
                                 exc_info=True,
                             )
