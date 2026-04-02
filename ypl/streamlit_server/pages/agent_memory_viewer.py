@@ -332,18 +332,9 @@ with tab_browse:
         # ── Left panel: filter + topic list ───────────────────────────────
 
         with left_col:
-            col_s, col_r = st.columns([5, 1])
-            with col_s:
-                search = st.text_input(
-                    "Filter", placeholder="Filter topics...", label_visibility="collapsed", key="browse_filter"
-                )
-            with col_r:
-                if st.button("Refresh", help="Refresh", key="browse_refresh"):
-                    _list_memory_files_cached.clear()
-                    _read_memory_file_cached.clear()
-                    _get_topic_stats.clear()
-                    _list_sections_for_topic.clear()
-                    st.rerun()
+            search = st.text_input(
+                "Filter", placeholder="Filter topics...", label_visibility="collapsed", key="browse_filter"
+            )
 
             if search:
                 filtered = [f for f in files if search.lower() in f.topic.lower()]
@@ -368,6 +359,13 @@ with tab_browse:
                     ):
                         st.session_state["selected_topic"] = f.topic
                         st.rerun()
+
+            if st.button("🔄 Refresh", help="Refresh", key="browse_refresh"):
+                _list_memory_files_cached.clear()
+                _read_memory_file_cached.clear()
+                _get_topic_stats.clear()
+                _list_sections_for_topic.clear()
+                st.rerun()
 
         # ── Right panel: content view ─────────────────────────────────────
 
