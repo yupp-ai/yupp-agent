@@ -105,5 +105,10 @@ temp/
 # Streamlit
 .streamlit/
 
+# Xcode
+xcuserdata/
+*.xcuserstate
+DerivedData/
+
 # Weight and Biases
 wandb/
