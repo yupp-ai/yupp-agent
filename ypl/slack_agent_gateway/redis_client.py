@@ -528,11 +528,37 @@ async def remove_from_status_flush_schedule(session_id: str) -> None:
 # Tool entry operations (structured tool-use tracking for the cluster display)
 
 
+# Lua script for atomic tool-result update on a Redis List.
+# Scans the list for the entry whose tool_use_id matches ARGV[1], updates its
+# result_status and error_msg in-place using LSET, and returns 1 on success or
+# 0 when the id is not found.  Using a Lua script makes the scan-and-update
+# atomic so concurrent START appends cannot interleave between our LRANGE read
+# and the subsequent LSET write.
+_LUA_UPDATE_TOOL_RESULT = """
+local entries = redis.call('LRANGE', KEYS[1], 0, -1)
+for i, raw in ipairs(entries) do
+    local entry = cjson.decode(raw)
+    if entry['tool_use_id'] == ARGV[1] then
+        entry['result_status'] = ARGV[2]
+        if ARGV[3] == '1' then
+            entry['error_msg'] = ARGV[4]
+        else
+            entry['error_msg'] = cjson.null
+        end
+        redis.call('LSET', KEYS[1], i - 1, cjson.encode(entry))
+        return 1
+    end
+end
+return 0
+"""
+
+
 async def append_tool_entry(session_id: str, entry: ToolUseEntry) -> None:
     """Append a new tool-use entry to the session's ordered list.
 
-    Creates the list if it does not exist.  TTL is reset on every append so the
-    list outlives the session's soft-expiration window.
+    Uses RPUSH for an atomic append so concurrent START events in the same batch
+    cannot overwrite each other (no GET-then-SET race).  TTL is reset on every
+    append so the list outlives the session's soft-expiration window.
 
     Args:
         session_id: The session ID
@@ -540,10 +566,8 @@ async def append_tool_entry(session_id: str, entry: ToolUseEntry) -> None:
     """
     redis = await get_redis_client()
     key = f"{REDIS_KEY_PREFIX_TOOL_ENTRIES}:{session_id}"
-    raw: str | None = await redis.get(key)
-    entries: list[dict] = json.loads(raw) if raw else []
-    entries.append(entry.model_dump())
-    await redis.set(key, json.dumps(entries), ex=TOOL_ENTRIES_TTL_SECONDS)
+    await redis.rpush(key, json.dumps(entry.model_dump()))
+    await redis.expire(key, TOOL_ENTRIES_TTL_SECONDS)
 
 
 async def update_tool_result(
@@ -554,6 +578,8 @@ async def update_tool_result(
 ) -> None:
     """Update the result status of an existing tool entry identified by tool_use_id.
 
+    Uses a Lua script so the scan-and-update is atomic — a concurrent RPUSH
+    (START event) cannot land between the LRANGE read and the LSET write.
     No-op if the session has no entries or the ID is not found.
 
     Args:
@@ -564,16 +590,15 @@ async def update_tool_result(
     """
     redis = await get_redis_client()
     key = f"{REDIS_KEY_PREFIX_TOOL_ENTRIES}:{session_id}"
-    raw: str | None = await redis.get(key)
-    if not raw:
-        return
-    entries: list[dict] = json.loads(raw)
-    for entry in entries:
-        if entry.get("tool_use_id") == tool_use_id:
-            entry["result_status"] = result_status
-            entry["error_msg"] = error_msg
-            break
-    await redis.set(key, json.dumps(entries), ex=TOOL_ENTRIES_TTL_SECONDS)
+    await redis.eval(
+        _LUA_UPDATE_TOOL_RESULT,
+        1,
+        key,
+        tool_use_id,
+        str(result_status),
+        "1" if error_msg is not None else "0",
+        error_msg or "",
+    )
 
 
 async def get_tool_entries(session_id: str) -> list[ToolUseEntry]:
@@ -587,10 +612,10 @@ async def get_tool_entries(session_id: str) -> list[ToolUseEntry]:
     """
     redis = await get_redis_client()
     key = f"{REDIS_KEY_PREFIX_TOOL_ENTRIES}:{session_id}"
-    raw: str | None = await redis.get(key)
-    if not raw:
+    raw_list: list[str] = await redis.lrange(key, 0, -1)
+    if not raw_list:
         return []
-    return [ToolUseEntry.model_validate(e) for e in json.loads(raw)]
+    return [ToolUseEntry.model_validate(json.loads(raw)) for raw in raw_list]
 
 
 async def clear_tool_entries(session_id: str) -> None:
@@ -636,7 +661,7 @@ async def queue_message(session_id: str, message: Message) -> int | None:
     key = f"{REDIS_KEY_PREFIX_QUEUE}:{session_id}"
 
     # Check queue length before adding to prevent unbounded growth
-    current_length: int = await redis.llen(key)  # type: ignore[misc]
+    current_length: int = await redis.llen(key)
     if current_length >= MAX_QUEUE_LENGTH:
         logger.warning(
             "Message queue full, rejecting message",
@@ -647,7 +672,7 @@ async def queue_message(session_id: str, message: Message) -> int | None:
         return None
 
     data = message.model_dump_json()
-    length: int = await redis.rpush(key, data)  # type: ignore[misc]
+    length: int = await redis.rpush(key, data)
     await redis.expire(key, QUEUE_TTL_SECONDS)
 
     logger.info("Queued message for session", session_id=session_id, queue_length=length)
@@ -670,7 +695,7 @@ async def requeue_message_front(session_id: str, message: Message) -> int:
     key = f"{REDIS_KEY_PREFIX_QUEUE}:{session_id}"
 
     data = message.model_dump_json()
-    length: int = await redis.lpush(key, data)  # type: ignore[misc]
+    length: int = await redis.lpush(key, data)
     await redis.expire(key, QUEUE_TTL_SECONDS)
 
     logger.debug("Re-queued message at front", session_id=session_id, queue_length=length)
@@ -689,7 +714,7 @@ async def get_queued_messages(session_id: str) -> list[Message]:
     redis = await get_redis_client()
     key = f"{REDIS_KEY_PREFIX_QUEUE}:{session_id}"
 
-    data_list: list[str] = await redis.lrange(key, 0, -1)  # type: ignore[misc]
+    data_list: list[str] = await redis.lrange(key, 0, -1)
     messages: list[Message] = []
     for data in data_list:
         try:
@@ -717,7 +742,7 @@ async def pop_queued_message(session_id: str) -> Message | None:
     redis = await get_redis_client()
     key = f"{REDIS_KEY_PREFIX_QUEUE}:{session_id}"
 
-    data: str | None = await redis.lpop(key)  # type: ignore[misc]
+    data: str | None = await redis.lpop(key)
     if not data:
         return None
 
@@ -736,7 +761,7 @@ async def clear_message_queue(session_id: str) -> int:
     redis = await get_redis_client()
     key = f"{REDIS_KEY_PREFIX_QUEUE}:{session_id}"
 
-    length: int = await redis.llen(key)  # type: ignore[misc]
+    length: int = await redis.llen(key)
     await redis.delete(key)
 
     return length
@@ -753,7 +778,7 @@ async def get_queue_length(session_id: str) -> int:
     """
     redis = await get_redis_client()
     key = f"{REDIS_KEY_PREFIX_QUEUE}:{session_id}"
-    length: int = await redis.llen(key)  # type: ignore[misc]
+    length: int = await redis.llen(key)
     return length
 
 
