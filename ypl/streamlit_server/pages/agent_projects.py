@@ -1519,8 +1519,10 @@ def _render_task_detail(
         if task.assigned_session_ids:
             st.markdown("**Sessions:**")
             for sid in task.assigned_session_ids:
-                link = _internal_link(f"Session {sid[:8]}", f"/agent_harness_console?session_id={sid}")
-                st.markdown(f"- {link}", unsafe_allow_html=True)
+                short_id = sid[:8]
+                lit_link = _internal_link(f"Lit {short_id}", f"/agent_harness_console?session_id={sid}")
+                wr_link = f'<a href="https://war-room.yuppster.ai/session/{sid}" target="_blank">WR</a>'
+                st.markdown(f"- {lit_link} · {wr_link}", unsafe_allow_html=True)
 
         if pr_link := _get_pr_link_parts(task.result):
             st.markdown(f"**PR:** [{pr_link[1]}]({pr_link[0]})")
@@ -1568,13 +1570,7 @@ def _render_task_detail(
     with right_col:
         st.markdown("### Description / Prompt")
         if task.description:
-            st.text_area(
-                "Full description",
-                value=task.description,
-                height=400,
-                disabled=True,
-                label_visibility="collapsed",
-            )
+            st.markdown(task.description)
         else:
             st.info("No description.")
 
@@ -2077,8 +2073,10 @@ def _render_at_a_glance() -> None:
                     session_links = []
                     for sid in task.assigned_session_ids:
                         short_id = sid[:8]
-                        session_links.append(_internal_link(short_id, f"/agent_harness_console?session_id={sid}"))
-                    st.caption(", ".join(session_links), unsafe_allow_html=True)
+                        lit_link = _internal_link(f"Lit {short_id}", f"/agent_harness_console?session_id={sid}")
+                        wr_link = f'<a href="https://war-room.yuppster.ai/session/{sid}" target="_blank">WR</a>'
+                        session_links.append(f"{lit_link} {wr_link}")
+                    st.caption(" · ".join(session_links), unsafe_allow_html=True)
 
 
 def _render_project_list() -> None:
