@@ -1,0 +1,38 @@
+name: AHSApp
+options:
+  bundleIdPrefix: com.yupp.ahs
+  deploymentTarget:
+    macOS: "14.0"
+  xcodeVersion: "16.0"
+  createIntermediateGroups: true
+  defaultConfig: Debug
+  groupSortPosition: top
+
+settings:
+  base:
+    SWIFT_VERSION: "5.10"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    DEVELOPMENT_TEAM: ""
+
+targets:
+  AHSApp:
+    type: application
+    platform: macOS
+    sources:
+      - path: AHSApp
+        excludes:
+          - "**/.DS_Store"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.yupp.ahs.app
+        PRODUCT_NAME: AHS
+        INFOPLIST_FILE: AHSApp/Info.plist
+        CODE_SIGN_ENTITLEMENTS: AHSApp/AHSApp.entitlements
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        COMBINE_HIDPI_IMAGES: true
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_HARDENED_RUNTIME: true
+        SWIFT_STRICT_CONCURRENCY: complete
