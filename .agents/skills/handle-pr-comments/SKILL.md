@@ -3,8 +3,8 @@ name: handle-pr-comments
 description: >-
   Review a GitHub PR, address all review comments (AI and human) and all CI
   failures (ruff, mypy, biome, tests), rebase onto main, reply to each comment
-  with a verdict, resolve threads, and produce a summary. Supports configurable
-  automation levels. Usage: /handle-pr-comments <PR_URL_OR_NUMBER>
+  with a verdict, resolve threads, and produce a summary. Runs fully
+  automatically with no human confirmation steps. Usage: /handle-pr-comments <PR_URL_OR_NUMBER>
 ---
 
 # Address PR Comments
@@ -48,9 +48,7 @@ Use the appropriate commands throughout Phases 5 and 9 based on this preference.
 
 ## Phase 0: Automation Level
 
-Always use **Level 1 (Full auto)**: Fix → Commit → Rebase → Push → Reply & Resolve — no human confirmation at any step. Do not ask the user to choose an automation level.
-
-`AUTOMATION_LEVEL` is always **1**. CODE_GATE and REPLY_GATE are never active.
+This skill runs **fully automatically**: Fix → Commit → Rebase → Push → Reply & Resolve — no human confirmation at any step.
 
 ---
 
@@ -268,19 +266,6 @@ Gather every **WON'T FIX** and **ACKNOWLEDGED** item with genuine future value. 
 
 ## Phase 5: Commit, Rebase, and Push
 
-### 5.0 CODE_GATE — human confirmation (if applicable)
-
-If `AUTOMATION_LEVEL` is **2** or **4** (CODE_GATE is active):
-
-1. Show the user a summary of all changes:
-   - List of files modified with a one-line description of each change
-   - Verdicts assigned to each comment (table format)
-   - CI failures fixed
-2. Wait for the user to confirm before proceeding.
-3. If the user requests changes, make them and return to Phase 4.3 (re-lint).
-
-If `AUTOMATION_LEVEL` is **1** or **3**: proceed directly.
-
 ### 5.1 Stage and commit
 
 ```bash
@@ -400,26 +385,6 @@ Use `--force-with-lease` because the rebase rewrites history — it will fail sa
 ## Phase 6: Reply to Comments and Resolve Threads
 
 **GATE: Do NOT enter this phase until Phase 5 push is confirmed successful.**
-
-### 6.1 REPLY_GATE — human confirmation (if applicable)
-
-If `AUTOMATION_LEVEL` is **3** or **4** (REPLY_GATE is active):
-
-1. Show the user the **complete list** of replies to be posted:
-
-   | # | Thread | File:Line | Source | Verdict | Reply Text |
-   |---|--------|-----------|--------|---------|------------|
-   | 1 | `<THREAD_ID>` | `file.py:42` | @reviewer | FIXED | "Added null check..." |
-   | 2 | `<THREAD_ID>` | `other.py:10` | yupp-reviews | NOT APPLICABLE | "Import is used..." |
-   | ... | ... | ... | ... | ... | ... |
-
-2. Wait for the user to confirm. The user may:
-   - Approve all → proceed
-   - Edit specific replies → update the reply text and proceed
-   - Skip specific threads → remove them from the reply list (leave unresolved)
-   - Abort → skip Phase 6 entirely
-
-If `AUTOMATION_LEVEL` is **1** or **2**: proceed directly.
 
 ### 6.2 Process EVERY tracked thread
 
@@ -620,8 +585,6 @@ If there are merge conflicts:
 
 **CRITICAL: Push before replying or resolving!**
 
-If `AUTOMATION_LEVEL` is **2** or **4** (CODE_GATE), show the user a per-PR summary of changes and wait for confirmation before pushing.
-
 **If `USE_GRAPHITE` is true:**
 ```bash
 gt submit --no-interactive
@@ -634,9 +597,7 @@ git push --force-with-lease  # for each branch in the stack
 
 ### 9.5 Reply, resolve, and summarize
 
-If `AUTOMATION_LEVEL` is **3** or **4** (REPLY_GATE), show the user the full list of replies across all PRs and wait for confirmation before posting.
-
-After push succeeds (and REPLY_GATE is cleared), run **Phase 6** (reply + resolve) and **Phase 7** (summary) for each PR that had comments addressed.
+After push succeeds, run **Phase 6** (reply + resolve) and **Phase 7** (summary) for each PR that had comments addressed.
 
 ### Stack Mode Tips
 
@@ -651,15 +612,14 @@ After push succeeds (and REPLY_GATE is cleared), run **Phase 6** (reply + resolv
 1. **Never approve or request changes** — only post `COMMENT` reviews.
 2. **Never delete existing comments or reviews.**
 3. **Identify as AI** — prefix all replies with `(AI reply)`.
-4. **Respect the automation level** — never silently bypass a gate. The automation level is a contract with the user.
-5. **Push before resolving** — resolving threads before pushing may trigger auto-merge without your fixes.
+4. **Push before resolving** — resolving threads before pushing may trigger auto-merge without your fixes.
 
 **Judgment principles**:
-6. **Verify before fixing** — AI reviewers often misread diffs. Read the actual code before acting on a claim.
-7. **Review your own fixes** — a fix that introduces a new bug is worse than the original issue.
-8. **Fix patterns, not instances** — when fixing a class of bug, scan nearby for the same pattern.
-9. **Exercise judgment on AI comments** — use WON'T FIX for nits that add more complexity than value. But capture the signal: TODOs, docs, Linear tickets.
-10. **Increasing decisiveness** — by round 3+, strongly favor WON'T FIX for marginal AI comments. The goal is forward progress.
-11. **Contain security scope** — fix common vectors (SSRF, injection). For exotic vectors (DNS rebinding, timing attacks), acknowledge and track.
-12. **Human comments get extra care** — never dismiss without asking the PR owner.
-13. **Don't drop threads** — always do a final sweep (Phase 6.3). Every tracked thread MUST get a reply and resolution.
+5. **Verify before fixing** — AI reviewers often misread diffs. Read the actual code before acting on a claim.
+6. **Review your own fixes** — a fix that introduces a new bug is worse than the original issue.
+7. **Fix patterns, not instances** — when fixing a class of bug, scan nearby for the same pattern.
+8. **Exercise judgment on AI comments** — use WON'T FIX for nits that add more complexity than value. But capture the signal: TODOs, docs, Linear tickets.
+9. **Increasing decisiveness** — by round 3+, strongly favor WON'T FIX for marginal AI comments. The goal is forward progress.
+10. **Contain security scope** — fix common vectors (SSRF, injection). For exotic vectors (DNS rebinding, timing attacks), acknowledge and track.
+11. **Human comments get extra care** — never dismiss without asking the PR owner.
+12. **Don't drop threads** — always do a final sweep (Phase 6.3). Every tracked thread MUST get a reply and resolution.
