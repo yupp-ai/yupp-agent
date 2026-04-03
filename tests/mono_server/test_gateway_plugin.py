@@ -194,9 +194,19 @@ class TestGatewayRouteRegistration:
         assert not any(p.name == "slack" for p in plugins)
 
     def test_create_app_mounts_gw_slack_prefix(self) -> None:
-        """create_app() includes /gw/slack/* routes on the top-level app."""
-        from ypl.mono_server.server import app
+        """create_app() includes /gw/slack/* routes when GATEWAY_SLACK_ENABLED=true.
 
-        paths = self._route_paths(app)
+        Uses a fresh app with a known env config rather than the module-level
+        ``app`` singleton (which is built at import time with whatever
+        ``GATEWAY_SLACK_ENABLED`` value the environment provides).
+        """
+        import os
+        from unittest.mock import patch
+
+        from ypl.mono_server.server import create_app
+
+        with patch.dict(os.environ, {"GATEWAY_SLACK_ENABLED": "true"}):
+            test_app = create_app()
+        paths = self._route_paths(test_app)
         slack_paths = [p for p in paths if p.startswith("/gw/slack")]
         assert slack_paths, f"No /gw/slack routes found. All routes: {sorted(paths)}"
