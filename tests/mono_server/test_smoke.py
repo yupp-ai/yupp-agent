@@ -132,35 +132,35 @@ class TestAHSAuthBoundary:
 
 
 # ---------------------------------------------------------------------------
-# 3. MCP harness auth boundary
+# 3. Unified MCP auth boundary
 # ---------------------------------------------------------------------------
 
 
 class TestMCPHarnessAuthBoundary:
-    """Harness MCP endpoint enforces token authentication."""
+    """Unified MCP endpoint (/mcp) enforces authentication for all callers."""
 
-    def test_post_mcp_harness_without_token_returns_401(self) -> None:
-        """Unauthenticated POST /mcp/harness/ → 401 (McpTokenAuthMiddleware)."""
-        r = _client().post("/mcp/harness/")
+    def test_post_mcp_without_token_returns_401(self) -> None:
+        """Unauthenticated POST /mcp/ → 401 (UnifiedMcpAuthMiddleware)."""
+        r = _client().post("/mcp/")
         assert r.status_code == 401
 
-    def test_get_mcp_harness_without_token_returns_401(self) -> None:
-        """Unauthenticated GET /mcp/harness/ → 401."""
-        r = _client().get("/mcp/harness/")
+    def test_get_mcp_without_token_returns_401(self) -> None:
+        """Unauthenticated GET /mcp/ → 401."""
+        r = _client().get("/mcp/")
         assert r.status_code == 401
 
-    def test_mcp_harness_never_returns_500(self) -> None:
+    def test_mcp_never_returns_500(self) -> None:
         """Auth rejection must not be a 500 error."""
-        r = _client().post("/mcp/harness/")
+        r = _client().post("/mcp/")
         assert r.status_code != 500
 
-    def test_mcp_harness_is_mounted(self) -> None:
-        """The /mcp/harness mount exists on the app (route discovery)."""
+    def test_mcp_is_mounted(self) -> None:
+        """The /mcp mount exists on the app (route discovery)."""
         from starlette.routing import Mount
         from ypl.mono_server.server import app
 
         mounts = {r.path for r in app.routes if isinstance(r, Mount)}
-        assert "/mcp/harness" in mounts, f"Missing /mcp/harness mount. Found: {sorted(mounts)}"
+        assert "/mcp" in mounts, f"Missing /mcp mount. Found: {sorted(mounts)}"
 
 
 # ---------------------------------------------------------------------------
@@ -256,10 +256,9 @@ def _noop_asynccontextmanager() -> Any:
 class TestLifespanOrdering:
     """combined_lifespan starts and stops services in the documented order.
 
-    Startup order:  ahs_startup → harness MCP lifespan → mcp_startup →
-                    yuppster MCP lifespan → sag_startup
-    Shutdown order: sag_shutdown → yuppster MCP exit → mcp_shutdown →
-                    harness MCP exit → ahs_shutdown
+    Startup order:  ahs_startup → unified MCP lifespan → register_unified_tools →
+                    mcp_startup → sag_startup
+    Shutdown order: sag_shutdown → mcp_shutdown → unified MCP exit → ahs_shutdown
     """
 
     @pytest.mark.asyncio
@@ -301,10 +300,8 @@ class TestLifespanOrdering:
             patch("ypl.mono_server.server.ahs_shutdown", side_effect=_ahs_shutdown),
             patch("ypl.mono_server.server.sag_startup", side_effect=_sag_startup),
             patch("ypl.mono_server.server.sag_shutdown", side_effect=_sag_shutdown),
-            patch("ypl.mono_server.server.yuppster_mcp_http_app") as mock_yuppster,
+            patch("ypl.mono_server.server.register_unified_tools", new=AsyncMock()),
         ):
-            mock_yuppster.lifespan.return_value = _noop_asynccontextmanager()
-
             test_app = create_app()
             async with test_app.router.lifespan_context(test_app):
                 pass  # yield point — services should be up
@@ -356,10 +353,8 @@ class TestLifespanOrdering:
             patch("ypl.mono_server.server.ahs_shutdown", side_effect=_ahs_shutdown),
             patch("ypl.mono_server.server.sag_startup", side_effect=_sag_startup),
             patch("ypl.mono_server.server.sag_shutdown", side_effect=_sag_shutdown),
-            patch("ypl.mono_server.server.yuppster_mcp_http_app") as mock_yuppster,
+            patch("ypl.mono_server.server.register_unified_tools", new=AsyncMock()),
         ):
-            mock_yuppster.lifespan.return_value = _noop_asynccontextmanager()
-
             test_app = create_app()
             async with test_app.router.lifespan_context(test_app):
                 pass
@@ -401,10 +396,8 @@ class TestLifespanOrdering:
             patch("ypl.mono_server.server.mcp_startup", side_effect=_mcp_startup),
             patch("ypl.mono_server.server.mcp_shutdown", side_effect=_mcp_shutdown),
             patch("ypl.mono_server.server.ahs_shutdown", side_effect=_ahs_shutdown),
-            patch("ypl.mono_server.server.yuppster_mcp_http_app") as mock_yuppster,
+            patch("ypl.mono_server.server.register_unified_tools", new=AsyncMock()),
         ):
-            mock_yuppster.lifespan.return_value = _noop_asynccontextmanager()
-
             test_app = create_app()
             with pytest.raises(RuntimeError, match="simulated mcp init failure"):
                 async with test_app.router.lifespan_context(test_app):
@@ -436,11 +429,9 @@ class TestLifespanOrdering:
             patch("ypl.mono_server.server.ahs_shutdown", new=AsyncMock()),
             patch("ypl.mono_server.server.sag_startup", side_effect=_sag_startup),
             patch("ypl.mono_server.server.sag_shutdown", new=AsyncMock()),
-            patch("ypl.mono_server.server.yuppster_mcp_http_app") as mock_yuppster,
+            patch("ypl.mono_server.server.register_unified_tools", new=AsyncMock()),
             patch.dict(os.environ, {"GATEWAY_SLACK_ENABLED": "false"}),
         ):
-            mock_yuppster.lifespan.return_value = _noop_asynccontextmanager()
-
             test_app = create_app()
             async with test_app.router.lifespan_context(test_app):
                 pass
@@ -482,11 +473,11 @@ class TestErrorResponseFormat:
         data = r.json()
         assert isinstance(data, dict)
 
-    def test_401_on_mcp_harness_is_json(self) -> None:
-        """A 401 from McpTokenAuthMiddleware returns valid JSON (not plain text)."""
-        r = _client().post("/mcp/harness/")
+    def test_401_on_mcp_is_json(self) -> None:
+        """A 401 from UnifiedMcpAuthMiddleware returns valid JSON (not plain text)."""
+        r = _client().post("/mcp/")
         assert r.status_code == 401
-        # McpTokenAuthMiddleware must return JSON so clients get a structured error
+        # UnifiedMcpAuthMiddleware must return JSON so clients get a structured error
         data = r.json()
         assert isinstance(data, dict), f"Expected JSON dict, got: {r.text!r}"
         assert data == {"detail": "Unauthorized"}

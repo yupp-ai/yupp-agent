@@ -11,6 +11,7 @@ MONO_SERVER_MODULES = [
     "ypl.mono_server",
     "ypl.mono_server.config",
     "ypl.mono_server.server",
+    "ypl.mono_server.unified_mcp",
 ]
 
 
@@ -54,8 +55,25 @@ def test_lifespan_importable() -> None:
 
 
 def test_sub_app_instances_importable() -> None:
-    """Module-level MCP sub-apps are importable."""
-    from ypl.mono_server.server import harness_mcp_app, yuppster_mcp_http_app
+    """Module-level unified MCP sub-app is importable from both server and unified_mcp."""
+    from ypl.mono_server.server import unified_mcp_http_app as server_app
+    from ypl.mono_server.unified_mcp import unified_mcp_http_app
 
-    assert harness_mcp_app is not None
-    assert yuppster_mcp_http_app is not None
+    assert unified_mcp_http_app is not None
+    # server.py re-exports the same object (imported from unified_mcp)
+    assert server_app is unified_mcp_http_app
+
+
+def test_unified_mcp_exports() -> None:
+    """unified_mcp module exports the expected public symbols."""
+    from ypl.mono_server.unified_mcp import (
+        UnifiedMcpAuthMiddleware,
+        register_unified_tools,
+        unified_mcp,
+        unified_mcp_http_app,
+    )
+
+    assert unified_mcp is not None
+    assert unified_mcp_http_app is not None
+    assert callable(register_unified_tools)
+    assert UnifiedMcpAuthMiddleware is not None
