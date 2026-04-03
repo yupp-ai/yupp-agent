@@ -871,8 +871,15 @@ async def flush_status_update(session_id: str, session: AgentSession | None = No
         entries = await get_tool_entries(session_id)
         if not entries:
             # Entries were cleared between the pending flag being set and the flush —
-            # nothing to render; just clean up the schedule.
+            # nothing to render for the cluster.  Restore raw_pending if it was
+            # consumed at the top so it isn't silently dropped (same pattern as
+            # the error-path restores below).
+            if raw_pending:
+                await set_pending_status(session_id, raw_pending)
             await remove_from_status_flush_schedule(session_id)
+            if raw_pending:
+                flush_at = time.time() + STATUS_RATELIMIT_SECONDS + 0.1
+                await schedule_status_flush(session_id, flush_at)
             return SendStatusUpdateResponse(success=True, message_ts=session.status_message_ts)
         text = _render_tool_cluster(entries)
         if len(text) > _STATUS_MAX_TEXT_LENGTH:
