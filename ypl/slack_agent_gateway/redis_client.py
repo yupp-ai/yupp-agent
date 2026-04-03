@@ -614,7 +614,7 @@ async def append_tool_entry(session_id: str, entry: ToolUseEntry) -> None:
     """
     redis = await get_redis_client()
     key = f"{REDIS_KEY_PREFIX_TOOL_ENTRIES}:{session_id}"
-    await redis.rpush(key, json.dumps(entry.model_dump()))
+    await redis.rpush(key, json.dumps(entry.model_dump()))  # type: ignore[misc]
     await redis.expire(key, TOOL_ENTRIES_TTL_SECONDS)
 
 
@@ -638,7 +638,7 @@ async def update_tool_result(
     """
     redis = await get_redis_client()
     key = f"{REDIS_KEY_PREFIX_TOOL_ENTRIES}:{session_id}"
-    await redis.eval(
+    await redis.eval(  # type: ignore[misc]
         _LUA_UPDATE_TOOL_RESULT,
         1,
         key,
@@ -660,7 +660,7 @@ async def get_tool_entries(session_id: str) -> list[ToolUseEntry]:
     """
     redis = await get_redis_client()
     key = f"{REDIS_KEY_PREFIX_TOOL_ENTRIES}:{session_id}"
-    raw_list: list[str] = await redis.lrange(key, 0, -1)
+    raw_list: list[str] = await redis.lrange(key, 0, -1)  # type: ignore[misc]
     if not raw_list:
         return []
     return [ToolUseEntry.model_validate(json.loads(raw)) for raw in raw_list]
@@ -709,7 +709,7 @@ async def queue_message(session_id: str, message: Message) -> int | None:
     key = f"{REDIS_KEY_PREFIX_QUEUE}:{session_id}"
 
     # Check queue length before adding to prevent unbounded growth
-    current_length: int = await redis.llen(key)
+    current_length: int = await redis.llen(key)  # type: ignore[misc]
     if current_length >= MAX_QUEUE_LENGTH:
         logger.warning(
             "Message queue full, rejecting message",
@@ -720,7 +720,7 @@ async def queue_message(session_id: str, message: Message) -> int | None:
         return None
 
     data = message.model_dump_json()
-    length: int = await redis.rpush(key, data)
+    length: int = await redis.rpush(key, data)  # type: ignore[misc]
     await redis.expire(key, QUEUE_TTL_SECONDS)
 
     logger.info("Queued message for session", session_id=session_id, queue_length=length)
@@ -743,7 +743,7 @@ async def requeue_message_front(session_id: str, message: Message) -> int:
     key = f"{REDIS_KEY_PREFIX_QUEUE}:{session_id}"
 
     data = message.model_dump_json()
-    length: int = await redis.lpush(key, data)
+    length: int = await redis.lpush(key, data)  # type: ignore[misc]
     await redis.expire(key, QUEUE_TTL_SECONDS)
 
     logger.debug("Re-queued message at front", session_id=session_id, queue_length=length)
@@ -762,7 +762,7 @@ async def get_queued_messages(session_id: str) -> list[Message]:
     redis = await get_redis_client()
     key = f"{REDIS_KEY_PREFIX_QUEUE}:{session_id}"
 
-    data_list: list[str] = await redis.lrange(key, 0, -1)
+    data_list: list[str] = await redis.lrange(key, 0, -1)  # type: ignore[misc]
     messages: list[Message] = []
     for data in data_list:
         try:
@@ -790,7 +790,7 @@ async def pop_queued_message(session_id: str) -> Message | None:
     redis = await get_redis_client()
     key = f"{REDIS_KEY_PREFIX_QUEUE}:{session_id}"
 
-    data: str | None = await redis.lpop(key)
+    data: str | None = await redis.lpop(key)  # type: ignore[misc]
     if not data:
         return None
 
@@ -809,7 +809,7 @@ async def clear_message_queue(session_id: str) -> int:
     redis = await get_redis_client()
     key = f"{REDIS_KEY_PREFIX_QUEUE}:{session_id}"
 
-    length: int = await redis.llen(key)
+    length: int = await redis.llen(key)  # type: ignore[misc]
     await redis.delete(key)
 
     return length
@@ -826,7 +826,7 @@ async def get_queue_length(session_id: str) -> int:
     """
     redis = await get_redis_client()
     key = f"{REDIS_KEY_PREFIX_QUEUE}:{session_id}"
-    length: int = await redis.llen(key)
+    length: int = await redis.llen(key)  # type: ignore[misc]
     return length
 
 
