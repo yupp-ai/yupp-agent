@@ -94,15 +94,11 @@ async def seed_roles(engine: AsyncEngine) -> None:
                 for perm in permissions:
                     session.add(RolePermission(role_id=role.role_id, permission=perm))
 
-                console.print(
-                    f"  [green]Created role[/green] {role_name.value} ({len(permissions)} permissions)"
-                )
+                console.print(f"  [green]Created role[/green] {role_name.value} ({len(permissions)} permissions)")
             else:
                 # Role exists — reconcile any permissions added since initial setup
                 existing_perms = (
-                    await session.exec(
-                        select(RolePermission).where(RolePermission.role_id == existing.role_id)
-                    )
+                    await session.exec(select(RolePermission).where(RolePermission.role_id == existing.role_id))
                 ).all()
                 existing_perm_set = {rp.permission for rp in existing_perms}
                 missing = [p for p in permissions if p not in existing_perm_set]
@@ -111,8 +107,7 @@ async def seed_roles(engine: AsyncEngine) -> None:
                     for perm in missing:
                         session.add(RolePermission(role_id=existing.role_id, permission=perm))
                     console.print(
-                        f"  [green]Updated role[/green] {role_name.value} "
-                        f"(+{len(missing)} missing permissions added)"
+                        f"  [green]Updated role[/green] {role_name.value} (+{len(missing)} missing permissions added)"
                     )
                 else:
                     console.print(f"  [dim]Role {role_name.value} up-to-date — skipped.[/dim]")
@@ -227,15 +222,12 @@ async def create_mcp_dev_token(
 
         # --- Policy check 2: user must have USE_MCP permission via a role ---
         user_role_rows = (
-            await session.exec(
-                select(UserRoleAssociation).where(UserRoleAssociation.user_id == user.user_id)
-            )
+            await session.exec(select(UserRoleAssociation).where(UserRoleAssociation.user_id == user.user_id))
         ).all()
 
         if not user_role_rows:
             raise ValueError(
-                f"User '{email}' has no roles assigned. "
-                "Assign an ENGINEER or ADMIN role before issuing a token."
+                f"User '{email}' has no roles assigned. Assign an ENGINEER or ADMIN role before issuing a token."
             )
 
         role_ids = [ur.role_id for ur in user_role_rows]
