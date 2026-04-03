@@ -10,6 +10,9 @@ import importlib
 MONO_SERVER_MODULES = [
     "ypl.mono_server",
     "ypl.mono_server.config",
+    "ypl.mono_server.gateway_plugin",
+    "ypl.mono_server.plugins",
+    "ypl.mono_server.plugins.slack",
     "ypl.mono_server.server",
     "ypl.mono_server.unified_mcp",
 ]
