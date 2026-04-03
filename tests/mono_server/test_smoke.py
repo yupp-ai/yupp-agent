@@ -95,8 +95,9 @@ class TestAHSAuthBoundary:
 
     def test_agents_no_api_key_returns_503(self) -> None:
         """When AGENT_HARNESS_SERVICE_API_KEY is unset all AHS requests → 503."""
-        env = {k: v for k, v in os.environ.items() if k != "AGENT_HARNESS_SERVICE_API_KEY"}
-        with patch.dict(os.environ, env, clear=True):
+        from ypl.backend.config import settings
+
+        with patch.object(settings, "AGENT_HARNESS_SERVICE_API_KEY", ""):
             r = _client().get("/ahs/agents")
         assert r.status_code == 503
 
@@ -110,8 +111,9 @@ class TestAHSAuthBoundary:
 
     def test_sessions_no_api_key_returns_503(self) -> None:
         """GET /ahs/sessions without API key configured → 503."""
-        env = {k: v for k, v in os.environ.items() if k != "AGENT_HARNESS_SERVICE_API_KEY"}
-        with patch.dict(os.environ, env, clear=True):
+        from ypl.backend.config import settings
+
+        with patch.object(settings, "AGENT_HARNESS_SERVICE_API_KEY", ""):
             r = _client().get("/ahs/sessions")
         assert r.status_code == 503
 
@@ -213,14 +215,27 @@ class TestGitHubGatewayToggle:
         assert github_paths, f"Expected /gw/github routes. All routes: {sorted(paths)}"
 
     def test_github_routes_absent_when_disabled(self) -> None:
-        """GATEWAY_GITHUB_ENABLED=false removes /gw/github routes."""
-        with patch.dict(os.environ, {"GATEWAY_GITHUB_ENABLED": "false"}):
-            from ypl.mono_server import server as _srv
+        """GATEWAY_GITHUB_ENABLED=false removes /gw/github/* and /ahs/webhook/* routes.
 
+        The _ahs_router_setup_done guard is reset and a fresh ahs_router is injected
+        so the test creates a clean app — without this, module-level initialisation
+        permanently bakes webhook_router into the shared ahs_router object.
+        """
+        from fastapi import APIRouter
+        from ypl.mono_server import server as _srv
+
+        fresh_ahs_router = APIRouter()
+        with (
+            patch.dict(os.environ, {"GATEWAY_GITHUB_ENABLED": "false"}),
+            patch.object(_srv, "_ahs_router_setup_done", False),
+            patch.object(_srv, "ahs_router", fresh_ahs_router),
+        ):
             disabled_app = _srv.create_app()
         paths = _route_paths(disabled_app)
         github_paths = [p for p in paths if "/gw/github" in p]
         assert not github_paths, f"Unexpected /gw/github routes: {github_paths}"
+        webhook_paths = [p for p in paths if "/webhook" in p]
+        assert not webhook_paths, f"Unexpected /webhook routes when GitHub disabled: {webhook_paths}"
 
 
 # ---------------------------------------------------------------------------
@@ -474,7 +489,7 @@ class TestErrorResponseFormat:
         # McpTokenAuthMiddleware must return JSON so clients get a structured error
         data = r.json()
         assert isinstance(data, dict), f"Expected JSON dict, got: {r.text!r}"
-        assert "detail" in data or len(data) > 0
+        assert data == {"detail": "Unauthorized"}
 
 
 # ---------------------------------------------------------------------------
