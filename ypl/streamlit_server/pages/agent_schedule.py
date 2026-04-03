@@ -15,6 +15,8 @@ from ypl.backend.llm.db_helpers import get_user_id_by_email
 from ypl.backend.utils.streamlit_utils import run_coroutine_in_lit_worker
 from ypl.db.agent_harness import (
     Agent,
+    AgentArtifact,
+    AgentArtifactType,
     AgentSchedule,
     AgentScheduleRun,
     AgentScheduleStatus,
@@ -209,6 +211,22 @@ async def fetch_schedule_runs(schedule_id: uuid.UUID, limit: int = 20) -> list[A
 
 
 @retry_db
+async def fetch_run_session_artifacts(session_ids: list[uuid.UUID]) -> list[AgentArtifact]:
+    """Fetch artifacts for a list of session IDs (from schedule runs)."""
+    if not session_ids:
+        return []
+    async with get_async_session_read_replica() as session:
+        stmt = (
+            select(AgentArtifact)
+            .where(col(AgentArtifact.deleted_at).is_(None))
+            .where(col(AgentArtifact.agent_session_id).in_(session_ids))
+            .order_by(col(AgentArtifact.created_at).asc())
+        )
+        result = await session.exec(stmt)
+        return list(result.all())
+
+
+@retry_db
 async def fetch_user_display_name(user_id: str) -> str | None:
     """Fetch user's display name from user_id."""
     async with get_async_session_read_replica() as session:
@@ -376,6 +394,39 @@ def _render_schedule_detail(
             error_str = run.error[:60] + "..." if run.error else ""
             runs_md_parts.append(f"| {run.run_number} | {run_emoji} | {started_str} | {session_str} | {error_str} |")
         st.markdown("\n".join(runs_md_parts))
+
+    # ── Artifacts for run sessions ────────────────────────────────────────────
+    run_session_ids = [run.session_id for run in runs if run.session_id is not None]
+    if run_session_ids:
+        with st.expander(f"📦 Artifacts ({len(run_session_ids)} run session(s))", expanded=False):
+            with st.spinner("Loading artifacts…"):
+                _artifacts = run_coroutine_in_lit_worker(
+                    fetch_run_session_artifacts(run_session_ids),
+                    timeout=30,
+                )
+            if not _artifacts:
+                st.caption("No artifacts found for these run sessions.")
+            else:
+                _ARTIFACT_ICON: dict[AgentArtifactType, str] = {
+                    AgentArtifactType.YUPPASTE: "📝",
+                    AgentArtifactType.CODE_REVIEW: "🔍",
+                    AgentArtifactType.OTHER: "📦",
+                }
+                rows = []
+                for a in _artifacts:
+                    icon = _ARTIFACT_ICON.get(a.artifact_type, "📦")
+                    type_str = f"{icon} {a.artifact_type.value}"
+                    title_link = f"[{a.title}]({a.url})"
+                    if a.agent_session_id:
+                        sid = str(a.agent_session_id)
+                        run_ref = f"[{sid[:8]}](/agent_harness_console?session_id={sid})"
+                    else:
+                        run_ref = "—"
+                    desc = (a.description or "")[:60] + ("…" if a.description and len(a.description) > 60 else "")
+                    rows.append(f"| {type_str} | {title_link} | {desc} | {run_ref} |")
+                header = "| Type | Title | Description | Session |"
+                sep = "|------|-------|-------------|---------|"
+                st.markdown("\n".join([header, sep] + rows))
 
     # Message/prompt at the bottom
     st.markdown("**Message (prompt):**")
