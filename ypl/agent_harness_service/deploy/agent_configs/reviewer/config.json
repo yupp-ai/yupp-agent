@@ -10,7 +10,7 @@
     "autoAllowBashIfSandboxed": false
   },
   "executor_config": {
-    "type": "harnessed"
+    "type": "raw"
   },
   "tool_permissions": {
     "*": "allow"
