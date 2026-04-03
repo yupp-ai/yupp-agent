@@ -9,6 +9,7 @@ import os
 import random
 import time
 import uuid
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -40,6 +41,12 @@ from ypl.agent_harness_service.executors.codex_app_server_runner import CodexApp
 from ypl.agent_harness_service.executors.providers import KNOWN_MODELS, parse_model_string, resolve_model
 from ypl.agent_harness_service.executors.raw_executor import run_raw_executor
 from ypl.agent_harness_service.executors.runner import ClaudeCodeRunner, RunContext
+from ypl.agent_harness_service.service.state import (
+    MAX_CONCURRENT_CLAUDE_CODE,
+    MAX_CONCURRENT_CODEX,
+    get_claude_code_semaphore,
+    get_codex_semaphore,
+)
 from ypl.agent_harness_service.tools.mcp_client import MCPToolAccess
 from ypl.backend.db import get_async_session
 from ypl.db.agent_harness import (
@@ -448,7 +455,45 @@ async def run_subagent(
     # Falls back to in-memory session.id if DB insert failed.
     effective_session_id = str(db_session_id) if db_session_id else session.id
 
-    # Wrap the execution in a trackable task so cancel_subagent_tasks() can cancel it.
+    # Record when the DB session was created so _execute_harnessed() can compute
+    # queue_wait_ms (time from session creation to CLI launch) for observability.
+    session_creation_time = datetime.now(UTC)
+
+    # Acquire a per-CLI-type concurrency semaphore BEFORE creating the execution
+    # task and BEFORE asyncio.wait_for starts — so queue wait time does NOT eat
+    # into timeout_s.  Released in the finally block below.
+    #
+    # Harnessed executors spawn a CLI subprocess (claude-code-cli or codex-cli)
+    # which consumes real CPU/memory.  Two independent semaphores allow tuning
+    # each CLI type separately: Codex is lighter and faster so it gets a higher
+    # cap.  Raw executors (HTTP API calls, no subprocess) are not gated here.
+    _acquired_semaphore: asyncio.Semaphore | None = None
+    if session.executor_type == EXECUTOR_TYPE_HARNESSED:
+        cli_model = (
+            agent_spec.executor.model if agent_spec else (fs_config.executor_config.model if fs_config else None)
+        )
+        if cli_model in (HARNESS_CODEX_CLI, HARNESS_CODEX_APP_SERVER):
+            _cli_sem = get_codex_semaphore()
+            _cli_label, _max_concurrent = "codex", MAX_CONCURRENT_CODEX
+        else:
+            _cli_sem = get_claude_code_semaphore()
+            _cli_label, _max_concurrent = "claude-code", MAX_CONCURRENT_CLAUDE_CODE
+        queue_start = time.monotonic()
+        await _cli_sem.acquire()
+        _acquired_semaphore = _cli_sem  # only set after acquire succeeds
+        wait_s = time.monotonic() - queue_start
+        if wait_s > 0.5:
+            logger.info(
+                "Subagent waited for concurrency slot",
+                agent_type=agent_type,
+                cli=_cli_label,
+                wait_s=round(wait_s, 2),
+                session_id=effective_session_id,
+                parent_session_id=parent_session_id,
+                max_concurrent=_max_concurrent,
+            )
+
+    # Wrap execution in a trackable task so cancel_subagent_tasks() can cancel it.
     execute_task = asyncio.ensure_future(
         _execute_subagent(
             agent_spec=agent_spec,
@@ -460,6 +505,7 @@ async def run_subagent(
             effective_session_id=effective_session_id,
             session_context=subagent_context,
             param_model=model,
+            session_created_at=session_creation_time,
         )
     )
     if db_session_id:
@@ -577,6 +623,8 @@ async def run_subagent(
     finally:
         if db_session_id:
             _active_subagent_tasks.pop(db_session_id, None)
+        if _acquired_semaphore is not None:
+            _acquired_semaphore.release()
 
     elapsed_ms = int((time.monotonic() - start_time) * 1000)
     session.status = "completed"
@@ -640,6 +688,7 @@ async def _execute_subagent(
     effective_session_id: str | None = None,
     session_context: dict | None = None,
     param_model: str | None = None,
+    session_created_at: datetime | None = None,
 ) -> ExecutorResult:
     """Execute a subagent using the appropriate runner.
 
@@ -650,6 +699,8 @@ async def _execute_subagent(
     Args:
         param_model: Explicit model override from new_task() call (not a fallback).
             Used by harnessed executors to avoid inheriting parent LLM models.
+        session_created_at: UTC timestamp of DB session creation, propagated to
+            the harnessed runner so it can compute and log queue_wait_ms.
     """
     # Check if this should use the raw executor
     if agent_spec and agent_spec.executor.type == EXECUTOR_TYPE_RAW:
@@ -676,6 +727,7 @@ async def _execute_subagent(
         effective_session_id,
         session_context,
         param_model=param_model,
+        session_created_at=session_created_at,
     )
 
 
@@ -768,6 +820,7 @@ async def _execute_harnessed(
     effective_session_id: str | None = None,
     session_context: dict | None = None,
     param_model: str | None = None,
+    session_created_at: datetime | None = None,
 ) -> ExecutorResult:
     """Execute a subagent via a harnessed executor (CLI subprocess)."""
     from ypl.agent_harness_service.tools.local_mcp_server import (
@@ -798,10 +851,14 @@ async def _execute_harnessed(
 
         # Use effective_session_id (DB session UUID) so nested subagents can resolve
         # parent context via DB lookup. Falls back to in-memory session.id.
+        # Pass session_created_at so ClaudeCodeRunner can log queue_wait_ms =
+        # (time of CLI launch) − (time of DB session creation), matching the
+        # same metric collected for top-level sessions.
         run_context = RunContext(
             session_id=sid,
             workspace=workspace,
             session_context=session_context,
+            session_created_at=session_created_at,
         )
 
         # Collect output and raw events for DB persistence

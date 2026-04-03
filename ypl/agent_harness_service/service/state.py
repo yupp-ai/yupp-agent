@@ -55,6 +55,56 @@ def _parse_env_int(env_var: str, default: int) -> int:
 
 MAX_CONCURRENT_EXECUTIONS = _parse_env_int("AHS_MAX_CONCURRENT_EXECUTIONS", 20)
 
+# ---------------------------------------------------------------------------
+# Per-CLI concurrency caps — limit concurrent subprocess executions by CLI type.
+#
+# Without these caps, multiple simultaneous master-reviewer sessions each spawn
+# 3-5 sub-reviewers (reviewer-claude, reviewer-codex, reviewer-glm), quickly
+# creating 15-20+ concurrent CLI subprocesses on the same instance.  Resource
+# contention under that load balloons reviewer-claude from ~31s to 150-300s.
+#
+# Two separate semaphores allow independent tuning per CLI type:
+#   - Claude Code / SDK (claude-code-cli, claude-agent-sdk): heavy, ~31s solo
+#   - Codex (codex-cli, codex-app-server): lighter, faster (~5s P50)
+#
+# Raw executors (HTTP API calls, no subprocess) are NOT gated here — they have
+# no per-process resource cost and are bounded by provider rate limits.
+#
+# Both pools are intentionally separate from MAX_CONCURRENT_EXECUTIONS (which
+# gates the scheduler/task-executor) so master-reviewer sprints don't starve
+# CRON/SLACK/TASK sessions.
+# ---------------------------------------------------------------------------
+MAX_CONCURRENT_CLAUDE_CODE = _parse_env_int("AHS_MAX_CONCURRENT_CLAUDE_CODE", 10)
+MAX_CONCURRENT_CODEX = _parse_env_int("AHS_MAX_CONCURRENT_CODEX", 15)
+
+# Lazily initialized to avoid creating Semaphores before the event loop starts.
+_claude_code_semaphore: asyncio.Semaphore | None = None
+_codex_semaphore: asyncio.Semaphore | None = None
+
+
+def get_claude_code_semaphore() -> asyncio.Semaphore:
+    """Return the global semaphore capping concurrent Claude Code / SDK subprocesses.
+
+    Lazily initialized on first call so it is always created inside a running
+    event loop (required by asyncio.Semaphore in Python ≤ 3.9; safe in 3.10+).
+    """
+    global _claude_code_semaphore
+    if _claude_code_semaphore is None:
+        _claude_code_semaphore = asyncio.Semaphore(MAX_CONCURRENT_CLAUDE_CODE)
+    return _claude_code_semaphore
+
+
+def get_codex_semaphore() -> asyncio.Semaphore:
+    """Return the global semaphore capping concurrent Codex CLI subprocesses.
+
+    Lazily initialized on first call so it is always created inside a running
+    event loop (required by asyncio.Semaphore in Python ≤ 3.9; safe in 3.10+).
+    """
+    global _codex_semaphore
+    if _codex_semaphore is None:
+        _codex_semaphore = asyncio.Semaphore(MAX_CONCURRENT_CODEX)
+    return _codex_semaphore
+
 
 def get_active_turn_count() -> int:
     """Return the number of currently active turns (all types)."""
