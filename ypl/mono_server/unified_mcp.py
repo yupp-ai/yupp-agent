@@ -36,6 +36,8 @@ The function is idempotent — subsequent calls are no-ops.
 """
 
 from __future__ import annotations
+import asyncio
+import hmac
 from collections.abc import Awaitable, Callable
 
 from fastmcp import FastMCP
@@ -79,6 +81,18 @@ class UnifiedMcpAuthMiddleware(BaseHTTPMiddleware):
        (e.g. one-box mode without the product database).
 
     Any request that satisfies neither condition is rejected with HTTP 401.
+
+    Security notes
+    --------------
+    * ``AHS_MCP_SECRET`` must be non-empty; an empty secret would allow any
+      caller to pass agent authentication.  The middleware rejects all
+      requests (returns 401) when the secret is unconfigured.
+    * All secret comparisons use :func:`hmac.compare_digest` to avoid
+      timing-based side-channel attacks.
+    * TODO: add per-tool caller-type enforcement so agent tools cannot be
+      invoked by developer tokens and vice versa.  Currently both caller
+      types reach the full unified tool set; access is differentiated only
+      by ``mcp_session_id_var`` vs ``request_context`` being populated.
     """
 
     async def dispatch(
@@ -86,17 +100,27 @@ class UnifiedMcpAuthMiddleware(BaseHTTPMiddleware):
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
+        # Reject immediately when the secret is not configured — an empty
+        # AHS_MCP_SECRET would make hmac.compare_digest succeed for every
+        # request, collapsing the security boundary.
+        if not AHS_MCP_SECRET:
+            logger.error("AHS_MCP_SECRET is not configured — rejecting all /mcp requests")
+            return JSONResponse(content={"detail": "Service not configured"}, status_code=503)
+
+        # Read the Authorization header once; reused in both the agent
+        # Bearer fallback and the developer-token branches below.
+        auth_header = request.headers.get("authorization", "")
+
         # ------------------------------------------------------------------
         # 1. Agent path: x-ahs-token header
         # ------------------------------------------------------------------
         token = request.headers.get("x-ahs-token", "")
         session_id = request.headers.get("x-ahs-session-id", "")
 
-        if token != AHS_MCP_SECRET:
+        if not hmac.compare_digest(token, AHS_MCP_SECRET):
             # Fallback: Bearer <secret>:<session_id> format.
             # Codex CLI only supports bearer_token_env_var for MCP auth, so
             # both the secret and the session ID are encoded into one token.
-            auth_header = request.headers.get("authorization", "")
             if auth_header.startswith("Bearer "):
                 bearer = auth_header[7:]
                 # Must contain ":" and must NOT look like a yupp_dev_* token
@@ -104,11 +128,11 @@ class UnifiedMcpAuthMiddleware(BaseHTTPMiddleware):
                 # with the <secret>:<session_id> format.
                 if ":" in bearer and not bearer.startswith("yupp_dev_"):
                     bearer_secret, bearer_session_id = bearer.split(":", 1)
-                    if bearer_secret == AHS_MCP_SECRET:
+                    if hmac.compare_digest(bearer_secret, AHS_MCP_SECRET):
                         token = bearer_secret
                         session_id = bearer_session_id
 
-        if token == AHS_MCP_SECRET:
+        if hmac.compare_digest(token, AHS_MCP_SECRET):
             # Agent authenticated — bind harness session context and dispatch.
             cv_token = mcp_session_id_var.set(session_id)
             try:
@@ -119,7 +143,6 @@ class UnifiedMcpAuthMiddleware(BaseHTTPMiddleware):
         # ------------------------------------------------------------------
         # 2. Developer path: Bearer yupp_dev_*
         # ------------------------------------------------------------------
-        auth_header = request.headers.get("authorization", "")
         if auth_header.startswith("Bearer yupp_dev_"):
             dev_token_str = auth_header[7:]  # strip "Bearer " prefix
             return await self._handle_dev_token(dev_token_str, request, call_next)
@@ -216,6 +239,7 @@ unified_mcp_http_app.add_middleware(UnifiedMcpAuthMiddleware)
 # ---------------------------------------------------------------------------
 
 _tools_registered: bool = False
+_tools_registered_lock: asyncio.Lock = asyncio.Lock()
 
 
 async def register_unified_tools() -> None:
@@ -237,22 +261,27 @@ async def register_unified_tools() -> None:
 
     This function is idempotent — subsequent calls are no-ops so it is safe
     to call from ``create_app()`` in tests without worrying about double
-    registration.
+    registration.  An :class:`asyncio.Lock` prevents concurrent callers from
+    registering tools twice during startup.
     """
     global _tools_registered
-    if _tools_registered:
-        return
 
-    from ypl.agent_harness_service.tools.local_mcp_server import mcp as harness_mcp
-    from ypl.mcp_server.core import mcp_server as yuppster_mcp
+    async with _tools_registered_lock:
+        # Check inside the lock so concurrent callers that raced to acquire
+        # it do not register tools a second time.
+        if _tools_registered:
+            return
 
-    await unified_mcp.import_server(harness_mcp)
-    logger.info("Unified MCP: imported harness tools")
+        from ypl.agent_harness_service.tools.local_mcp_server import mcp as harness_mcp
+        from ypl.mcp_server.core import mcp_server as yuppster_mcp
 
-    await unified_mcp.import_server(yuppster_mcp)
-    logger.info("Unified MCP: imported yuppster tools")
+        await unified_mcp.import_server(harness_mcp)
+        logger.info("Unified MCP: imported harness tools")
 
-    tools = await unified_mcp.get_tools()
-    logger.info("Unified MCP ready", tool_count=len(tools))
+        await unified_mcp.import_server(yuppster_mcp)
+        logger.info("Unified MCP: imported yuppster tools")
 
-    _tools_registered = True
+        tools = await unified_mcp.get_tools()
+        logger.info("Unified MCP ready", tool_count=len(tools))
+
+        _tools_registered = True
