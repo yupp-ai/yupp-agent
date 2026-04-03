@@ -30,7 +30,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import ORJSONResponse
+from fastapi.responses import ORJSONResponse, Response
 
 # Import mcp_tools to trigger @mcp_server.tool() decorator registration for all
 # yuppster MCP tools.  This is a side-effect-only import — without it the
@@ -239,6 +239,28 @@ def create_app() -> FastAPI:
     async def health() -> dict[str, str]:
         """Liveness probe — always returns 200 OK."""
         return {"status": "ok"}
+
+    # --- Prometheus metrics stub (no auth) -----------------------------------
+    # Returns a minimal valid Prometheus text exposition payload so that a
+    # Prometheus scraper can already be pointed at this endpoint.
+    # Replace the body with ``prometheus_client.generate_latest()`` once metric
+    # instrumentation is wired in (see ``docs/observability.md``).
+    @application.get("/metrics", tags=["observability"])
+    async def metrics() -> Response:
+        """Prometheus metrics stub — returns a valid (minimal) text payload.
+
+        Upgrade path: install ``prometheus-client``, register collectors, and
+        swap the hardcoded string for ``prometheus_client.generate_latest()``.
+        The content-type header already matches what Prometheus expects, so no
+        scrape-config changes are needed once real metrics are wired in.
+        """
+        # Empty-but-valid Prometheus payload.  Using a stub metric with a
+        # hardcoded value of 1 is misleading (it would never fire an alert
+        # even if the process were actually broken) and duplicates the
+        # built-in Prometheus `up` metric.  Swap in
+        # ``prometheus_client.generate_latest()`` once instrumentation is wired.
+        content = "# Prometheus metrics stub — no instrumentation yet\n"
+        return Response(content=content, media_type="text/plain; version=0.0.4; charset=utf-8")
 
     return application
 
