@@ -632,6 +632,11 @@ _ARTIFACT_TYPE_ICON: dict[AgentArtifactType, str] = {
 }
 
 
+def _md_cell(s: str) -> str:
+    """Escape pipe characters and newlines so the string is safe in a markdown table cell."""
+    return s.replace("|", "\\|").replace("\n", " ")
+
+
 def _render_task_artifacts(task_id: uuid.UUID, session_ids: list[str] | None) -> None:
     """Fetch and render artifacts for a task and its sessions."""
     artifacts = run_coroutine_in_lit_worker(
@@ -645,14 +650,15 @@ def _render_task_artifacts(task_id: uuid.UUID, session_ids: list[str] | None) ->
     for a in artifacts or []:
         icon = _ARTIFACT_TYPE_ICON.get(a.artifact_type, "📦")
         type_str = f"{icon} {a.artifact_type.value}"
-        title_link = f"[{a.title}]({a.url})"
+        title_link = f"[{_md_cell(a.title)}]({a.url})"
         src = ""
         if a.agent_session_id:
             sid = str(a.agent_session_id)
             src = f"[session {sid[:8]}](/agent_harness_console?session_id={sid})"
         elif a.agent_task_id:
             src = "task"
-        desc = (a.description or "")[:60] + ("…" if a.description and len(a.description) > 60 else "")
+        raw_desc = (a.description or "")[:60] + ("…" if a.description and len(a.description) > 60 else "")
+        desc = _md_cell(raw_desc)
         rows.append(f"| {type_str} | {title_link} | {desc} | {src} |")
     header = "| Type | Title | Description | Source |"
     sep = "|------|-------|-------------|--------|"

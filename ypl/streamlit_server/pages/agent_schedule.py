@@ -122,6 +122,17 @@ _RUN_STATUS_EMOJI: dict[str, str] = {
     "FAILED": "❌",
 }
 
+_ARTIFACT_TYPE_ICON: dict[AgentArtifactType, str] = {
+    AgentArtifactType.YUPPASTE: "📝",
+    AgentArtifactType.CODE_REVIEW: "🔍",
+    AgentArtifactType.OTHER: "📦",
+}
+
+
+def _md_cell(s: str) -> str:
+    """Escape pipe characters and newlines so the string is safe in a markdown table cell."""
+    return s.replace("|", "\\|").replace("\n", " ")
+
 
 # ── DB queries ───────────────────────────────────────────────────────────────
 
@@ -407,22 +418,18 @@ def _render_schedule_detail(
             if not _artifacts:
                 st.caption("No artifacts found for these run sessions.")
             else:
-                _ARTIFACT_ICON: dict[AgentArtifactType, str] = {
-                    AgentArtifactType.YUPPASTE: "📝",
-                    AgentArtifactType.CODE_REVIEW: "🔍",
-                    AgentArtifactType.OTHER: "📦",
-                }
                 rows = []
                 for a in _artifacts:
-                    icon = _ARTIFACT_ICON.get(a.artifact_type, "📦")
+                    icon = _ARTIFACT_TYPE_ICON.get(a.artifact_type, "📦")
                     type_str = f"{icon} {a.artifact_type.value}"
-                    title_link = f"[{a.title}]({a.url})"
+                    title_link = f"[{_md_cell(a.title)}]({a.url})"
                     if a.agent_session_id:
                         sid = str(a.agent_session_id)
                         run_ref = f"[{sid[:8]}](/agent_harness_console?session_id={sid})"
                     else:
                         run_ref = "—"
-                    desc = (a.description or "")[:60] + ("…" if a.description and len(a.description) > 60 else "")
+                    raw_desc = (a.description or "")[:60] + ("…" if a.description and len(a.description) > 60 else "")
+                    desc = _md_cell(raw_desc)
                     rows.append(f"| {type_str} | {title_link} | {desc} | {run_ref} |")
                 header = "| Type | Title | Description | Session |"
                 sep = "|------|-------|-------------|---------|"

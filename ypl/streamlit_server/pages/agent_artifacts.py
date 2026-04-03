@@ -129,8 +129,8 @@ async def _fetch_artifact_counts() -> dict[str, int]:
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def _load_artifacts(artifact_type: str | None, limit: int) -> list[dict[str, Any]]:
-    """Load artifacts, cached for 60 seconds."""
+def _load_artifacts(artifact_type: str | None, limit: int, _cache_ver: int = 0) -> list[dict[str, Any]]:
+    """Load artifacts, cached for 60 seconds. `_cache_ver` is a nonce to bust only this loader."""
     return (
         run_coroutine_in_lit_worker(
             _fetch_artifacts_raw(artifact_type=artifact_type, limit=limit),
@@ -141,18 +141,22 @@ def _load_artifacts(artifact_type: str | None, limit: int) -> list[dict[str, Any
 
 
 @st.cache_data(ttl=120, show_spinner=False)
-def _load_counts() -> dict[str, int]:
-    """Load artifact counts per type, cached for 2 minutes."""
+def _load_counts(_cache_ver: int = 0) -> dict[str, int]:
+    """Load artifact counts per type, cached for 2 minutes. `_cache_ver` busts only this loader."""
     return run_coroutine_in_lit_worker(_fetch_artifact_counts(), timeout=30) or {}
 
 
 # ── Filtering helpers ─────────────────────────────────────────────────────────
 
 
+def _md_cell(s: str) -> str:
+    """Escape pipe characters and newlines so the string is safe in a markdown table cell."""
+    return s.replace("|", "\\|").replace("\n", " ")
+
+
 def _apply_filters(
     rows: list[dict[str, Any]],
     keyword: str,
-    group_by: str,
 ) -> list[dict[str, Any]]:
     """Filter rows by keyword search."""
     if keyword:
@@ -175,13 +179,6 @@ def _group_rows(
 ) -> dict[str, list[dict[str, Any]]]:
     """Group rows by the chosen dimension."""
     groups: dict[str, list[dict[str, Any]]] = {}
-    for r in rows:
-        if group_by == "Type":
-            key = f"{_ARTIFACT_TYPE_ICON.get(AgentArtifactType(r['type']), '📦')} {r['type']}"
-        elif group_by == "Session":
-            key = r["session_id"] or "(no session)"
-        else:
-            key = "(all)"
     for r in rows:
         if group_by == "Type":
             key = f"{_ARTIFACT_TYPE_ICON.get(AgentArtifactType(r['type']), '📦')} {r['type']}"
@@ -217,8 +214,9 @@ def _render_artifact_rows(rows: list[dict[str, Any]], *, show_type: bool = True)
     for r in rows:
         icon = _ARTIFACT_TYPE_ICON.get(AgentArtifactType(r["type"]), "📦")
         type_str = f"{icon} {r['type']}"
-        title_link = f"[{r['title']}]({r['url']})"
-        desc = (r["description"] or "")[:70] + ("…" if r["description"] and len(r["description"]) > 70 else "")
+        title_link = f"[{_md_cell(r['title'])}]({r['url']})"
+        raw_desc = (r["description"] or "")[:70] + ("…" if r["description"] and len(r["description"]) > 70 else "")
+        desc = _md_cell(raw_desc)
         if r["session_id"]:
             sid = r["session_id"]
             session_str = f"[{sid[:8]}…](/agent_harness_console?session_id={sid})"
@@ -243,9 +241,12 @@ def _render_artifact_rows(rows: list[dict[str, Any]], *, show_type: bool = True)
 
 st.title("📦 Agent Artifacts")
 
+# Cache-busting nonce: bumped by the Refresh button so only this page's loaders are invalidated.
+_cache_ver: int = st.session_state.get("artifact_cache_ver", 0)
+
 # Top stats row
 with st.spinner("Loading counts…"):
-    counts = _load_counts()
+    counts = _load_counts(_cache_ver=_cache_ver)
 
 if counts:
     total = sum(counts.values())
@@ -286,16 +287,18 @@ with filter_cols[3]:
 refresh_col, _ = st.columns([1, 9])
 with refresh_col:
     if st.button("🔄 Refresh", key="artifact_refresh"):
-        st.cache_data.clear()
+        # Bump the per-page cache version — invalidates only this page's loaders,
+        # not the entire app-wide cache.
+        st.session_state["artifact_cache_ver"] = _cache_ver + 1
         st.rerun()
 
 # ── Load & filter data ────────────────────────────────────────────────────────
 
 with st.spinner("Loading artifacts…"):
     type_param = type_filter if type_filter != "(all)" else None
-    all_rows = _load_artifacts(type_param, limit)
+    all_rows = _load_artifacts(type_param, limit, _cache_ver=_cache_ver)
 
-filtered = _apply_filters(all_rows, keyword=keyword.strip(), group_by=group_by)
+filtered = _apply_filters(all_rows, keyword=keyword.strip())
 
 _count_suffix = f" (filtered from {len(all_rows)})" if len(filtered) != len(all_rows) else ""
 st.caption(f"Showing {len(filtered)} artifact(s){_count_suffix}")

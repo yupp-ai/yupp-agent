@@ -1037,6 +1037,11 @@ _ARTIFACT_TYPE_ICON: dict[AgentArtifactType, str] = {
 }
 
 
+def _md_cell(s: str) -> str:
+    """Escape pipe characters and newlines so the string is safe in a markdown table cell."""
+    return s.replace("|", "\\|").replace("\n", " ")
+
+
 def _render_artifacts_table(artifacts: list[AgentArtifact]) -> None:
     """Render a compact table of artifacts with links."""
     if not artifacts:
@@ -1046,9 +1051,10 @@ def _render_artifacts_table(artifacts: list[AgentArtifact]) -> None:
     for a in artifacts:
         icon = _ARTIFACT_TYPE_ICON.get(a.artifact_type, "📦")
         type_str = f"{icon} {a.artifact_type.value}"
-        title_link = f"[{a.title}]({a.url})"
+        title_link = f"[{_md_cell(a.title)}]({a.url})"
         created_str = _to_local(a.created_at)
-        desc = (a.description or "")[:80] + ("…" if a.description and len(a.description) > 80 else "")
+        raw_desc = (a.description or "")[:80] + ("…" if a.description and len(a.description) > 80 else "")
+        desc = _md_cell(raw_desc)
         rows.append(f"| {type_str} | {title_link} | {desc} | {created_str} |")
     header = "| Type | Title | Description | Created |"
     sep = "|------|-------|-------------|---------|"
