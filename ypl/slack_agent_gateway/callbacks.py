@@ -4,10 +4,12 @@ Handles:
 - add_new_reply: Posts a new message to Slack
 - append_to_last_reply: Buffers text for streaming (PR 6)
 - update_last_reply: Replaces the last reply content
-- send_status_update: Posts/edits a rate-limited status context block
+- handle_tool_event: Accumulates tool-use entries and edits a live cluster block
+- send_status_update: Posts/edits a rate-limited status context block (legacy)
 """
 
 import time
+from collections import Counter
 from typing import Any
 
 from slack_sdk.errors import SlackApiError
@@ -21,18 +23,25 @@ from ypl.slack_agent_gateway.constants import (
     get_agent_config_by_name,
 )
 from ypl.slack_agent_gateway.redis_client import (
+    append_tool_entry,
+    clear_tool_entries,
     get_and_clear_pending_status,
+    get_and_clear_tool_cluster_pending,
     get_session,
+    get_tool_entries,
     peek_pending_status,
+    peek_tool_cluster_pending,
     release_feedback_claim,
     remove_from_status_flush_schedule,
     save_session,
     schedule_status_flush,
     set_pending_status,
+    set_tool_cluster_pending,
     store_reply_mapping,
     store_thread_session_mapping,
     try_acquire_status_ratelimit,
     try_claim_feedback_request,
+    update_tool_result,
 )
 from ypl.slack_agent_gateway.sessions import record_reply
 from ypl.slack_agent_gateway.types import (
@@ -47,6 +56,11 @@ from ypl.slack_agent_gateway.types import (
     SendQuestionnaireResponse,
     SendStatusUpdateRequest,
     SendStatusUpdateResponse,
+    SendToolEventRequest,
+    SendToolEventResponse,
+    ToolEventKind,
+    ToolResultStatus,
+    ToolUseEntry,
     UpdateReplyRequest,
     UpdateReplyResponse,
 )
@@ -178,22 +192,51 @@ async def add_reply(request: AddReplyRequest) -> AddReplyResponse:
             )
 
         # When a real (non-status) reply is posted:
-        # 1. Reset status_message_ts so future status updates get a fresh block.
-        # 2. Clear any pending status text and scheduled flush so stale
-        #    tool-use hints don't appear after the real reply is visible.
+        # 1. If a tool cluster is active, edit it to show a compact summary so
+        #    the live display is replaced by a clean "Bash*5, Grep*2 ..." line.
+        # 2. Clear tool entries so the next cluster starts fresh.
+        # 3. Reset status_message_ts so future tool events post a new message.
+        # 4. Clear any pending status text and scheduled flush.
         if request.reply_type != "thinking":
             try:
                 # Re-fetch a fresh session — record_reply already updated it
                 # and we must not overwrite those changes with our stale copy.
                 fresh_session = await get_session(request.session_id)
+                # 1. Snapshot tool entries before clearing so we can render the summary.
+                entries = await get_tool_entries(request.session_id)
+                # 2. Clear all pending state first to prevent a concurrent flush from
+                #    racing against our summary write below.
+                await remove_from_status_flush_schedule(request.session_id)
+                await get_and_clear_pending_status(request.session_id)
+                await get_and_clear_tool_cluster_pending(request.session_id)
+                await clear_tool_entries(request.session_id)
+                # 3. Write summary to the cluster message (best-effort).
                 if fresh_session and fresh_session.status_message_ts:
+                    if entries:
+                        summary = _render_tool_summary(entries)
+                        cluster_client = await _get_slack_client(fresh_session)
+                        if cluster_client:
+                            try:
+                                await cluster_client.chat_update(
+                                    channel=fresh_session.channel_id,
+                                    ts=fresh_session.status_message_ts,
+                                    text=summary,
+                                    blocks=[
+                                        {
+                                            "type": "context",
+                                            "elements": [{"type": "mrkdwn", "text": summary}],
+                                        }
+                                    ],
+                                )
+                            except SlackApiError as slack_err:
+                                logger.warning(
+                                    "Failed to post tool cluster summary",
+                                    session_id=request.session_id,
+                                    error=str(slack_err),
+                                )
+                    # 4. Nullify status_message_ts so the next tool cluster posts fresh.
                     fresh_session.status_message_ts = None
                     await save_session(fresh_session)
-                # Always clear pending status + flush schedule regardless of
-                # whether status_message_ts was set, to prevent a deferred
-                # flush from posting stale tool hints after the real reply.
-                await get_and_clear_pending_status(request.session_id)
-                await remove_from_status_flush_schedule(request.session_id)
             except Exception as e:
                 logger.warning(
                     "Failed to clear status state after real reply",
@@ -638,6 +681,146 @@ async def send_message(request: SendMessageRequest) -> SendMessageResponse:
 
 
 # ---------------------------------------------------------------------------
+# Tool-use cluster display helpers
+# ---------------------------------------------------------------------------
+
+# How many tool entries to show in the live cluster block
+_TOOL_CLUSTER_DISPLAY_COUNT = 3
+
+# Max characters for a command string in the cluster display
+_TOOL_COMMAND_MAX_LEN = 100
+
+
+def _render_tool_cluster(entries: list[ToolUseEntry]) -> str:
+    """Render the last up-to-3 tool entries as a Slack mrkdwn code block.
+
+    Format per entry:
+        toolname (command)
+        ⎿  DONE | EMPTY | FAILED: error | ...
+
+    A ``(N tools used)`` footer is appended when total > 3.
+
+    Args:
+        entries: All tool entries for the session (ordered by insertion).
+
+    Returns:
+        Slack mrkdwn string using a fenced code block.
+    """
+    total = len(entries)
+    visible = entries[-_TOOL_CLUSTER_DISPLAY_COUNT:]
+    lines: list[str] = []
+    for entry in visible:
+        cmd = entry.command or ""
+        if len(cmd) > _TOOL_COMMAND_MAX_LEN:
+            cmd = cmd[: _TOOL_COMMAND_MAX_LEN - 3] + "..."
+        header = f"{entry.name} ({cmd})" if cmd else entry.name
+        lines.append(header)
+        if entry.result_status == ToolResultStatus.RUNNING:
+            lines.append("⎿  ...")
+        elif entry.result_status == ToolResultStatus.DONE:
+            lines.append("⎿  DONE")
+        elif entry.result_status == ToolResultStatus.EMPTY:
+            lines.append("⎿  EMPTY")
+        else:  # FAILED
+            err = (entry.error_msg or "")[:50]
+            if entry.error_msg and len(entry.error_msg) > 50:
+                err += "..."
+            lines.append(f"⎿  FAILED: {err}" if err else "⎿  FAILED")
+
+    content = "\n".join(lines)
+    if total > _TOOL_CLUSTER_DISPLAY_COUNT:
+        content += f"\n({total} tools used)"
+    # Escape any triple backticks in tool output so they don't break the code block.
+    content = content.replace("```", "'''")
+    return f"```\n{content}\n```"
+
+
+def _render_tool_summary(entries: list[ToolUseEntry]) -> str:
+    """Render a compact summary of all tool calls after a cluster finishes.
+
+    Format: ``Bash*5, Grep*2, Read*1 (8 tools used)``
+    Shows at most 5 distinct tool types.
+
+    Args:
+        entries: All tool entries accumulated for this cluster.
+
+    Returns:
+        Single-line summary string (no code block wrapper).
+    """
+    total = len(entries)
+    counts = Counter(e.name for e in entries)
+    top = counts.most_common(5)
+    parts = [f"{name}*{n}" for name, n in top]
+    if len(counts) > 5:
+        parts.append("...")
+    return f"{', '.join(parts)} ({total} tool{'s' if total != 1 else ''} used)"
+
+
+# ---------------------------------------------------------------------------
+# Tool event handler (new structured path)
+# ---------------------------------------------------------------------------
+
+
+async def handle_tool_event(request: SendToolEventRequest) -> SendToolEventResponse:
+    """Accept a structured tool-start or tool-result event from AHS.
+
+    START events append a new ToolUseEntry (status=RUNNING) to the session's
+    list.  RESULT events update the matching entry's result_status.
+
+    After updating the list, a rate-limited flush is triggered so Slack sees
+    the last 3 tool entries as a live code-block message.
+
+    Args:
+        request: SendToolEventRequest from AHS
+
+    Returns:
+        SendToolEventResponse
+    """
+    session = await get_session(request.session_id)
+    if not session:
+        return SendToolEventResponse(success=False, error="Session not found")
+
+    if request.kind == ToolEventKind.START:
+        entry = ToolUseEntry(
+            tool_use_id=request.tool_use_id,
+            name=request.name or "unknown",
+            command=request.command or "",
+            result_status=ToolResultStatus.RUNNING,
+        )
+        await append_tool_entry(request.session_id, entry)
+    else:  # RESULT
+        await update_tool_result(
+            request.session_id,
+            request.tool_use_id,
+            ToolResultStatus(request.result_status or "done"),
+            request.error_msg,
+        )
+
+    # Signal that tool entries were updated so flush_status_update renders the cluster.
+    await set_tool_cluster_pending(request.session_id)
+
+    if not await try_acquire_status_ratelimit(request.session_id):
+        flush_at = time.time() + STATUS_RATELIMIT_SECONDS + 0.1
+        await schedule_status_flush(request.session_id, flush_at)
+        logger.debug(
+            "Tool event deferred (rate-limited)",
+            session_id=request.session_id,
+            kind=request.kind,
+            tool_use_id=request.tool_use_id,
+        )
+        return SendToolEventResponse(success=True, message_ts=session.status_message_ts)
+
+    # Gate acquired — flush immediately. Pass None to force a fresh session fetch
+    # so we don't use a stale status_message_ts from when this handler started.
+    flush_resp = await flush_status_update(request.session_id)
+    return SendToolEventResponse(
+        success=flush_resp.success,
+        message_ts=flush_resp.message_ts,
+        error=flush_resp.error,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Status update (live tool-use hints rendered as a muted context block)
 # ---------------------------------------------------------------------------
 
@@ -664,25 +847,51 @@ async def flush_status_update(session_id: str, session: AgentSession | None = No
     if not session:
         return SendStatusUpdateResponse(success=False, error="Session not found")
 
-    text = await get_and_clear_pending_status(session_id)
-    if not text:
+    # Read both pending signals atomically before any rendering decision.
+    is_tool_cluster_flush = await get_and_clear_tool_cluster_pending(session_id)
+    raw_pending = await get_and_clear_pending_status(session_id)
+    if not is_tool_cluster_flush and not raw_pending:
         # Nothing pending — remove from flush schedule and return success.
         await remove_from_status_flush_schedule(session_id)
         return SendStatusUpdateResponse(success=True, message_ts=session.status_message_ts)
 
     client = await _get_slack_client(session)
     if not client:
-        # Restore pending text so the next scheduled flush can retry.
-        await set_pending_status(session_id, text)
+        # Restore pending flags so the next scheduled flush can retry.
+        if is_tool_cluster_flush:
+            await set_tool_cluster_pending(session_id)
+        if raw_pending:
+            await set_pending_status(session_id, raw_pending)
         flush_at = time.time() + STATUS_RATELIMIT_SECONDS + 0.1
         await schedule_status_flush(session_id, flush_at)
         return SendStatusUpdateResponse(success=False, error="Failed to get Slack client")
 
-    # Truncate to stay within Slack's context block text limit.
-    if len(text) > _STATUS_MAX_TEXT_LENGTH:
-        text = text[: _STATUS_MAX_TEXT_LENGTH - 3] + "..."
-
-    blocks: list[dict] = [{"type": "context", "elements": [{"type": "mrkdwn", "text": text}]}]
+    # Determine rendering mode: structured tool cluster vs legacy plain-text.
+    if is_tool_cluster_flush:
+        entries = await get_tool_entries(session_id)
+        if not entries:
+            # Entries were cleared between the pending flag being set and the flush —
+            # nothing to render for the cluster.  Restore raw_pending if it was
+            # consumed at the top so it isn't silently dropped (same pattern as
+            # the error-path restores below).
+            if raw_pending:
+                await set_pending_status(session_id, raw_pending)
+            await remove_from_status_flush_schedule(session_id)
+            if raw_pending:
+                flush_at = time.time() + STATUS_RATELIMIT_SECONDS + 0.1
+                await schedule_status_flush(session_id, flush_at)
+            return SendStatusUpdateResponse(success=True, message_ts=session.status_message_ts)
+        text = _render_tool_cluster(entries)
+        if len(text) > _STATUS_MAX_TEXT_LENGTH:
+            text = text[: _STATUS_MAX_TEXT_LENGTH - 3] + "..."
+        # Tool cluster: standalone section block (not muted context)
+        blocks: list[dict] = [{"type": "section", "text": {"type": "mrkdwn", "text": text}}]
+    else:
+        # Legacy plain-text path: context block (muted gray).
+        text = raw_pending or ""
+        if len(text) > _STATUS_MAX_TEXT_LENGTH:
+            text = text[: _STATUS_MAX_TEXT_LENGTH - 3] + "..."
+        blocks = [{"type": "context", "elements": [{"type": "mrkdwn", "text": text}]}]
 
     try:
         if session.status_message_ts:
@@ -737,9 +946,17 @@ async def flush_status_update(session_id: str, session: AgentSession | None = No
         # posting (it would have called schedule_status_flush because the
         # rate-limit gate was held by us).  If so, reschedule a flush so the
         # new text is eventually delivered.
+        #
+        # Also: if the tool-cluster path ran but raw_pending was also set
+        # (e.g. a max-turn notice fired during an active tool session),
+        # restore it so it isn't silently dropped — the reschedule below
+        # will carry it on the next flush.
+        if is_tool_cluster_flush and raw_pending:
+            await set_pending_status(session_id, raw_pending)
         await remove_from_status_flush_schedule(session_id)
         new_pending = await peek_pending_status(session_id)
-        if new_pending:
+        new_tool_cluster = await peek_tool_cluster_pending(session_id)
+        if new_pending or new_tool_cluster:
             flush_at = time.time() + STATUS_RATELIMIT_SECONDS + 0.1
             await schedule_status_flush(session_id, flush_at)
 
@@ -761,9 +978,12 @@ async def flush_status_update(session_id: str, session: AgentSession | None = No
                 await save_session(session)
             except Exception:
                 pass
-            await set_pending_status(session_id, text)
-            # Schedule a deferred flush so the re-stored text is eventually
-            # delivered even if no further status updates arrive.
+            # Restore pending flags so the next flush retries correctly.
+            if is_tool_cluster_flush:
+                await set_tool_cluster_pending(session_id)
+            if raw_pending:
+                await set_pending_status(session_id, raw_pending)
+            # Schedule a deferred flush so the re-stored content is eventually delivered.
             flush_at = time.time() + STATUS_RATELIMIT_SECONDS + 0.1
             await schedule_status_flush(session_id, flush_at)
         else:
@@ -773,9 +993,12 @@ async def flush_status_update(session_id: str, session: AgentSession | None = No
                 error=error_str,
                 exc_info=True,
             )
-            # Restore pending text so retryable transient errors don't silently
-            # drop one-off notices (e.g. max-turn / context-overflow messages).
-            await set_pending_status(session_id, text)
+            # Restore pending flags so retryable transient errors don't silently
+            # drop content (e.g. max-turn / context-overflow messages).
+            if is_tool_cluster_flush:
+                await set_tool_cluster_pending(session_id)
+            if raw_pending:
+                await set_pending_status(session_id, raw_pending)
             flush_at = time.time() + STATUS_RATELIMIT_SECONDS + 0.1
             await schedule_status_flush(session_id, flush_at)
         return SendStatusUpdateResponse(success=False, error=error_str)

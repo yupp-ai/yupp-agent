@@ -342,7 +342,74 @@ class SlackGateway(Gateway):
             return False
 
     # ------------------------------------------------------------------
-    # send_status_update (live tool-use hints — Slack-only)
+    # send_tool_event (structured tool-cluster display — Slack-only)
+    # ------------------------------------------------------------------
+
+    async def send_tool_event(
+        self,
+        session_id: str,
+        kind: str,
+        tool_use_id: str,
+        *,
+        name: str | None = None,
+        command: str | None = None,
+        result_status: str | None = None,
+        error_msg: str | None = None,
+    ) -> bool:
+        """Push a structured tool-start or tool-result event to SAG.
+
+        Returns False immediately (without calling SAG) if the session was
+        previously found to be expired (404).
+        """
+        if session_id in self._dead_session_ids:
+            return False
+
+        url = f"{self._base_url}/slack-agent-gateway/sessions/tool"
+        payload: dict[str, str | None] = {
+            "session_id": session_id,
+            "kind": kind,
+            "tool_use_id": tool_use_id,
+        }
+        if name is not None:
+            payload["name"] = name
+        if command is not None:
+            payload["command"] = command
+        if result_status is not None:
+            payload["result_status"] = result_status
+        if error_msg is not None:
+            payload["error_msg"] = error_msg
+
+        try:
+            resp = await self._get_client().post(url, json=payload, headers=self._headers())
+            resp.raise_for_status()
+            data = resp.json()
+            if not data.get("success"):
+                error = data.get("error", "")
+                if error == "Session not found":
+                    self._dead_session_ids.add(session_id)
+                else:
+                    logger.warning("Gateway rejected tool event", session_id=session_id, error=error)
+                return False
+            return True
+        except httpx.TimeoutException:
+            logger.warning("Timeout calling gateway /sessions/tool", session_id=session_id)
+            return False
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                self._dead_session_ids.add(session_id)
+            else:
+                logger.warning(
+                    "HTTP error calling gateway /sessions/tool",
+                    session_id=session_id,
+                    status_code=e.response.status_code,
+                )
+            return False
+        except Exception:
+            logger.warning("Error calling gateway /sessions/tool", session_id=session_id, exc_info=True)
+            return False
+
+    # ------------------------------------------------------------------
+    # send_status_update (live tool-use hints — Slack-only, legacy)
     # ------------------------------------------------------------------
 
     async def send_status_update(self, session_id: str, text: str) -> bool:

@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -253,7 +254,68 @@ class SendMessageResponse(BaseModel):
     error: str | None = Field(None, description="Error message if failed")
 
 
-# Status update (live tool-use hints)
+# Tool use events (structured, replaces plain-text status updates)
+
+
+class ToolResultStatus(StrEnum):
+    """Result status of a single tool call."""
+
+    RUNNING = "running"  # call in-flight, no result yet
+    DONE = "done"  # succeeded with non-empty output
+    EMPTY = "empty"  # succeeded but returned no output
+    FAILED = "failed"  # errored
+
+
+class ToolUseEntry(BaseModel):
+    """One tool invocation tracked for the live tool-cluster display."""
+
+    tool_use_id: str = Field(..., description="Unique tool-call identifier (from Anthropic event id field)")
+    name: str = Field(..., description="Tool name, e.g. 'Bash', 'Grep', 'Read'")
+    command: str = Field(..., description="Formatted command string shown in the cluster block (max 200 chars)")
+    result_status: ToolResultStatus = Field(default=ToolResultStatus.RUNNING, description="Current result status")
+    error_msg: str | None = Field(None, description="Short error message (FAILED only, max 50 chars)")
+
+
+class ToolEventKind(StrEnum):
+    """Discriminates tool-start vs tool-result events."""
+
+    START = "start"
+    RESULT = "result"
+
+
+class SendToolEventRequest(BaseModel):
+    """Request body for POST /sessions/tool (called by AHS).
+
+    AHS sends a START event when a tool call begins (name + command known) and
+    a RESULT event when the result arrives (result_status + optional error_msg).
+    SAG accumulates entries per session, renders the last 3 in a live code-block
+    message edited in-place, and replaces it with a summary when text output starts.
+    """
+
+    session_id: str = Field(..., description="Session identifier")
+    kind: ToolEventKind = Field(..., description="'start' or 'result'")
+    tool_use_id: str = Field(..., description="Unique identifier correlating start ↔ result")
+
+    # START fields
+    name: str | None = Field(None, description="Tool name (required for 'start' events)")
+    command: str | None = Field(None, description="Formatted command string (required for 'start' events)")
+
+    # RESULT fields
+    result_status: Literal["done", "empty", "failed"] | None = Field(
+        None, description="Result status (required for 'result' events)"
+    )
+    error_msg: str | None = Field(None, description="Short error text (FAILED only, max 50 chars)")
+
+
+class SendToolEventResponse(BaseModel):
+    """Response for POST /sessions/tool."""
+
+    success: bool = Field(..., description="Whether the event was accepted")
+    message_ts: str | None = Field(None, description="Slack ts of the tool-cluster message (may be None if deferred)")
+    error: str | None = Field(None, description="Error message if failed")
+
+
+# Status update (live tool-use hints — legacy plain-text path)
 
 
 class SendStatusUpdateRequest(BaseModel):

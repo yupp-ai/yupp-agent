@@ -15,7 +15,7 @@ import os
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import sqlalchemy as sa
 from sqlmodel import col, select
@@ -367,13 +367,13 @@ async def claim_task(task_id: uuid.UUID) -> AgentTask | None:
 async def get_project(project_id: uuid.UUID) -> AgentProject | None:
     """Get a project by ID."""
     async with get_async_session() as session:
-        return await session.get(AgentProject, project_id)
+        return cast(AgentProject | None, await session.get(AgentProject, project_id))
 
 
 async def get_agent_by_id(agent_id: uuid.UUID) -> Agent | None:
     """Get an agent by ID."""
     async with get_async_session() as session:
-        return await session.get(Agent, agent_id)
+        return cast(Agent | None, await session.get(Agent, agent_id))
 
 
 async def _ensure_updates_thread(project: AgentProject, agent_name: str) -> str | None:
