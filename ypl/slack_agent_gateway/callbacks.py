@@ -685,20 +685,43 @@ async def send_message(request: SendMessageRequest) -> SendMessageResponse:
 # ---------------------------------------------------------------------------
 
 # How many tool entries to show in the live cluster block
-_TOOL_CLUSTER_DISPLAY_COUNT = 3
+_TOOL_CLUSTER_DISPLAY_COUNT = 2
 
 # Max characters for a command string in the cluster display
 _TOOL_COMMAND_MAX_LEN = 100
 
 
+def _escape_mrkdwn(text: str) -> str:
+    """Escape characters that Slack mrkdwn interprets specially in context elements.
+
+    Context block elements are rendered as mrkdwn (unlike code-fence content which
+    is rendered literally).  Raw tool output injected without escaping can:
+      - send notifications (<@U123>, <!here>, <!channel>)
+      - render as hyperlinks (<https://url|label>)
+      - corrupt the visual layout (* _ ` sequences)
+
+    We escape the three HTML entities that Slack requires before any other
+    substitution, which neutralises all link/mention/entity markup.  Backticks
+    are left as-is because they produce harmless inline-code spans inside context
+    blocks and are not a security concern.
+
+    Args:
+        text: Raw string that may contain Slack-special sequences.
+
+    Returns:
+        Escaped string safe for direct inclusion in a mrkdwn context element.
+    """
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def _render_tool_cluster(entries: list[ToolUseEntry]) -> str:
-    """Render the last up-to-3 tool entries as Slack mrkdwn for a context block.
+    """Render the last up-to-2 tool entries as Slack mrkdwn for a context block.
 
     Format per entry:
         🔧 *toolname* (command)
         ⎿  ... | [DONE] content | [EMPTY] | [FAILED] error
 
-    A ``(N tools used)`` footer is appended when total > 3.
+    A ``(N tools used)`` footer is appended when total > 2.
 
     Args:
         entries: All tool entries for the session (ordered by insertion).
@@ -718,12 +741,12 @@ def _render_tool_cluster(entries: list[ToolUseEntry]) -> str:
         if entry.result_status == ToolResultStatus.RUNNING:
             lines.append("⎿  _..._")
         elif entry.result_status == ToolResultStatus.DONE:
-            content = entry.result_content or ""
+            content = _escape_mrkdwn(entry.result_content or "")
             lines.append(f"⎿  [DONE] {content}" if content else "⎿  [DONE]")
         elif entry.result_status == ToolResultStatus.EMPTY:
             lines.append("⎿  [EMPTY]")
         else:  # FAILED
-            err = (entry.error_msg or "")[:50]
+            err = _escape_mrkdwn((entry.error_msg or "")[:50])
             if entry.error_msg and len(entry.error_msg) > 50:
                 err += "..."
             lines.append(f"⎿  [FAILED] {err}" if err else "⎿  [FAILED]")
@@ -824,8 +847,8 @@ async def handle_tool_event(request: SendToolEventRequest) -> SendToolEventRespo
 # Status update (live tool-use hints rendered as a muted context block)
 # ---------------------------------------------------------------------------
 
-# Slack context block mrkdwn max length
-_STATUS_MAX_TEXT_LENGTH = 3000
+# Slack context block mrkdwn element max length (context blocks cap at 2000, section blocks at 3000)
+_STATUS_MAX_TEXT_LENGTH = 2000
 
 
 async def flush_status_update(session_id: str, session: AgentSession | None = None) -> SendStatusUpdateResponse:

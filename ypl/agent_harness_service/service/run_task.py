@@ -596,7 +596,7 @@ async def _run_agent_task(
                                     if isinstance(_b, dict) and _b.get("text"):
                                         _raw_text = str(_b["text"])
                                         break
-                            _first_line = _raw_text.strip().split("\n")[0].strip()
+                            _first_line = _raw_text.strip().splitlines()[0].strip() if _raw_text.strip() else ""
                             if _first_line:
                                 _result_content = _first_line[:150]
                         try:
