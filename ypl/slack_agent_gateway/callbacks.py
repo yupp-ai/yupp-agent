@@ -692,11 +692,11 @@ _TOOL_COMMAND_MAX_LEN = 100
 
 
 def _render_tool_cluster(entries: list[ToolUseEntry]) -> str:
-    """Render the last up-to-3 tool entries as a Slack mrkdwn code block.
+    """Render the last up-to-3 tool entries as Slack mrkdwn for a context block.
 
     Format per entry:
-        toolname (command)
-        ⎿  DONE | EMPTY | FAILED: error | ...
+        🔧 *toolname* (command)
+        ⎿  ... | [DONE] content | [EMPTY] | [FAILED] error
 
     A ``(N tools used)`` footer is appended when total > 3.
 
@@ -704,7 +704,7 @@ def _render_tool_cluster(entries: list[ToolUseEntry]) -> str:
         entries: All tool entries for the session (ordered by insertion).
 
     Returns:
-        Slack mrkdwn string using a fenced code block.
+        Slack mrkdwn string suitable for a context block element (no code fences).
     """
     total = len(entries)
     visible = entries[-_TOOL_CLUSTER_DISPLAY_COUNT:]
@@ -713,26 +713,25 @@ def _render_tool_cluster(entries: list[ToolUseEntry]) -> str:
         cmd = entry.command or ""
         if len(cmd) > _TOOL_COMMAND_MAX_LEN:
             cmd = cmd[: _TOOL_COMMAND_MAX_LEN - 3] + "..."
-        header = f"{entry.name} ({cmd})" if cmd else entry.name
+        header = f"🔧 *{entry.name}* ({cmd})" if cmd else f"🔧 *{entry.name}*"
         lines.append(header)
         if entry.result_status == ToolResultStatus.RUNNING:
-            lines.append("⎿  ...")
+            lines.append("⎿  _..._")
         elif entry.result_status == ToolResultStatus.DONE:
-            lines.append("⎿  DONE")
+            content = entry.result_content or ""
+            lines.append(f"⎿  [DONE] {content}" if content else "⎿  [DONE]")
         elif entry.result_status == ToolResultStatus.EMPTY:
-            lines.append("⎿  EMPTY")
+            lines.append("⎿  [EMPTY]")
         else:  # FAILED
             err = (entry.error_msg or "")[:50]
             if entry.error_msg and len(entry.error_msg) > 50:
                 err += "..."
-            lines.append(f"⎿  FAILED: {err}" if err else "⎿  FAILED")
+            lines.append(f"⎿  [FAILED] {err}" if err else "⎿  [FAILED]")
 
-    content = "\n".join(lines)
+    text = "\n".join(lines)
     if total > _TOOL_CLUSTER_DISPLAY_COUNT:
-        content += f"\n({total} tools used)"
-    # Escape any triple backticks in tool output so they don't break the code block.
-    content = content.replace("```", "'''")
-    return f"```\n{content}\n```"
+        text += f"\n_{total} tools used_"
+    return text
 
 
 def _render_tool_summary(entries: list[ToolUseEntry]) -> str:
@@ -794,6 +793,7 @@ async def handle_tool_event(request: SendToolEventRequest) -> SendToolEventRespo
             request.tool_use_id,
             ToolResultStatus(request.result_status or "done"),
             request.error_msg,
+            request.result_content,
         )
 
     # Signal that tool entries were updated so flush_status_update renders the cluster.
@@ -884,8 +884,8 @@ async def flush_status_update(session_id: str, session: AgentSession | None = No
         text = _render_tool_cluster(entries)
         if len(text) > _STATUS_MAX_TEXT_LENGTH:
             text = text[: _STATUS_MAX_TEXT_LENGTH - 3] + "..."
-        # Tool cluster: standalone section block (not muted context)
-        blocks: list[dict] = [{"type": "section", "text": {"type": "mrkdwn", "text": text}}]
+        # Tool cluster: muted context block (same as legacy status path)
+        blocks: list[dict] = [{"type": "context", "elements": [{"type": "mrkdwn", "text": text}]}]
     else:
         # Legacy plain-text path: context block (muted gray).
         text = raw_pending or ""
