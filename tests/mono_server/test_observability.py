@@ -72,7 +72,7 @@ class TestServiceFieldProcessor:
         with patch.dict(os.environ, {"SERVICE_NAME": "ahs"}, clear=False):
             from ypl.structured_logger import _service_field_processor
 
-            result = _service_field_processor(None, "info", {"event": "hello"})  # type: ignore[arg-type]
+            result = _service_field_processor(None, "info", {"event": "hello"})
         assert result["service"] == "ahs"
 
     def test_service_field_defaults_to_yupp_agent(self) -> None:
@@ -81,7 +81,7 @@ class TestServiceFieldProcessor:
         with patch.dict(os.environ, env_without, clear=True):
             from ypl.structured_logger import _service_field_processor
 
-            result = _service_field_processor(None, "info", {"event": "hello"})  # type: ignore[arg-type]
+            result = _service_field_processor(None, "info", {"event": "hello"})
         assert result["service"] == "yupp-agent"
 
     def test_explicit_service_field_not_overwritten(self) -> None:
@@ -89,9 +89,7 @@ class TestServiceFieldProcessor:
         with patch.dict(os.environ, {"SERVICE_NAME": "ahs"}, clear=False):
             from ypl.structured_logger import _service_field_processor
 
-            result = _service_field_processor(  # type: ignore[arg-type]
-                None, "info", {"event": "hello", "service": "my-custom-service"}
-            )
+            result = _service_field_processor(None, "info", {"event": "hello", "service": "my-custom-service"})
         assert result["service"] == "my-custom-service"
 
     def test_other_fields_untouched(self) -> None:
@@ -99,7 +97,7 @@ class TestServiceFieldProcessor:
             from ypl.structured_logger import _service_field_processor
 
             event_dict: dict[str, Any] = {"event": "msg", "session_id": "abc", "level": "info"}
-            result = _service_field_processor(None, "info", event_dict)  # type: ignore[arg-type]
+            result = _service_field_processor(None, "info", event_dict)
         assert result["event"] == "msg"
         assert result["session_id"] == "abc"
         assert result["service"] == "sag"
