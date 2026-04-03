@@ -4,21 +4,27 @@ Composes AHS, SAG, and MCP into a single FastAPI application with a
 combined lifespan, enabling the entire agent platform to run as one process.
 
 Route layout:
-  /ahs/*            — Agent Harness Service (router already carries /ahs prefix)
-  /mcp/harness/*    — Harness MCP server (FastMCP, for agents)
-  /mcp/yuppster/*   — Yuppster MCP server (FastMCP, for developers)
-  /gw/slack/*       — Slack gateway (SAG; toggled by GATEWAY_SLACK_ENABLED)
-  /gw/github/*      — GitHub webhook gateway (toggled by GATEWAY_GITHUB_ENABLED)
-  /health           — Liveness probe — always 200 OK
+  /ahs/*   — Agent Harness Service (router already carries /ahs prefix)
+  /mcp/*   — Unified MCP server (FastMCP, agents + developers, single mount)
+  /gw/slack/*    — Slack gateway (SAG; toggled by GATEWAY_SLACK_ENABLED)
+  /gw/github/*   — GitHub webhook gateway (toggled by GATEWAY_GITHUB_ENABLED)
+  /health  — Liveness probe — always 200 OK
 
 Startup order:
   1. AHS (registers orchestration callbacks, warms process pool, etc.)
-  2. Harness MCP lifespan (via AHSState._mcp_lifespan_ctx)
-  3. Yuppster MCP (batch-system init + FastMCP session-manager)
-  4. Slack gateway (if GATEWAY_SLACK_ENABLED=true)
+  2. Unified MCP lifespan (via AHSState._mcp_lifespan_ctx)
+  3. register_unified_tools() — imports tools from both FastMCP instances
+  4. Yuppster batch-system init (mcp_startup)
+  5. Slack gateway (if GATEWAY_SLACK_ENABLED=true)
 
 Shutdown is in strict reverse order so in-flight AHS tasks can still use
 MCP tools while the scheduler drains.
+
+Auth at /mcp:
+  - ``x-ahs-token`` header (or ``Bearer <secret>:<session_id>``) → agent
+  - ``Bearer yupp_dev_*`` → developer (validated against yuppdb; 503 when
+    yuppdb is not configured, e.g. one-box mode)
+  - Any other request → 401 Unauthorized
 
 All standalone server entrypoints (AHS, SAG, MCP) remain functional and
 unchanged — the monolith is an *additive* composition, not a replacement.
@@ -39,43 +45,15 @@ import ypl.mcp_server.mcp_tools  # noqa: F401
 from ypl.agent_harness_service.common.auth import verify_api_key
 from ypl.agent_harness_service.github_webhook import webhook_router
 from ypl.agent_harness_service.lifespan import AHSState, ahs_shutdown, ahs_startup
-from ypl.agent_harness_service.middleware import AHSRequestLoggingMiddleware, McpTokenAuthMiddleware
+from ypl.agent_harness_service.middleware import AHSRequestLoggingMiddleware
 from ypl.agent_harness_service.projects.project_routes import project_router
 from ypl.agent_harness_service.routes import router as ahs_router
-from ypl.agent_harness_service.tools.local_mcp_server import mcp as harness_mcp
 from ypl.backend.routes.v1.yuppaste import router as yuppaste_router
-from ypl.mcp_server.core import mcp_server as yuppster_mcp_server
 from ypl.mcp_server.lifespan import mcp_shutdown, mcp_startup
 from ypl.mono_server.config import MonoConfig
+from ypl.mono_server.unified_mcp import register_unified_tools, unified_mcp_http_app
 from ypl.slack_agent_gateway.lifespan import SAGState, sag_shutdown, sag_startup
 from ypl.slack_agent_gateway.routes import router as sag_router
-
-# ---------------------------------------------------------------------------
-# Sub-app creation (module level — shared across all requests)
-# ---------------------------------------------------------------------------
-
-# Harness MCP app — exactly the same configuration as the standalone AHS server
-# (path="/", transport=streamable-http, json_response, stateless).
-# McpTokenAuthMiddleware is applied here so agents authenticating via the
-# x-ahs-token header pass through correctly.
-harness_mcp_app = harness_mcp.http_app(
-    path="/",
-    transport="streamable-http",
-    json_response=True,
-    stateless_http=True,
-)
-harness_mcp_app.add_middleware(McpTokenAuthMiddleware)
-
-# Yuppster MCP app — created with path="/" so it can be cleanly mounted at
-# /mcp/yuppster in the parent FastAPI app (Starlette strips the mount prefix
-# before dispatching to the sub-app).  Tools are already registered above via
-# the mcp_tools side-effect import.
-yuppster_mcp_http_app = yuppster_mcp_server.http_app(
-    path="/",
-    transport="streamable-http",
-    json_response=True,
-    stateless_http=True,
-)
 
 # ---------------------------------------------------------------------------
 # Router setup guard
@@ -114,59 +92,61 @@ async def combined_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Orchestrate startup and shutdown of all services in the monolith.
 
     Startup order:
-      1. AHS (creates harness MCP lifespan ctx internally)
-      2. Enter harness MCP lifespan (via AHSState._mcp_lifespan_ctx)
-      3. Yuppster MCP batch-system init
-      4. Enter yuppster MCP session-manager lifespan
+      1. AHS (wires orchestration callbacks, starts warm process pool,
+         launches scheduler, creates unified MCP lifespan context)
+      2. Enter unified MCP lifespan (via AHSState._mcp_lifespan_ctx)
+      3. register_unified_tools() — copy all tools from harness + yuppster
+         FastMCP instances into the unified instance
+      4. Yuppster batch-system init (mcp_startup)
       5. Slack gateway (if enabled)
 
     Shutdown is the mirror image of startup.  AHS shutdown runs *inside* the
-    harness MCP lifespan context so that in-flight scheduler tasks can still
+    unified MCP lifespan context so that in-flight scheduler tasks can still
     call MCP tools while the drain completes.
     """
     config = MonoConfig()
 
     # --- 1. AHS startup -------------------------------------------------------
     # ahs_startup() wires orchestration callbacks, starts the warm process pool,
-    # launches the scheduler, and returns a state object that carries the harness
+    # launches the scheduler, and returns a state object that carries the unified
     # MCP lifespan context manager (not yet entered).
-    ahs_state: AHSState = await ahs_startup(app, harness_mcp_app)
+    ahs_state: AHSState = await ahs_startup(app, unified_mcp_http_app)
 
-    # --- 2. Harness MCP lifespan (FastMCP session manager) --------------------
+    # --- 2. Unified MCP lifespan (FastMCP session manager) --------------------
     # Enter via the unentered context manager stored in ahs_state so real
     # exception info is forwarded to __aexit__ on a crash (same pattern as the
     # standalone AHS server).
-    # TODO: Expose a public property on AHSState for the MCP lifespan context
-    # manager so callers don't need to access the private _mcp_lifespan_ctx
-    # field directly.  The pattern is intentional (see AHSState docstring) but
-    # the underscore prefix signals an abstraction boundary.
     async with ahs_state._mcp_lifespan_ctx:
         try:
-            # --- 3 & 4. Yuppster MCP ------------------------------------------
+            # --- 3. Tool registration ------------------------------------------
+            # Both harness and yuppster tool registrations have already fired at
+            # module load time via side-effect imports (local_mcp_server import +
+            # mcp_tools import at the top of this file).  import_server() copies
+            # the fully-populated tool registries into unified_mcp.
+            await register_unified_tools()
+
+            # --- 4. Yuppster batch-system init --------------------------------
             await mcp_startup()
             try:
-                async with yuppster_mcp_http_app.lifespan(yuppster_mcp_http_app):
-                    # --- 5. Gateways ------------------------------------------
-                    sag_state: SAGState | None = None
-                    if config.gateway_slack_enabled:
-                        sag_state = await sag_startup()
+                # --- 5. Gateways ------------------------------------------
+                sag_state: SAGState | None = None
+                if config.gateway_slack_enabled:
+                    sag_state = await sag_startup()
 
-                    try:
-                        yield
-                    finally:
-                        # Shutdown in reverse order
-                        if sag_state is not None:
-                            await sag_shutdown(sag_state)
+                try:
+                    yield
+                finally:
+                    # Shutdown in reverse order
+                    if sag_state is not None:
+                        await sag_shutdown(sag_state)
             finally:
-                # Yuppster MCP teardown (batch-system flush, Sentry close, GCP log
-                # flush).  The finally block ensures mcp_shutdown runs even if
-                # sag_startup() raises or the yuppster MCP lifespan __aexit__ raises.
+                # Yuppster MCP teardown (batch-system flush, Sentry close, GCP
+                # log flush).  The finally block ensures mcp_shutdown runs even
+                # if sag_startup() raises or the yield block raises.
                 await mcp_shutdown()
         finally:
-            # AHS teardown — inside harness MCP lifespan so in-flight tasks
+            # AHS teardown — inside unified MCP lifespan so in-flight tasks
             # that call MCP tools during scheduler drain can still complete.
-            # The finally block ensures ahs_shutdown runs even if mcp_startup()
-            # or the yuppster MCP lifespan raises.
             await ahs_shutdown(ahs_state)
 
 
@@ -213,15 +193,11 @@ def create_app() -> FastAPI:
     _setup_ahs_router(config)
     application.include_router(ahs_router)
 
-    # --- Harness MCP (agents connect here) -----------------------------------
-    application.mount("/mcp/harness", harness_mcp_app)
-
-    # --- Yuppster MCP (developers/IDEs connect here) -------------------------
-    # No auth middleware on this mount by design: the monolith is intended for
-    # local / personal deployments where all callers on the network are trusted.
-    # For shared or remote deployments, place the monolith behind a
-    # network-layer auth proxy (e.g. Cloud IAP or an nginx auth_request).
-    application.mount("/mcp/yuppster", yuppster_mcp_http_app)
+    # --- Unified MCP (/mcp — agents and developers share one endpoint) -------
+    # Auth is handled by UnifiedMcpAuthMiddleware (already attached to the app):
+    #   - x-ahs-token header → agent context (process-local secret, no DB)
+    #   - Bearer yupp_dev_* → developer context (validated against yuppdb)
+    application.mount("/mcp", unified_mcp_http_app)
 
     # --- Slack gateway (pluggable) -------------------------------------------
     if config.gateway_slack_enabled:
@@ -254,11 +230,6 @@ def create_app() -> FastAPI:
         The content-type header already matches what Prometheus expects, so no
         scrape-config changes are needed once real metrics are wired in.
         """
-        # Empty-but-valid Prometheus payload.  Using a stub metric with a
-        # hardcoded value of 1 is misleading (it would never fire an alert
-        # even if the process were actually broken) and duplicates the
-        # built-in Prometheus `up` metric.  Swap in
-        # ``prometheus_client.generate_latest()`` once instrumentation is wired.
         content = "# Prometheus metrics stub — no instrumentation yet\n"
         return Response(content=content, media_type="text/plain; version=0.0.4; charset=utf-8")
 
