@@ -62,12 +62,6 @@ class TestMetricsEndpoint:
 class TestServiceFieldProcessor:
     """_service_field_processor injects ``service`` into every log record."""
 
-    def _call(self, env: dict[str, str], event_dict: dict[str, Any]) -> dict[str, Any]:
-        from ypl.structured_logger import _service_field_processor
-
-        with patch.dict(os.environ, env, clear=False):
-            return _service_field_processor(None, "info", event_dict)  # type: ignore[arg-type]
-
     def test_service_field_added_from_env(self) -> None:
         with patch.dict(os.environ, {"SERVICE_NAME": "ahs"}, clear=False):
             from ypl.structured_logger import _service_field_processor

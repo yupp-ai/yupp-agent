@@ -140,7 +140,17 @@ def init_console_logger(base_processors: list[Any]) -> structlog.BoundLogger:
             # Machine-readable JSON ------------------------------------------------
             # Rename 'event' → 'message' (consistent with GCL path), then render
             # each log record as a single JSON line.  No colours or padding.
-            console_processors.append(lambda _, __, event_dict: {"message": event_dict.pop("event", ""), **event_dict})
+            def _rename_event_to_message(logger: Any, name: str, event_dict: dict[str, Any]) -> dict[str, Any]:
+                """Rename 'event' → 'message' for JSON log output.
+
+                Uses setdefault so that a pre-bound 'message' key is preserved
+                and we never silently drop a value that was already there.
+                """
+                event = event_dict.pop("event", "")
+                event_dict.setdefault("message", event)
+                return event_dict
+
+            console_processors.append(_rename_event_to_message)
             console_processors.append(structlog.processors.JSONRenderer())
 
             structlog.configure(

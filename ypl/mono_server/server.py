@@ -254,7 +254,12 @@ def create_app() -> FastAPI:
         The content-type header already matches what Prometheus expects, so no
         scrape-config changes are needed once real metrics are wired in.
         """
-        content = "# HELP yupp_agent_up Agent platform is running\n# TYPE yupp_agent_up gauge\nyupp_agent_up 1\n"
+        # Empty-but-valid Prometheus payload.  Using a stub metric with a
+        # hardcoded value of 1 is misleading (it would never fire an alert
+        # even if the process were actually broken) and duplicates the
+        # built-in Prometheus `up` metric.  Swap in
+        # ``prometheus_client.generate_latest()`` once instrumentation is wired.
+        content = "# Prometheus metrics stub — no instrumentation yet\n"
         return Response(content=content, media_type="text/plain; version=0.0.4; charset=utf-8")
 
     return application
