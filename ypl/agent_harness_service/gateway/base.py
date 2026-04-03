@@ -104,6 +104,7 @@ class Gateway(ABC):
         command: str | None = None,
         result_status: str | None = None,
         error_msg: str | None = None,
+        result_content: str | None = None,
     ) -> bool:
         """Push a structured tool-start or tool-result event to the session.
 
@@ -119,6 +120,7 @@ class Gateway(ABC):
             command: Formatted command string shown in the cluster (START only).
             result_status: ``"done"`` | ``"empty"`` | ``"failed"`` (RESULT only).
             error_msg: Short error text when result_status is ``"failed"``.
+            result_content: First line of tool output (DONE only, max 150 chars).
 
         Returns:
             True if the event was accepted, False if unsupported or failed.

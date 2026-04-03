@@ -355,6 +355,7 @@ class SlackGateway(Gateway):
         command: str | None = None,
         result_status: str | None = None,
         error_msg: str | None = None,
+        result_content: str | None = None,
     ) -> bool:
         """Push a structured tool-start or tool-result event to SAG.
 
@@ -378,6 +379,8 @@ class SlackGateway(Gateway):
             payload["result_status"] = result_status
         if error_msg is not None:
             payload["error_msg"] = error_msg
+        if result_content is not None:
+            payload["result_content"] = result_content
 
         try:
             resp = await self._get_client().post(url, json=payload, headers=self._headers())

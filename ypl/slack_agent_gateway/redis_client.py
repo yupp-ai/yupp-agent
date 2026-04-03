@@ -593,6 +593,11 @@ for i, raw in ipairs(entries) do
         else
             entry['error_msg'] = cjson.null
         end
+        if ARGV[5] == '1' then
+            entry['result_content'] = ARGV[6]
+        else
+            entry['result_content'] = cjson.null
+        end
         redis.call('LSET', KEYS[1], i - 1, cjson.encode(entry))
         return 1
     end
@@ -623,6 +628,7 @@ async def update_tool_result(
     tool_use_id: str,
     result_status: ToolResultStatus,
     error_msg: str | None = None,
+    result_content: str | None = None,
 ) -> None:
     """Update the result status of an existing tool entry identified by tool_use_id.
 
@@ -635,6 +641,7 @@ async def update_tool_result(
         tool_use_id: Identifier matching the original tool_use event
         result_status: New status (done / empty / failed)
         error_msg: Short error text (only meaningful for FAILED)
+        result_content: First line of tool output (only meaningful for DONE)
     """
     redis = await get_redis_client()
     key = f"{REDIS_KEY_PREFIX_TOOL_ENTRIES}:{session_id}"
@@ -646,6 +653,8 @@ async def update_tool_result(
         str(result_status),
         "1" if error_msg is not None else "0",
         error_msg or "",
+        "1" if result_content is not None else "0",
+        result_content or "",
     )
 
 

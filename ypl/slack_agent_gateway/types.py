@@ -274,6 +274,7 @@ class ToolUseEntry(BaseModel):
     command: str = Field(..., description="Formatted command string shown in the cluster block (max 200 chars)")
     result_status: ToolResultStatus = Field(default=ToolResultStatus.RUNNING, description="Current result status")
     error_msg: str | None = Field(None, description="Short error message (FAILED only, max 50 chars)")
+    result_content: str | None = Field(None, description="First line of tool output (DONE only, max 150 chars)")
 
 
 class ToolEventKind(StrEnum):
@@ -288,7 +289,7 @@ class SendToolEventRequest(BaseModel):
 
     AHS sends a START event when a tool call begins (name + command known) and
     a RESULT event when the result arrives (result_status + optional error_msg).
-    SAG accumulates entries per session, renders the last 3 in a live code-block
+    SAG accumulates entries per session, renders the last 3 in a live context-block
     message edited in-place, and replaces it with a summary when text output starts.
     """
 
@@ -305,6 +306,7 @@ class SendToolEventRequest(BaseModel):
         None, description="Result status (required for 'result' events)"
     )
     error_msg: str | None = Field(None, description="Short error text (FAILED only, max 50 chars)")
+    result_content: str | None = Field(None, description="First line of tool output (DONE only, max 150 chars)")
 
 
 class SendToolEventResponse(BaseModel):
