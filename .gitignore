@@ -66,6 +66,7 @@ cover/
 # Environments
 .env*
 !.env.test
+!.env.template
 .venv
 env/
 venv/
