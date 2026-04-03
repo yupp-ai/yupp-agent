@@ -99,7 +99,7 @@ def build_async_db_url(user: str, password: str, host: str, database: str) -> st
         port=int(port_str) if port_str else 5432,
         database=database,
     )
-    return url.render_as_string(hide_password=False)  # type: ignore[no-any-return]
+    return url.render_as_string(hide_password=False)
 
 
 def generate_env_content(params: dict[str, str]) -> str:
@@ -240,7 +240,7 @@ async def check_redis_connectivity(url: str) -> bool:
     import redis.asyncio as aioredis  # local import
 
     try:
-        r = aioredis.from_url(url, socket_timeout=5)
+        r = aioredis.from_url(url, socket_timeout=5)  # type: ignore[no-untyped-call]
         await r.ping()
         await r.aclose()
         return True
