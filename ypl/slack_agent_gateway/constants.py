@@ -62,6 +62,8 @@ REDIS_KEY_PREFIX_THREAD_SESSION = "slack_agent_gw:thread_session"
 REDIS_KEY_PREFIX_STATUS_PENDING = "slack_agent_gw:status_pending"
 REDIS_KEY_PREFIX_STATUS_RATELIMIT = "slack_agent_gw:status_ratelimit"
 REDIS_KEY_PREFIX_STATUS_FLUSH_SCHEDULE = "slack_agent_gw:status_flush_schedule"
+REDIS_KEY_PREFIX_TOOL_ENTRIES = "slack_agent_gw:tool_entries"
+REDIS_KEY_PREFIX_TOOL_CLUSTER_PENDING = "slack_agent_gw:tool_cluster_pending"
 
 # Redis TTL for thread→AHS-session mapping (24 hours, matching session TTL)
 THREAD_SESSION_MAPPING_TTL_SECONDS = 24 * 60 * 60
@@ -80,6 +82,9 @@ STATUS_RATELIMIT_SECONDS = 2
 
 # Redis TTL for pending status text (1 minute — short-lived hints)
 STATUS_PENDING_TTL_SECONDS = 60
+
+# Redis TTL for tool entries list (24 hours, matching session TTL)
+TOOL_ENTRIES_TTL_SECONDS = 24 * 60 * 60
 
 
 def _load_agent_configs_from_env() -> dict[str, AgentAppConfig]:

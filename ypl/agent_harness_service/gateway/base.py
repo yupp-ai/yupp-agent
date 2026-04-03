@@ -94,6 +94,37 @@ class Gateway(ABC):
         """
         return False
 
+    async def send_tool_event(
+        self,
+        session_id: str,
+        kind: str,
+        tool_use_id: str,
+        *,
+        name: str | None = None,
+        command: str | None = None,
+        result_status: str | None = None,
+        error_msg: str | None = None,
+    ) -> bool:
+        """Push a structured tool-start or tool-result event to the session.
+
+        Optional — the default no-op implementation returns ``False`` for
+        gateways that do not support the structured tool-cluster display.
+        Only the Slack gateway currently overrides this.
+
+        Args:
+            session_id: The gateway session identifier.
+            kind: ``"start"`` (tool call begins) or ``"result"`` (result arrives).
+            tool_use_id: Unique identifier that correlates start ↔ result events.
+            name: Tool name (required for ``"start"`` events, e.g. "Bash").
+            command: Formatted command string shown in the cluster (START only).
+            result_status: ``"done"`` | ``"empty"`` | ``"failed"`` (RESULT only).
+            error_msg: Short error text when result_status is ``"failed"``.
+
+        Returns:
+            True if the event was accepted, False if unsupported or failed.
+        """
+        return False
+
     async def send_questionnaire(
         self,
         session_id: str,

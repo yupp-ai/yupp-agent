@@ -3,6 +3,7 @@
 Handles session storage, event deduplication, append buffering, and message queuing.
 """
 
+import json
 from datetime import UTC, datetime, timedelta
 
 from ypl.db.redis import get_redis_client
@@ -26,14 +27,17 @@ from ypl.slack_agent_gateway.constants import (
     REDIS_KEY_PREFIX_STATUS_RATELIMIT,
     REDIS_KEY_PREFIX_SURVEY_RESPONSE,
     REDIS_KEY_PREFIX_THREAD_SESSION,
+    REDIS_KEY_PREFIX_TOOL_CLUSTER_PENDING,
+    REDIS_KEY_PREFIX_TOOL_ENTRIES,
     REPLY_MAPPING_TTL_SECONDS,
     SESSION_REDIS_TTL_SECONDS,
     STATUS_PENDING_TTL_SECONDS,
     STATUS_RATELIMIT_SECONDS,
     SURVEY_RESPONSE_TTL_SECONDS,
     THREAD_SESSION_MAPPING_TTL_SECONDS,
+    TOOL_ENTRIES_TTL_SECONDS,
 )
-from ypl.slack_agent_gateway.types import AgentSession, Message, SessionStatus
+from ypl.slack_agent_gateway.types import AgentSession, Message, SessionStatus, ToolResultStatus, ToolUseEntry
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -481,6 +485,53 @@ async def peek_pending_status(session_id: str) -> str | None:
     return result
 
 
+async def set_tool_cluster_pending(session_id: str) -> None:
+    """Signal that tool entries were updated and a cluster flush is needed.
+
+    Mirrors set_pending_status but for the tool-cluster path, so the two
+    signals use separate Redis keys and cannot collide.
+
+    Args:
+        session_id: The session ID
+    """
+    redis = await get_redis_client()
+    key = f"{REDIS_KEY_PREFIX_TOOL_CLUSTER_PENDING}:{session_id}"
+    await redis.set(key, "1", ex=STATUS_PENDING_TTL_SECONDS)
+
+
+async def get_and_clear_tool_cluster_pending(session_id: str) -> bool:
+    """Atomically read and delete the tool-cluster-pending flag.
+
+    Args:
+        session_id: The session ID
+
+    Returns:
+        True if a tool-cluster flush was pending, False otherwise
+    """
+    redis = await get_redis_client()
+    key = f"{REDIS_KEY_PREFIX_TOOL_CLUSTER_PENDING}:{session_id}"
+    result: str | None = await redis.getdel(key)
+    return result is not None
+
+
+async def peek_tool_cluster_pending(session_id: str) -> bool:
+    """Check whether a tool-cluster flush is pending without consuming the flag.
+
+    Used after a flush completes to detect whether a new tool event arrived
+    in the window, so the caller can reschedule if needed.
+
+    Args:
+        session_id: The session ID
+
+    Returns:
+        True if a tool-cluster flush is pending, False otherwise
+    """
+    redis = await get_redis_client()
+    key = f"{REDIS_KEY_PREFIX_TOOL_CLUSTER_PENDING}:{session_id}"
+    result: str | None = await redis.get(key)
+    return result is not None
+
+
 async def schedule_status_flush(session_id: str, flush_at: float) -> None:
     """Schedule a deferred status-update flush.
 
@@ -520,6 +571,112 @@ async def remove_from_status_flush_schedule(session_id: str) -> None:
     """
     redis = await get_redis_client()
     await redis.zrem(REDIS_KEY_PREFIX_STATUS_FLUSH_SCHEDULE, session_id)
+
+
+# Tool entry operations (structured tool-use tracking for the cluster display)
+
+
+# Lua script for atomic tool-result update on a Redis List.
+# Scans the list for the entry whose tool_use_id matches ARGV[1], updates its
+# result_status and error_msg in-place using LSET, and returns 1 on success or
+# 0 when the id is not found.  Using a Lua script makes the scan-and-update
+# atomic so concurrent START appends cannot interleave between our LRANGE read
+# and the subsequent LSET write.
+_LUA_UPDATE_TOOL_RESULT = """
+local entries = redis.call('LRANGE', KEYS[1], 0, -1)
+for i, raw in ipairs(entries) do
+    local entry = cjson.decode(raw)
+    if entry['tool_use_id'] == ARGV[1] then
+        entry['result_status'] = ARGV[2]
+        if ARGV[3] == '1' then
+            entry['error_msg'] = ARGV[4]
+        else
+            entry['error_msg'] = cjson.null
+        end
+        redis.call('LSET', KEYS[1], i - 1, cjson.encode(entry))
+        return 1
+    end
+end
+return 0
+"""
+
+
+async def append_tool_entry(session_id: str, entry: ToolUseEntry) -> None:
+    """Append a new tool-use entry to the session's ordered list.
+
+    Uses RPUSH for an atomic append so concurrent START events in the same batch
+    cannot overwrite each other (no GET-then-SET race).  TTL is reset on every
+    append so the list outlives the session's soft-expiration window.
+
+    Args:
+        session_id: The session ID
+        entry: The tool-use entry to append
+    """
+    redis = await get_redis_client()
+    key = f"{REDIS_KEY_PREFIX_TOOL_ENTRIES}:{session_id}"
+    await redis.rpush(key, json.dumps(entry.model_dump()))  # type: ignore[misc]
+    await redis.expire(key, TOOL_ENTRIES_TTL_SECONDS)
+
+
+async def update_tool_result(
+    session_id: str,
+    tool_use_id: str,
+    result_status: ToolResultStatus,
+    error_msg: str | None = None,
+) -> None:
+    """Update the result status of an existing tool entry identified by tool_use_id.
+
+    Uses a Lua script so the scan-and-update is atomic — a concurrent RPUSH
+    (START event) cannot land between the LRANGE read and the LSET write.
+    No-op if the session has no entries or the ID is not found.
+
+    Args:
+        session_id: The session ID
+        tool_use_id: Identifier matching the original tool_use event
+        result_status: New status (done / empty / failed)
+        error_msg: Short error text (only meaningful for FAILED)
+    """
+    redis = await get_redis_client()
+    key = f"{REDIS_KEY_PREFIX_TOOL_ENTRIES}:{session_id}"
+    await redis.eval(  # type: ignore[misc]
+        _LUA_UPDATE_TOOL_RESULT,
+        1,
+        key,
+        tool_use_id,
+        str(result_status),
+        "1" if error_msg is not None else "0",
+        error_msg or "",
+    )
+
+
+async def get_tool_entries(session_id: str) -> list[ToolUseEntry]:
+    """Return all tool-use entries for a session in insertion order.
+
+    Args:
+        session_id: The session ID
+
+    Returns:
+        List of ToolUseEntry (empty if none recorded yet)
+    """
+    redis = await get_redis_client()
+    key = f"{REDIS_KEY_PREFIX_TOOL_ENTRIES}:{session_id}"
+    raw_list: list[str] = await redis.lrange(key, 0, -1)  # type: ignore[misc]
+    if not raw_list:
+        return []
+    return [ToolUseEntry.model_validate(json.loads(raw)) for raw in raw_list]
+
+
+async def clear_tool_entries(session_id: str) -> None:
+    """Delete all tool-use entries for a session.
+
+    Called when a real text reply arrives and the tool cluster is finalised.
+
+    Args:
+        session_id: The session ID
+    """
+    redis = await get_redis_client()
+    key = f"{REDIS_KEY_PREFIX_TOOL_ENTRIES}:{session_id}"
+    await redis.delete(key)
 
 
 async def get_next_status_flush_time() -> float | None:

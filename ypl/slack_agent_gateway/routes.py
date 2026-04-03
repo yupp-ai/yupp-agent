@@ -25,6 +25,7 @@ from ypl.slack_agent_gateway.bot_father_types import (
 from ypl.slack_agent_gateway.buffer import append_to_reply
 from ypl.slack_agent_gateway.callbacks import (
     add_reply,
+    handle_tool_event,
     request_feedback,
     send_message,
     send_questionnaire,
@@ -49,6 +50,8 @@ from ypl.slack_agent_gateway.types import (
     SendQuestionnaireResponse,
     SendStatusUpdateRequest,
     SendStatusUpdateResponse,
+    SendToolEventRequest,
+    SendToolEventResponse,
     SlackSessionInfoResponse,
     UpdateReplyRequest,
     UpdateReplyResponse,
@@ -206,6 +209,36 @@ async def post_questionnaire(request_body: SendQuestionnaireRequest) -> SendQues
         SendQuestionnaireResponse with success status and message_ts
     """
     return await send_questionnaire(request_body)
+
+
+@router.post("/sessions/tool", dependencies=[Depends(verify_api_key)])
+async def post_tool_event(request_body: SendToolEventRequest) -> SendToolEventResponse:
+    """Accept a structured tool-start or tool-result event from AHS.
+
+    AHS calls this endpoint for every tool invocation:
+    - kind='start': tool name + formatted command are known; SAG creates a new
+      entry (status=RUNNING) and triggers a rate-limited flush.
+    - kind='result': result status (done/empty/failed) + optional error are
+      known; SAG updates the matching entry and triggers another flush.
+
+    SAG renders the last 3 entries as a live code-block message edited in-place.
+    When the next real text reply arrives, the cluster is replaced with a summary.
+    Requires X-API-Key header for authentication.
+
+    Args:
+        request_body: SendToolEventRequest with session_id, kind, tool_use_id, and
+            name/command (START) or result_status/error_msg (RESULT).
+
+    Returns:
+        SendToolEventResponse with success status and optional message_ts
+
+    Raises:
+        HTTPException: 404 if the session is not found (expired or never existed).
+    """
+    result = await handle_tool_event(request_body)
+    if not result.success and result.error == "Session not found":
+        raise HTTPException(status_code=404, detail="Session not found")
+    return result
 
 
 @router.post("/sessions/status", dependencies=[Depends(verify_api_key)])
