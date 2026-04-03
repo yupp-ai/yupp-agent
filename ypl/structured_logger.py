@@ -28,6 +28,23 @@ from ypl.loggers.processors import (
 load_dotenv()
 
 
+def _service_field_processor(logger: Any, name: str, event_dict: dict[str, Any]) -> dict[str, Any]:
+    """Inject a ``service`` field from the SERVICE_NAME env var into every log record.
+
+    Defaults to ``"yupp-agent"`` when SERVICE_NAME is not set.  Deployments
+    should set ``SERVICE_NAME`` to an identifier matching the running component
+    (e.g. ``"ahs"``, ``"sag"``, ``"mcp"``, ``"mono_server"``) so that logs
+    from different services can be correlated and filtered independently in any
+    log viewer or aggregator (systemd journal, Loki, Cloud Logging, etc.).
+
+    Uses :func:`dict.setdefault` so an explicitly bound ``service`` key (e.g.
+    via ``structlog.contextvars.bind_contextvars(service=…)``) is never
+    overwritten.
+    """
+    event_dict.setdefault("service", os.environ.get("SERVICE_NAME", "yupp-agent"))
+    return event_dict
+
+
 @dataclass
 class LoggerConfig:
     timestamp: bool = True
@@ -84,6 +101,7 @@ def setup_logger() -> structlog.BoundLogger:
                 structlog.processors.CallsiteParameter.THREAD_NAME,
             }
         ),
+        _service_field_processor,
         FilterFieldsProcessor(),
         SerializeModelsProcessor(),
         NormalizeErrorMessageProcessor(),
