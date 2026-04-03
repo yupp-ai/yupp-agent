@@ -282,7 +282,7 @@ def _read_db_url_from_env(env_path: Path) -> str:
     for line in env_path.read_text().splitlines():
         line = line.strip()
         if line.startswith("POSTGRES_CONNECTION_AGENTDB="):
-            raw = line[len("POSTGRES_CONNECTION_AGENTDB="):]
+            raw = line[len("POSTGRES_CONNECTION_AGENTDB=") :]
             pg = json.loads(raw)
             return build_async_db_url(pg["user"], pg["password"], pg["host"], pg["database"])
     raise ValueError(
@@ -326,6 +326,14 @@ async def setup_interactive() -> int:
         except (ValueError, KeyError, json.JSONDecodeError) as exc:
             console.print(f"[red]✗ Cannot read DB credentials from existing .env: {exc}[/red]")
             return 1
+        # Propagate the raw connection JSON into the subprocess environment so
+        # Alembic (invoked via subprocess in Step 5) connects to the correct
+        # database, regardless of what the parent shell has set.
+        for _line in env_path.read_text().splitlines():
+            _line = _line.strip()
+            if _line.startswith("POSTGRES_CONNECTION_AGENTDB="):
+                os.environ["POSTGRES_CONNECTION_AGENTDB"] = _line[len("POSTGRES_CONNECTION_AGENTDB=") :]
+                break
     else:
         # ------------------------------------------------------------------
         # Step 1 — Collect database credentials
