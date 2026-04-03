@@ -585,6 +585,20 @@ async def _run_agent_task(
                         _is_error = block.get("is_error", False)
                         _output = block.get("output") or block.get("content", "")
                         _result_status, _error_msg = _determine_result_status(_output, _is_error)
+                        # Extract the first non-empty line of output for the live display.
+                        _result_content: str | None = None
+                        if _result_status == "done" and _output:
+                            _raw_text: str = ""
+                            if isinstance(_output, str):
+                                _raw_text = _output
+                            elif isinstance(_output, list):
+                                for _b in _output:
+                                    if isinstance(_b, dict) and _b.get("text"):
+                                        _raw_text = str(_b["text"])
+                                        break
+                            _first_line = _raw_text.strip().splitlines()[0].strip() if _raw_text.strip() else ""
+                            if _first_line:
+                                _result_content = _first_line[:150]
                         try:
                             _t = asyncio.create_task(
                                 gateway.send_tool_event(
@@ -593,6 +607,7 @@ async def _run_agent_task(
                                     tool_use_id=_tool_use_id,
                                     result_status=_result_status,
                                     error_msg=_error_msg,
+                                    result_content=_result_content,
                                 )
                             )
                             _t.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
