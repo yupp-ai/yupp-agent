@@ -152,9 +152,7 @@ The monolith exposes a **stub** Prometheus metrics endpoint at `GET /metrics`.
 HTTP/1.1 200 OK
 Content-Type: text/plain; version=0.0.4; charset=utf-8
 
-# HELP yupp_agent_up Agent platform is running
-# TYPE yupp_agent_up gauge
-yupp_agent_up 1
+# Prometheus metrics stub — no instrumentation yet
 ```
 
 The content-type already matches Prometheus's scrape format, so a scrape config like
