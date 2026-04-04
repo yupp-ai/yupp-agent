@@ -237,6 +237,34 @@ async def read_slack_thread(
 
         return result
 
+    except SlackApiError as e:
+        slack_error = e.response.get("error", "unknown_slack_error")
+        if slack_error == "not_in_channel":
+            friendly = (
+                f"Bot is not a member of channel {channel} — "
+                "please invite the Yupp MCP bot to the channel first "
+                "(e.g. type `/invite @YuppMCP` in the channel, or go to the channel's Apps/Integrations settings)."
+            )
+            logger.warning(
+                "Slack bot not in channel",
+                channel=channel,
+                thread_ts=thread_ts,
+                slack_error=slack_error,
+            )
+            return {"success": False, "error": friendly, "slack_error": slack_error}
+        if slack_error == "channel_not_found":
+            return {
+                "success": False,
+                "error": f"Channel '{channel}' was not found — verify the channel ID is correct.",
+                "slack_error": slack_error,
+            }
+        logger.warning(
+            "Slack API error reading thread",
+            error=slack_error,
+            channel=channel,
+            thread_ts=thread_ts,
+        )
+        return {"success": False, "error": str(e), "slack_error": slack_error}
     except Exception as e:
         logger.warning("Error reading Slack thread", error=str(e), channel=channel, thread_ts=thread_ts)
         return {"success": False, "error": str(e)}
