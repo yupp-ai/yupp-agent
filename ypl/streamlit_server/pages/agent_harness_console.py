@@ -18,6 +18,8 @@ from ypl.backend.llm.constants import LINEAR_TO_SLACK_ID
 from ypl.backend.utils.streamlit_utils import run_coroutine_in_lit_worker
 from ypl.db.agent_harness import (
     Agent,
+    AgentArtifact,
+    AgentArtifactType,
     AgentExecutorType,
     AgentFeedback,
     AgentSession,
@@ -176,6 +178,20 @@ async def fetch_single_session(session_id: uuid.UUID) -> AgentSession | None:
         )
         result = await session.exec(query)
         return result.one_or_none()
+
+
+@retry_db
+async def fetch_session_artifacts(session_id: uuid.UUID) -> list[AgentArtifact]:
+    """Fetch all artifacts associated with a session."""
+    async with get_async_session_read_replica() as session:
+        stmt = (
+            select(AgentArtifact)
+            .where(col(AgentArtifact.deleted_at).is_(None))
+            .where(col(AgentArtifact.agent_session_id) == session_id)
+            .order_by(col(AgentArtifact.created_at).asc())
+        )
+        result = await session.exec(stmt)
+        return list(result.all())
 
 
 @retry_db
@@ -1014,6 +1030,37 @@ _CHAT_CSS = """
 # ── Chat thread view ─────────────────────────────────────────────────────────
 
 
+_ARTIFACT_TYPE_ICON: dict[AgentArtifactType, str] = {
+    AgentArtifactType.YUPPASTE: "📝",
+    AgentArtifactType.CODE_REVIEW: "🔍",
+    AgentArtifactType.OTHER: "📦",
+}
+
+
+def _md_cell(s: str) -> str:
+    """Escape pipe characters and newlines so the string is safe in a markdown table cell."""
+    return s.replace("|", "\\|").replace("\n", " ")
+
+
+def _render_artifacts_table(artifacts: list[AgentArtifact]) -> None:
+    """Render a compact table of artifacts with links."""
+    if not artifacts:
+        st.caption("No artifacts for this session.")
+        return
+    rows = []
+    for a in artifacts:
+        icon = _ARTIFACT_TYPE_ICON.get(a.artifact_type, "📦")
+        type_str = f"{icon} {a.artifact_type.value}"
+        title_link = f"[{_md_cell(a.title)}]({a.url})"
+        created_str = _to_local(a.created_at)
+        raw_desc = (a.description or "")[:80] + ("…" if a.description and len(a.description) > 80 else "")
+        desc = _md_cell(raw_desc)
+        rows.append(f"| {type_str} | {title_link} | {desc} | {created_str} |")
+    header = "| Type | Title | Description | Created |"
+    sep = "|------|-------|-------------|---------|"
+    st.markdown("\n".join([header, sep] + rows))
+
+
 def _render_chat_thread(agent_session: AgentSession) -> None:
     """Render a single session as a chat thread in chronological order."""
     agent_name = agent_session.agent.display_name if agent_session.agent else "?"
@@ -1151,6 +1198,16 @@ def _render_chat_thread(agent_session: AgentSession) -> None:
                     _render_events_cost_tokens(events_list)
                 with ev_raw_tab:
                     st.json(msg.raw_events)
+
+    # ── Session artifacts ─────────────────────────────────────────────────────
+    st.divider()
+    with st.expander("📦 Artifacts", expanded=True):
+        with st.spinner("Loading artifacts…"):
+            _artifacts = run_coroutine_in_lit_worker(
+                fetch_session_artifacts(agent_session.agent_session_id),
+                timeout=30,
+            )
+        _render_artifacts_table(_artifacts or [])
 
 
 # ── Agent config from repo ────────────────────────────────────────────────────
