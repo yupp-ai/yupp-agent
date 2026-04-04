@@ -1,0 +1,49 @@
+# Cloudflare Tunnel configuration template
+#
+# Prerequisites:
+#   1. Install cloudflared: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
+#   2. Authenticate:  cloudflared tunnel login
+#   3. Create tunnel: cloudflared tunnel create yupp-agent
+#   4. Copy the tunnel ID printed above and paste it below.
+#   5. Add DNS CNAME records (or let cloudflared manage them):
+#        cloudflared tunnel route dns yupp-agent agent.yourdomain.com
+#        cloudflared tunnel route dns yupp-agent agent-ui.yourdomain.com
+#   6. Place this file at: ~/.cloudflared/config.yml  (or /etc/cloudflared/config.yml for system-wide)
+#   7. Run:  cloudflared tunnel run yupp-agent
+#        Or install as a service: cloudflared service install && systemctl start cloudflared
+#
+# Replace ALL occurrences of:
+#   <YOUR_TUNNEL_ID>  — UUID from step 3
+#   yourdomain.com    — your Cloudflare-managed domain
+#   <APP_HOME>        — home directory of the user running cloudflared:
+#                       - bare-metal (yupp user, default): /opt/yupp-agent
+#                       - custom APP_USER with home at /home/<user>: /home/<user>
+#                       Find it with: eval echo "~<your-app-user>"
+
+tunnel: <YOUR_TUNNEL_ID>
+# IMPORTANT: credentials-file must match the actual home directory of the user
+# that ran `cloudflared tunnel login`. The yupp system user created by install.sh
+# has its home at /opt/yupp-agent (--home-dir $INSTALL_DIR), NOT /home/yupp.
+credentials-file: <APP_HOME>/.cloudflared/<YOUR_TUNNEL_ID>.json
+
+# Optional: restrict to specific source IPs (e.g. your office VPN exit node)
+# originRequest:
+#   noTLSVerify: false
+
+ingress:
+  # AHS / MCP / gateway API
+  - hostname: agent.yourdomain.com
+    service: http://localhost:8090
+    originRequest:
+      # Surface real errors (don't retry on 5xx)
+      noHappyEyeballs: false
+      connectTimeout: 10s
+
+  # Streamlit operational dashboards (optional — omit to keep internal-only)
+  - hostname: agent-ui.yourdomain.com
+    service: http://localhost:8501
+    originRequest:
+      connectTimeout: 10s
+
+  # Catch-all — must be last
+  - service: http_status:404
