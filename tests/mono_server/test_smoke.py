@@ -204,23 +204,43 @@ class TestSAGRouteRegistration:
 
 
 class TestGitHubGatewayToggle:
-    """GitHub gateway routes are controlled by GATEWAY_GITHUB_ENABLED."""
+    """GitHub gateway routes are controlled by GATEWAY_GITHUB_ENABLED.
 
-    def test_github_routes_present_by_default(self) -> None:
-        """Default config includes /gw/github/* routes."""
+    The gateway is OFF by default (``gateway_github_enabled=False``) — operators
+    must explicitly opt in by setting ``GATEWAY_GITHUB_ENABLED=true`` and
+    configuring ``AHS_GITHUB_WEBHOOK_SECRET``.
+    """
+
+    def test_github_routes_absent_by_default(self) -> None:
+        """Default config (GATEWAY_GITHUB_ENABLED unset) has no /gw/github/* routes."""
         from ypl.mono_server.server import app
 
         paths = _route_paths(app)
         github_paths = [p for p in paths if "/gw/github" in p]
+        assert not github_paths, f"Unexpected /gw/github routes: {sorted(paths)}"
+
+    def test_github_routes_present_when_enabled(self) -> None:
+        """GATEWAY_GITHUB_ENABLED=true registers /gw/github/* routes.
+
+        A fresh ahs_router is injected so the _ahs_router_setup_done guard does
+        not cache the previous (disabled) state into the shared router object.
+        """
+        from fastapi import APIRouter
+        from ypl.mono_server import server as _srv
+
+        fresh_ahs_router = APIRouter()
+        with (
+            patch.dict(os.environ, {"GATEWAY_GITHUB_ENABLED": "true"}),
+            patch.object(_srv, "_ahs_router_setup_done", False),
+            patch.object(_srv, "ahs_router", fresh_ahs_router),
+        ):
+            enabled_app = _srv.create_app()
+        paths = _route_paths(enabled_app)
+        github_paths = [p for p in paths if "/gw/github" in p]
         assert github_paths, f"Expected /gw/github routes. All routes: {sorted(paths)}"
 
     def test_github_routes_absent_when_disabled(self) -> None:
-        """GATEWAY_GITHUB_ENABLED=false removes /gw/github/* and /ahs/webhook/* routes.
-
-        The _ahs_router_setup_done guard is reset and a fresh ahs_router is injected
-        so the test creates a clean app -- without this, module-level initialisation
-        permanently bakes webhook_router into the shared ahs_router object.
-        """
+        """GATEWAY_GITHUB_ENABLED=false leaves no /gw/github/* or /webhook/* routes."""
         from fastapi import APIRouter
         from ypl.mono_server import server as _srv
 

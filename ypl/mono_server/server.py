@@ -49,7 +49,6 @@ from fastapi.responses import ORJSONResponse, Response
 # yuppster FastMCP instance has an empty tool registry.
 import ypl.mcp_server.mcp_tools  # noqa: F401
 from ypl.agent_harness_service.common.auth import verify_api_key
-from ypl.agent_harness_service.github_webhook import webhook_router
 from ypl.agent_harness_service.lifespan import AHSState, ahs_shutdown, ahs_startup
 from ypl.agent_harness_service.middleware import AHSRequestLoggingMiddleware
 from ypl.agent_harness_service.projects.project_routes import project_router
@@ -58,6 +57,7 @@ from ypl.backend.routes.v1.yuppaste import router as yuppaste_router
 from ypl.mcp_server.lifespan import mcp_shutdown, mcp_startup
 from ypl.mono_server.config import MonoConfig
 from ypl.mono_server.gateway_plugin import GatewayPlugin
+from ypl.mono_server.plugins.github import GitHubGatewayPlugin
 from ypl.mono_server.plugins.slack import SlackGatewayPlugin
 from ypl.mono_server.unified_mcp import register_unified_tools, unified_mcp_http_app
 from ypl.structured_logger import get_logger
@@ -75,6 +75,7 @@ logger = get_logger()
 # between routing and lifecycle management.
 _PLUGIN_REGISTRY: list[GatewayPlugin] = [
     SlackGatewayPlugin(),
+    GitHubGatewayPlugin(),
 ]
 
 
@@ -127,8 +128,6 @@ def _setup_ahs_router(config: MonoConfig) -> None:
         tags=["yuppaste"],
         dependencies=[Depends(verify_api_key)],
     )
-    if config.gateway_github_enabled:
-        ahs_router.include_router(webhook_router)
     _ahs_router_setup_done = True
 
 
@@ -273,16 +272,10 @@ def create_app() -> FastAPI:
     # Routers are registered here; lifespan (startup/shutdown) is handled by
     # combined_lifespan via discover_plugins().  Plugins without a router
     # (get_router() returns None) still participate in the lifespan.
+    # GitHub gateway is wired in via GitHubGatewayPlugin (Task [7]).
     for plugin in discover_plugins(config):
         if router := plugin.get_router():
             application.include_router(router, prefix=f"/gw/{plugin.name}")
-
-    # --- GitHub webhook gateway (not yet a plugin -- converted in Task [7]) --
-    # Also registered at /ahs/webhook/* via _setup_ahs_router() for backward
-    # compatibility.  The /gw/github/* alias lets you point GitHub App webhook
-    # URLs here without the /ahs prefix.
-    if config.gateway_github_enabled:
-        application.include_router(webhook_router, prefix="/gw/github")
 
     # --- Health check (always registered, no auth) ---------------------------
     @application.get("/health", tags=["health"])
