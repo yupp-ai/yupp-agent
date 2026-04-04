@@ -242,8 +242,8 @@ async def read_slack_thread(
         if slack_error == "not_in_channel":
             friendly = (
                 f"Bot is not a member of channel {channel} — "
-                "please add the Yupp MCP bot to the channel first "
-                "(open the channel in Slack → Integrations → Add apps)."
+                "please invite the Yupp MCP bot to the channel first "
+                "(e.g. type `/invite @YuppMCP` in the channel, or go to the channel's Apps/Integrations settings)."
             )
             logger.warning(
                 "Slack bot not in channel",
@@ -252,6 +252,12 @@ async def read_slack_thread(
                 slack_error=slack_error,
             )
             return {"success": False, "error": friendly, "slack_error": slack_error}
+        if slack_error == "channel_not_found":
+            return {
+                "success": False,
+                "error": f"Channel '{channel}' was not found — verify the channel ID is correct.",
+                "slack_error": slack_error,
+            }
         logger.warning(
             "Slack API error reading thread",
             error=slack_error,
