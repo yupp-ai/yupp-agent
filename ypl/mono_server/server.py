@@ -4,42 +4,48 @@ Composes AHS, SAG, and MCP into a single FastAPI application with a
 combined lifespan, enabling the entire agent platform to run as one process.
 
 Route layout:
-  /ahs/*   — Agent Harness Service (router already carries /ahs prefix)
-  /mcp/*   — Unified MCP server (FastMCP, agents + developers, single mount)
-  /gw/slack/*    — Slack gateway (SAG; toggled by GATEWAY_SLACK_ENABLED)
-  /gw/github/*   — GitHub webhook gateway (toggled by GATEWAY_GITHUB_ENABLED)
-  /health  — Liveness probe — always 200 OK
+  /ahs/*            — Agent Harness Service (router already carries /ahs prefix)
+  /mcp/*            — Unified MCP server (FastMCP, agents + developers, single mount)
+  /gw/<name>/*      — Gateway plugins (e.g. /gw/slack/*, /gw/github/*)
+  /health           — Liveness probe — always 200 OK
 
 Startup order:
   1. AHS (registers orchestration callbacks, warms process pool, etc.)
   2. Unified MCP lifespan (via AHSState._mcp_lifespan_ctx)
   3. register_unified_tools() — imports tools from both FastMCP instances
   4. Yuppster batch-system init (mcp_startup)
-  5. Slack gateway (if GATEWAY_SLACK_ENABLED=true)
+  5. Enabled gateway plugins in registration order (see ``discover_plugins``)
 
 Shutdown is in strict reverse order so in-flight AHS tasks can still use
 MCP tools while the scheduler drains.
 
 Auth at /mcp:
-  - ``x-ahs-token`` header (or ``Bearer <secret>:<session_id>``) → agent
-  - ``Bearer yupp_dev_*`` → developer (validated against yuppdb; 503 when
+  - ``x-ahs-token`` header (or ``Bearer <secret>:<session_id>``) -> agent
+  - ``Bearer yupp_dev_*`` -> developer (validated against yuppdb; 503 when
     yuppdb is not configured, e.g. one-box mode)
-  - Any other request → 401 Unauthorized
+  - Any other request -> 401 Unauthorized
 
 All standalone server entrypoints (AHS, SAG, MCP) remain functional and
-unchanged — the monolith is an *additive* composition, not a replacement.
+unchanged -- the monolith is an *additive* composition, not a replacement.
+
+Gateway plugin model (Section 4.4 of the design doc):
+  Gateways implement :class:`~ypl.mono_server.gateway_plugin.GatewayPlugin`
+  and are registered in :func:`discover_plugins`.  The monolith calls
+  ``plugin.startup()`` / ``plugin.shutdown()`` in its combined lifespan, and
+  ``plugin.get_router()`` to mount routes at ``/gw/<name>/``.
 """
 
 from __future__ import annotations
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse, Response
 
 # Import mcp_tools to trigger @mcp_server.tool() decorator registration for all
-# yuppster MCP tools.  This is a side-effect-only import — without it the
+# yuppster MCP tools.  This is a side-effect-only import -- without it the
 # yuppster FastMCP instance has an empty tool registry.
 import ypl.mcp_server.mcp_tools  # noqa: F401
 from ypl.agent_harness_service.common.auth import verify_api_key
@@ -51,9 +57,53 @@ from ypl.agent_harness_service.routes import router as ahs_router
 from ypl.backend.routes.v1.yuppaste import router as yuppaste_router
 from ypl.mcp_server.lifespan import mcp_shutdown, mcp_startup
 from ypl.mono_server.config import MonoConfig
+from ypl.mono_server.gateway_plugin import GatewayPlugin
+from ypl.mono_server.plugins.slack import SlackGatewayPlugin
 from ypl.mono_server.unified_mcp import register_unified_tools, unified_mcp_http_app
-from ypl.slack_agent_gateway.lifespan import SAGState, sag_shutdown, sag_startup
-from ypl.slack_agent_gateway.routes import router as sag_router
+from ypl.structured_logger import get_logger
+
+logger = get_logger()
+
+# ---------------------------------------------------------------------------
+# Gateway plugin registry
+# ---------------------------------------------------------------------------
+
+# Module-level registry -- the same instances are returned by every
+# discover_plugins() call, ensuring lifecycle hooks (startup/shutdown) and
+# routing (get_router) always operate on the same object.  This prevents a
+# future plugin that keeps instance-local state from silently diverging
+# between routing and lifecycle management.
+_PLUGIN_REGISTRY: list[GatewayPlugin] = [
+    SlackGatewayPlugin(),
+]
+
+
+def discover_plugins(config: MonoConfig) -> list[GatewayPlugin]:
+    """Return the list of gateway plugins that are enabled in *config*.
+
+    Each plugin's :attr:`~ypl.mono_server.gateway_plugin.GatewayPlugin.env_flag`
+    maps to a ``MonoConfig`` field by converting it to lower-case
+    (e.g. ``GATEWAY_SLACK_ENABLED`` -> ``gateway_slack_enabled``).  A missing
+    field raises :exc:`ValueError` rather than silently disabling the plugin --
+    a typo in ``env_flag`` would otherwise make the plugin vanish with no
+    diagnostic.
+
+    To add a new gateway, create a module under ``ypl/mono_server/plugins/``,
+    implement the :class:`~ypl.mono_server.gateway_plugin.GatewayPlugin`
+    protocol, and append an instance to :data:`_PLUGIN_REGISTRY` above.
+    """
+    enabled: list[GatewayPlugin] = []
+    for plugin in _PLUGIN_REGISTRY:
+        flag_attr = plugin.env_flag.lower()
+        if not hasattr(config, flag_attr):
+            raise ValueError(
+                f"{plugin.name!r} plugin env_flag {plugin.env_flag!r} has no "
+                f"matching MonoConfig field -- check for typos"
+            )
+        if getattr(config, flag_attr):
+            enabled.append(plugin)
+    return enabled
+
 
 # ---------------------------------------------------------------------------
 # Router setup guard
@@ -67,7 +117,7 @@ _ahs_router_setup_done = False
 
 
 def _setup_ahs_router(config: MonoConfig) -> None:
-    """Add sub-routers to the AHS router.  Idempotent — safe to call multiple times."""
+    """Add sub-routers to the AHS router.  Idempotent -- safe to call multiple times."""
     global _ahs_router_setup_done
     if _ahs_router_setup_done:
         return
@@ -95,10 +145,10 @@ async def combined_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
       1. AHS (wires orchestration callbacks, starts warm process pool,
          launches scheduler, creates unified MCP lifespan context)
       2. Enter unified MCP lifespan (via AHSState._mcp_lifespan_ctx)
-      3. register_unified_tools() — copy all tools from harness + yuppster
+      3. register_unified_tools() -- copy all tools from harness + yuppster
          FastMCP instances into the unified instance
       4. Yuppster batch-system init (mcp_startup)
-      5. Slack gateway (if enabled)
+      5. Enabled gateway plugins in registration order (see discover_plugins)
 
     Shutdown is the mirror image of startup.  AHS shutdown runs *inside* the
     unified MCP lifespan context so that in-flight scheduler tasks can still
@@ -121,31 +171,51 @@ async def combined_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             # --- 3. Tool registration ------------------------------------------
             # Both harness and yuppster tool registrations have already fired at
             # module load time via side-effect imports (local_mcp_server import +
-            # mcp_tools import at the top of this file).  import_server() copies
-            # the fully-populated tool registries into unified_mcp.
+            # mcp_tools import at the top of this file).  register_unified_tools()
+            # copies the fully-populated tool registries into unified_mcp.
             await register_unified_tools()
 
             # --- 4. Yuppster batch-system init --------------------------------
             await mcp_startup()
             try:
-                # --- 5. Gateways ------------------------------------------
-                sag_state: SAGState | None = None
-                if config.gateway_slack_enabled:
-                    sag_state = await sag_startup()
+                # --- 5. Gateway plugins ---------------------------------------
+                # Start each enabled plugin in registration order; record
+                # (plugin, state) pairs so shutdown runs in reverse order.
+                # Startup is wrapped so a failure in plugin N cleanly tears down
+                # plugins 0..N-1 before re-raising -- no leaked subsystems.
+                plugins = discover_plugins(config)
+                gateway_states: list[tuple[GatewayPlugin, Any]] = []
+                try:
+                    for plugin in plugins:
+                        state = await plugin.startup()
+                        gateway_states.append((plugin, state))
+                except Exception:
+                    # Clean up already-started plugins before propagating.
+                    for p, s in reversed(gateway_states):
+                        try:
+                            await p.shutdown(s)
+                        except Exception:
+                            logger.exception("Plugin %s shutdown failed during startup cleanup", p.name)
+                    raise
 
                 try:
                     yield
                 finally:
-                    # Shutdown in reverse order
-                    if sag_state is not None:
-                        await sag_shutdown(sag_state)
+                    # Shutdown plugins in strict reverse startup order.
+                    # Each call is individually exception-isolated so a failure
+                    # in one plugin does not prevent others from being torn down.
+                    for plugin, state in reversed(gateway_states):
+                        try:
+                            await plugin.shutdown(state)
+                        except Exception:
+                            logger.exception("Plugin %s shutdown failed", plugin.name)
             finally:
                 # Yuppster MCP teardown (batch-system flush, Sentry close, GCP
                 # log flush).  The finally block ensures mcp_shutdown runs even
-                # if sag_startup() raises or the yield block raises.
+                # if a plugin startup raises or the yield block raises.
                 await mcp_shutdown()
         finally:
-            # AHS teardown — inside unified MCP lifespan so in-flight tasks
+            # AHS teardown -- inside unified MCP lifespan so in-flight tasks
             # that call MCP tools during scheduler drain can still complete.
             await ahs_shutdown(ahs_state)
 
@@ -172,7 +242,7 @@ def create_app() -> FastAPI:
         lifespan=combined_lifespan,
     )
 
-    # CORS — same allowed origins as the standalone AHS server
+    # CORS -- same allowed origins as the standalone AHS server
     application.add_middleware(
         CORSMiddleware,
         allow_origins=[
@@ -193,17 +263,21 @@ def create_app() -> FastAPI:
     _setup_ahs_router(config)
     application.include_router(ahs_router)
 
-    # --- Unified MCP (/mcp — agents and developers share one endpoint) -------
+    # --- Unified MCP (/mcp -- agents and developers share one endpoint) ------
     # Auth is handled by UnifiedMcpAuthMiddleware (already attached to the app):
-    #   - x-ahs-token header → agent context (process-local secret, no DB)
-    #   - Bearer yupp_dev_* → developer context (validated against yuppdb)
+    #   - x-ahs-token header -> agent context (process-local secret, no DB)
+    #   - Bearer yupp_dev_* -> developer context (validated against yuppdb)
     application.mount("/mcp", unified_mcp_http_app)
 
-    # --- Slack gateway (pluggable) -------------------------------------------
-    if config.gateway_slack_enabled:
-        application.include_router(sag_router, prefix="/gw/slack")
+    # --- Gateway plugins (all enabled plugins, each at /gw/<name>/) ----------
+    # Routers are registered here; lifespan (startup/shutdown) is handled by
+    # combined_lifespan via discover_plugins().  Plugins without a router
+    # (get_router() returns None) still participate in the lifespan.
+    for plugin in discover_plugins(config):
+        if router := plugin.get_router():
+            application.include_router(router, prefix=f"/gw/{plugin.name}")
 
-    # --- GitHub webhook gateway (pluggable) ----------------------------------
+    # --- GitHub webhook gateway (not yet a plugin -- converted in Task [7]) --
     # Also registered at /ahs/webhook/* via _setup_ahs_router() for backward
     # compatibility.  The /gw/github/* alias lets you point GitHub App webhook
     # URLs here without the /ahs prefix.
@@ -213,7 +287,7 @@ def create_app() -> FastAPI:
     # --- Health check (always registered, no auth) ---------------------------
     @application.get("/health", tags=["health"])
     async def health() -> dict[str, str]:
-        """Liveness probe — always returns 200 OK."""
+        """Liveness probe -- always returns 200 OK."""
         return {"status": "ok"}
 
     # --- Prometheus metrics stub (no auth) -----------------------------------
@@ -223,14 +297,14 @@ def create_app() -> FastAPI:
     # instrumentation is wired in (see ``docs/observability.md``).
     @application.get("/metrics", tags=["observability"])
     async def metrics() -> Response:
-        """Prometheus metrics stub — returns a valid (minimal) text payload.
+        """Prometheus metrics stub -- returns a valid (minimal) text payload.
 
         Upgrade path: install ``prometheus-client``, register collectors, and
         swap the hardcoded string for ``prometheus_client.generate_latest()``.
         The content-type header already matches what Prometheus expects, so no
         scrape-config changes are needed once real metrics are wired in.
         """
-        content = "# Prometheus metrics stub — no instrumentation yet\n"
+        content = "# Prometheus metrics stub -- no instrumentation yet\n"
         return Response(content=content, media_type="text/plain; version=0.0.4; charset=utf-8")
 
     return application
