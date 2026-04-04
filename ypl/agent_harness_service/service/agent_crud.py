@@ -12,6 +12,7 @@ from ypl.agent_harness_service.common.types import (
 from ypl.agent_harness_service.service.resolvers import _resolve_agent
 from ypl.backend.db import get_async_session
 from ypl.db.agent_harness import Agent, AgentExecutorType
+from ypl.db.users import User, UserStatus, UserType
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -64,6 +65,19 @@ async def create_agent(request: AgentCreateRequest) -> AgentCreateResponse:
             additional_system_prompt=request.additional_system_prompt,
         )
         session.add(agent)
+        await session.flush()  # populate agent.agent_id without committing
+
+        # Create a corresponding User identity row for this agent in the same transaction.
+        # If either insert fails, neither is committed.
+        user = User(
+            user_id=str(agent.agent_id),
+            name=f"agent:{agent.name}",
+            email=f"agent-{agent.name}@yupp.ai",
+            user_type=UserType.AGENT,
+            status=UserStatus.ACTIVE,
+        )
+        session.add(user)
+        agent.agent_user_id = str(agent.agent_id)
         await session.commit()
 
     logger.info("Created agent", name=request.name, user_id=request.user_id)
