@@ -190,6 +190,7 @@ pytest-timeout = "^2.4.0"
 types-requests = "^2.33.0.20260327"
 types-pyyaml = "^6.0.12.20250915"
 types-cachetools = "^6.2.0.20260317"
+pytest-cov = "^7.1.0"
 
 [tool.mypy]
 python_version = "3.12"
