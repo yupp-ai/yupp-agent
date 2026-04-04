@@ -68,7 +68,7 @@ if ! command -v psql &>/dev/null; then
 https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
         > /etc/apt/sources.list.d/pgdg.list
     apt-get update -q
-    apt-get install -y --no-install-recommends postgresql-16 postgresql-client-16
+    apt-get install -y --no-install-recommends postgresql-16 postgresql-client-16 postgresql-16-pgvector
 fi
 systemctl enable --now postgresql
 info "PostgreSQL: $(psql --version)"
