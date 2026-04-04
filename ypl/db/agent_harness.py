@@ -4,6 +4,7 @@ Tables:
 - agents: Agent definitions with config paths and metadata
 - agent_sessions: Conversation sessions tied to agents
 - agent_session_messages: Individual messages within sessions (user + agent)
+- agent_messages: Agent-to-agent messages (A2A messaging)
 - agent_feedbacks: Feedback signals on sessions or individual messages
 - agent_schedules: Scheduled/recurring agent calls
 - agent_schedule_runs: Execution history for agent schedules
@@ -16,7 +17,7 @@ from decimal import Decimal
 from typing import Any
 
 import sqlalchemy as sa
-from sqlalchemy import Column, Index
+from sqlalchemy import Column, Index, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlmodel import Field, Relationship
 
@@ -39,6 +40,7 @@ class AgentSessionTrigger(str, enum.Enum):
     CRON = "CRON"
     API = "API"
     TASK = "TASK"  # Triggered by a project task executor
+    AGENT = "AGENT"  # Session initiated by another agent (A2A messaging)
 
 
 class AgentSessionStatus(str, enum.Enum):
@@ -55,6 +57,7 @@ class AgentSessionMessageRole(str, enum.Enum):
     USER = "USER"
     AGENT = "AGENT"
     SYSTEM = "SYSTEM"
+    FELLOW_AGENT = "FELLOW_AGENT"  # Turn originated from a peer agent (A2A messaging)
 
 
 class AgentSessionMessageCompletionStatus(str, enum.Enum):
@@ -165,6 +168,15 @@ class AgentTaskPriority(int, enum.Enum):
     LOW = 4
 
 
+class AgentMessageStatus(str, enum.Enum):
+    """Delivery status of an agent-to-agent message."""
+
+    QUEUED = "QUEUED"  # Persisted, waiting to be dispatched
+    DELIVERING = "DELIVERING"  # Claimed by a worker; in-flight
+    DELIVERED = "DELIVERED"  # Successfully injected into target session
+    FAILED = "FAILED"  # Exhausted max_attempts without successful delivery
+
+
 class Agent(BaseModel, table=True):
     """An agent definition with its config and identity."""
 
@@ -193,6 +205,11 @@ class Agent(BaseModel, table=True):
     creator_user_id: str | None = Field(default=None, nullable=True, sa_type=sa.Text, index=True)
 
     additional_system_prompt: str | None = Field(default=None, sa_type=sa.Text)
+
+    # Corresponding user identity row in the users table (set at agent creation time)
+    agent_user_id: str | None = Field(
+        default=None, foreign_key="users.user_id", nullable=True, sa_type=sa.Text, index=True
+    )
 
 
 class AgentSession(BaseModel, table=True):
@@ -229,6 +246,86 @@ class AgentSession(BaseModel, table=True):
     feedbacks: list["AgentFeedback"] = Relationship(back_populates="session")
 
     title: str | None = Field(default=None, sa_type=sa.Text)
+
+
+class AgentMessage(BaseModel, table=True):
+    """A message sent from one agent to another (A2A messaging).
+
+    Supports two delivery scenarios:
+    - Scenario A (to_session_id IS NULL): create a new session for the target agent.
+    - Scenario B (to_session_id IS NOT NULL): inject into an existing session.
+
+    Delivery is at-least-once with crash-safe recovery via the claimed_at lease.
+    """
+
+    __tablename__ = "agent_messages"
+
+    agent_message_id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True, nullable=False)
+
+    # Sender and recipient agents
+    from_agent_id: uuid.UUID = Field(foreign_key="agents.agent_id", nullable=False, index=True)
+    to_agent_id: uuid.UUID = Field(foreign_key="agents.agent_id", nullable=False, index=True)
+
+    # Sender context — nullable (agent may send outside any active session)
+    from_session_id: uuid.UUID | None = Field(
+        default=None, foreign_key="agent_sessions.agent_session_id", nullable=True
+    )
+
+    # Delivery target:
+    #   NULL → create a new session for to_agent    (Scenario A)
+    #   set  → inject into this existing session    (Scenario B)
+    to_session_id: uuid.UUID | None = Field(default=None, foreign_key="agent_sessions.agent_session_id", nullable=True)
+
+    content: str = Field(nullable=False, sa_type=sa.Text)
+    message_metadata: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB, nullable=False))
+
+    status: AgentMessageStatus = Field(
+        default=AgentMessageStatus.QUEUED,
+        sa_column=Column(sa.Enum(AgentMessageStatus), nullable=False),
+    )
+
+    queued_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+    )
+    delivered_at: datetime | None = Field(default=None, nullable=True, sa_type=sa.DateTime(timezone=True))  # type: ignore[call-overload]
+
+    # Lease tracking for crash recovery
+    claimed_at: datetime | None = Field(default=None, nullable=True, sa_type=sa.DateTime(timezone=True))  # type: ignore[call-overload]
+    attempt_count: int = Field(default=0, nullable=False)
+    max_attempts: int = Field(default=3, nullable=False)
+
+    # Populated after successful delivery — the session that received the message
+    resolved_session_id: uuid.UUID | None = Field(
+        default=None, foreign_key="agent_sessions.agent_session_id", nullable=True
+    )
+    error: str | None = Field(default=None, nullable=True, sa_type=sa.Text)
+
+    __table_args__ = (
+        # Fast queue drain: find pending new-session messages for a target agent
+        Index(
+            "ix_agent_message_to_agent_queued",
+            "to_agent_id",
+            "created_at",
+            postgresql_where=text("status = 'QUEUED' AND to_session_id IS NULL"),
+        ),
+        # Fast session inbox drain
+        Index(
+            "ix_agent_message_to_session_queued",
+            "to_session_id",
+            "status",
+            "created_at",
+            postgresql_where=text("status IN ('QUEUED', 'DELIVERING') AND to_session_id IS NOT NULL"),
+        ),
+        # Stale-claim recovery: find hung DELIVERING rows by lease age
+        Index(
+            "ix_agent_message_stale_delivering",
+            "claimed_at",
+            postgresql_where=text("status = 'DELIVERING'"),
+        ),
+        Index("ix_agent_message_from_session", "from_session_id"),
+        sa.CheckConstraint("attempt_count <= max_attempts", name="ck_agent_message_attempt_count"),
+    )
 
 
 class AgentSessionMessage(BaseModel, table=True):
@@ -270,10 +367,22 @@ class AgentSessionMessage(BaseModel, table=True):
         ),
     )
 
+    # A2A provenance — set when role=FELLOW_AGENT
+    from_agent_id: uuid.UUID | None = Field(default=None, foreign_key="agents.agent_id", nullable=True, index=True)
+    agent_message_id_ref: uuid.UUID | None = Field(
+        default=None, foreign_key="agent_messages.agent_message_id", nullable=True, index=True
+    )
+
     session: AgentSession = Relationship(back_populates="messages")
     feedbacks: list["AgentFeedback"] = Relationship(back_populates="message")
 
-    __table_args__ = (Index("ix_agent_session_messages_session_turn", "agent_session_id", "turn_number"),)
+    __table_args__ = (
+        Index("ix_agent_session_messages_session_turn", "agent_session_id", "turn_number"),
+        sa.CheckConstraint(
+            "(role = 'FELLOW_AGENT') = (from_agent_id IS NOT NULL)",
+            name="ck_agent_session_message_fellow_agent_provenance",
+        ),
+    )
 
 
 class AgentFeedback(BaseModel, table=True):
