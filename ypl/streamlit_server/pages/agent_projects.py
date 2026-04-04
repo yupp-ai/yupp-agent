@@ -24,6 +24,8 @@ from ypl.backend.llm.constants import TEAM_DIRECTORY
 from ypl.backend.utils.streamlit_utils import run_coroutine_in_lit_worker
 from ypl.db.agent_harness import (
     Agent,
+    AgentArtifact,
+    AgentArtifactType,
     AgentProject,
     AgentProjectStatus,
     AgentSession,
@@ -323,6 +325,45 @@ async def update_project_status(project_id: uuid.UUID, new_status: AgentProjectS
 
 
 @retry_db
+async def fetch_task_artifacts(task_id: uuid.UUID, session_ids: list[str] | None = None) -> list[AgentArtifact]:
+    """Fetch artifacts for a task (by task_id) and optionally its related sessions."""
+    async with get_async_session_read_replica() as session:
+        stmt = (
+            select(AgentArtifact)
+            .where(col(AgentArtifact.deleted_at).is_(None))
+            .where(col(AgentArtifact.agent_task_id) == task_id)
+            .order_by(col(AgentArtifact.created_at).asc())
+        )
+        result = await session.exec(stmt)
+        task_artifacts = list(result.all())
+
+        # Also fetch artifacts linked to associated sessions (not already in task_artifacts)
+        if session_ids:
+            known_ids = {a.agent_artifact_id for a in task_artifacts}
+            sid_uuids = []
+            for sid in session_ids:
+                try:
+                    sid_uuids.append(uuid.UUID(sid))
+                except ValueError:
+                    pass
+            if sid_uuids:
+                sess_stmt = (
+                    select(AgentArtifact)
+                    .where(col(AgentArtifact.deleted_at).is_(None))
+                    .where(col(AgentArtifact.agent_session_id).in_(sid_uuids))
+                    .order_by(col(AgentArtifact.created_at).asc())
+                )
+                sess_result = await session.exec(sess_stmt)
+                for a in sess_result.all():
+                    if a.agent_artifact_id not in known_ids:
+                        task_artifacts.append(a)
+                        known_ids.add(a.agent_artifact_id)
+
+        task_artifacts.sort(key=lambda a: a.created_at or datetime.min.replace(tzinfo=UTC))
+        return task_artifacts
+
+
+@retry_db
 async def set_task_forced_pickup(task_id: uuid.UUID) -> bool:
     """Set forced_pickup flag in task_data to allow manual triggering.
 
@@ -580,6 +621,48 @@ async def fetch_project_sessions(
         }
         for s in sessions
     ]
+
+
+# ── Artifact helpers ─────────────────────────────────────────────────────────
+
+_ARTIFACT_TYPE_ICON: dict[AgentArtifactType, str] = {
+    AgentArtifactType.YUPPASTE: "📝",
+    AgentArtifactType.CODE_REVIEW: "🔍",
+    AgentArtifactType.OTHER: "📦",
+}
+
+
+def _md_cell(s: str) -> str:
+    """Escape pipe characters and newlines so the string is safe in a markdown table cell."""
+    return s.replace("|", "\\|").replace("\n", " ")
+
+
+def _render_task_artifacts(task_id: uuid.UUID, session_ids: list[str] | None) -> None:
+    """Fetch and render artifacts for a task and its sessions."""
+    artifacts = run_coroutine_in_lit_worker(
+        fetch_task_artifacts(task_id, session_ids),
+        timeout=30,
+    )
+    if not artifacts:
+        st.caption("No artifacts.")
+        return
+    rows = []
+    for a in artifacts or []:
+        icon = _ARTIFACT_TYPE_ICON.get(a.artifact_type, "📦")
+        type_str = f"{icon} {a.artifact_type.value}"
+        title_link = f"[{_md_cell(a.title)}]({a.url})"
+        src = ""
+        if a.agent_session_id:
+            sid = str(a.agent_session_id)
+            src = f"[session {sid[:8]}](/agent_harness_console?session_id={sid})"
+        elif a.agent_task_id:
+            src = "task"
+        raw_desc = (a.description or "")[:60] + ("…" if a.description and len(a.description) > 60 else "")
+        desc = _md_cell(raw_desc)
+        rows.append(f"| {type_str} | {title_link} | {desc} | {src} |")
+    header = "| Type | Title | Description | Source |"
+    sep = "|------|-------|-------------|--------|"
+    st.markdown("\n".join([header, sep] + rows))
 
 
 # ── Tree / topo helpers ──────────────────────────────────────────────────────
@@ -1581,6 +1664,12 @@ def _render_task_detail(
         if task.result:
             with st.expander("📄 Result", expanded=False):
                 st.json(task.result)
+
+        with st.expander("📦 Artifacts", expanded=True):
+            _render_task_artifacts(
+                uuid.UUID(task_id),
+                task.assigned_session_ids or [],
+            )
 
 
 # ── Project detail view ──────────────────────────────────────────────────────
