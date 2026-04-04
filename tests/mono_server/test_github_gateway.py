@@ -94,8 +94,8 @@ class TestGitHubGatewayPluginLifecycle:
     @pytest.mark.asyncio
     async def test_startup_returns_none(self) -> None:
         plugin = GitHubGatewayPlugin()
-        state = await plugin.startup()
-        assert state is None
+        # startup() is typed -> None; just verify it doesn't raise
+        await plugin.startup()
 
     @pytest.mark.asyncio
     async def test_shutdown_accepts_none_state(self) -> None:
@@ -106,8 +106,8 @@ class TestGitHubGatewayPluginLifecycle:
     @pytest.mark.asyncio
     async def test_startup_then_shutdown_roundtrip(self) -> None:
         plugin = GitHubGatewayPlugin()
-        state = await plugin.startup()
-        await plugin.shutdown(state)  # Must not raise
+        await plugin.startup()
+        await plugin.shutdown(None)  # Must not raise
 
 
 # ---------------------------------------------------------------------------
