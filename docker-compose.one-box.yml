@@ -1,0 +1,122 @@
+# One-box deployment: AHS monolith + Streamlit + PostgreSQL + Redis
+#
+# Quick start:
+#   cp .env.example .env && $EDITOR .env   # set POSTGRES_PASSWORD and secrets
+#   python -m ypl.mono_server.setup        # first run: runs migrations, seeds roles
+#   docker compose -f docker-compose.one-box.yml up -d
+#
+# Both 'app' and 'streamlit' are built from the same Dockerfile.
+# Set SANDBOX_ENABLED=false in your .env when running in unprivileged Docker
+# (bwrap is unavailable without --privileged; agents will still work,
+# just without filesystem-level sandboxing).
+#
+# Port map:
+#   8090 — AHS + MCP + gateways (uvicorn)     — all interfaces (intentionally reachable)
+#   8501 — Streamlit dashboards               — all interfaces (intentionally reachable)
+#   5432 — PostgreSQL 16                      — 127.0.0.1 only (host-side psql / alembic)
+#   6379 — Redis 7                            — 127.0.0.1 only (host-side redis-cli)
+#
+# Required .env variables (set BEFORE running setup):
+#   POSTGRES_USER      — e.g. postgres
+#   POSTGRES_PASSWORD  — choose a strong password; default is INSECURE
+#   POSTGRES_DB        — e.g. yupp_agent
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.0-pg16
+    # Bind to 127.0.0.1 only — prevents exposure on cloud VMs with public IPs.
+    # The app/streamlit containers reach postgres via the internal Docker network.
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_before_deployment}
+      POSTGRES_DB: ${POSTGRES_DB:-yupp_agent}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.2-alpine
+    # Bind to 127.0.0.1 only — unauthenticated Redis must not be internet-reachable.
+    # The app/streamlit containers reach redis via the internal Docker network.
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: yupp-agent:local
+    ports:
+      - "8090:8090"
+    env_file: .env
+    environment:
+      # Use the monolith entrypoint (AHS + MCP + gateways in one process).
+      SCRIPT_TO_RUN: /app/ypl/mono_server/entrypoint.sh
+      AHS_PORT: "8090"
+      # Override DB host to use the Docker internal network service name.
+      # The .env written by setup wizard uses 'localhost', which resolves to
+      # the container itself inside Docker — not the postgres service.
+      POSTGRES_CONNECTION_AGENTDB: '{"user":"${POSTGRES_USER:-postgres}","password":"${POSTGRES_PASSWORD:-changeme_before_deployment}","host":"postgres","database":"${POSTGRES_DB:-yupp_agent}"}'
+      # Override Redis URL to use the Docker internal network service name.
+      REDIS_URL: "redis://redis:6379/1"
+      # bwrap is unavailable in unprivileged Docker — agents still run fine.
+      SANDBOX_ENABLED: "false"
+      USE_GOOGLE_CLOUD_LOGGING: "false"
+      DISABLE_WRITE_GOOGLE_CLOUD_METRICS: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8090/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    restart: unless-stopped
+
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: yupp-agent:local
+    ports:
+      - "8501:8501"
+    env_file: .env
+    environment:
+      SCRIPT_TO_RUN: /app/ypl/streamlit_server/streamlit_server_entrypoint.sh
+      PORT: "8501"
+      POSTGRES_CONNECTION_AGENTDB: '{"user":"${POSTGRES_USER:-postgres}","password":"${POSTGRES_PASSWORD:-changeme_before_deployment}","host":"postgres","database":"${POSTGRES_DB:-yupp_agent}"}'
+      REDIS_URL: "redis://redis:6379/1"
+      USE_GOOGLE_CLOUD_LOGGING: "false"
+      DISABLE_WRITE_GOOGLE_CLOUD_METRICS: "true"
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8501/_stcore/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
