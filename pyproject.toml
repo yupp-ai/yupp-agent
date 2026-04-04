@@ -222,6 +222,19 @@ filterwarnings = [
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
+[tool.coverage.run]
+omit = [
+    "*/alembic/*",
+    "*/streamlit*",
+    "*/deploy/*",
+    "*/tui/*",
+    "*/scripts/*",
+    "*/entrypoints/*",
+]
+
+[tool.coverage.report]
+fail_under = 33
+
 [tool.uv.workspace]
 members = [
     "example",
