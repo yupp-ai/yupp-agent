@@ -599,6 +599,7 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
         "task": AgentSessionTrigger.TASK,  # Triggered by project task executor
         "agent": AgentSessionTrigger.AGENT,  # Triggered by a peer agent via A2A messaging
         "api": AgentSessionTrigger.API,
+        "agent": AgentSessionTrigger.AGENT,  # Session initiated by another agent (A2A messaging)
     }
     trigger = trigger_map.get(request.trigger.lower(), AgentSessionTrigger.API)
 
@@ -630,7 +631,9 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
                         slack_user_id=slack_user_id,
                     )
 
-    if not user_id:
+    # For AGENT-triggered sessions, user_id is derived from the sending agent's identity
+    # inside the DB session below (from_agent.agent_user_id).  Skip the early check.
+    if not user_id and trigger != AgentSessionTrigger.AGENT:
         logger.error(
             "Rejected session create: missing user_id",
             source=request.source,
@@ -674,33 +677,52 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
             session.add(agent)
             await session.flush()
 
-        # A2A authorization: enforce deny-by-default when the session is initiated by a peer agent.
-        # Only checked when trigger == AGENT — ``from_agent_id`` is a server-side field set by the
-        # AGENT trigger path (see PR #128) and is NOT available to arbitrary API callers.  Gating
-        # on trigger prevents a non-AGENT caller from injecting ``from_agent_id`` into context and
-        # routing through the authz check with a permissive agent config.
-        _from_agent_id_ctx = context.get("from_agent_id")
-        if _from_agent_id_ctx and trigger == AgentSessionTrigger.AGENT:
+        # For AGENT-triggered sessions: resolve from_agent, enforce A2A authorization,
+        # override creator identity, and guarantee full MCP permissions.
+        if trigger == AgentSessionTrigger.AGENT:
+            _from_agent_id_ctx = context.get("from_agent_id")
+            if not _from_agent_id_ctx:
+                raise AHSValidationError("context.from_agent_id is required when trigger=AGENT")
             # Parse the UUID first — narrow the ValueError catch to just this line so that
             # AHSValidationError (which inherits ValueError) raised below is not mistakenly
             # caught and replaced with a misleading "malformed from_agent_id" message.
             try:
                 _from_agent_uuid = uuid.UUID(str(_from_agent_id_ctx))
-            except ValueError as _val_exc:
+            except ValueError as exc:
+                raise AHSValidationError(f"context.from_agent_id is not a valid UUID: {_from_agent_id_ctx!r}") from exc
+            _from_agent_obj = await session.get(Agent, _from_agent_uuid)
+            if not _from_agent_obj:
+                raise AHSValidationError(f"Sending agent not found: {_from_agent_id_ctx!r}")
+            if not _from_agent_obj.agent_user_id:
                 raise AHSValidationError(
-                    f"A2A authorization failed: malformed from_agent_id {_from_agent_id_ctx!r}"
-                ) from _val_exc
-            _from_agent_result = await session.exec(select(Agent).where(Agent.agent_id == _from_agent_uuid))
-            _from_agent_db = _from_agent_result.one_or_none()
-            if _from_agent_db is None:
-                logger.warning(
-                    "A2A authz: sending agent not found — denying",
-                    from_agent_id=str(_from_agent_id_ctx),
+                    f"Sending agent {_from_agent_obj.name!r} has no agent_user_id. "
+                    "Ensure sweep_agent_user_identities() has run or re-create the agent."
                 )
-                raise AHSValidationError(f"A2A authorization failed: sending agent '{_from_agent_id_ctx}' not found")
-            _from_cfg = load_agent_config_from_db(_from_agent_db)
+
+            # A2A authorization: enforce deny-by-default messaging policy.
             # AgentAuthorizationError propagates to routes.py where it is mapped to HTTP 403.
+            _from_cfg = load_agent_config_from_db(_from_agent_obj)
             check_agent_message_authz(_from_cfg, agent.name or resolved_agent_id)
+
+            # Override user_id: session is attributed to the sending agent's user identity.
+            user_id = _from_agent_obj.agent_user_id
+            logger.info(
+                "AGENT trigger: resolved from_agent identity",
+                from_agent_id=str(_from_agent_uuid),
+                from_agent_name=_from_agent_obj.name,
+                from_agent_user_id=user_id,
+                from_session_id=context.get("from_session_id"),
+            )
+            # Grant full MCP permissions — AGENT-triggered sessions are trusted callers.
+            if "permissions" not in context:
+                context["permissions"] = SessionPermissions.full_access().model_dump(mode="json")
+
+        # At this point user_id must be non-None:
+        #   - AGENT trigger: set above from from_agent.agent_user_id
+        #   - All other triggers: guarded by the early validation check above
+        # Help mypy narrow the type so the has_permission_by_user_id_cached call type-checks.
+        if user_id is None:
+            raise AHSValidationError("Internal: user_id could not be resolved for session creation")
 
         if "permissions" in context:
             # Permissions already set by an earlier create_session caller. Respect them.
@@ -974,18 +996,80 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
                     )
 
     # If a message was provided, kick off the first turn.
-    # Pass user IDs so send_message can re-check USE_MCP for the sender
-    # (without these, it defaults to restricted and overrides permissions).
     if request.message:
-        msg_request = SessionMessageRequest(
-            session_id=str(agent_session.agent_session_id),
-            message=request.message,
-            slack_user_id=context.get("slack_user_id"),
-            user_id=context.get("user_id") or context.get("yupp_user_id") or request.user_id,
-            attachments=request.attachments,
-            source=request.source,
-        )
-        await send_message(msg_request)
+        if trigger == AgentSessionTrigger.AGENT:
+            # For AGENT-triggered sessions the initial turn is a FELLOW_AGENT message,
+            # not a USER message.  We write it directly (bypassing send_message) to
+            # preserve provenance (from_agent_id + agent_message_id_ref).
+            _ctx_from_agent_id = context.get("from_agent_id")
+            _ctx_agent_message_id = context.get("agent_message_id")
+            _fellow_from_agent_id: uuid.UUID | None = None
+            _fellow_agent_msg_ref: uuid.UUID | None = None
+            try:
+                if _ctx_from_agent_id:
+                    _fellow_from_agent_id = uuid.UUID(str(_ctx_from_agent_id))
+                if _ctx_agent_message_id:
+                    _fellow_agent_msg_ref = uuid.UUID(str(_ctx_agent_message_id))
+            except ValueError:
+                logger.warning(
+                    "AGENT trigger: could not parse UUID from context",
+                    from_agent_id=_ctx_from_agent_id,
+                    agent_message_id=_ctx_agent_message_id,
+                )
+            async with get_async_session() as _msg_db:
+                _fellow_turn = await _next_turn_number(_msg_db, agent_session.agent_session_id)
+                _fellow_msg = AgentSessionMessage(
+                    agent_session_id=agent_session.agent_session_id,
+                    turn_number=_fellow_turn,
+                    role=AgentSessionMessageRole.FELLOW_AGENT,
+                    content=request.message,
+                    creator_user_id=user_id,
+                    from_agent_id=_fellow_from_agent_id,
+                    agent_message_id_ref=_fellow_agent_msg_ref,
+                )
+                _msg_db.add(_fellow_msg)
+                await _msg_db.commit()
+
+            logger.info(
+                "AGENT trigger: injected FELLOW_AGENT turn",
+                session_id=str(agent_session.agent_session_id),
+                turn_number=_fellow_turn,
+                from_agent_id=str(_fellow_from_agent_id) if _fellow_from_agent_id else None,
+                agent_message_id_ref=str(_fellow_agent_msg_ref) if _fellow_agent_msg_ref else None,
+            )
+
+            # Fire agent task for this turn.
+            _active_tasks[agent_session.agent_session_id] = None  # type: ignore[assignment]
+            _agent_task = create_background_task(
+                _run_agent_task(
+                    agent_session_id=agent_session.agent_session_id,
+                    turn_number=_fellow_turn,
+                    message=request.message,
+                    agent_config_name=resolved_agent_id,
+                    workspace=agent_session.workspace,
+                    llm_session_id=agent_session.llm_session_id,
+                    extra_dirs=agent_session.extra_dirs or [],
+                    slack_session_id=agent_session.slack_session_id,
+                    is_slack=False,
+                    is_task=False,
+                    session_context=dict(agent_session.context) if agent_session.context else {},
+                    trigger=agent_session.trigger.value,
+                    session_created_at=agent_session.created_at,
+                )
+            )
+            _active_tasks[agent_session.agent_session_id] = _agent_task
+        else:
+            # Pass user IDs so send_message can re-check USE_MCP for the sender
+            # (without these, it defaults to restricted and overrides permissions).
+            msg_request = SessionMessageRequest(
+                session_id=str(agent_session.agent_session_id),
+                message=request.message,
+                slack_user_id=context.get("slack_user_id"),
+                user_id=context.get("user_id") or context.get("yupp_user_id") or request.user_id,
+                attachments=request.attachments,
+                source=request.source,
+            )
+            await send_message(msg_request)
 
     return SessionCreateResponse(
         session_id=str(agent_session.agent_session_id),
