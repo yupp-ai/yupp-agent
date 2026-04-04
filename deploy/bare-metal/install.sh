@@ -91,7 +91,6 @@ info "Redis: $(redis-server --version)"
 if ! command -v poetry &>/dev/null; then
     info "Installing Poetry…"
     curl -sSL https://install.python-poetry.org | POETRY_HOME=/usr/local python3 -
-    ln -sf /usr/local/bin/poetry /usr/local/bin/poetry
 fi
 info "Poetry: $(poetry --version)"
 
@@ -125,13 +124,13 @@ fi
 # 4. Python venv + dependencies
 # ---------------------------------------------------------------------------
 info "Installing Python dependencies (this may take a few minutes)…"
-sudo -u "$APP_USER" bash -c "
-    cd ${INSTALL_DIR}
-    poetry env use python${PYTHON_VERSION}
+sudo -u "$APP_USER" env INSTALL_DIR="$INSTALL_DIR" PYTHON_VERSION="$PYTHON_VERSION" bash -c '
+    cd "$INSTALL_DIR"
+    poetry env use "python${PYTHON_VERSION}"
     poetry install --no-root --without dev --compile
-"
+'
 
-VENV_DIR=$(sudo -u "$APP_USER" bash -c "cd ${INSTALL_DIR} && poetry env info --path")
+VENV_DIR=$(sudo -u "$APP_USER" env INSTALL_DIR="$INSTALL_DIR" bash -c 'cd "$INSTALL_DIR" && poetry env info --path')
 ln -sfn "$VENV_DIR" "${INSTALL_DIR}/.venv"
 info "Virtual environment: ${VENV_DIR}"
 

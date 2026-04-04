@@ -24,7 +24,7 @@ Environment=PYTHONUNBUFFERED=1
 ExecStart=/opt/yupp-agent/.venv/bin/uvicorn \
     ypl.mono_server.server:app \
     --host 0.0.0.0 \
-    --port 8090 \
+    --port ${AHS_PORT} \
     --loop uvloop \
     --log-config ypl/uvicorn-logging.yml
 
@@ -41,8 +41,12 @@ StartLimitBurst=5
 # Hardening
 NoNewPrivileges=yes
 PrivateTmp=yes
+ProtectHome=yes
 ProtectSystem=strict
-ReadWritePaths=/opt/yupp-agent /tmp /var/log/yupp-agent
+# Only grant write access to subdirs actually written by the app at runtime.
+# Keeping /opt/yupp-agent itself read-only prevents a compromised process from
+# modifying source files that get loaded on the next restart.
+ReadWritePaths=/opt/yupp-agent/data /opt/yupp-agent/.cache /tmp /var/log/yupp-agent
 
 # Logging — journald captures stdout/stderr automatically
 StandardOutput=journal
