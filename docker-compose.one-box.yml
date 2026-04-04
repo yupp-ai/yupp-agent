@@ -10,11 +10,11 @@
 # (bwrap is unavailable without --privileged; agents will still work,
 # just without filesystem-level sandboxing).
 #
-# Port map (all bound to 127.0.0.1 — not exposed to external network):
-#   8090 — AHS + MCP + gateways (uvicorn)
-#   8501 — Streamlit operational dashboards
-#   5432 — PostgreSQL 16  (host-only, for psql / alembic from the host)
-#   6379 — Redis 7        (host-only, for redis-cli inspection)
+# Port map:
+#   8090 — AHS + MCP + gateways (uvicorn)     — all interfaces (intentionally reachable)
+#   8501 — Streamlit dashboards               — all interfaces (intentionally reachable)
+#   5432 — PostgreSQL 16                      — 127.0.0.1 only (host-side psql / alembic)
+#   6379 — Redis 7                            — 127.0.0.1 only (host-side redis-cli)
 #
 # Required .env variables (set BEFORE running setup):
 #   POSTGRES_USER      — e.g. postgres
