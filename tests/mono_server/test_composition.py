@@ -164,13 +164,13 @@ class TestGatewayToggle:
         gw_paths = [p for p in paths if p.startswith("/gw/slack")]
         assert gw_paths, f"Expected /gw/slack routes but found none. All paths: {paths}"
 
-    def test_github_gateway_routes_present_by_default(self) -> None:
-        """GitHub gateway is on by default — /gw/github routes are registered."""
+    def test_github_gateway_absent_by_default(self) -> None:
+        """GitHub gateway is OFF by default — /gw/github routes are not registered."""
         from ypl.mono_server.server import app
 
         paths = _route_paths(app)
         github_paths = [p for p in paths if "/gw/github" in p]
-        assert github_paths, f"Expected /gw/github routes but found none. All paths: {paths}"
+        assert not github_paths, f"Unexpected /gw/github routes: {github_paths}"
 
     def test_github_gateway_not_mounted_when_disabled(self) -> None:
         """With GATEWAY_GITHUB_ENABLED=false, no /gw/github routes are registered."""
@@ -182,6 +182,23 @@ class TestGatewayToggle:
         paths = _route_paths(disabled_app)
         github_paths = [p for p in paths if "/gw/github" in p]
         assert not github_paths, f"Unexpected /gw/github routes: {github_paths}"
+
+    def test_github_gateway_routes_present_when_enabled(self) -> None:
+        """With GATEWAY_GITHUB_ENABLED=true, /gw/github/* routes are registered."""
+        from fastapi import APIRouter
+        from ypl.mono_server import server as _srv
+
+        fresh_ahs_router = APIRouter()
+        with (
+            patch.dict(os.environ, {"GATEWAY_GITHUB_ENABLED": "true"}),
+            patch.object(_srv, "_ahs_router_setup_done", False),
+            patch.object(_srv, "ahs_router", fresh_ahs_router),
+        ):
+            enabled_app = _srv.create_app()
+
+        paths = _route_paths(enabled_app)
+        github_paths = [p for p in paths if "/gw/github" in p]
+        assert github_paths, f"Expected /gw/github routes but found none. All paths: {paths}"
 
 
 # ---------------------------------------------------------------------------
@@ -218,8 +235,16 @@ class TestMonoConfig:
             cfg = MonoConfig()
             assert cfg.gateway_slack_enabled is False
 
-    def test_gateway_github_default_true(self) -> None:
+    def test_gateway_github_default_false(self) -> None:
+        """GitHub gateway is disabled by default (requires explicit opt-in)."""
         from ypl.mono_server.config import MonoConfig
 
         cfg = MonoConfig()
-        assert cfg.gateway_github_enabled is True
+        assert cfg.gateway_github_enabled is False
+
+    def test_gateway_github_enabled_via_env(self) -> None:
+        with patch.dict(os.environ, {"GATEWAY_GITHUB_ENABLED": "1"}):
+            from ypl.mono_server.config import MonoConfig
+
+            cfg = MonoConfig()
+            assert cfg.gateway_github_enabled is True
