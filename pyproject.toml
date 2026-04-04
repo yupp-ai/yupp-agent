@@ -222,6 +222,20 @@ filterwarnings = [
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
+[tool.coverage.run]
+source = ["ypl"]
+omit = [
+    "ypl/db/alembic/*",
+    "ypl/streamlit_server/*",
+    "ypl/agent_harness_service/deploy/*",
+    "ypl/agent_harness_service/tui/*",
+    "ypl/agent_harness_service/scripts/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 33  # Ratchet target: 33 → 80%. See http://go/p/55313dc9-bed8-49cf-ace2-ab7d37240dbb
+
 [tool.uv.workspace]
 members = [
     "example",
