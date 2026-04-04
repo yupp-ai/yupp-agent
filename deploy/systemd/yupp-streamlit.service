@@ -22,7 +22,7 @@ Environment=PYTHONUNBUFFERED=1
 
 ExecStart=/opt/yupp-agent/.venv/bin/streamlit run \
     ypl/streamlit_server/app.py \
-    --server.port 8501 \
+    --server.port ${PORT} \
     --server.address 0.0.0.0 \
     --server.headless true \
     --browser.gatherUsageStats false
