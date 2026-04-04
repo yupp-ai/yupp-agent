@@ -82,8 +82,6 @@ class GitHubGatewayPlugin:
 
             POST /gw/github/webhook/github
 
-        The same handler is also reachable at the backward-compat path
-        ``POST /ahs/webhook/github`` when registered via ``_setup_ahs_router``.
         """
         return webhook_router
 
