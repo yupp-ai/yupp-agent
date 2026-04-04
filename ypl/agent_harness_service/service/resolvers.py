@@ -194,8 +194,9 @@ async def _download_attachments_to_workspace(
         workspace: Session workspace root directory.
 
     Returns:
-        List of relative paths (e.g., "attachments/screenshot.png") for
-        successfully downloaded files.
+        List of absolute paths (e.g., "/data/sessions/{id}/attachments/screenshot.png") for
+        successfully downloaded files. Absolute paths are used so the agent can pass them
+        directly to the Read tool without guessing the workspace root.
     """
     from ypl.backend.utils.gcs_utils import download_from_gcs
 
@@ -210,13 +211,12 @@ async def _download_attachments_to_workspace(
             logger.warning("Skipping attachment with unsafe filename", filename=att.filename)
             continue
         local_path = os.path.join(attachments_dir, safe_name)
-        relative_path = f"attachments/{safe_name}"
 
         try:
             data = await download_from_gcs(att.gcs_url)
             with open(local_path, "wb") as f:
                 f.write(data)
-            downloaded_paths.append(relative_path)
+            downloaded_paths.append(local_path)
             logger.info(
                 "Downloaded attachment to workspace",
                 filename=att.filename,
