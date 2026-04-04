@@ -7,7 +7,7 @@ Postgres or Redis instance.  Every test here must pass in CI with
 Coverage areas:
   1. Health check — always 200, correct body and content-type.
   2. Auth boundary — AHS routes reject unauthenticated requests correctly.
-  3. MCP harness auth boundary — rejects requests without a valid token.
+  3. MCP auth boundary — /mcp rejects requests without a valid token.
   4. SAG route registration — /gw/slack/* routes are wired.
   5. GitHub gateway toggle — /gw/github/* routes controlled by env var.
   6. Combined lifespan ordering — startup / shutdown happen in correct order
@@ -94,7 +94,7 @@ class TestAHSAuthBoundary:
     """AHS routes return the right auth-related status codes."""
 
     def test_agents_no_api_key_returns_503(self) -> None:
-        """When AGENT_HARNESS_SERVICE_API_KEY is unset all AHS requests → 503."""
+        """When AGENT_HARNESS_SERVICE_API_KEY is unset all AHS requests -> 503."""
         from ypl.backend.config import settings
 
         with patch.object(settings, "AGENT_HARNESS_SERVICE_API_KEY", ""):
@@ -102,7 +102,7 @@ class TestAHSAuthBoundary:
         assert r.status_code == 503
 
     def test_agents_wrong_x_api_key_returns_403(self) -> None:
-        """Wrong X-API-Key header → 403 (not 500)."""
+        """Wrong X-API-Key header -> 403 (not 500)."""
         from ypl.backend.config import settings
 
         with patch.object(settings, "AGENT_HARNESS_SERVICE_API_KEY", "real-key"):
@@ -110,7 +110,7 @@ class TestAHSAuthBoundary:
         assert r.status_code == 403
 
     def test_sessions_no_api_key_returns_503(self) -> None:
-        """GET /ahs/sessions without API key configured → 503."""
+        """GET /ahs/sessions without API key configured -> 503."""
         from ypl.backend.config import settings
 
         with patch.object(settings, "AGENT_HARNESS_SERVICE_API_KEY", ""):
@@ -140,12 +140,12 @@ class TestMCPHarnessAuthBoundary:
     """Unified MCP endpoint (/mcp) enforces authentication for all callers."""
 
     def test_post_mcp_without_token_returns_401(self) -> None:
-        """Unauthenticated POST /mcp/ → 401 (UnifiedMcpAuthMiddleware)."""
+        """Unauthenticated POST /mcp/ -> 401 (UnifiedMcpAuthMiddleware)."""
         r = _client().post("/mcp/")
         assert r.status_code == 401
 
     def test_get_mcp_without_token_returns_401(self) -> None:
-        """Unauthenticated GET /mcp/ → 401."""
+        """Unauthenticated GET /mcp/ -> 401."""
         r = _client().get("/mcp/")
         assert r.status_code == 401
 
@@ -218,7 +218,7 @@ class TestGitHubGatewayToggle:
         """GATEWAY_GITHUB_ENABLED=false removes /gw/github/* and /ahs/webhook/* routes.
 
         The _ahs_router_setup_done guard is reset and a fresh ahs_router is injected
-        so the test creates a clean app — without this, module-level initialisation
+        so the test creates a clean app -- without this, module-level initialisation
         permanently bakes webhook_router into the shared ahs_router object.
         """
         from fastapi import APIRouter
@@ -256,9 +256,15 @@ def _noop_asynccontextmanager() -> Any:
 class TestLifespanOrdering:
     """combined_lifespan starts and stops services in the documented order.
 
-    Startup order:  ahs_startup → unified MCP lifespan → register_unified_tools →
-                    mcp_startup → sag_startup
-    Shutdown order: sag_shutdown → mcp_shutdown → unified MCP exit → ahs_shutdown
+    Startup order:  ahs_startup -> unified MCP lifespan -> register_unified_tools
+                    -> mcp_startup -> plugin.startup() (SAG)
+    Shutdown order: plugin.shutdown() (SAG) -> mcp_shutdown -> unified MCP exit
+                    -> ahs_shutdown
+
+    SAG startup/shutdown are now delegated through SlackGatewayPlugin
+    (ypl.mono_server.plugins.slack).  Tests patch the underlying SAG helpers
+    at their definition site so both the plugin and the combined lifespan see
+    the mocked versions.
     """
 
     @pytest.mark.asyncio
@@ -293,18 +299,20 @@ class TestLifespanOrdering:
 
         from ypl.mono_server.server import create_app
 
+        # Patch SAG helpers at their definition site (plugins.slack) so the
+        # SlackGatewayPlugin sees the mocked versions when it delegates to them.
         with (
             patch("ypl.mono_server.server.ahs_startup", side_effect=_ahs_startup),
             patch("ypl.mono_server.server.mcp_startup", side_effect=_mcp_startup),
             patch("ypl.mono_server.server.mcp_shutdown", side_effect=_mcp_shutdown),
             patch("ypl.mono_server.server.ahs_shutdown", side_effect=_ahs_shutdown),
-            patch("ypl.mono_server.server.sag_startup", side_effect=_sag_startup),
-            patch("ypl.mono_server.server.sag_shutdown", side_effect=_sag_shutdown),
+            patch("ypl.mono_server.plugins.slack.sag_startup", side_effect=_sag_startup),
+            patch("ypl.mono_server.plugins.slack.sag_shutdown", side_effect=_sag_shutdown),
             patch("ypl.mono_server.server.register_unified_tools", new=AsyncMock()),
         ):
             test_app = create_app()
             async with test_app.router.lifespan_context(test_app):
-                pass  # yield point — services should be up
+                pass  # yield point -- services should be up
 
         # Verify order
         assert call_log.index("ahs_startup") < call_log.index("mcp_startup"), (
@@ -351,8 +359,8 @@ class TestLifespanOrdering:
             patch("ypl.mono_server.server.mcp_startup", side_effect=_mcp_startup),
             patch("ypl.mono_server.server.mcp_shutdown", side_effect=_mcp_shutdown),
             patch("ypl.mono_server.server.ahs_shutdown", side_effect=_ahs_shutdown),
-            patch("ypl.mono_server.server.sag_startup", side_effect=_sag_startup),
-            patch("ypl.mono_server.server.sag_shutdown", side_effect=_sag_shutdown),
+            patch("ypl.mono_server.plugins.slack.sag_startup", side_effect=_sag_startup),
+            patch("ypl.mono_server.plugins.slack.sag_shutdown", side_effect=_sag_shutdown),
             patch("ypl.mono_server.server.register_unified_tools", new=AsyncMock()),
         ):
             test_app = create_app()
@@ -427,8 +435,8 @@ class TestLifespanOrdering:
             patch("ypl.mono_server.server.mcp_startup", new=AsyncMock()),
             patch("ypl.mono_server.server.mcp_shutdown", new=AsyncMock()),
             patch("ypl.mono_server.server.ahs_shutdown", new=AsyncMock()),
-            patch("ypl.mono_server.server.sag_startup", side_effect=_sag_startup),
-            patch("ypl.mono_server.server.sag_shutdown", new=AsyncMock()),
+            patch("ypl.mono_server.plugins.slack.sag_startup", side_effect=_sag_startup),
+            patch("ypl.mono_server.plugins.slack.sag_shutdown", new=AsyncMock()),
             patch("ypl.mono_server.server.register_unified_tools", new=AsyncMock()),
             patch.dict(os.environ, {"GATEWAY_SLACK_ENABLED": "false"}),
         ):
@@ -468,7 +476,7 @@ class TestErrorResponseFormat:
         # Provide a valid API key in settings so the middleware can check auth,
         # then make the request without the X-API-Key header to get a 401.
         with patch.object(settings, "AGENT_HARNESS_SERVICE_API_KEY", "key"):
-            r = _client().get("/ahs/agents")  # no X-API-Key header → 401
+            r = _client().get("/ahs/agents")  # no X-API-Key header -> 401
         assert r.status_code == 401
         data = r.json()
         assert isinstance(data, dict)
@@ -528,9 +536,9 @@ class TestIntegrationLiveStack:
         assert r.status_code in {401, 503}
 
     def test_mcp_harness_live_401(self) -> None:
-        """POST /mcp/harness/ without MCP token returns 401."""
+        """POST /mcp/ without token returns 401."""
         with self._http_client() as client:
-            r = client.post("/mcp/harness/")
+            r = client.post("/mcp/")
         assert r.status_code == 401
 
     def test_sag_route_live(self) -> None:
