@@ -51,9 +51,7 @@ def upgrade() -> None:
         sa.Column("max_attempts", sa.Integer(), nullable=False),
         sa.Column("resolved_session_id", sa.Uuid(), nullable=True),
         sa.Column("error", sa.Text(), nullable=True),
-        sa.CheckConstraint(
-            "attempt_count <= max_attempts", name=op.f("ck_agent_messages_ck_agent_message_attempt_count")
-        ),
+        sa.CheckConstraint("attempt_count <= max_attempts", name="ck_agent_message_attempt_count"),
         sa.ForeignKeyConstraint(
             ["from_agent_id"], ["agents.agent_id"], name=op.f("fk_agent_messages_from_agent_id_agents")
         ),
