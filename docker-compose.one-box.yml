@@ -1,0 +1,102 @@
+# One-box deployment: AHS monolith + Streamlit + PostgreSQL + Redis
+#
+# Quick start:
+#   python -m ypl.mono_server.setup   # first run: creates .env, runs migrations
+#   docker compose -f docker-compose.one-box.yml up -d
+#
+# Both 'app' and 'streamlit' are built from the same Dockerfile.
+# Set SANDBOX_ENABLED=false in your .env when running in unprivileged Docker
+# (bwrap is unavailable without --privileged; agents will still work,
+# just without filesystem-level sandboxing).
+#
+# Port map:
+#   8090 — AHS + MCP + gateways (uvicorn)
+#   8501 — Streamlit operational dashboards
+#   5432 — PostgreSQL 16  (exposed for local psql / migrations)
+#   6379 — Redis 7        (exposed for redis-cli inspection)
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: yupp_agent
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: yupp-agent:local
+    ports:
+      - "8090:8090"
+    env_file: .env
+    environment:
+      # Use the monolith entrypoint (AHS + MCP + gateways in one process).
+      SCRIPT_TO_RUN: /app/ypl/mono_server/entrypoint.sh
+      AHS_PORT: "8090"
+      # Override DB/Redis to point at the Compose service names.
+      REDIS_URL: "redis://redis:6379/1"
+      # bwrap is unavailable in unprivileged Docker — agents still run fine.
+      SANDBOX_ENABLED: "false"
+      USE_GOOGLE_CLOUD_LOGGING: "false"
+      DISABLE_WRITE_GOOGLE_CLOUD_METRICS: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8090/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    restart: unless-stopped
+
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: yupp-agent:local
+    ports:
+      - "8501:8501"
+    env_file: .env
+    environment:
+      SCRIPT_TO_RUN: /app/ypl/streamlit_server/streamlit_server_entrypoint.sh
+      PORT: "8501"
+      # Point Streamlit at local DB (same connection string as app).
+      REDIS_URL: "redis://redis:6379/1"
+      USE_GOOGLE_CLOUD_LOGGING: "false"
+      DISABLE_WRITE_GOOGLE_CLOUD_METRICS: "true"
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
