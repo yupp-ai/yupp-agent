@@ -213,6 +213,22 @@ exclude = ["ypl/db/alembic/", "tmp/", "scripts/"]
 cache_dir = ".mypy_cache"
 incremental = true
 
+[tool.coverage.run]
+source = ["ypl"]
+omit = [
+    "ypl/db/alembic/*",
+    "ypl/streamlit_server/*",
+    "ypl/*/deploy/*",
+    "ypl/*/tui.py",
+    "ypl/*/entrypoint.py",
+    "scripts/*",
+]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_covered = false
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = [
