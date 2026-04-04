@@ -150,6 +150,11 @@ info "Systemd units installed and enabled (not started yet)."
 mkdir -p /var/log/yupp-agent
 chown "${APP_USER}:${APP_USER}" /var/log/yupp-agent
 
+# Data and cache directories referenced by systemd ReadWritePaths
+# (ProtectSystem=strict makes the parent read-only, so create them now)
+mkdir -p "${INSTALL_DIR}/data" "${INSTALL_DIR}/.cache"
+chown "${APP_USER}:${APP_USER}" "${INSTALL_DIR}/data" "${INSTALL_DIR}/.cache"
+
 # ---------------------------------------------------------------------------
 # Done — prompt for setup wizard
 # ---------------------------------------------------------------------------
