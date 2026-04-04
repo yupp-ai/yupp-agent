@@ -251,10 +251,20 @@ class TestWebhookEndpointHermetic:
         body: dict[str, Any],
         *,
         event: str = "pull_request",
-        secret: str | None = None,
+        sig_override: str | None = None,
     ) -> Any:
+        """POST a signed webhook payload.
+
+        Args:
+            client:       TestClient for the mini app.
+            body:         JSON-serialisable payload dict.
+            event:        Value for the ``X-GitHub-Event`` header.
+            sig_override: If provided, use this raw value for the
+                          ``X-Hub-Signature-256`` header instead of computing
+                          a real HMAC.  Use to test invalid-signature paths.
+        """
         raw = json.dumps(body).encode()
-        sig = _hmac_sig(secret or self._SECRET, raw) if secret is not None else _hmac_sig(self._SECRET, raw)
+        sig = sig_override if sig_override is not None else _hmac_sig(self._SECRET, raw)
         return client.post(
             "/gw/github/webhook/github",
             content=raw,
@@ -266,16 +276,16 @@ class TestWebhookEndpointHermetic:
         )
 
     def test_missing_secret_returns_503(self) -> None:
-        """When AHS_GITHUB_WEBHOOK_SECRET is empty, the endpoint returns 503."""
+        """When AHS_GITHUB_WEBHOOK_SECRET is empty, the endpoint returns 503.
+
+        The secret check fires before signature verification, so any request
+        (even a validly-signed one) returns 503 when the secret is unset.
+        """
         from ypl.backend.config import settings
 
         client = _make_github_client(self._SECRET)
         with patch.object(settings, "AHS_GITHUB_WEBHOOK_SECRET", ""):
-            r = client.post(
-                "/gw/github/webhook/github",
-                content=b"{}",
-                headers={"X-Hub-Signature-256": "sha256=abc", "X-GitHub-Event": "ping"},
-            )
+            r = self._post(client, {}, event="ping")
         assert r.status_code == 503
 
     def test_invalid_signature_returns_401(self) -> None:
@@ -284,15 +294,7 @@ class TestWebhookEndpointHermetic:
 
         client = _make_github_client(self._SECRET)
         with patch.object(settings, "AHS_GITHUB_WEBHOOK_SECRET", self._SECRET):
-            r = client.post(
-                "/gw/github/webhook/github",
-                content=b'{"foo": "bar"}',
-                headers={
-                    "X-Hub-Signature-256": "sha256=badhex",
-                    "X-GitHub-Event": "pull_request",
-                    "Content-Type": "application/json",
-                },
-            )
+            r = self._post(client, {"foo": "bar"}, sig_override="sha256=badhex")
         assert r.status_code == 401
 
     def test_ping_event_acknowledged(self) -> None:
@@ -300,19 +302,8 @@ class TestWebhookEndpointHermetic:
         from ypl.backend.config import settings
 
         client = _make_github_client(self._SECRET)
-        body = {"zen": "Keep it logically awesome."}
-        raw = json.dumps(body).encode()
-        sig = _hmac_sig(self._SECRET, raw)
         with patch.object(settings, "AHS_GITHUB_WEBHOOK_SECRET", self._SECRET):
-            r = client.post(
-                "/gw/github/webhook/github",
-                content=raw,
-                headers={
-                    "X-Hub-Signature-256": sig,
-                    "X-GitHub-Event": "ping",
-                    "Content-Type": "application/json",
-                },
-            )
+            r = self._post(client, {"zen": "Keep it logically awesome."}, event="ping")
         assert r.status_code == 200
         assert r.json()["ok"] is True
         assert r.json()["event"] == "ping"
@@ -322,19 +313,8 @@ class TestWebhookEndpointHermetic:
         from ypl.backend.config import settings
 
         client = _make_github_client(self._SECRET)
-        body: dict[str, Any] = {}
-        raw = json.dumps(body).encode()
-        sig = _hmac_sig(self._SECRET, raw)
         with patch.object(settings, "AHS_GITHUB_WEBHOOK_SECRET", self._SECRET):
-            r = client.post(
-                "/gw/github/webhook/github",
-                content=raw,
-                headers={
-                    "X-Hub-Signature-256": sig,
-                    "X-GitHub-Event": "push",
-                    "Content-Type": "application/json",
-                },
-            )
+            r = self._post(client, {}, event="push")
         assert r.status_code == 200
         data = r.json()
         assert data["skipped"] is True
@@ -345,18 +325,10 @@ class TestWebhookEndpointHermetic:
         from ypl.backend.config import settings
 
         client = _make_github_client(self._SECRET)
-        body = {"action": "closed", "pull_request": {"draft": False}}
-        raw = json.dumps(body).encode()
-        sig = _hmac_sig(self._SECRET, raw)
         with patch.object(settings, "AHS_GITHUB_WEBHOOK_SECRET", self._SECRET):
-            r = client.post(
-                "/gw/github/webhook/github",
-                content=raw,
-                headers={
-                    "X-Hub-Signature-256": sig,
-                    "X-GitHub-Event": "pull_request",
-                    "Content-Type": "application/json",
-                },
+            r = self._post(
+                client,
+                {"action": "closed", "pull_request": {"draft": False}},
             )
         assert r.status_code == 200
         data = r.json()

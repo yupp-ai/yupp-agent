@@ -30,9 +30,10 @@ that GitHub sends in the ``X-Hub-Signature-256`` header.  The shared
 secret must be configured via ``AHS_GITHUB_WEBHOOK_SECRET``.  No API key
 is required — the webhook secret is the sole auth mechanism.
 
-The standalone AHS server (``ypl/agent_harness_service/server.py``) and
-the backward-compat ``/ahs/webhook/github`` path are unaffected — they
-continue to call the same underlying endpoint directly.
+The standalone AHS server (``ypl/agent_harness_service/server.py``) is
+unaffected — it continues to register its own webhook router directly.
+Note: the monolith no longer exposes ``/ahs/webhook/github``; the canonical
+webhook URL in the monolith is ``/gw/github/webhook/github``.
 """
 
 from __future__ import annotations
