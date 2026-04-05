@@ -17,6 +17,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
+import cachetools
 import sqlalchemy as sa
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -60,9 +61,6 @@ RESUMABLE_ERROR_SUBTYPES: frozenset[str] = frozenset(
 
 # Track in-flight task execution tasks for graceful shutdown
 _task_execution_tasks: set[asyncio.Task] = set()
-
-# Per-project in-flight count: incremented on claim, decremented on completion.
-_project_in_flight: dict[uuid.UUID, int] = {}
 
 
 def _parse_env_int(env_var: str, default: int) -> int:
@@ -115,35 +113,48 @@ def _get_rate_limiter() -> RedisTokenBucketRateLimiter:
     return _rate_limiter
 
 
-def _increment_project_in_flight(project_id: uuid.UUID) -> None:
-    _project_in_flight[project_id] = _project_in_flight.get(project_id, 0) + 1
+_project_capacity_cache: cachetools.TTLCache[uuid.UUID, int] = cachetools.TTLCache(maxsize=256, ttl=60)
 
 
-def _decrement_project_in_flight(project_id: uuid.UUID) -> None:
-    count = _project_in_flight.get(project_id, 0) - 1
-    if count <= 0:
-        _project_in_flight.pop(project_id, None)
-    else:
-        _project_in_flight[project_id] = count
+async def _get_project_in_progress_count(project_id: uuid.UUID) -> int:
+    """Get the number of IN_PROGRESS tasks for a project, cached for 60s."""
+    cached = _project_capacity_cache.get(project_id)
+    if cached is not None:
+        return cached
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(sa.func.count())
+            .select_from(AgentTask)
+            .where(col(AgentTask.agent_project_id) == project_id)
+            .where(col(AgentTask.status) == AgentTaskStatus.IN_PROGRESS)
+            .where(col(AgentTask.deleted_at).is_(None))
+        )
+        db_count: int = result.scalar_one()
+    _project_capacity_cache[project_id] = db_count
+    return db_count
 
 
-def has_project_capacity(project_id: uuid.UUID, extra_in_flight: int = 0) -> bool:
+async def has_project_capacity(project_id: uuid.UUID, extra_in_flight: int = 0) -> bool:
     """Check if a project has capacity to start another task.
+
+    Queries the database for IN_PROGRESS tasks instead of relying on in-memory
+    counters, which can drift after crashes or leaked sessions. Results are
+    cached for 60 seconds to avoid excessive DB queries during poll cycles.
 
     Args:
         project_id: The project to check.
         extra_in_flight: Additional tasks already dispatched this poll cycle that
-            have not yet incremented _project_in_flight inside execute_task().
-            Pass this when batch-dispatching to avoid a TOCTOU race where all
-            tasks in a batch see the same stale counter before any task starts.
+            may not yet be IN_PROGRESS in the DB.
     """
-    current = _project_in_flight.get(project_id, 0) + extra_in_flight
+    db_count = await _get_project_in_progress_count(project_id)
+    current = db_count + extra_in_flight
     if current < MAX_CONCURRENT_TASKS_PER_PROJECT:
         return True
-    logger.info(
+    logger.warning(
         "Project at task capacity, deferring",
         agent_project_id=str(project_id),
-        active_count=current,
+        in_progress_db=db_count,
+        extra_in_flight=extra_in_flight,
         max_per_project=MAX_CONCURRENT_TASKS_PER_PROJECT,
     )
     return False
@@ -552,8 +563,6 @@ async def execute_task(task_id: uuid.UUID) -> None:
         logger.warning("Task claim failed — not READY or already claimed", agent_task_id=str(task_id))
         return
 
-    _increment_project_in_flight(task.agent_project_id)
-
     # Check if this is a resumption (resume_session flag set by resume_task())
     task_data = dict(task.task_data or {})
     resume_session = task_data.pop("resume_session", False)
@@ -659,9 +668,6 @@ async def execute_task(task_id: uuid.UUID) -> None:
         )
 
     except Exception as e:
-        # Setup failed before session was created — decrement here since
-        # update_task_completion won't be called by the session completion hook.
-        _decrement_project_in_flight(task.agent_project_id)
         error_msg = str(e)
         logger.error(
             "Task execution failed",
@@ -745,10 +751,6 @@ async def update_task_completion(
         await complete_task(session, task, target_status, result=task_result)
 
         await session.commit()
-
-        # Decrement per-project in-flight counter now that the session has finished.
-        # (For setup failures, the decrement happens in execute_task's except block.)
-        _decrement_project_in_flight(task.agent_project_id)
 
         # Capture fields needed for Slack notification before the session expires.
         _slack_project_id = task.agent_project_id
@@ -950,10 +952,9 @@ async def poll_and_execute_ready_tasks() -> None:
     # that requires releasing the task if rate-limited. (see PR #10907)
     scheduled_count = 0
     now = time.monotonic()
-    # Track tasks dispatched in this cycle per project.  execute_task() increments
-    # _project_in_flight only after claiming the task (inside the background task),
-    # so multiple tasks for the same project dispatched in one batch would all see
-    # the same stale counter if we relied on _project_in_flight alone.
+    # Track tasks dispatched in this cycle per project.  The DB query in
+    # has_project_capacity() won't see tasks dispatched earlier in this batch
+    # until they are claimed and set to IN_PROGRESS, so we pass extra_in_flight.
     dispatched_this_cycle: dict[uuid.UUID, int] = {}
     for task in ready_tasks:
         # Check rate limit per project (project_id is the bucket identifier)
@@ -1025,16 +1026,15 @@ async def poll_and_execute_ready_tasks() -> None:
         )
 
         # Check per-project parallelism limit.  Pass extra_in_flight so tasks
-        # dispatched earlier in this same batch are counted even though their
-        # _increment_project_in_flight() call hasn't run yet.
+        # dispatched earlier in this same batch (not yet IN_PROGRESS in DB)
+        # are counted.
         pending_this_cycle = dispatched_this_cycle.get(task.agent_project_id, 0)
-        if not has_project_capacity(task.agent_project_id, extra_in_flight=pending_this_cycle):
+        if not await has_project_capacity(task.agent_project_id, extra_in_flight=pending_this_cycle):
             # BUG: rate limiter token was already consumed but task is not dispatched
             logger.warning(
                 "Task passed rate limiter but blocked by project capacity (token wasted)",
                 agent_task_id=str(task.agent_task_id),
                 agent_project_id=project_id_str,
-                in_flight=_project_in_flight.get(task.agent_project_id, 0),
                 extra_in_flight=pending_this_cycle,
                 max_per_project=MAX_CONCURRENT_TASKS_PER_PROJECT,
             )
