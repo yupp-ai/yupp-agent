@@ -549,7 +549,7 @@ async def execute_task(task_id: uuid.UUID) -> None:
     # Claim the task
     task = await claim_task(task_id)
     if not task:
-        logger.debug("Task already claimed or not ready", agent_task_id=str(task_id))
+        logger.warning("Task claim failed — not READY or already claimed", agent_task_id=str(task_id))
         return
 
     _increment_project_in_flight(task.agent_project_id)
@@ -1018,22 +1018,44 @@ async def poll_and_execute_ready_tasks() -> None:
         # denial (if any) starts fresh from the base cooldown.
         _rate_limited_projects.pop(project_id_str, None)
 
+        logger.warning(
+            "Rate limiter allowed task (token consumed)",
+            agent_task_id=str(task.agent_task_id),
+            agent_project_id=project_id_str,
+        )
+
         # Check per-project parallelism limit.  Pass extra_in_flight so tasks
         # dispatched earlier in this same batch are counted even though their
         # _increment_project_in_flight() call hasn't run yet.
         pending_this_cycle = dispatched_this_cycle.get(task.agent_project_id, 0)
         if not has_project_capacity(task.agent_project_id, extra_in_flight=pending_this_cycle):
-            # Continue to next task - other projects may have capacity
+            # BUG: rate limiter token was already consumed but task is not dispatched
+            logger.warning(
+                "Task passed rate limiter but blocked by project capacity (token wasted)",
+                agent_task_id=str(task.agent_task_id),
+                agent_project_id=project_id_str,
+                in_flight=_project_in_flight.get(task.agent_project_id, 0),
+                extra_in_flight=pending_this_cycle,
+                max_per_project=MAX_CONCURRENT_TASKS_PER_PROJECT,
+            )
             continue
 
         # Check global execution capacity before spawning
         if not has_execution_capacity():
-            logger.info(
-                "Deferring remaining tasks to next poll",
-                deferred_count=len(ready_tasks) - ready_tasks.index(task),
+            logger.warning(
+                "Task passed rate limiter but blocked by execution capacity (token wasted)",
+                agent_task_id=str(task.agent_task_id),
+                agent_project_id=project_id_str,
+                active_tasks=len(_task_execution_tasks),
             )
             break
 
+        logger.warning(
+            "Dispatching task for execution",
+            agent_task_id=str(task.agent_task_id),
+            agent_project_id=project_id_str,
+            scheduled_count=scheduled_count + 1,
+        )
         bg_task = create_background_task(execute_task(task.agent_task_id))
         _task_execution_tasks.add(bg_task)
         bg_task.add_done_callback(_task_done_callback)
