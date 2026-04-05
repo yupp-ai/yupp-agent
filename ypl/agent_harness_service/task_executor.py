@@ -560,7 +560,7 @@ async def execute_task(task_id: uuid.UUID) -> None:
     # Claim the task
     task = await claim_task(task_id)
     if not task:
-        logger.warning("Task claim failed — not READY or already claimed", agent_task_id=str(task_id))
+        logger.info("Task claim failed — not READY or already claimed", agent_task_id=str(task_id))
         return
 
     # Check if this is a resumption (resume_session flag set by resume_task())
@@ -1019,7 +1019,7 @@ async def poll_and_execute_ready_tasks() -> None:
         # denial (if any) starts fresh from the base cooldown.
         _rate_limited_projects.pop(project_id_str, None)
 
-        logger.warning(
+        logger.info(
             "Rate limiter allowed task (token consumed)",
             agent_task_id=str(task.agent_task_id),
             agent_project_id=project_id_str,
@@ -1030,7 +1030,8 @@ async def poll_and_execute_ready_tasks() -> None:
         # are counted.
         pending_this_cycle = dispatched_this_cycle.get(task.agent_project_id, 0)
         if not await has_project_capacity(task.agent_project_id, extra_in_flight=pending_this_cycle):
-            # BUG: rate limiter token was already consumed but task is not dispatched
+            # TODO: rate limiter token is consumed before capacity check — move
+            # is_allowed() after capacity checks to avoid wasting tokens.
             logger.warning(
                 "Task passed rate limiter but blocked by project capacity (token wasted)",
                 agent_task_id=str(task.agent_task_id),
@@ -1042,15 +1043,18 @@ async def poll_and_execute_ready_tasks() -> None:
 
         # Check global execution capacity before spawning
         if not has_execution_capacity():
+            # TODO: rate limiter token is consumed before capacity check — move
+            # is_allowed() after capacity checks to avoid wasting tokens.
             logger.warning(
                 "Task passed rate limiter but blocked by execution capacity (token wasted)",
                 agent_task_id=str(task.agent_task_id),
                 agent_project_id=project_id_str,
                 active_tasks=len(_task_execution_tasks),
+                deferred_count=len(ready_tasks) - ready_tasks.index(task) - 1,
             )
             break
 
-        logger.warning(
+        logger.info(
             "Dispatching task for execution",
             agent_task_id=str(task.agent_task_id),
             agent_project_id=project_id_str,
