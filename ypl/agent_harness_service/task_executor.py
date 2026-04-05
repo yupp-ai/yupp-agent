@@ -113,7 +113,10 @@ def _get_rate_limiter() -> RedisTokenBucketRateLimiter:
     return _rate_limiter
 
 
-_project_capacity_cache: cachetools.TTLCache[uuid.UUID, int] = cachetools.TTLCache(maxsize=256, ttl=60)
+_SCHEDULER_POLL_INTERVAL = _parse_env_int("AHS_SCHEDULER_POLL_INTERVAL", 10)
+_project_capacity_cache: cachetools.TTLCache[uuid.UUID, int] = cachetools.TTLCache(
+    maxsize=256, ttl=_SCHEDULER_POLL_INTERVAL
+)
 
 
 async def _get_project_in_progress_count(project_id: uuid.UUID) -> int:
