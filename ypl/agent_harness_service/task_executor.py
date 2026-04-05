@@ -725,6 +725,12 @@ async def update_task_completion(
                 current_status=task.status.value,
                 session_id=session_id,
             )
+            # Still decrement the in-flight counter: the session that was holding this
+            # slot has finished regardless of whether we write a status transition.
+            # Without this, tasks that transition to IN_REVIEW via MCP (which updates
+            # the DB directly, bypassing this function's write path) permanently consume
+            # a slot in _project_in_flight and block future dispatches for the project.
+            _decrement_project_in_flight(task.agent_project_id)
             return
 
         target_status = AgentTaskStatus.COMPLETED if success else AgentTaskStatus.FAILED
@@ -959,6 +965,17 @@ async def poll_and_execute_ready_tasks() -> None:
         # Check rate limit per project (project_id is the bucket identifier)
         project_id_str = str(task.agent_project_id)
 
+        # Check per-project parallelism limit FIRST — before consuming a rate-limit
+        # token.  If the project is already at capacity there is no point burning a
+        # token from the bucket; we would waste it and then have to wait for it to
+        # refill before dispatching the next task for that project.  Pass
+        # extra_in_flight so tasks dispatched earlier in this same batch are counted
+        # even though their _increment_project_in_flight() call hasn't run yet.
+        pending_this_cycle = dispatched_this_cycle.get(task.agent_project_id, 0)
+        if not has_project_capacity(task.agent_project_id, extra_in_flight=pending_this_cycle):
+            # Continue to next task - other projects may have capacity
+            continue
+
         # Skip projects that are in a post-rate-limit cooldown window.  Without
         # this guard, every 10-second scheduler poll logs a WARNING for the same
         # task until the token-bucket hour window rolls over — producing dozens of
@@ -1017,14 +1034,6 @@ async def poll_and_execute_ready_tasks() -> None:
         # Rate limiter allowed — clear any accumulated back-off state so the next
         # denial (if any) starts fresh from the base cooldown.
         _rate_limited_projects.pop(project_id_str, None)
-
-        # Check per-project parallelism limit.  Pass extra_in_flight so tasks
-        # dispatched earlier in this same batch are counted even though their
-        # _increment_project_in_flight() call hasn't run yet.
-        pending_this_cycle = dispatched_this_cycle.get(task.agent_project_id, 0)
-        if not has_project_capacity(task.agent_project_id, extra_in_flight=pending_this_cycle):
-            # Continue to next task - other projects may have capacity
-            continue
 
         # Check global execution capacity before spawning
         if not has_execution_capacity():
