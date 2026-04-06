@@ -45,6 +45,7 @@ _MEMORY_SYMLINK_NAME = "agent_memories"
 # Whitelist approach: only these paths are visible to the sandboxed command.
 _BWRAP_RO_BINDS: list[str] = [
     "/usr",
+    "/opt",  # poetry venv (/opt/yupp-mind/.venv) and any other opt-installed tools
     "/etc/ssl",  # TLS certificates
     "/etc/ca-certificates",
     "/etc/alternatives",
