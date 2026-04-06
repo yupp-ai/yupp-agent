@@ -75,12 +75,12 @@ class TestValidateBigqueryQuery:
         err = _validate_bigquery_query("INSERT INTO tbl VALUES (1)")
         assert err is not None
         assert err["success"] is False
-        assert "INSERT" in err["error"]
+        assert "Only SELECT" in err["error"]
 
     def test_rejects_update(self) -> None:
         err = _validate_bigquery_query("UPDATE tbl SET x=1")
         assert err is not None
-        assert "UPDATE" in err["error"]
+        assert "Only SELECT" in err["error"]
 
     def test_rejects_delete(self) -> None:
         err = _validate_bigquery_query("DELETE FROM tbl")
@@ -89,7 +89,7 @@ class TestValidateBigqueryQuery:
     def test_rejects_drop(self) -> None:
         err = _validate_bigquery_query("DROP TABLE tbl")
         assert err is not None
-        assert "DROP" in err["error"]
+        assert "Only SELECT" in err["error"]
 
     def test_rejects_create(self) -> None:
         err = _validate_bigquery_query("CREATE TABLE foo (id INT)")
@@ -124,6 +124,12 @@ class TestValidateBigqueryQuery:
     def test_case_insensitive_dangerous_keyword(self) -> None:
         err = _validate_bigquery_query("select 1; delete from foo")
         assert err is not None
+
+    def test_cte_query_rejected(self) -> None:
+        # CTE queries don't start with SELECT and are rejected (known limitation)
+        err = _validate_bigquery_query("WITH t AS (SELECT 1) SELECT * FROM t")
+        assert err is not None
+        assert "Only SELECT" in err["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -275,7 +281,7 @@ class TestQueryPostgresImpl:
         result = await _query_postgres_impl(
             "INSERT INTO t VALUES (1)",
             max_rows=10,
-            database="agentdb",  # type: ignore[arg-type]
+            database="agentdb",
         )
         assert result["success"] is False
         assert "Only SELECT" in result["error"]
@@ -283,15 +289,19 @@ class TestQueryPostgresImpl:
     async def test_adds_limit(self) -> None:
         rows = [(1,)]
         ctx = self._make_session_context(rows, ["id"])
-        with patch("ypl.mcp_server.tools.database.get_async_session_for", return_value=ctx):
-            result = await _query_postgres_impl("SELECT id FROM t", max_rows=5, database="agentdb")  # type: ignore[arg-type]
+        with patch("ypl.mcp_server.tools.database.get_async_session_for", return_value=ctx) as mock_session_for:
+            result = await _query_postgres_impl("SELECT id FROM t", max_rows=5, database="agentdb")
         assert result["success"] is True
+        # Verify LIMIT was included in the executed SQL
+        session = await mock_session_for.return_value.__aenter__()
+        executed_sql = str(session.execute.call_args[0][0])
+        assert "LIMIT" in executed_sql.upper()
 
     async def test_returns_formatted_rows(self) -> None:
         rows = [(42, "hello")]
         ctx = self._make_session_context(rows, ["id", "msg"])
         with patch("ypl.mcp_server.tools.database.get_async_session_for", return_value=ctx):
-            result = await _query_postgres_impl("SELECT id, msg FROM t", max_rows=10, database="yuppdb")  # type: ignore[arg-type]
+            result = await _query_postgres_impl("SELECT id, msg FROM t", max_rows=10, database="yuppdb")
         assert result["success"] is True
         assert result["results"][0]["id"] == 42
         assert result["results"][0]["msg"] == "hello"
@@ -301,7 +311,7 @@ class TestQueryPostgresImpl:
         ctx.__aenter__ = AsyncMock(side_effect=RuntimeError("db error"))
         ctx.__aexit__ = AsyncMock(return_value=False)
         with patch("ypl.mcp_server.tools.database.get_async_session_for", return_value=ctx):
-            result = await _query_postgres_impl("SELECT 1", max_rows=10, database="yuppdb")  # type: ignore[arg-type]
+            result = await _query_postgres_impl("SELECT 1", max_rows=10, database="yuppdb")
         assert result["success"] is False
         assert "db error" in result["error"]
 
@@ -310,7 +320,7 @@ class TestQueryPostgresImpl:
         rows = [(dt,)]
         ctx = self._make_session_context(rows, ["ts"])
         with patch("ypl.mcp_server.tools.database.get_async_session_for", return_value=ctx):
-            result = await _query_postgres_impl("SELECT ts FROM t", max_rows=10, database="agentdb")  # type: ignore[arg-type]
+            result = await _query_postgres_impl("SELECT ts FROM t", max_rows=10, database="agentdb")
         assert result["results"][0]["ts"] == dt.isoformat()
 
 

@@ -318,16 +318,15 @@ class TestListArtifacts:
         ctx.__aenter__ = AsyncMock(return_value=session)
         ctx.__aexit__ = AsyncMock(return_value=False)
 
-        stmt_chain = MagicMock()
-        stmt_chain.where.return_value = stmt_chain
-        stmt_chain.order_by.return_value = stmt_chain
-        stmt_chain.limit.return_value = stmt_chain
-
         with (
             patch("ypl.mcp_server.tools.agent_artifacts.get_ahs_session_id", return_value=FAKE_SESSION_ID),
             patch("ypl.mcp_server.tools.agent_artifacts.get_async_session_read_replica", return_value=ctx),
         ):
-            # Passing limit=999 should still succeed (capped internally)
+            # Passing limit=999 should still succeed (capped internally to 100)
             result = await list_artifacts.fn(limit=999)
 
         assert result["success"] is True
+        # Verify the executed SQL statement capped the LIMIT to 100
+        executed_stmt = session.execute.call_args[0][0]
+        compiled = executed_stmt.compile(compile_kwargs={"literal_binds": True})
+        assert "100" in str(compiled)

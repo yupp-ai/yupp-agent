@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 import json
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 from ypl.mcp_server.tools.redis import get_redis_value, scan_redis_keys
@@ -10,7 +11,7 @@ from ypl.mcp_server.tools.redis import get_redis_value, scan_redis_keys
 def _make_redis_client(
     get_value: bytes | None = None,
     ttl: int = -1,
-    scan_pages: list[tuple[int, list[str]]] | None = None,
+    scan_pages: list[tuple[int, list[Any]]] | None = None,
 ) -> AsyncMock:
     """Build an async mock Redis client."""
     client = AsyncMock()
@@ -126,7 +127,7 @@ class TestScanRedisKeys:
         assert result["truncated"] is True
 
     async def test_scan_no_keys_found(self) -> None:
-        scan_pages = [(0, [])]
+        scan_pages: list[tuple[int, list[Any]]] = [(0, [])]
         redis = _make_redis_client(scan_pages=scan_pages)
         with patch("ypl.mcp_server.tools.redis.get_redis_client", AsyncMock(return_value=redis)):
             result = await scan_redis_keys.fn("nonexistent:*")
