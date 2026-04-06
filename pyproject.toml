@@ -234,7 +234,7 @@ omit = [
 
 [tool.coverage.report]
 show_missing = true
-fail_under = 33  # Ratchet target: 33 → 80%. See http://go/p/55313dc9-bed8-49cf-ace2-ab7d37240dbb
+fail_under = 70  # Ratchet target: 33 → 80%. See http://go/p/55313dc9-bed8-49cf-ace2-ab7d37240dbb
 
 [tool.uv.workspace]
 members = [
