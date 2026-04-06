@@ -8,6 +8,7 @@ from __future__ import annotations
 from ypl.mcp_server.tools.agent_memory import (
     _sanitize_metadata_value,
     _validate_memory_topic,
+    search_agent_memory_tool,
 )
 
 # ---------------------------------------------------------------------------
@@ -125,3 +126,45 @@ class TestSanitizeMetadataValue:
         val = "col1\tcol2"
         result = _sanitize_metadata_value(val)
         assert "\t" not in result
+
+
+# ---------------------------------------------------------------------------
+# search_agent_memory_tool — input validation
+# ---------------------------------------------------------------------------
+
+
+class TestSearchAgentMemoryToolValidation:
+    async def test_empty_query_rejected(self) -> None:
+        result = await search_agent_memory_tool.fn("")
+        assert result["success"] is False
+        assert "non-empty" in result["error"]
+
+    async def test_whitespace_only_query_rejected(self) -> None:
+        result = await search_agent_memory_tool.fn("   ")
+        assert result["success"] is False
+        assert "non-empty" in result["error"]
+
+    async def test_invalid_mode_rejected(self) -> None:
+        result = await search_agent_memory_tool.fn("test query", mode="invalid")
+        assert result["success"] is False
+        assert "Invalid mode" in result["error"]
+
+    async def test_invalid_scope_rejected(self) -> None:
+        result = await search_agent_memory_tool.fn("test query", scope="invalid")
+        assert result["success"] is False
+        assert "Invalid scope" in result["error"]
+
+    async def test_malformed_agent_name_rejected(self) -> None:
+        result = await search_agent_memory_tool.fn("test query", agent_name="bad agent name!")
+        assert result["success"] is False
+        assert "Invalid agent_name" in result["error"]
+
+    async def test_private_scope_requires_agent_name(self) -> None:
+        result = await search_agent_memory_tool.fn("test query", scope="private")
+        assert result["success"] is False
+        assert "agent_name is required" in result["error"]
+
+    async def test_all_scope_requires_agent_name(self) -> None:
+        result = await search_agent_memory_tool.fn("test query", scope="all")
+        assert result["success"] is False
+        assert "agent_name is required" in result["error"]

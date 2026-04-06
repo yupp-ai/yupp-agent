@@ -192,12 +192,42 @@ class TestMcpCreateYuppaste:
             patch(
                 "ypl.mcp_server.tools.yuppaste.create_yuppaste_with_attachments",
                 AsyncMock(return_value=paste),
-            ),
+            ) as mock_create_attachments,
             patch("ypl.mcp_server.tools.yuppaste.generate_yuppaste_link", return_value="http://go/p/abc"),
         ):
             result = await mcp_create_yuppaste.fn(content="test", attachments=attachments_json)
 
         assert result["success"] is True
+        # Verify the decoded attachment was passed correctly
+        mock_create_attachments.assert_called_once()
+        attachments_arg = mock_create_attachments.call_args[1]["attachments"]
+        assert len(attachments_arg) == 1
+        filename, file_bytes, content_type = attachments_arg[0]
+        assert filename == "img.png"
+        assert file_bytes == b"image data"
+
+    async def test_with_attachments_exception(self) -> None:
+        import json
+
+        valid_b64 = base64.b64encode(b"image data").decode()
+        attachments_json = json.dumps([{"filename": "img.png", "content_base64": valid_b64}])
+
+        with (
+            patch("ypl.mcp_server.tools.yuppaste.get_requesting_user_id", return_value=FAKE_USER_ID),
+            patch(
+                "ypl.mcp_server.tools.yuppaste.resolve_email_from_user_id",
+                AsyncMock(return_value="user@example.com"),
+            ),
+            patch("ypl.mcp_server.tools.yuppaste.get_authenticated_user_email", return_value="user@example.com"),
+            patch(
+                "ypl.mcp_server.tools.yuppaste.create_yuppaste_with_attachments",
+                AsyncMock(side_effect=RuntimeError("storage error")),
+            ),
+        ):
+            result = await mcp_create_yuppaste.fn(content="test", attachments=attachments_json)
+
+        assert result["success"] is False
+        assert "error" in result
 
     async def test_named_slug_included_in_response(self) -> None:
         paste = _make_paste_result(named_slug="my-report", version=3)

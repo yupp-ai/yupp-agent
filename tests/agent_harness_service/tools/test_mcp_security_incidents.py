@@ -22,13 +22,6 @@ FAKE_SESSION_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 FAKE_INCIDENT_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 
 
-def _patch_headers(session_id: str = FAKE_SESSION_ID, agent_name: str = "sre") -> dict:
-    return {
-        "ypl.mcp_server.tools.security_incidents.get_ahs_session_id": lambda: session_id,
-        "ypl.mcp_server.tools.security_incidents.get_ahs_agent_name": lambda: agent_name,
-    }
-
-
 # ---------------------------------------------------------------------------
 # report_security_incident
 # ---------------------------------------------------------------------------

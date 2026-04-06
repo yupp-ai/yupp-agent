@@ -176,12 +176,12 @@ class TestIsGcpLoggingRateLimitedError:
     def test_resource_exhausted(self) -> None:
         from google.api_core.exceptions import ResourceExhausted
 
-        assert _is_gcp_logging_rate_limited_error(ResourceExhausted("quota")) is True
+        assert _is_gcp_logging_rate_limited_error(ResourceExhausted("quota")) is True  # type: ignore[no-untyped-call]
 
     def test_too_many_requests(self) -> None:
         from google.api_core.exceptions import TooManyRequests
 
-        assert _is_gcp_logging_rate_limited_error(TooManyRequests("quota")) is True
+        assert _is_gcp_logging_rate_limited_error(TooManyRequests("quota")) is True  # type: ignore[no-untyped-call]
 
     def test_generic_exception(self) -> None:
         assert _is_gcp_logging_rate_limited_error(RuntimeError("boom")) is False
@@ -315,7 +315,7 @@ class TestSearchGcpLogs:
             patch("ypl.mcp_server.tools.gcp_logs._is_gcp_logs_search_rate_limited", AsyncMock(return_value=False)),
             patch(
                 "ypl.mcp_server.tools.gcp_logs.google_logging.Client",
-                side_effect=ResourceExhausted("quota"),
+                side_effect=ResourceExhausted("quota"),  # type: ignore[no-untyped-call]
             ),
             patch(
                 "ypl.mcp_server.tools.gcp_logs._mark_gcp_logs_search_rate_limited",
@@ -325,7 +325,7 @@ class TestSearchGcpLogs:
             result = await search_gcp_logs.fn(query="severity=ERROR")
 
         assert result["success"] is False
-        assert result["error"] == "RATELIMITED"
+        assert result["error"] == "RATE_LIMITED"
         mock_mark.assert_called_once()
 
     async def test_generic_exception_returns_error(self) -> None:
