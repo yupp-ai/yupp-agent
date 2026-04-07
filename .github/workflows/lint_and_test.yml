@@ -94,7 +94,7 @@ jobs:
       - name: Run tests with coverage
         env:
           ENVIRONMENT: test
-        run: poetry run pytest -m 'not alembic' --timeout=120 --cov --cov-report=term-missing --cov-fail-under=33 || [ $? -eq 5 ]
+        run: poetry run pytest -m 'not alembic' --timeout=120 --cov --cov-report=term-missing --cov-fail-under=50 || [ $? -eq 5 ]
 
   test-alembic:
     needs: changes
