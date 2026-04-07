@@ -4,6 +4,7 @@ All external I/O (database, Redis, psutil) is mocked so these tests
 run without any live infrastructure.
 """
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -41,7 +42,7 @@ class TestHealthEndpoint:
         mock_session.exec = AsyncMock()
 
         @asynccontextmanager
-        async def mock_get_async_session(*args: Any, **kwargs: Any):  # type: ignore[misc]
+        async def mock_get_async_session(*args: Any, **kwargs: Any) -> AsyncIterator[Any]:
             yield mock_session
 
         with patch("ypl.backend.routes.v1.health.get_async_session", mock_get_async_session):
@@ -52,9 +53,9 @@ class TestHealthEndpoint:
 
     async def test_health_error_when_db_fails(self, client: AsyncClient) -> None:
         @asynccontextmanager
-        async def failing_session(*args: Any, **kwargs: Any):  # type: ignore[misc]
+        async def failing_session(*args: Any, **kwargs: Any) -> AsyncIterator[Any]:
             raise RuntimeError("DB connection failed")
-            yield  # type: ignore[misc]  # unreachable but required for @asynccontextmanager
+            yield  # type: ignore[unreachable]  # required for @asynccontextmanager
 
         with patch("ypl.backend.routes.v1.health.get_async_session", failing_session):
             response = await client.get("/health")
