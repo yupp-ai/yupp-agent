@@ -45,6 +45,11 @@ _MEMORY_SYMLINK_NAME = "agent_memories"
 # Whitelist approach: only these paths are visible to the sandboxed command.
 _BWRAP_RO_BINDS: list[str] = [
     "/usr",
+    # /opt is intentionally mounted in full. In our VM setup, /opt contains ONLY
+    # Python/dependency artifacts: the source-built Python interpreter
+    # (/opt/python3.12.12/) and the poetry venvs (/opt/yupp-mind/.venv,
+    # /opt/yupp-agent/.venv). There is no sensitive or unrelated data under /opt.
+    "/opt",
     "/etc/ssl",  # TLS certificates
     "/etc/ca-certificates",
     "/etc/alternatives",
