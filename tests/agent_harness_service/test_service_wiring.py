@@ -142,7 +142,7 @@ class TestCapacityChecks:
         from ypl.agent_harness_service.service.state import _active_tasks, get_active_turn_count
 
         sid = uuid.uuid4()
-        _active_tasks[sid] = MagicMock()  # type: ignore[assignment]
+        _active_tasks[sid] = MagicMock()
         try:
             assert get_active_turn_count() == 1
         finally:
@@ -163,7 +163,7 @@ class TestCapacityChecks:
         added: list[uuid.UUID] = []
         for _ in range(MAX_CONCURRENT_EXECUTIONS):
             sid = uuid.uuid4()
-            _active_tasks[sid] = MagicMock()  # type: ignore[assignment]
+            _active_tasks[sid] = MagicMock()
             added.append(sid)
 
         try:
@@ -1548,7 +1548,7 @@ class TestDeliverSubagentResultToParent:
         parent_uuid = uuid.UUID(parent_id)
 
         # Mark parent as busy
-        state._active_tasks[parent_uuid] = MagicMock()  # type: ignore[assignment]
+        state._active_tasks[parent_uuid] = MagicMock()
 
         fake_session = MagicMock()
         trigger_mock = MagicMock()
@@ -1638,7 +1638,7 @@ class TestDeliverSubagentResultToParent:
         parent_uuid = uuid.UUID(parent_id)
 
         # Mark parent as busy
-        state._active_tasks[parent_uuid] = MagicMock()  # type: ignore[assignment]
+        state._active_tasks[parent_uuid] = MagicMock()
         # Fill queue to capacity
         state._pending_messages[parent_uuid] = [PendingMessage(message=f"msg{i}") for i in range(_MAX_PENDING_MESSAGES)]
 
