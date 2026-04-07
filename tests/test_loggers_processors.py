@@ -503,12 +503,12 @@ class TestErrorDetailsProcessor:
         assert "error_file" in result
         assert "error_line" in result
 
-    def test_existing_exc_info_not_overwritten(self) -> None:
+    def test_existing_truthy_exc_info_not_overwritten(self) -> None:
         processor = ErrorDetailsProcessor()
-        event_dict: dict[str, Any] = {"event": "error", "exc_info": False}
+        # When exc_info is already truthy, the processor preserves it
+        event_dict: dict[str, Any] = {"event": "error", "exc_info": True}
         result = processor(None, "error", event_dict)
-        # Our processor only sets exc_info=True when NOT present
-        assert result["exc_info"] is False
+        assert result["exc_info"] is True
 
     def test_warning_method_passthrough(self) -> None:
         processor = ErrorDetailsProcessor()

@@ -29,7 +29,7 @@ from ypl.utils import (
 class TestSingletonMixin:
     def setup_method(self) -> None:
         # Reset singleton state between tests
-        _FreshSingleton._instance = None
+        _FreshSingleton._instance = None  # type: ignore[misc]
 
     def test_get_instance_returns_same_object(self) -> None:
         a = _FreshSingleton.get_instance()
@@ -41,10 +41,10 @@ class TestSingletonMixin:
         assert isinstance(obj, _FreshSingleton)
 
     def test_separate_subclasses_have_separate_singletons(self) -> None:
-        _AnotherSingleton._instance = None
+        _AnotherSingleton._instance = None  # type: ignore[misc]
         a = _FreshSingleton.get_instance()
         b = _AnotherSingleton.get_instance()
-        assert a is not b
+        assert id(a) != id(b)
 
 
 class _FreshSingleton(SingletonMixin):
@@ -327,7 +327,7 @@ class TestAsyncTimedCacheWithBackgroundRefresh:
             call_count += 1
             return call_count
 
-        bg_fn.cache_clear()
+        bg_fn.cache_clear()  # type: ignore[attr-defined]
         r1 = await bg_fn()
         r2 = await bg_fn()
         assert r1 == 1

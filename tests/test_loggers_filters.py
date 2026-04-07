@@ -33,7 +33,7 @@ def _capture_exc_info(exc_msg: str) -> tuple:
     try:
         raise RuntimeError(exc_msg)
     except RuntimeError:
-        return sys.exc_info()  # type: ignore[return-value]
+        return sys.exc_info()
 
 
 class TestConnectionTerminationErrorFilterAlwaysReturnsTrue:
