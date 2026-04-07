@@ -88,7 +88,7 @@ class TestTraceContextMiddleware:
         assert response.json()["trace"] == ""
 
     def test_different_trace_values_independent(self) -> None:
-        """Ensure two sequential requests don't bleed context between them."""
+        """Ensure two sequential requests each set the correct trace context from their respective headers."""
         client = TestClient(_make_trace_app(), raise_server_exceptions=True)
         r1 = client.get("/", headers={"x-cloud-trace-context": "trace1"})
         r2 = client.get("/", headers={"x-cloud-trace-context": "trace2"})
@@ -111,6 +111,18 @@ class TestYuppContextMiddlewareNoHeader:
         assert data["risk_session_key"] == ""
         assert data["user_agent"] is None
         assert data["is_yuppster"] is False
+
+    def test_context_cleared_between_requests(self) -> None:
+        """A header-present request followed by a no-header request should reset context vars."""
+        client = TestClient(_make_yupp_app(), raise_server_exceptions=True)
+        # First request sets context values
+        ctx = _encode_context({"sardineSessionKey": "should-not-persist", "userAgent": "Agent/1"})
+        client.get("/", headers={"X-YUPP-CONTEXT": ctx})
+        # Second request has NO header — values should be reset, not stale
+        response = client.get("/")
+        data = response.json()
+        assert data["risk_session_key"] == ""
+        assert data["user_agent"] is None
 
 
 class TestYuppContextMiddlewareWithHeader:

@@ -9,6 +9,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from ypl.backend.routes.v1.health import public_router, router
@@ -23,7 +24,7 @@ def app() -> FastAPI:
     return _app
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def client(app: FastAPI) -> AsyncClient:  # type: ignore[misc]
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
@@ -82,7 +83,8 @@ class TestHealthzEndpoint:
         data = response.json()
         assert data["status"] == "ok"
 
-    async def test_healthz_includes_process_metrics(self, client: AsyncClient) -> None:
+    async def test_healthz_reads_process_metrics(self, client: AsyncClient) -> None:
+        """Endpoint reads num_fds and memory_percent (logged internally); response is always {"status": "ok"}."""
         mock_process = MagicMock()
         mock_process.num_fds.return_value = 42
         mock_process.memory_percent.return_value = 7.5
@@ -91,9 +93,10 @@ class TestHealthzEndpoint:
             response = await client.get("/healthz")
 
         assert response.status_code == 200
-        data = response.json()
-        assert data["num_fds"] == 42
-        assert data["memory_percent"] == pytest.approx(7.5)
+        assert response.json()["status"] == "ok"
+        # Process metrics are logged internally, not returned in the response body
+        mock_process.num_fds.assert_called_once()
+        mock_process.memory_percent.assert_called_once()
 
     async def test_healthz_ok_when_psutil_raises(self, client: AsyncClient) -> None:
         """psutil failures should be swallowed — endpoint still returns 200."""
@@ -111,15 +114,17 @@ class TestHealthzEndpoint:
 
         mock_redis = AsyncMock()
         mock_redis.set = AsyncMock(return_value=True)  # rate-limit key not set yet
+        mock_bg_task = MagicMock()
 
         with (
             patch("ypl.backend.routes.v1.health.psutil.Process", return_value=mock_process),
             patch("ypl.backend.routes.v1.health.get_redis_client", AsyncMock(return_value=mock_redis)),
-            patch("ypl.backend.routes.v1.health.create_background_task"),
+            patch("ypl.backend.routes.v1.health.create_background_task", mock_bg_task),
         ):
             response = await client.get("/healthz")
 
         assert response.status_code == 200
+        mock_bg_task.assert_called_once()  # verifies the high-FD branch was entered
 
 
 # ---------------------------------------------------------------------------
