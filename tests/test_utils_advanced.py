@@ -294,10 +294,10 @@ class TestAsyncTimedCache:
         expiring_fn.cache_clear()
         await expiring_fn()
         await asyncio.sleep(0.01)  # Let cache expire (ttl=0)
-        # The second call should use stale-while-revalidate,
-        # triggering a background refresh. Either way, we get a result.
+        # async_timed_cache uses stale-while-revalidate: on expiry the second call
+        # returns the stale cached value (1) immediately and enqueues a background refresh.
         result = await expiring_fn()
-        assert result is not None
+        assert result == 1  # stale cached value returned, background refresh enqueued
 
     async def test_maxsize_evicts_old_entries(self) -> None:
         @async_timed_cache(seconds=60, maxsize=2, jitter=False)
@@ -379,7 +379,7 @@ class TestDelegator:
         """early_terminate_on: when 'fast' succeeds, 'slow' is cancelled."""
         delegates = {
             "fast": _SimpleDelegate("fast", "fast-result"),
-            "slow": _SimpleDelegate("slow", "slow-result", delay=10),
+            "slow": _SimpleDelegate("slow", "slow-result", delay=0.5),  # short delay: only needs to outlast 'fast'
         }
         d = Delegator(delegates, early_terminate_on=["fast"])
         results = await d.delegate("do_work")
