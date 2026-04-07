@@ -10,7 +10,6 @@ Covers:
 
 from __future__ import annotations
 from datetime import UTC, datetime, timedelta
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -337,7 +336,7 @@ class TestRenderToolCluster:
             )
         ]
         result = _render_tool_cluster(entries)
-        assert "&lt;@U123&gt;" in result or "<@U123>" not in result
+        assert "&lt;@U123&gt;" in result
 
 
 class TestRenderToolSummary:
@@ -393,24 +392,6 @@ def _make_slack_response(ts: str = "1111111111.000") -> MagicMock:
     resp = MagicMock()
     resp.get = lambda key, default=None: ts if key == "ts" else (None if key != "channel" else "C123")
     return resp
-
-
-@pytest.fixture()
-def base_patches() -> dict[str, Any]:
-    """Common patch targets used by multiple callback tests."""
-    return {
-        "get_session": "ypl.slack_agent_gateway.callbacks.get_session",
-        "save_session": "ypl.slack_agent_gateway.callbacks.save_session",
-        "get_agent_config_by_app_id": "ypl.slack_agent_gateway.callbacks.get_agent_config_by_app_id",
-        "record_reply": "ypl.slack_agent_gateway.callbacks.record_reply",
-        "store_reply_mapping": "ypl.slack_agent_gateway.callbacks.store_reply_mapping",
-        "get_tool_entries": "ypl.slack_agent_gateway.callbacks.get_tool_entries",
-        "clear_tool_entries": "ypl.slack_agent_gateway.callbacks.clear_tool_entries",
-        "remove_from_status_flush_schedule": "ypl.slack_agent_gateway.callbacks.remove_from_status_flush_schedule",
-        "get_and_clear_pending_status": "ypl.slack_agent_gateway.callbacks.get_and_clear_pending_status",
-        "get_and_clear_tool_cluster_pending": "ypl.slack_agent_gateway.callbacks.get_and_clear_tool_cluster_pending",
-        "AsyncWebClient": "ypl.slack_agent_gateway.callbacks.AsyncWebClient",
-    }
 
 
 class TestAddReply:
