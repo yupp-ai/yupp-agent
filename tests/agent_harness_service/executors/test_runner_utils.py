@@ -1,6 +1,8 @@
 """Tests for runner.py utility functions — extract_excerpt, retry logic, bottleneck detection."""
 
+from __future__ import annotations
 from collections.abc import AsyncIterator
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -19,12 +21,12 @@ from ypl.agent_harness_service.executors.runner import (
 # ---------------------------------------------------------------------------
 
 
-def _event(type_: str, **raw_fields) -> StreamEvent:
+def _event(type_: str, **raw_fields: Any) -> StreamEvent:
     return StreamEvent(type=type_, raw=raw_fields)
 
 
-def _make_context(**overrides) -> RunContext:
-    defaults = {"session_id": "test-session", "workspace": None, "llm_session_id": None}
+def _make_context(**overrides: Any) -> RunContext:
+    defaults: dict[str, Any] = {"session_id": "test-session", "workspace": None, "llm_session_id": None}
     defaults.update(overrides)
     return RunContext(**defaults)
 
@@ -37,7 +39,6 @@ def _make_context(**overrides) -> RunContext:
 class TestExtractExcerpt:
     def test_assistant_text_event(self) -> None:
         event = StreamEvent(type="assistant", raw={"message": {"content": [{"type": "text", "text": "Hello world"}]}})
-        event.text = "Hello world"
         result = extract_excerpt(event)
         assert "Hello world" in result
 
@@ -47,14 +48,12 @@ class TestExtractExcerpt:
             type="assistant",
             raw={"message": {"content": [{"type": "tool_use", "name": "read_file", "id": "t1", "input": {}}]}},
         )
-        event.text = ""  # no text
         result = extract_excerpt(event)
         assert "tool_call" in result
         assert "read_file" in result
 
     def test_assistant_no_content_returns_placeholder(self) -> None:
         event = StreamEvent(type="assistant", raw={"message": {"content": []}})
-        event.text = ""
         result = extract_excerpt(event)
         assert result == "(no text content)"
 
@@ -121,7 +120,8 @@ class TestExtractExcerpt:
         """result event with cost_usd key (not estimated_cost_usd) still works."""
         event = _event("result", cost_usd=0.10, num_turns=1, duration_ms=500)
         result = extract_excerpt(event)
-        assert "0.10" in result
+        # Python may format 0.10 as 0.1
+        assert "$0.1" in result
 
 
 # ---------------------------------------------------------------------------
@@ -141,18 +141,17 @@ class _FixedEventsRunner(AgentRunner):
 
     async def _run_once(self, prompt: str, context: RunContext) -> AsyncIterator[StreamEvent]:
         if self._call_count >= len(self._sequences):
-            # Fallback: return empty
             return
-            yield  # make it a generator
+            yield  # type: ignore[unreachable]  # makes this an async generator
         events = self._sequences[self._call_count]
         self._call_count += 1
         for event in events:
             yield event
 
 
-async def _collect(runner: AgentRunner, prompt: str = "test", **ctx_overrides) -> list[StreamEvent]:
+async def _collect(runner: AgentRunner, prompt: str = "test", **ctx_overrides: Any) -> list[StreamEvent]:
     ctx = _make_context(**ctx_overrides)
-    return [e async for e in await runner.run(prompt, ctx)]
+    return [e async for e in runner.run(prompt, ctx)]
 
 
 class TestAgentRunnerRetry:
@@ -252,7 +251,7 @@ class TestCheckQueueBottleneck:
 
     def test_alert_fires_at_threshold_count(self) -> None:
         """Alert fires exactly when count reaches _QUEUE_BOTTLENECK_MIN_COUNT (3)."""
-        calls = []
+        calls: list[str] = []
         with (
             patch("ypl.agent_harness_service.executors.runner.metric_inc", side_effect=lambda x: calls.append(x)),
             patch("ypl.agent_harness_service.executors.runner.metric_record_with_labels"),
