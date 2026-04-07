@@ -345,7 +345,7 @@ class TestFormatModelsList:
         assert "gpt-4o" in result
 
     def test_usage_example_included(self) -> None:
-        models = {"harnessed": [], "raw": []}
+        models: dict[str, list[str]] = {"harnessed": [], "raw": []}
         result = _format_models_list(models)
         assert "/model:" in result
 
