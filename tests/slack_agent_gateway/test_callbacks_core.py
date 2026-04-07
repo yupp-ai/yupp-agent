@@ -90,7 +90,7 @@ def _make_app_config(app_id: str = "A001") -> AgentAppConfig:
 def _slack_api_error(code: str = "message_too_long") -> SlackApiError:
     resp = MagicMock()
     resp.get = lambda key, default=None: code if key == "error" else default
-    return SlackApiError(message=code, response=resp)
+    return SlackApiError(message=code, response=resp)  # type: ignore[no-untyped-call]
 
 
 # ---------------------------------------------------------------------------
