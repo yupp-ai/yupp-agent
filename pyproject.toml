@@ -219,9 +219,7 @@ omit = [
     "ypl/db/alembic/*",
     "ypl/streamlit_server/*",
     "ypl/*/deploy/*",
-    "ypl/*/tui.py",
-    "ypl/*/entrypoint.py",
-    "scripts/*",
+    "ypl/agent_harness_service/tui/*",
 ]
 
 [tool.coverage.report]
