@@ -87,7 +87,9 @@ def _http_status_error(status_code: int) -> httpx.HTTPStatusError:
 def _mock_client(response: Any) -> AsyncMock:
     """Return a mock httpx.AsyncClient whose post() returns *response*."""
     client = AsyncMock()
+    client.is_closed = False
     client.post = AsyncMock(return_value=response)
+    client.is_closed = False
     return client
 
 
@@ -140,12 +142,14 @@ class TestSlackGatewayInit:
         assert c1 is c2
 
     def test_get_client_recreates_if_closed(self, gateway: SlackGateway) -> None:
-        c1 = gateway._get_client()
-        c1.close()  # close synchronously — internal flag is set
-        # Manually mark as closed for test isolation
-        gateway._client = None
+        gateway._get_client()  # create initial client
+        # Simulate a closed client by replacing with a mock that reports is_closed=True
+        mock_closed = MagicMock()
+        mock_closed.is_closed = True
+        gateway._client = mock_closed
         c2 = gateway._get_client()
         assert isinstance(c2, httpx.AsyncClient)
+        assert c2 is not mock_closed
 
 
 # ===========================================================================
@@ -196,6 +200,7 @@ class TestSendReply:
     @pytest.mark.asyncio
     async def test_timeout(self, gateway: SlackGateway) -> None:
         client = AsyncMock()
+        client.is_closed = False
         client.post = AsyncMock(side_effect=httpx.TimeoutException("timeout"))
         gateway._client = client
         result = await gateway.send_reply(SESSION_ID, "hi")
@@ -204,6 +209,7 @@ class TestSendReply:
     @pytest.mark.asyncio
     async def test_http_status_error(self, gateway: SlackGateway) -> None:
         client = AsyncMock()
+        client.is_closed = False
         client.post = AsyncMock(side_effect=_http_status_error(500))
         gateway._client = client
         result = await gateway.send_reply(SESSION_ID, "hi")
@@ -212,6 +218,7 @@ class TestSendReply:
     @pytest.mark.asyncio
     async def test_generic_exception(self, gateway: SlackGateway) -> None:
         client = AsyncMock()
+        client.is_closed = False
         client.post = AsyncMock(side_effect=RuntimeError("boom"))
         gateway._client = client
         result = await gateway.send_reply(SESSION_ID, "hi")
@@ -256,6 +263,7 @@ class TestAppendReply:
     @pytest.mark.asyncio
     async def test_timeout(self, gateway: SlackGateway) -> None:
         client = AsyncMock()
+        client.is_closed = False
         client.post = AsyncMock(side_effect=httpx.TimeoutException("t"))
         gateway._client = client
         assert await gateway.append_reply(SESSION_ID, "text") is False
@@ -263,6 +271,7 @@ class TestAppendReply:
     @pytest.mark.asyncio
     async def test_http_error(self, gateway: SlackGateway) -> None:
         client = AsyncMock()
+        client.is_closed = False
         client.post = AsyncMock(side_effect=_http_status_error(503))
         gateway._client = client
         assert await gateway.append_reply(SESSION_ID, "text") is False
@@ -270,6 +279,7 @@ class TestAppendReply:
     @pytest.mark.asyncio
     async def test_generic_exception(self, gateway: SlackGateway) -> None:
         client = AsyncMock()
+        client.is_closed = False
         client.post = AsyncMock(side_effect=ValueError("bad"))
         gateway._client = client
         assert await gateway.append_reply(SESSION_ID, "text") is False
@@ -310,6 +320,7 @@ class TestRequestFeedback:
     @pytest.mark.asyncio
     async def test_timeout(self, gateway: SlackGateway) -> None:
         client = AsyncMock()
+        client.is_closed = False
         client.post = AsyncMock(side_effect=httpx.TimeoutException("t"))
         gateway._client = client
         assert await gateway.request_feedback(SESSION_ID) is False
@@ -317,6 +328,7 @@ class TestRequestFeedback:
     @pytest.mark.asyncio
     async def test_http_error(self, gateway: SlackGateway) -> None:
         client = AsyncMock()
+        client.is_closed = False
         client.post = AsyncMock(side_effect=_http_status_error(502))
         gateway._client = client
         assert await gateway.request_feedback(SESSION_ID) is False
@@ -324,6 +336,7 @@ class TestRequestFeedback:
     @pytest.mark.asyncio
     async def test_generic_exception(self, gateway: SlackGateway) -> None:
         client = AsyncMock()
+        client.is_closed = False
         client.post = AsyncMock(side_effect=OSError("conn refused"))
         gateway._client = client
         assert await gateway.request_feedback(SESSION_ID) is False
@@ -383,6 +396,17 @@ class TestSendMessage:
         assert "username" not in kwargs["json"]
 
     @pytest.mark.asyncio
+    async def test_empty_string_thread_id_not_in_payload(self, gateway: SlackGateway) -> None:
+        """Verify that falsy-but-not-None values (empty string) are also excluded."""
+        client = _mock_client(_ok_response({"channel": "C123"}))
+        gateway._client = client
+        await gateway.send_message("agent", "C123", "msg", thread_id="", ahs_session_id="", username="")
+        _, kwargs = client.post.call_args
+        assert "thread_ts" not in kwargs["json"]
+        assert "ahs_session_id" not in kwargs["json"]
+        assert "username" not in kwargs["json"]
+
+    @pytest.mark.asyncio
     async def test_gateway_rejected(self, gateway: SlackGateway) -> None:
         gateway._client = _mock_client(_fail_response("Channel not found"))
         result = await gateway.send_message("agent", "C999", "msg")
@@ -393,6 +417,7 @@ class TestSendMessage:
     @pytest.mark.asyncio
     async def test_timeout(self, gateway: SlackGateway) -> None:
         client = AsyncMock()
+        client.is_closed = False
         client.post = AsyncMock(side_effect=httpx.TimeoutException("t"))
         gateway._client = client
         result = await gateway.send_message("agent", "C123", "msg")
@@ -402,6 +427,7 @@ class TestSendMessage:
     @pytest.mark.asyncio
     async def test_http_error(self, gateway: SlackGateway) -> None:
         client = AsyncMock()
+        client.is_closed = False
         client.post = AsyncMock(side_effect=_http_status_error(400))
         gateway._client = client
         result = await gateway.send_message("agent", "C123", "msg")
@@ -411,6 +437,7 @@ class TestSendMessage:
     @pytest.mark.asyncio
     async def test_generic_exception(self, gateway: SlackGateway) -> None:
         client = AsyncMock()
+        client.is_closed = False
         client.post = AsyncMock(side_effect=RuntimeError("oops"))
         gateway._client = client
         result = await gateway.send_message("agent", "C123", "msg")
@@ -470,6 +497,7 @@ class TestSendQuestionnaire:
     @pytest.mark.asyncio
     async def test_timeout(self, gateway: SlackGateway) -> None:
         client = AsyncMock()
+        client.is_closed = False
         client.post = AsyncMock(side_effect=httpx.TimeoutException("t"))
         gateway._client = client
         assert await gateway.send_questionnaire(SESSION_ID, "q1", "Pick", self.CHOICES) is False
@@ -477,6 +505,7 @@ class TestSendQuestionnaire:
     @pytest.mark.asyncio
     async def test_http_error(self, gateway: SlackGateway) -> None:
         client = AsyncMock()
+        client.is_closed = False
         client.post = AsyncMock(side_effect=_http_status_error(429))
         gateway._client = client
         assert await gateway.send_questionnaire(SESSION_ID, "q1", "Pick", self.CHOICES) is False
@@ -484,6 +513,7 @@ class TestSendQuestionnaire:
     @pytest.mark.asyncio
     async def test_generic_exception(self, gateway: SlackGateway) -> None:
         client = AsyncMock()
+        client.is_closed = False
         client.post = AsyncMock(side_effect=ConnectionError("refused"))
         gateway._client = client
         assert await gateway.send_questionnaire(SESSION_ID, "q1", "Pick", self.CHOICES) is False
@@ -513,6 +543,7 @@ class TestSendToolEvent:
     async def test_dead_session_skips_http(self, gateway: SlackGateway) -> None:
         gateway._dead_session_ids.add(SESSION_ID)
         client = AsyncMock()
+        client.is_closed = False
         gateway._client = client
         result = await gateway.send_tool_event(SESSION_ID, "start", "tool-123", name="Read")
         assert result is False
@@ -535,6 +566,7 @@ class TestSendToolEvent:
     @pytest.mark.asyncio
     async def test_404_http_error_marks_dead(self, gateway: SlackGateway) -> None:
         client = AsyncMock()
+        client.is_closed = False
         client.post = AsyncMock(side_effect=_http_status_error(404))
         gateway._client = client
         result = await gateway.send_tool_event(SESSION_ID, "start", "tool-123", name="Bash")
@@ -544,6 +576,7 @@ class TestSendToolEvent:
     @pytest.mark.asyncio
     async def test_non_404_http_error_does_not_mark_dead(self, gateway: SlackGateway) -> None:
         client = AsyncMock()
+        client.is_closed = False
         client.post = AsyncMock(side_effect=_http_status_error(500))
         gateway._client = client
         result = await gateway.send_tool_event(SESSION_ID, "start", "tool-123", name="Bash")
@@ -553,6 +586,7 @@ class TestSendToolEvent:
     @pytest.mark.asyncio
     async def test_timeout(self, gateway: SlackGateway) -> None:
         client = AsyncMock()
+        client.is_closed = False
         client.post = AsyncMock(side_effect=httpx.TimeoutException("t"))
         gateway._client = client
         assert await gateway.send_tool_event(SESSION_ID, "start", "tool-123") is False
@@ -560,6 +594,7 @@ class TestSendToolEvent:
     @pytest.mark.asyncio
     async def test_generic_exception(self, gateway: SlackGateway) -> None:
         client = AsyncMock()
+        client.is_closed = False
         client.post = AsyncMock(side_effect=RuntimeError("boom"))
         gateway._client = client
         assert await gateway.send_tool_event(SESSION_ID, "start", "tool-123") is False
@@ -615,6 +650,7 @@ class TestSendStatusUpdate:
     async def test_dead_session_short_circuits(self, gateway: SlackGateway) -> None:
         gateway._dead_session_ids.add(SESSION_ID)
         client = AsyncMock()
+        client.is_closed = False
         gateway._client = client
         result = await gateway.send_status_update(SESSION_ID, "text")
         assert result is False
@@ -637,6 +673,7 @@ class TestSendStatusUpdate:
     @pytest.mark.asyncio
     async def test_404_evicts_session(self, gateway: SlackGateway) -> None:
         client = AsyncMock()
+        client.is_closed = False
         client.post = AsyncMock(side_effect=_http_status_error(404))
         gateway._client = client
         result = await gateway.send_status_update(SESSION_ID, "text")
@@ -646,6 +683,7 @@ class TestSendStatusUpdate:
     @pytest.mark.asyncio
     async def test_non_404_http_error_does_not_evict(self, gateway: SlackGateway) -> None:
         client = AsyncMock()
+        client.is_closed = False
         client.post = AsyncMock(side_effect=_http_status_error(503))
         gateway._client = client
         result = await gateway.send_status_update(SESSION_ID, "text")
@@ -655,6 +693,7 @@ class TestSendStatusUpdate:
     @pytest.mark.asyncio
     async def test_timeout(self, gateway: SlackGateway) -> None:
         client = AsyncMock()
+        client.is_closed = False
         client.post = AsyncMock(side_effect=httpx.TimeoutException("t"))
         gateway._client = client
         assert await gateway.send_status_update(SESSION_ID, "text") is False
@@ -662,6 +701,7 @@ class TestSendStatusUpdate:
     @pytest.mark.asyncio
     async def test_generic_exception(self, gateway: SlackGateway) -> None:
         client = AsyncMock()
+        client.is_closed = False
         client.post = AsyncMock(side_effect=OSError("network down"))
         gateway._client = client
         assert await gateway.send_status_update(SESSION_ID, "text") is False
@@ -670,6 +710,7 @@ class TestSendStatusUpdate:
     async def test_connection_error_does_not_evict(self, gateway: SlackGateway) -> None:
         """Connection-refused errors should not mark session dead (SAG may be restarting)."""
         client = AsyncMock()
+        client.is_closed = False
         client.post = AsyncMock(side_effect=OSError("connection refused"))
         gateway._client = client
         await gateway.send_status_update(SESSION_ID, "text")
@@ -800,9 +841,16 @@ class TestGatewayRegistry:
         # Patch init_gateways to be a no-op so singleton creation doesn't fail on missing env
         with patch("ypl.agent_harness_service.gateway.init_gateways"):
             inst1 = GatewayRegistry.get_instance()
+            # Register a gateway so we can verify reset clears it
+            gw = self._make_gateway("slack")
+            inst1.register(gw)
+            assert inst1.get("slack") is gw
+
             GatewayRegistry.reset()
             inst2 = GatewayRegistry.get_instance()
             assert inst1 is not inst2
+            # Verify the new instance has no registered gateways
+            assert inst2.get("slack") is None
 
 
 # ===========================================================================
@@ -877,6 +925,10 @@ class TestInitGateways:
             r2 = init_gateways()
 
         assert r1 is r2
+        # Verify the gateway still uses the original URL (not the changed one)
+        gw = r2.get("slack")
+        assert isinstance(gw, SlackGateway)
+        assert gw._base_url == "http://sag:9000"
 
 
 # ===========================================================================
@@ -1004,6 +1056,7 @@ class TestExtractAttachmentText:
     def test_fallback_ignored_when_richer_content_present(self) -> None:
         att = [{"text": "Rich text", "fallback": "Fallback text"}]
         result = _extract_attachment_text(att)
+        assert result is not None
         assert "Rich text" in result
         assert "Fallback text" not in result
 
@@ -1263,8 +1316,9 @@ class TestFetchSlackThreadContent:
 
         assert result is not None
         assert "truncated" in result.lower()
-        # Total length should not blow up too much beyond 15000
-        assert len(result) < 20000
+        # The truncation limit is 15000 chars; verify we're within a reasonable margin
+        # (some overhead from formatting, metadata, truncation notice)
+        assert len(result) <= 16000
 
     @pytest.mark.asyncio
     async def test_has_more_hint_appended(self) -> None:
@@ -1307,7 +1361,7 @@ class TestFetchSlackThreadContent:
             }
         )
         # Simulate Slack API error during user resolution
-        mock_client.users_info = AsyncMock(side_effect=SlackApiError("user_not_found", {"error": "user_not_found"}))
+        mock_client.users_info = AsyncMock(side_effect=SlackApiError("user_not_found", {"error": "user_not_found"}))  # type: ignore[no-untyped-call]
 
         with patch.object(slack_prefetch, "_slack_bot_client", mock_client):
             result = await fetch_slack_thread_content("C123", "1.0")
