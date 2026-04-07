@@ -1,7 +1,10 @@
 """Tests for executors/mcp_config.py — MCP server resolution and workspace config writing."""
 
+from __future__ import annotations
 import json
 import os
+from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 from ypl.agent_harness_service.common.types import SessionPermissions
@@ -14,7 +17,7 @@ from ypl.agent_harness_service.executors.mcp_config import (
 )
 
 # Minimal base .mcp.json content used across tests
-_BASE_MCP_JSON = {
+_BASE_MCP_JSON: dict[str, Any] = {
     "mcpServers": {
         "yuppster-mcp-server": {
             "type": "http",
@@ -25,7 +28,7 @@ _BASE_MCP_JSON = {
 }
 
 
-def _patch_base_mcp(content: dict | None = None, raise_exc: bool = False):
+def _patch_base_mcp(content: dict[str, Any] | None = None, raise_exc: bool = False) -> Any:
     """Return a context manager that patches open() to return a fake .mcp.json."""
     import builtins
     import io
@@ -34,13 +37,13 @@ def _patch_base_mcp(content: dict | None = None, raise_exc: bool = False):
     mcp_content = content if content is not None else _BASE_MCP_JSON
 
     class FakeFile(io.StringIO):
-        def __enter__(self):
+        def __enter__(self) -> FakeFile:
             return self
 
-        def __exit__(self, *_):
+        def __exit__(self, *_: Any) -> None:
             self.close()
 
-    def patched_open(path, mode="r", *args, **kwargs):
+    def patched_open(path: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
         if ".mcp.json" in str(path) and "repos" in str(path):
             if raise_exc:
                 raise FileNotFoundError("no base mcp.json")
@@ -59,6 +62,8 @@ class TestResolveMcpServers:
         assert "url" in servers["harness"]
         assert "X-AHS-Session-ID" in servers["harness"]["headers"]
         assert servers["harness"]["headers"]["X-AHS-Session-ID"] == "sess-1"
+        # Security: auth token header must be present
+        assert "X-AHS-Token" in servers["harness"]["headers"]
 
     def test_session_id_in_harness_headers(self) -> None:
         with _patch_base_mcp():
@@ -68,7 +73,7 @@ class TestResolveMcpServers:
     def test_full_access_keeps_all_servers(self) -> None:
         """Full access permissions keeps both yuppster and harness servers."""
         perms = SessionPermissions.full_access()
-        ctx = {"permissions": perms.model_dump(mode="json")}
+        ctx: dict[str, Any] = {"permissions": perms.model_dump(mode="json")}
         with _patch_base_mcp():
             servers = resolve_mcp_servers(session_id="sess-1", session_context=ctx)
         assert "harness" in servers
@@ -77,7 +82,7 @@ class TestResolveMcpServers:
     def test_restricted_permissions_removes_yuppster(self) -> None:
         """Restricted permissions removes servers not in allowed_servers list."""
         perms = SessionPermissions.restricted()  # allowed_servers=["harness"]
-        ctx = {"permissions": perms.model_dump(mode="json")}
+        ctx: dict[str, Any] = {"permissions": perms.model_dump(mode="json")}
         with _patch_base_mcp():
             servers = resolve_mcp_servers(session_id="sess-1", session_context=ctx)
         assert "harness" in servers
@@ -93,14 +98,14 @@ class TestResolveMcpServers:
 
     def test_yuppster_gets_user_id_header(self) -> None:
         """User ID from session context is injected into yuppster headers."""
-        ctx = {"user_id": "user-abc-123"}
+        ctx: dict[str, Any] = {"user_id": "user-abc-123"}
         with _patch_base_mcp():
             servers = resolve_mcp_servers(session_id="sess-1", session_context=ctx)
         assert servers["yuppster-mcp-server"]["headers"]["X-User-ID"] == "user-abc-123"
 
     def test_current_turn_user_id_takes_priority(self) -> None:
         """current_turn_user_id overrides user_id for yuppster header."""
-        ctx = {"user_id": "static-user", "current_turn_user_id": "turn-user"}
+        ctx: dict[str, Any] = {"user_id": "static-user", "current_turn_user_id": "turn-user"}
         with _patch_base_mcp():
             servers = resolve_mcp_servers(session_id="sess-1", session_context=ctx)
         assert servers["yuppster-mcp-server"]["headers"]["X-User-ID"] == "turn-user"
@@ -113,7 +118,7 @@ class TestResolveMcpServers:
 
     def test_disabled_servers_are_dropped(self) -> None:
         """Servers with disabled=True are excluded from the result."""
-        base = {
+        base: dict[str, Any] = {
             "mcpServers": {
                 "yuppster-mcp-server": {
                     "type": "http",
@@ -136,7 +141,7 @@ class TestResolveMcpServers:
 
 
 class TestEnsureWorkspaceMcpConfig:
-    def test_writes_mcp_json_to_workspace(self, tmp_path) -> None:
+    def test_writes_mcp_json_to_workspace(self, tmp_path: Path) -> None:
         """ensure_workspace_mcp_config writes a valid .mcp.json to the workspace."""
         workspace = str(tmp_path)
         with _patch_base_mcp():
@@ -151,7 +156,7 @@ class TestEnsureWorkspaceMcpConfig:
         assert "mcpServers" in config
         assert "harness" in config["mcpServers"]
 
-    def test_mcp_json_contains_session_id(self, tmp_path) -> None:
+    def test_mcp_json_contains_session_id(self, tmp_path: Path) -> None:
         workspace = str(tmp_path)
         with _patch_base_mcp():
             ensure_workspace_mcp_config(workspace, session_id="my-session")
@@ -169,7 +174,7 @@ class TestEnsureWorkspaceMcpConfig:
             ensure_workspace_mcp_config("", session_id="sess-1")
         # No assertions needed — just verify no exception
 
-    def test_atomic_write_replaces_existing(self, tmp_path) -> None:
+    def test_atomic_write_replaces_existing(self, tmp_path: Path) -> None:
         """A second call overwrites the existing .mcp.json atomically."""
         workspace = str(tmp_path)
         with _patch_base_mcp():
@@ -207,7 +212,7 @@ class TestBuildCodexMcpArgs:
 
     def test_no_url_servers_skipped(self) -> None:
         """Servers without a URL are excluded from Codex args."""
-        base = {
+        base: dict[str, Any] = {
             "mcpServers": {
                 "no-url-server": {
                     "type": "stdio",
