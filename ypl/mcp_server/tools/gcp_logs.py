@@ -253,7 +253,7 @@ async def search_gcp_logs(
             await _mark_gcp_logs_search_rate_limited()
             return {
                 "success": False,
-                "error": "RATELIMITED",
+                "error": "RATE_LIMITED",
                 "retry_after_seconds": _GCP_LOGS_RATE_LIMIT_TTL_SECONDS,
                 "query": query,
             }
