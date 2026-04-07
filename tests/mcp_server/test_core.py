@@ -149,27 +149,21 @@ class TestCreateMcpServer:
         from ypl.mcp_server.core import _create_mcp_server
 
         mock_provider = MagicMock()
+        mock_create = MagicMock(return_value=mock_provider)
 
-        with (
-            patch("ypl.mcp_server.core.settings") as mock_settings,
-            patch("ypl.mcp_server.core.FastMCP", wraps=FastMCP),
-            patch(
-                "ypl.mcp_server.auth_oauth.create_oauth_provider",
-                return_value=mock_provider,
-            ),
-        ):
+        with patch("ypl.mcp_server.core.settings") as mock_settings:
             mock_settings.MCP_SERVER_MODE = "OAUTH"
-            # We need to patch the import inside the function
             with patch.dict(
                 "sys.modules",
                 {
-                    "ypl.mcp_server.auth_oauth": MagicMock(create_oauth_provider=lambda: mock_provider),
+                    "ypl.mcp_server.auth_oauth": MagicMock(create_oauth_provider=mock_create),
                 },
             ):
                 server = _create_mcp_server()
 
-        # Server should be a FastMCP instance
         assert isinstance(server, FastMCP)
+        # Verify the OAuth provider factory was called
+        mock_create.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
