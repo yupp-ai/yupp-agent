@@ -5,8 +5,11 @@ report, etc.) and update_artifact to revise the record as the artifact evolves.
 All writes are attributed to the calling agent's session via AHS headers.
 """
 
+import asyncio
 import uuid
 from typing import Any
+
+from sqlalchemy.exc import IntegrityError
 
 from ypl.backend.db import get_async_session, get_async_session_read_replica, retry_db
 from ypl.db.agent_harness import AgentArtifact, AgentArtifactType
@@ -16,6 +19,14 @@ from ypl.structured_logger import get_logger
 logger = get_logger()
 
 _VALID_TYPES = [t.value for t in AgentArtifactType]
+
+# FK constraint name for the agent_session_id → agent_sessions reference.
+# When the session row hasn't been committed yet (race condition between AHS
+# session-start and the agent's first MCP call), the INSERT violates this
+# constraint.  We retry with backoff before falling back to session_id=None.
+_SESSION_FK_CONSTRAINT = "fk_agent_artifacts_agent_session_id_agent_sessions"
+_SESSION_FK_MAX_RETRIES = 3
+_SESSION_FK_RETRY_DELAYS = (0.5, 1.0, 2.0)  # seconds
 
 
 def _parse_session_id(raw: str | None) -> uuid.UUID | None:
@@ -57,6 +68,95 @@ async def _create_artifact(
         await session.commit()
         await session.refresh(artifact)
         return artifact
+
+
+async def _create_artifact_with_session_retry(
+    *,
+    artifact_type: AgentArtifactType,
+    title: str,
+    url: str,
+    description: str | None,
+    creator_user_id: str | None,
+    creator_agent_id: uuid.UUID | None,
+    agent_session_id: uuid.UUID | None,
+    agent_task_id: uuid.UUID | None,
+    artifact_metadata: dict[str, Any] | None,
+) -> tuple[AgentArtifact, bool]:
+    """Create an artifact, retrying on session FK violations with backoff.
+
+    The session row may not be committed by the time this tool is called —
+    there is a race condition between ``session.flush()`` (which inserts the
+    AgentSession row inside an open transaction) and the agent's first MCP call.
+    Because ``IntegrityError`` is excluded from ``retry_db``, it won't be
+    retried automatically; this function handles that case explicitly.
+
+    Returns:
+        (artifact, session_linked) — ``session_linked`` is False when the
+        fallback path was used (artifact saved with ``agent_session_id=None``).
+    """
+    if agent_session_id is None:
+        return await _create_artifact(
+            artifact_type=artifact_type,
+            title=title,
+            url=url,
+            description=description,
+            creator_user_id=creator_user_id,
+            creator_agent_id=creator_agent_id,
+            agent_session_id=None,
+            agent_task_id=agent_task_id,
+            artifact_metadata=artifact_metadata,
+        ), True
+
+    last_exc: IntegrityError | None = None
+    for attempt in range(_SESSION_FK_MAX_RETRIES + 1):
+        try:
+            artifact = await _create_artifact(
+                artifact_type=artifact_type,
+                title=title,
+                url=url,
+                description=description,
+                creator_user_id=creator_user_id,
+                creator_agent_id=creator_agent_id,
+                agent_session_id=agent_session_id,
+                agent_task_id=agent_task_id,
+                artifact_metadata=artifact_metadata,
+            )
+            return artifact, True
+        except IntegrityError as exc:
+            if _SESSION_FK_CONSTRAINT not in str(exc):
+                raise
+            last_exc = exc
+            if attempt < _SESSION_FK_MAX_RETRIES:
+                delay = _SESSION_FK_RETRY_DELAYS[attempt]
+                logger.warning(
+                    "Session FK not found for add_artifact — retrying",
+                    attempt=attempt + 1,
+                    max_retries=_SESSION_FK_MAX_RETRIES,
+                    session_id=str(agent_session_id),
+                    retry_delay_s=delay,
+                )
+                await asyncio.sleep(delay)
+
+    # All retries exhausted.  Save the artifact without the session link so
+    # the artifact is never silently lost — the caller will log/warn about it.
+    logger.error(
+        "Session FK violation persists after retries — saving artifact without session link",
+        session_id=str(agent_session_id),
+        title=title,
+        exc_info=last_exc,
+    )
+    artifact = await _create_artifact(
+        artifact_type=artifact_type,
+        title=title,
+        url=url,
+        description=description,
+        creator_user_id=creator_user_id,
+        creator_agent_id=creator_agent_id,
+        agent_session_id=None,  # fallback: unlink from missing session
+        agent_task_id=agent_task_id,
+        artifact_metadata=artifact_metadata,
+    )
+    return artifact, False
 
 
 @retry_db
@@ -154,7 +254,7 @@ async def add_artifact(
             return {"success": False, "error": f"Invalid agent_task_id '{agent_task_id}': not a valid UUID"}
 
     try:
-        artifact = await _create_artifact(
+        artifact, session_linked = await _create_artifact_with_session_retry(
             artifact_type=parsed_type,
             title=title,
             url=url,
@@ -176,15 +276,23 @@ async def add_artifact(
         title=title,
         agent_name=agent_name,
         session_id=str(agent_session_id),
+        session_linked=session_linked,
     )
+
+    message = (
+        f"Artifact '{title}' ({artifact_type}) registered with ID {artifact.agent_artifact_id}. "
+        "Use this ID to reference the artifact in future sessions or update it later."
+    )
+    if not session_linked:
+        message += (
+            " Note: the artifact could not be linked to the current session "
+            f"(session {agent_session_id} was not found in the database after retries)."
+        )
 
     return {
         "success": True,
         "artifact_id": str(artifact.agent_artifact_id),
-        "message": (
-            f"Artifact '{title}' ({artifact_type}) registered with ID {artifact.agent_artifact_id}. "
-            "Use this ID to reference the artifact in future sessions or update it later."
-        ),
+        "message": message,
     }
 
 
