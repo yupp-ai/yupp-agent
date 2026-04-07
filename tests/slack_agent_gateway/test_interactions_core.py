@@ -25,6 +25,7 @@ from ypl.slack_agent_gateway.interactions import (
     handle_interaction,
     process_slack_interaction,
 )
+from ypl.slack_agent_gateway.types import AgentAppConfig
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -51,11 +52,15 @@ def _make_block_actions_payload(
     }
 
 
-def _make_app_config(app_id: str = "A001") -> MagicMock:
-    cfg = MagicMock()
-    cfg.bot_token = "xoxb-test"
-    cfg.app_id = app_id
-    return cfg
+def _make_app_config(app_id: str = "A001") -> AgentAppConfig:
+    return AgentAppConfig(
+        app_id=app_id,
+        agent_name="test-agent",
+        slack_name="testbot",
+        bot_token="xoxb-test",
+        signing_secret="test-secret",
+        display_name="Test Bot",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +165,7 @@ class TestHandleInteractionRouting:
         }
         response = await handle_interaction(payload)
         assert response.status_code == 200
+        assert json.loads(response.body) == {}
 
 
 # ---------------------------------------------------------------------------

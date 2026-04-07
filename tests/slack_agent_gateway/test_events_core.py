@@ -141,6 +141,31 @@ class TestVerifySlackSignatureMulti:
             verify_slack_signature_multi(req, body, ["secret"])
         assert exc_info.value.status_code == 401
 
+    def test_accepts_fresh_timestamp(self) -> None:
+        mock_settings = MagicMock()
+        mock_settings.ENVIRONMENT = "production"
+
+        body = b"payload=x"
+        secret = "my-secret"
+        req = _make_request(body, secret)  # default: time.time() (fresh)
+        with patch("ypl.slack_agent_gateway.events.settings", mock_settings):
+            result = verify_slack_signature_multi(req, body, [secret])
+        assert result == secret
+
+    def test_raises_just_outside_window(self) -> None:
+        mock_settings = MagicMock()
+        mock_settings.ENVIRONMENT = "production"
+
+        just_old_ts = str(int(time.time()) - 301)  # 1 second past the 300s threshold
+        body = b"test"
+        req = _make_request(body, "secret", timestamp=just_old_ts)
+        with (
+            patch("ypl.slack_agent_gateway.events.settings", mock_settings),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            verify_slack_signature_multi(req, body, ["secret"])
+        assert exc_info.value.status_code == 401
+
     def test_valid_signature_returns_matching_secret(self) -> None:
         mock_settings = MagicMock()
         mock_settings.ENVIRONMENT = "production"
