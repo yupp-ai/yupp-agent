@@ -15,13 +15,14 @@ Coverage strategy:
 
 Heavy mocking for all orchestration / DB / GCS / Slack dependencies.
 """
-from __future__ import annotations
 
+from __future__ import annotations
 import asyncio
 import os
 import sys
 import types
 import uuid
+from datetime import UTC
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -175,6 +176,18 @@ class TestCapacityChecks:
 class TestSemaphoreLazyInit:
     """Semaphores are created lazily inside the event loop."""
 
+    def setup_method(self) -> None:
+        import ypl.agent_harness_service.service.state as _s
+
+        self._orig_cc = _s._claude_code_semaphore
+        self._orig_cx = _s._codex_semaphore
+
+    def teardown_method(self) -> None:
+        import ypl.agent_harness_service.service.state as _s
+
+        _s._claude_code_semaphore = self._orig_cc
+        _s._codex_semaphore = self._orig_cx
+
     def test_get_claude_code_semaphore_returns_semaphore(self) -> None:
         import ypl.agent_harness_service.service.state as _state_mod
 
@@ -319,7 +332,6 @@ class TestTrimValue:
 
     def test_trims_content_key(self) -> None:
         from ypl.agent_harness_service.service.message_helpers import _trim_value
-        from ypl.agent_harness_service.service.state import _TRIM_MAX_LEN
 
         result = _trim_value({"content": "y" * 200})
         assert len(result["content"]) < 200
@@ -842,6 +854,8 @@ class TestResolveSession:
         sid = str(uuid.uuid4())
         result = await _resolve_session(mock_session, sid)
         assert result is None
+        # UUID miss falls through to slack_session_id fallback — exec must be called twice
+        assert mock_session.exec.call_count == 2
 
 
 # ===========================================================================
@@ -1219,9 +1233,9 @@ class TestDrainPendingMessages:
     @pytest.mark.asyncio
     async def test_two_messages_attachments_merged(self) -> None:
         """Attachments from all pending messages are merged into combined request."""
+        from ypl.agent_harness_service.common.types import AttachmentInfo
         from ypl.agent_harness_service.service.session_lifecycle import _drain_pending_messages
         from ypl.agent_harness_service.service.state import PendingMessage, _pending_messages
-        from ypl.agent_harness_service.common.types import AttachmentInfo
 
         sid = uuid.uuid4()
         att1 = AttachmentInfo(filename="a.pdf", gcs_url="gs://bucket/a.pdf", content_type="application/pdf", size=100)
@@ -1308,7 +1322,14 @@ class TestMaybeUpdateTaskCompletion:
                 result={"summary": "done"},
                 error=None,
             )
-        mock_update.assert_awaited_once()
+        mock_update.assert_awaited_once_with(
+            task_id=uuid.UUID(task_id),
+            session_id=str(session_id),
+            success=True,
+            result={"summary": "done"},
+            error=None,
+            error_subtype=None,
+        )
 
     @pytest.mark.asyncio
     async def test_task_trigger_none_context_is_noop(self) -> None:
@@ -1373,16 +1394,18 @@ def _make_subagent_result(**kwargs: Any) -> Any:
 def _make_db_context_manager(agent_session_obj: Any, agent_obj: Any) -> Any:
     """Return a context manager that yields an AsyncMock DB session.
 
-    ``db.get(Model, pk)`` returns ``agent_session_obj`` for the first call
-    (AgentSession lookup) and ``agent_obj`` for the second (Agent lookup).
+    ``db.get(AgentSession, pk)`` returns ``agent_session_obj``;
+    ``db.get(Agent, pk)`` returns ``agent_obj``.
+    Dispatches by model class to avoid brittle call-order dependencies.
     """
-    call_count = {"n": 0}
+    from ypl.db.agent_harness import Agent, AgentSession
 
     async def _get_side_effect(model: Any, pk: Any) -> Any:
-        call_count["n"] += 1
-        if call_count["n"] == 1:
+        if model is AgentSession:
             return agent_session_obj
-        return agent_obj
+        if model is Agent:
+            return agent_obj
+        return None
 
     db = AsyncMock()
     db.__aenter__ = AsyncMock(return_value=db)
@@ -1608,7 +1631,7 @@ class TestDeliverSubagentResultToParent:
         """When _pending_messages is at capacity, new result is dropped (logged)."""
         from ypl.agent_harness_service.service import state
         from ypl.agent_harness_service.service.session_lifecycle import deliver_subagent_result_to_parent
-        from ypl.agent_harness_service.service.state import PendingMessage, _MAX_PENDING_MESSAGES
+        from ypl.agent_harness_service.service.state import _MAX_PENDING_MESSAGES, PendingMessage
 
         result = _make_subagent_result()
         parent_id = str(uuid.uuid4())
@@ -1617,9 +1640,7 @@ class TestDeliverSubagentResultToParent:
         # Mark parent as busy
         state._active_tasks[parent_uuid] = MagicMock()  # type: ignore[assignment]
         # Fill queue to capacity
-        state._pending_messages[parent_uuid] = [
-            PendingMessage(message=f"msg{i}") for i in range(_MAX_PENDING_MESSAGES)
-        ]
+        state._pending_messages[parent_uuid] = [PendingMessage(message=f"msg{i}") for i in range(_MAX_PENDING_MESSAGES)]
 
         fake_session = MagicMock()
         trigger_mock = MagicMock()
@@ -1720,7 +1741,7 @@ class TestBuildSessionInfo:
         trigger_mock.value = kwargs.get("trigger", "api")
         row.trigger = trigger_mock
         row.model = kwargs.get("model", "claude-code-cli")
-        row.created_at = kwargs.get("created_at", datetime.now())
+        row.created_at = kwargs.get("created_at", datetime.now(tz=UTC))
         row.context = kwargs.get("context", {})
         row.parent_session_id = kwargs.get("parent_session_id", None)
         row.title = kwargs.get("title", None)
