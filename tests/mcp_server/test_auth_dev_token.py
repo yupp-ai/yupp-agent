@@ -195,7 +195,7 @@ class TestIsServiceToken:
             assert _is_service_token(token) is True
 
     def test_empty_allowlist_trusts_all(self) -> None:
-        """When AHS_SERVICE_TOKEN_EMAILS is empty, every token is trusted."""
+        """When AHS_SERVICE_TOKEN_EMAILS is empty, every token is trusted (local dev mode)."""
         token = _make_db_token(email="anyone@yupp.ai")
         with patch("ypl.mcp_server.auth_dev_token.settings") as mock_settings:
             mock_settings.AHS_SERVICE_TOKEN_EMAILS = ""
@@ -308,15 +308,10 @@ class TestCreateRequestContext:
 
 
 class TestDevTokenAuthMiddleware:
-    def test_health_check_skips_auth(self) -> None:
-        """GET /health bypasses authentication entirely."""
+    def test_unauthenticated_request_returns_401(self) -> None:
+        """An unauthenticated request to a non-public path returns 401."""
         app = _make_starlette_app()
         client = TestClient(app, raise_server_exceptions=False)
-        # Override routing to add /health path
-        # Instead, test PUBLIC_PATHS bypass via dispatch logic directly
-
-        # Health path is skipped, but our minimal test app doesn't have /health.
-        # We validate that a non-yupp_dev_ token gets rejected on /ping
         r = client.get("/ping")
         assert r.status_code == 401
 

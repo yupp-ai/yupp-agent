@@ -160,6 +160,7 @@ class TestMcpSessionMiddlewarePaths:
 
     async def test_context_var_reset_after_request(self) -> None:
         """ContextVar is reset to its prior value after the request."""
+        from httpx import ASGITransport, AsyncClient
         from starlette.applications import Starlette
         from starlette.responses import JSONResponse
         from starlette.routing import Route
@@ -173,8 +174,8 @@ class TestMcpSessionMiddlewarePaths:
         app = Starlette(routes=[Route("/other", handler)])
         app.add_middleware(McpSessionMiddleware)
 
-        client = TestClient(app)
-        client.get("/other")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.get("/other")
 
         assert mcp_request_id_var.get() == prior_id
 

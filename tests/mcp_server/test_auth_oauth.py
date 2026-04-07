@@ -78,14 +78,11 @@ class TestAllowedDomainsGoogleProviderVerifyToken:
     async def test_returns_none_when_parent_returns_none(self) -> None:
         provider = _make_provider()
 
-        with (
-            patch.object(AllowedDomainsGoogleProvider, "verify_token", wraps=None),
-            patch(
-                "fastmcp.server.auth.providers.google.GoogleProvider.verify_token",
-                new=AsyncMock(return_value=None),
-            ),
+        with patch(
+            "fastmcp.server.auth.providers.google.GoogleProvider.verify_token",
+            new=AsyncMock(return_value=None),
         ):
-            result = await AllowedDomainsGoogleProvider.verify_token(provider, "bad-token")
+            result = await provider.verify_token("bad-token")
 
         assert result is None
 
