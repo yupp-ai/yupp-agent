@@ -33,10 +33,18 @@ together_module.AsyncTogether = _AsyncTogether
 together_module.Together = _Together
 together_types_module.ChatCompletion = _ChatCompletion
 
-sys.modules.setdefault("together", together_module)
-sys.modules.setdefault("together.types", together_types_module)
-croniter_module.croniter = lambda *args, **kwargs: None
-sys.modules.setdefault("croniter", croniter_module)
+try:
+    import together as _real_together  # noqa: F401
+except ImportError:
+    sys.modules.setdefault("together", together_module)
+    sys.modules.setdefault("together.types", together_types_module)
+try:
+    import croniter as _real_croniter  # noqa: F401
+
+    # Real croniter is available — don't stub it out
+except ImportError:
+    croniter_module.croniter = lambda *args, **kwargs: None
+    sys.modules.setdefault("croniter", croniter_module)
 
 from ypl.agent_harness_service.service import _extract_tool_uses  # noqa: E402
 

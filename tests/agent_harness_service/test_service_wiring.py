@@ -58,11 +58,11 @@ _together.APITimeoutError = _APITimeoutError  # type: ignore[attr-defined]
 _together.AsyncTogether = _AsyncTogether  # type: ignore[attr-defined]
 _together.Together = _Together  # type: ignore[attr-defined]
 _together_types.ChatCompletion = _ChatCompletion  # type: ignore[attr-defined]
-_croniter.croniter = lambda *args, **kwargs: None  # type: ignore[attr-defined]
-
-sys.modules.setdefault("together", _together)
-sys.modules.setdefault("together.types", _together_types)
-sys.modules.setdefault("croniter", _croniter)
+try:
+    import croniter as _real_croniter  # noqa: F401
+except ImportError:
+    _croniter.croniter = lambda *args, **kwargs: None
+    sys.modules.setdefault("croniter", _croniter)
 
 
 # ===========================================================================
