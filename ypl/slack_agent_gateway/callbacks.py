@@ -879,7 +879,9 @@ async def flush_status_update(session_id: str, session: AgentSession | None = No
 
     entries = await get_tool_entries(session_id)
     if not entries:
-        # Entries were cleared between the pending flag being set and the flush.
+        # Entries were cleared between the pending flag being set and the flush
+        # (e.g. add_reply() finalised the cluster first).
+        logger.debug("Tool cluster flush: entries already cleared, skipping render", session_id=session_id)
         await remove_from_status_flush_schedule(session_id)
         return SendToolEventResponse(success=True, message_ts=session.status_message_ts)
 

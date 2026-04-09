@@ -1030,9 +1030,8 @@ async def _run_agent_task(
 
         if stop_notice and gateway and gateway_session_id:
             try:
-                # For Slack: send as a muted status context block (Slack-only grey
-                # hint).  For other gateways send_status_update returns False and we
-                # fall back to a regular reply so they still see the message.
+                # send_status_update is a no-op for all gateways; fall back to a
+                # visible reply so the user sees the stop notice.
                 delivered = await gateway.send_status_update(gateway_session_id, stop_notice)
                 if not delivered:
                     await gateway.send_reply(gateway_session_id, stop_notice, username=gateway_username)

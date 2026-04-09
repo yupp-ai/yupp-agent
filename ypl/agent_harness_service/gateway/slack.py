@@ -25,7 +25,7 @@ class SlackGateway(Gateway):
         self._api_key: str | None = config.settings.get("api_key")
         self._client: httpx.AsyncClient | None = None
         # Sessions that returned 404 (expired/not found in SAG). We skip all
-        # future send_status_update calls for these to stop the 404 storm.
+        # future send_tool_event calls for these to stop the 404 storm.
         self._dead_session_ids: set[str] = set()
 
     @property
