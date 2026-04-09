@@ -23,7 +23,6 @@ from ypl.slack_agent_gateway.constants import (
     REDIS_KEY_PREFIX_REPLY,
     REDIS_KEY_PREFIX_SESSION,
     REDIS_KEY_PREFIX_STATUS_FLUSH_SCHEDULE,
-    REDIS_KEY_PREFIX_STATUS_PENDING,
     REDIS_KEY_PREFIX_STATUS_RATELIMIT,
     REDIS_KEY_PREFIX_SURVEY_RESPONSE,
     REDIS_KEY_PREFIX_THREAD_SESSION,
@@ -438,58 +437,8 @@ async def try_acquire_status_ratelimit(session_id: str) -> bool:
     return result is not None
 
 
-async def set_pending_status(session_id: str, text: str) -> None:
-    """Store the latest pending status text for a session.
-
-    Always overwrites the previous value — the newest text wins.
-
-    Args:
-        session_id: The session ID
-        text: Status text to store
-    """
-    redis = await get_redis_client()
-    key = f"{REDIS_KEY_PREFIX_STATUS_PENDING}:{session_id}"
-    await redis.set(key, text, ex=STATUS_PENDING_TTL_SECONDS)
-
-
-async def get_and_clear_pending_status(session_id: str) -> str | None:
-    """Atomically read and delete the pending status text.
-
-    Args:
-        session_id: The session ID
-
-    Returns:
-        Pending status text, or None if none was stored
-    """
-    redis = await get_redis_client()
-    key = f"{REDIS_KEY_PREFIX_STATUS_PENDING}:{session_id}"
-    result: str | None = await redis.getdel(key)
-    return result
-
-
-async def peek_pending_status(session_id: str) -> str | None:
-    """Read the pending status text without deleting it.
-
-    Used to check whether new pending text arrived after a flush completed,
-    so the caller can reschedule a flush if needed.
-
-    Args:
-        session_id: The session ID
-
-    Returns:
-        Pending status text, or None if none is stored
-    """
-    redis = await get_redis_client()
-    key = f"{REDIS_KEY_PREFIX_STATUS_PENDING}:{session_id}"
-    result: str | None = await redis.get(key)
-    return result
-
-
 async def set_tool_cluster_pending(session_id: str) -> None:
     """Signal that tool entries were updated and a cluster flush is needed.
-
-    Mirrors set_pending_status but for the tool-cluster path, so the two
-    signals use separate Redis keys and cannot collide.
 
     Args:
         session_id: The session ID
