@@ -26,7 +26,10 @@ _VALID_TYPES = [t.value for t in AgentArtifactType]
 # constraint.  We retry with backoff before falling back to session_id=None.
 _SESSION_FK_CONSTRAINT = "fk_agent_artifacts_agent_session_id_agent_sessions"
 _SESSION_FK_MAX_RETRIES = 3
-_SESSION_FK_RETRY_DELAYS = (0.5, 1.0, 2.0)  # seconds
+_SESSION_FK_RETRY_DELAYS = (0.5, 1.0, 2.0)  # seconds; one entry per retry
+assert len(_SESSION_FK_RETRY_DELAYS) == _SESSION_FK_MAX_RETRIES, (
+    "_SESSION_FK_RETRY_DELAYS must have exactly _SESSION_FK_MAX_RETRIES entries"
+)
 
 
 def _parse_session_id(raw: str | None) -> uuid.UUID | None:
@@ -123,7 +126,7 @@ async def _create_artifact_with_session_retry(
             )
             return artifact, True
         except IntegrityError as exc:
-            if _SESSION_FK_CONSTRAINT not in str(exc):
+            if getattr(exc.orig, "constraint_name", None) != _SESSION_FK_CONSTRAINT:
                 raise
             last_exc = exc
             if attempt < _SESSION_FK_MAX_RETRIES:
@@ -136,6 +139,13 @@ async def _create_artifact_with_session_retry(
                     retry_delay_s=delay,
                 )
                 await asyncio.sleep(delay)
+            else:
+                logger.warning(
+                    "Session FK not found for add_artifact — all retries exhausted, falling back to unlinked artifact",
+                    attempt=attempt + 1,
+                    max_retries=_SESSION_FK_MAX_RETRIES,
+                    session_id=str(agent_session_id),
+                )
 
     # All retries exhausted.  Save the artifact without the session link so
     # the artifact is never silently lost — the caller will log/warn about it.
