@@ -79,7 +79,7 @@ def check_file(path: Path) -> list[tuple[int, str]]:
     violations: list[tuple[int, str]] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and _is_logger_call(node) and _message_is_empty(node):
-            method = node.func.attr  # type: ignore[union-attr]
+            method = node.func.attr  # type: ignore[attr-defined]
             violations.append(
                 (
                     node.lineno,
@@ -107,7 +107,7 @@ def scan(roots: list[Path]) -> dict[Path, list[tuple[int, str]]]:
 
 def main() -> int:
     args = sys.argv[1:]
-    roots = [Path(a) for a in args] if args else [Path("ypl")]
+    roots = [Path(a) for a in args] if args else [Path(__file__).parent.parent / "ypl"]
 
     results = scan(roots)
     if not results:

@@ -43,7 +43,15 @@ logger = get_logger()
 # --- MCP session tracking ---
 
 # Paths that do not need session-level tracking (lightweight / frequent).
-_PATHS_WITHOUT_SESSION_TRACKING: frozenset[str] = frozenset({"/health", "/healthz", "/tools"})
+_PATHS_WITHOUT_SESSION_TRACKING: frozenset[str] = frozenset(
+    {
+        "/",
+        "/health",
+        "/healthz",
+        "/robots.txt",
+        "/tools",
+    }
+)
 
 
 class _McpSessionIdFilter(logging.Filter):
@@ -119,23 +127,32 @@ class McpSessionMiddleware(BaseHTTPMiddleware):
         try:
             response = await call_next(request)
         finally:
-            status_code = response.status_code if response is not None else 0
+            status_code = response.status_code if response is not None else None
             log_kwargs: dict[str, object] = {
-                "http_method": method,
-                "http_path": path,
-                "http_status": status_code,
+                k: v
+                for k, v in {
+                    "http_method": method,
+                    "http_path": path,
+                    "http_status": status_code,
+                }.items()
+                if v is not None
             }
-            # Emit at WARNING level for 4xx so SRE can correlate with Cloud Run
-            # platform logs; use INFO for successful or server-error responses.
-            if 400 <= status_code < 500:
+            # Emit at WARNING level for error conditions so SRE can correlate
+            # with Cloud Run platform logs; INFO for successful responses.
+            if response is None:
+                logger.warning("Session terminated without response (exception in call_next)", **log_kwargs)
+            elif 400 <= status_code < 500:  # type: ignore[operator]
                 logger.warning("Terminating session with client error", **log_kwargs)
+            elif status_code >= 500:  # type: ignore[operator]
+                logger.warning("Terminating session with server error", **log_kwargs)
             else:
                 logger.info("Terminating session", **log_kwargs)
             clear_contextvars()
             mcp_request_id_var.reset(cv_token)
 
-        # response is always set here — call_next() raises on transport errors
-        # rather than returning None, so this path is only reached on success.
+        # call_next() raises rather than returning None on transport errors,
+        # so response is always set when execution reaches this line.
+        assert response is not None
         return response
 
 
