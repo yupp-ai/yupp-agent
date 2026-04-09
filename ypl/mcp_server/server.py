@@ -24,7 +24,7 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import JSONResponse, PlainTextResponse, Response
 from starlette.routing import Mount, Route
 from structlog.contextvars import bind_contextvars, clear_contextvars
 
@@ -111,18 +111,56 @@ class McpSessionMiddleware(BaseHTTPMiddleware):
 
         session_id = str(uuid.uuid4())
         cv_token = mcp_request_id_var.set(session_id)
+        method = request.method
         bind_contextvars(mcp_request_id=session_id)
 
-        logger.info("Initializing session")
+        logger.info("Initializing session", http_method=method, http_path=path)
+        response: Response | None = None
         try:
-            return await call_next(request)
+            response = await call_next(request)
         finally:
-            logger.info("Terminating session")
+            status_code = response.status_code if response is not None else 0
+            log_kwargs: dict[str, object] = {
+                "http_method": method,
+                "http_path": path,
+                "http_status": status_code,
+            }
+            # Emit at WARNING level for 4xx so SRE can correlate with Cloud Run
+            # platform logs; use INFO for successful or server-error responses.
+            if 400 <= status_code < 500:
+                logger.warning("Terminating session with client error", **log_kwargs)
+            else:
+                logger.info("Terminating session", **log_kwargs)
             clear_contextvars()
             mcp_request_id_var.reset(cv_token)
 
+        # response is always set here — call_next() raises on transport errors
+        # rather than returning None, so this path is only reached on success.
+        return response
+
 
 # --- Route handlers ---
+
+
+async def root(request: Request) -> JSONResponse:
+    """Root handler for Cloud Run GFE probes.
+
+    The Cloud Run Google Front End (GFE) periodically probes GET / and logs
+    any non-2xx response as a WARNING-severity request log entry with a null
+    message payload.  Return a minimal 200 OK to silence those spurious
+    WARNING log entries.  Use /health for real liveness checks.
+    """
+    return JSONResponse({"status": "ok"})
+
+
+async def robots_txt(request: Request) -> PlainTextResponse:
+    """Robots.txt handler for Cloud Run GFE probes.
+
+    The Cloud Run GFE occasionally probes GET /robots.txt; a 404 is logged
+    as a WARNING with a null message.  Return a deny-all robots.txt to
+    eliminate those entries and keep crawlers out.
+    """
+    return PlainTextResponse("User-agent: *\nDisallow: /\n")
 
 
 async def health_check(request: Request) -> JSONResponse:
@@ -313,6 +351,11 @@ def _get_middleware() -> list[Middleware]:
 app = Starlette(
     debug=False,
     routes=[
+        # GFE probe handlers must come first — Cloud Run's Google Front End
+        # probes these paths and emits null-message WARNING log entries for
+        # any non-2xx response.  Explicit 200 OK handlers silence those.
+        Route("/", root, methods=["GET"]),
+        Route("/robots.txt", robots_txt, methods=["GET"]),
         Route("/health", health_check, methods=["GET"]),
         Route("/healthz", health_check, methods=["GET"]),
         Route("/tools", list_tools, methods=["GET"]),

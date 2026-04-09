@@ -86,7 +86,9 @@ def init_google_cloud_logger(base_processors: list[Any]) -> structlog.BoundLogge
         cloud_processors = base_processors.copy()
         cloud_processors.append(
             lambda _, __, event_dict: {
-                "message": event_dict.pop("event", ""),
+                # Use `or ""` so that an explicit event=None never becomes
+                # message=null in GCP — null messages make SRE triage blind.
+                "message": event_dict.pop("event", "") or "",
                 **event_dict,
             }
         )
@@ -145,8 +147,10 @@ def init_console_logger(base_processors: list[Any]) -> structlog.BoundLogger:
 
                 Uses setdefault so that a pre-bound 'message' key is preserved
                 and we never silently drop a value that was already there.
+                Uses ``or ""`` so that an explicit event=None never produces
+                message=null — null messages make SRE triage blind.
                 """
-                event = event_dict.pop("event", "")
+                event = event_dict.pop("event", "") or ""
                 event_dict.setdefault("message", event)
                 return event_dict
 
