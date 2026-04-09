@@ -118,7 +118,7 @@ class TestInvalidateConnection:
         conn.invalidate.side_effect = RuntimeError("invalidation failed")
         with caplog.at_level(logging.WARNING):
             _invalidate_connection(conn)
-        assert "invalidating connection" in caplog.text.lower() or True  # just no raise
+        assert "invalidating connection" in caplog.text.lower()
 
 
 # ---------------------------------------------------------------------------

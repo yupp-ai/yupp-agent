@@ -642,7 +642,11 @@ class TestFlushStatusUpdate:
         fresh_session = _make_session(status_message_ts=None)
 
         with (
-            patch(f"{_CALLBACKS_MODULE}.get_session", new_callable=AsyncMock, return_value=session),
+            patch(
+                f"{_CALLBACKS_MODULE}.get_session",
+                new_callable=AsyncMock,
+                side_effect=[session, fresh_session],
+            ),
             patch(
                 f"{_CALLBACKS_MODULE}.get_and_clear_tool_cluster_pending",
                 new_callable=AsyncMock,
@@ -654,11 +658,6 @@ class TestFlushStatusUpdate:
                 f"{_CALLBACKS_MODULE}.get_tool_entries",
                 new_callable=AsyncMock,
                 return_value=[self._make_entry()],
-            ),
-            patch(
-                f"{_CALLBACKS_MODULE}.get_session",
-                new_callable=AsyncMock,
-                side_effect=[session, fresh_session],
             ),
             patch(f"{_CALLBACKS_MODULE}.save_session", new_callable=AsyncMock),
             patch(f"{_CALLBACKS_MODULE}.remove_from_status_flush_schedule", new_callable=AsyncMock),
