@@ -79,15 +79,15 @@ class Gateway(ABC):
         ...
 
     async def send_status_update(self, session_id: str, text: str) -> bool:
-        """Push a live status hint (e.g., tool-use progress) to the session.
+        """Push a plain-text status hint to the session (no-op by default).
 
-        Optional — the default no-op implementation returns ``False`` so callers
-        can fall back to ``send_reply`` for gateways that do not support inline
-        status blocks.  Only the Slack gateway currently overrides this.
+        No gateway currently overrides this — tool-use progress is delivered
+        via ``send_tool_event`` instead.  Callers fall back to ``send_reply``
+        when this returns ``False`` (e.g. for stop notices).
 
         Args:
             session_id: The gateway session identifier.
-            text: Short status line, e.g. "🔧 5 tools used: Bash, Grep, Read".
+            text: Short status line to display.
 
         Returns:
             True if the update was accepted, False if unsupported or failed.

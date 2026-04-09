@@ -29,7 +29,6 @@ from ypl.slack_agent_gateway.callbacks import (
     request_feedback,
     send_message,
     send_questionnaire,
-    send_status_update,
     update_reply,
 )
 from ypl.slack_agent_gateway.commands import process_slack_command
@@ -48,8 +47,6 @@ from ypl.slack_agent_gateway.types import (
     SendMessageResponse,
     SendQuestionnaireRequest,
     SendQuestionnaireResponse,
-    SendStatusUpdateRequest,
-    SendStatusUpdateResponse,
     SendToolEventRequest,
     SendToolEventResponse,
     SlackSessionInfoResponse,
@@ -236,33 +233,6 @@ async def post_tool_event(request_body: SendToolEventRequest) -> SendToolEventRe
         HTTPException: 404 if the session is not found (expired or never existed).
     """
     result = await handle_tool_event(request_body)
-    if not result.success and result.error == "Session not found":
-        raise HTTPException(status_code=404, detail="Session not found")
-    return result
-
-
-@router.post("/sessions/status", dependencies=[Depends(verify_api_key)])
-async def post_status_update(request_body: SendStatusUpdateRequest) -> SendStatusUpdateResponse:
-    """Post or update a live status hint for an agent session.
-
-    AHS calls this endpoint to push tool-use progress and other internal info
-    during execution.  SAG renders the text as a muted context block and edits
-    it in-place so that users see a continuously updating status line without
-    new messages being created.  Rate-limited to at most one Slack API call per
-    2 seconds per session.
-    Requires X-API-Key header for authentication.
-
-    Args:
-        request_body: Request containing session_id and status text
-
-    Returns:
-        SendStatusUpdateResponse with success status
-
-    Raises:
-        HTTPException: 404 if the session is not found (expired or never existed),
-            so AHS can evict the session from its status-update queue immediately.
-    """
-    result = await send_status_update(request_body)
     if not result.success and result.error == "Session not found":
         raise HTTPException(status_code=404, detail="Session not found")
     return result
