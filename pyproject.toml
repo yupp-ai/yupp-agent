@@ -248,11 +248,15 @@ omit = [
     "ypl/cache.py",
     # Dev-only mock
     "ypl/slack_agent_gateway/mock_agent_service.py",
+    # Pure external API wrappers (thin plumbing over Linear/Slack/external GraphQL)
+    "ypl/mcp_server/tools/linear_sync.py",
+    "ypl/mcp_server/tools/agent_schedules.py",
+    "ypl/backend/utils/linear.py",
 ]
 
 [tool.coverage.report]
 show_missing = true
-fail_under = 33  # Ratchet target: 33 → 80%. See http://go/p/55313dc9-bed8-49cf-ace2-ab7d37240dbb
+fail_under = 60  # Ratchet target: 60 → 80%. See http://go/p/55313dc9-bed8-49cf-ace2-ab7d37240dbb
 exclude_lines = [
     "pragma: no cover",
     "if __name__ == .__main__.",
