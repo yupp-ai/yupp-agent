@@ -225,16 +225,40 @@ asyncio_default_fixture_loop_scope = "function"
 [tool.coverage.run]
 source = ["ypl"]
 omit = [
+    # Migrations & deploy artifacts
     "ypl/db/alembic/*",
-    "ypl/streamlit_server/*",
     "ypl/agent_harness_service/deploy/*",
-    "ypl/agent_harness_service/tui/*",
     "ypl/agent_harness_service/scripts/*",
+    # Interactive / UI (need Streamlit runtime or terminal)
+    "ypl/streamlit_server/*",
+    "ypl/agent_harness_service/tui/*",
+    "ypl/backend/utils/streamlit_utils.py",
+    # Server bootstrap (pure app wiring, no business logic)
+    "ypl/slack_agent_gateway/server.py",
+    # Infrastructure wiring (need running Redis/DB/TaskIQ worker)
+    "ypl/backend/jobs/taskiq.py",
+    "ypl/mcp_server/tasks.py",
+    "ypl/db/log_utils.py",
+    # Stubs & no-ops (interfaces only, implementation in other repos)
+    "ypl/backend/email/*",
+    "ypl/backend/llm/agent_memory_indexing.py",
+    "ypl/backend/llm/model_heuristics.py",
+    # Import-time side-effects only
+    "ypl/warning_utils.py",
+    "ypl/cache.py",
+    # Dev-only mock
+    "ypl/slack_agent_gateway/mock_agent_service.py",
 ]
 
 [tool.coverage.report]
 show_missing = true
 fail_under = 33  # Ratchet target: 33 → 80%. See http://go/p/55313dc9-bed8-49cf-ace2-ab7d37240dbb
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.",
+    "raise NotImplementedError",
+    "\\.\\.\\.",
+]
 
 [tool.uv.workspace]
 members = [
