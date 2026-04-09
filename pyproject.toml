@@ -258,7 +258,6 @@ omit = [
     "ypl/agent_harness_service/routes.py",
     "ypl/agent_harness_service/projects/project_routes.py",
     "ypl/slack_agent_gateway/agent_client.py",
-    "ypl/slack_agent_gateway/queue.py",
     # Deep wiring / orchestration (every line touches DB + external services + subprocesses)
     "ypl/agent_harness_service/orchestration.py",
     "ypl/agent_harness_service/service/run_task.py",
@@ -267,8 +266,9 @@ omit = [
     "ypl/agent_harness_service/core/memory_persistence.py",
     "ypl/agent_harness_service/tools/repo_manager.py",
     "ypl/agent_harness_service/tools/mcp_client.py",
-    # Slack SDK orchestration (every function calls Slack API)
+    # Slack SDK orchestration (every function calls Slack API + Redis + Agent Service)
     "ypl/slack_agent_gateway/bot_father.py",
+    "ypl/slack_agent_gateway/queue.py",
     # Server plugin wiring
     "ypl/mono_server/setup.py",
 ]
