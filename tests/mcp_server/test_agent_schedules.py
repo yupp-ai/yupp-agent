@@ -1,0 +1,697 @@
+"""Unit tests for ypl/mcp_server/tools/agent_schedules.py.
+
+Covers:
+- list_ahs_agents: success (returns agents), database error
+- create_agent_schedule_tool: timezone validation error, execute_at parse error,
+  context parse error, no auth (unknown email), resolved user_id, success
+- create_recurring_agent_schedule_tool: timezone error, cron error, max_runs ≤ 0,
+  context parse error, no auth, success
+- cancel_agent_schedule: unauthenticated, no USE_MCP permission, invalid UUID,
+  successful cancel, not found, wrong owner, wrong status
+- list_agent_schedules: limit ≤ 0, unauthenticated, no USE_MCP permission,
+  invalid status, invalid schedule_type, success (returns schedules), DB error
+
+All external dependencies (DB sessions, permission checks, helper functions)
+are mocked — no live database required.
+"""
+
+from __future__ import annotations
+import uuid
+from datetime import UTC, datetime
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
+
+# MCP tools are FunctionTool objects — access the raw coroutine via .fn
+import ypl.mcp_server.tools.agent_schedules as _sched_mod
+
+list_ahs_agents = _sched_mod.list_ahs_agents.fn
+create_agent_schedule_tool = _sched_mod.create_agent_schedule_tool.fn
+create_recurring_agent_schedule_tool = _sched_mod.create_recurring_agent_schedule_tool.fn
+cancel_agent_schedule = _sched_mod.cancel_agent_schedule.fn
+edit_agent_schedule = _sched_mod.edit_agent_schedule.fn
+list_agent_schedules = _sched_mod.list_agent_schedules.fn
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_agent_row(
+    name: str = "eng-raccoon",
+    display_name: str = "Engineering Raccoon",
+    description: str = "A test agent",
+) -> MagicMock:
+    agent = MagicMock()
+    agent.name = name
+    agent.display_name = display_name
+    agent.description = description
+    return agent
+
+
+def _make_schedule_row(
+    schedule_id: str | None = None,
+    agent_name: str = "eng-raccoon",
+    schedule_type: str = "SCHEDULED",
+    status: str = "PENDING",
+    message: str = "Do the thing",
+) -> MagicMock:
+    from ypl.db.agent_harness import AgentScheduleStatus, AgentScheduleType
+
+    row = MagicMock()
+    schedule = MagicMock()
+    schedule.agent_schedule_id = uuid.UUID(schedule_id or str(uuid.uuid4()))
+    schedule.schedule_type = AgentScheduleType(schedule_type)
+    schedule.status = AgentScheduleStatus(status)
+    schedule.message = message
+    schedule.name = "Test Schedule"
+    schedule.execute_at = datetime(2024, 1, 1, tzinfo=UTC)
+    schedule.cron_expression = None
+    schedule.cron_timezone = None
+    schedule.next_run_at = datetime(2024, 1, 1, tzinfo=UTC)
+    schedule.last_run_at = None
+    schedule.run_count = 0
+    schedule.max_runs = None
+    schedule.created_by_user = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    schedule.created_by_agent = None
+    schedule.created_at = datetime(2024, 1, 1, tzinfo=UTC)
+    row.AgentSchedule = schedule
+    row.agent_name = agent_name
+    return row
+
+
+def _ctx_manager_session(exec_result: Any = None, all_result: Any = None) -> MagicMock:
+    """Create an async context manager mock for get_async_session / get_async_session_read_replica."""
+    session = AsyncMock()
+    if exec_result is not None:
+        session.execute = AsyncMock(return_value=exec_result)
+    if all_result is not None:
+        result = MagicMock()
+        result.all = MagicMock(return_value=all_result)
+        session.exec = AsyncMock(return_value=result)
+    session.commit = AsyncMock()
+
+    ctx = MagicMock()
+    ctx.__aenter__ = AsyncMock(return_value=session)
+    ctx.__aexit__ = AsyncMock(return_value=False)
+    return ctx
+
+
+# ---------------------------------------------------------------------------
+# list_ahs_agents
+# ---------------------------------------------------------------------------
+
+
+class TestListAhsAgents:
+    async def test_success_returns_agents(self) -> None:
+        agents = [_make_agent_row("eng-raccoon"), _make_agent_row("bookkeeper")]
+        ctx = _ctx_manager_session(all_result=agents)
+
+        with patch("ypl.mcp_server.tools.agent_schedules.get_async_session_read_replica", return_value=ctx):
+            result = await list_ahs_agents()
+
+        assert result["success"] is True
+        assert result["agent_count"] == 2
+        names = [a["name"] for a in result["agents"]]
+        assert "eng-raccoon" in names
+        assert "bookkeeper" in names
+
+    async def test_db_error_returns_failure(self) -> None:
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(side_effect=Exception("DB connection failed"))
+        ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("ypl.mcp_server.tools.agent_schedules.get_async_session_read_replica", return_value=ctx):
+            result = await list_ahs_agents()
+
+        assert result["success"] is False
+        assert "DB connection failed" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# create_agent_schedule_tool
+# ---------------------------------------------------------------------------
+
+
+class TestCreateAgentScheduleTool:
+    async def test_invalid_timezone_returns_error(self) -> None:
+        with patch("ypl.mcp_server.tools.agent_schedules.validate_timezone", return_value="Invalid timezone: Blarg"):
+            result = await create_agent_schedule_tool(
+                agent_name="eng-raccoon",
+                message="Do thing",
+                execute_at="2024-01-01T12:00:00",
+                timezone="Blarg",
+            )
+
+        assert result["success"] is False
+        assert "Invalid timezone" in result["error"]
+
+    async def test_invalid_execute_at_returns_error(self) -> None:
+        with (
+            patch("ypl.mcp_server.tools.agent_schedules.validate_timezone", return_value=None),
+            patch("ypl.mcp_server.tools.agent_schedules.parse_execute_at", return_value=(None, "Bad date format")),
+        ):
+            result = await create_agent_schedule_tool(
+                agent_name="eng-raccoon",
+                message="Do thing",
+                execute_at="not-a-date",
+            )
+
+        assert result["success"] is False
+        assert "Bad date format" in result["error"]
+
+    async def test_invalid_context_returns_error(self) -> None:
+        execute_at_utc = datetime(2024, 6, 1, tzinfo=UTC)
+        with (
+            patch("ypl.mcp_server.tools.agent_schedules.validate_timezone", return_value=None),
+            patch("ypl.mcp_server.tools.agent_schedules.parse_execute_at", return_value=(execute_at_utc, None)),
+            patch("ypl.mcp_server.tools.agent_schedules.parse_schedule_context", return_value=(None, "Invalid JSON")),
+        ):
+            result = await create_agent_schedule_tool(
+                agent_name="eng-raccoon",
+                message="Do thing",
+                execute_at="2024-06-01T12:00:00",
+                context="{bad json",
+            )
+
+        assert result["success"] is False
+        assert "Invalid JSON" in result["error"]
+
+    async def test_unauthenticated_returns_error(self) -> None:
+        execute_at_utc = datetime(2024, 6, 1, tzinfo=UTC)
+        with (
+            patch("ypl.mcp_server.tools.agent_schedules.validate_timezone", return_value=None),
+            patch("ypl.mcp_server.tools.agent_schedules.parse_execute_at", return_value=(execute_at_utc, None)),
+            patch("ypl.mcp_server.tools.agent_schedules.parse_schedule_context", return_value=({}, None)),
+            patch("ypl.mcp_server.tools.agent_schedules.get_requesting_user_id", return_value=None),
+            patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="unknown"),
+        ):
+            result = await create_agent_schedule_tool(
+                agent_name="eng-raccoon",
+                message="Do thing",
+                execute_at="2024-06-01T12:00:00",
+            )
+
+        assert result["success"] is False
+        assert "Authentication required" in result["error"]
+
+    async def test_success_with_requesting_user_id(self) -> None:
+        execute_at_utc = datetime(2024, 6, 1, tzinfo=UTC)
+        user_id = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+        expected_result = {"success": True, "agent_schedule_id": "sched-123"}
+
+        with (
+            patch("ypl.mcp_server.tools.agent_schedules.validate_timezone", return_value=None),
+            patch("ypl.mcp_server.tools.agent_schedules.parse_execute_at", return_value=(execute_at_utc, None)),
+            patch("ypl.mcp_server.tools.agent_schedules.parse_schedule_context", return_value=({}, None)),
+            patch("ypl.mcp_server.tools.agent_schedules.get_requesting_user_id", return_value=user_id),
+            patch(
+                "ypl.mcp_server.tools.agent_schedules.create_agent_schedule",
+                new=AsyncMock(return_value=expected_result),
+            ),
+        ):
+            result = await create_agent_schedule_tool(
+                agent_name="eng-raccoon",
+                message="Do thing",
+                execute_at="2024-06-01T12:00:00",
+            )
+
+        assert result["success"] is True
+        assert result["agent_schedule_id"] == "sched-123"
+
+    async def test_user_id_resolved_from_email(self) -> None:
+        execute_at_utc = datetime(2024, 6, 1, tzinfo=UTC)
+        user_id = uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+        expected_result = {"success": True, "agent_schedule_id": "sched-456"}
+
+        with (
+            patch("ypl.mcp_server.tools.agent_schedules.validate_timezone", return_value=None),
+            patch("ypl.mcp_server.tools.agent_schedules.parse_execute_at", return_value=(execute_at_utc, None)),
+            patch("ypl.mcp_server.tools.agent_schedules.parse_schedule_context", return_value=({}, None)),
+            patch("ypl.mcp_server.tools.agent_schedules.get_requesting_user_id", return_value=None),
+            patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@yupp.ai"),
+            patch(
+                "ypl.mcp_server.tools.agent_schedules.resolve_yuppster_user_id",
+                new=AsyncMock(return_value=(user_id, None)),
+            ),
+            patch(
+                "ypl.mcp_server.tools.agent_schedules.create_agent_schedule",
+                new=AsyncMock(return_value=expected_result),
+            ),
+        ):
+            result = await create_agent_schedule_tool(
+                agent_name="eng-raccoon",
+                message="Do thing",
+                execute_at="2024-06-01T12:00:00",
+            )
+
+        assert result["success"] is True
+
+    async def test_user_id_resolution_failure(self) -> None:
+        execute_at_utc = datetime(2024, 6, 1, tzinfo=UTC)
+
+        with (
+            patch("ypl.mcp_server.tools.agent_schedules.validate_timezone", return_value=None),
+            patch("ypl.mcp_server.tools.agent_schedules.parse_execute_at", return_value=(execute_at_utc, None)),
+            patch("ypl.mcp_server.tools.agent_schedules.parse_schedule_context", return_value=({}, None)),
+            patch("ypl.mcp_server.tools.agent_schedules.get_requesting_user_id", return_value=None),
+            patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@yupp.ai"),
+            patch(
+                "ypl.mcp_server.tools.agent_schedules.resolve_yuppster_user_id",
+                new=AsyncMock(return_value=(None, "User not found")),
+            ),
+        ):
+            result = await create_agent_schedule_tool(
+                agent_name="eng-raccoon",
+                message="Do thing",
+                execute_at="2024-06-01T12:00:00",
+            )
+
+        assert result["success"] is False
+        assert "User not found" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# create_recurring_agent_schedule_tool
+# ---------------------------------------------------------------------------
+
+
+class TestCreateRecurringAgentScheduleTool:
+    async def test_invalid_timezone_returns_error(self) -> None:
+        with patch("ypl.mcp_server.tools.agent_schedules.validate_timezone", return_value="Bad timezone"):
+            result = await create_recurring_agent_schedule_tool(
+                agent_name="eng-raccoon",
+                message="Daily report",
+                cron_expression="0 9 * * *",
+                timezone="BadZone",
+            )
+
+        assert result["success"] is False
+
+    async def test_invalid_cron_expression(self) -> None:
+        with (
+            patch("ypl.mcp_server.tools.agent_schedules.validate_timezone", return_value=None),
+            patch("ypl.mcp_server.tools.agent_schedules.validate_cron_expression", return_value="Invalid cron: bad"),
+        ):
+            result = await create_recurring_agent_schedule_tool(
+                agent_name="eng-raccoon",
+                message="Daily report",
+                cron_expression="bad cron",
+            )
+
+        assert result["success"] is False
+        assert "Invalid cron" in result["error"]
+
+    async def test_max_runs_zero_or_negative_returns_error(self) -> None:
+        with (
+            patch("ypl.mcp_server.tools.agent_schedules.validate_timezone", return_value=None),
+            patch("ypl.mcp_server.tools.agent_schedules.validate_cron_expression", return_value=None),
+        ):
+            result = await create_recurring_agent_schedule_tool(
+                agent_name="eng-raccoon",
+                message="Daily report",
+                cron_expression="0 9 * * *",
+                max_runs=0,
+            )
+
+        assert result["success"] is False
+        assert "max_runs" in result["error"]
+
+    async def test_invalid_context_returns_error(self) -> None:
+        with (
+            patch("ypl.mcp_server.tools.agent_schedules.validate_timezone", return_value=None),
+            patch("ypl.mcp_server.tools.agent_schedules.validate_cron_expression", return_value=None),
+            patch("ypl.mcp_server.tools.agent_schedules.parse_schedule_context", return_value=(None, "Bad context")),
+        ):
+            result = await create_recurring_agent_schedule_tool(
+                agent_name="eng-raccoon",
+                message="Daily report",
+                cron_expression="0 9 * * *",
+                context="{bad",
+            )
+
+        assert result["success"] is False
+
+    async def test_unauthenticated_returns_error(self) -> None:
+        with (
+            patch("ypl.mcp_server.tools.agent_schedules.validate_timezone", return_value=None),
+            patch("ypl.mcp_server.tools.agent_schedules.validate_cron_expression", return_value=None),
+            patch("ypl.mcp_server.tools.agent_schedules.parse_schedule_context", return_value=({}, None)),
+            patch("ypl.mcp_server.tools.agent_schedules.get_requesting_user_id", return_value=None),
+            patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="unknown"),
+        ):
+            result = await create_recurring_agent_schedule_tool(
+                agent_name="eng-raccoon",
+                message="Daily report",
+                cron_expression="0 9 * * *",
+            )
+
+        assert result["success"] is False
+        assert "Authentication required" in result["error"]
+
+    async def test_success(self) -> None:
+        user_id = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+        next_run = datetime(2024, 6, 1, 9, 0, tzinfo=UTC)
+        expected = {"success": True, "agent_schedule_id": "recurring-123"}
+
+        with (
+            patch("ypl.mcp_server.tools.agent_schedules.validate_timezone", return_value=None),
+            patch("ypl.mcp_server.tools.agent_schedules.validate_cron_expression", return_value=None),
+            patch("ypl.mcp_server.tools.agent_schedules.parse_schedule_context", return_value=({}, None)),
+            patch("ypl.mcp_server.tools.agent_schedules.get_requesting_user_id", return_value=user_id),
+            patch("ypl.mcp_server.tools.agent_schedules.compute_next_run_for_cron", return_value=next_run),
+            patch("ypl.mcp_server.tools.agent_schedules.create_agent_schedule", new=AsyncMock(return_value=expected)),
+        ):
+            result = await create_recurring_agent_schedule_tool(
+                agent_name="eng-raccoon",
+                message="Daily report",
+                cron_expression="0 9 * * *",
+                max_runs=5,
+            )
+
+        assert result["success"] is True
+
+
+# ---------------------------------------------------------------------------
+# cancel_agent_schedule
+# ---------------------------------------------------------------------------
+
+
+class TestCancelAgentSchedule:
+    async def test_unauthenticated_returns_error(self) -> None:
+        with patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="unknown"):
+            result = await cancel_agent_schedule(str(uuid.uuid4()))
+
+        assert result["success"] is False
+        assert "Authentication required" in result["error"]
+
+    async def test_no_permission_returns_error(self) -> None:
+        with (
+            patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@yupp.ai"),
+            patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=False)),
+        ):
+            result = await cancel_agent_schedule(str(uuid.uuid4()))
+
+        assert result["success"] is False
+        assert "permission" in result["error"].lower()
+
+    async def test_invalid_uuid_returns_error(self) -> None:
+        caller_id = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+        with (
+            patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@yupp.ai"),
+            patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
+            patch(
+                "ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email",
+                new=AsyncMock(return_value=(caller_id, None)),
+            ),
+        ):
+            result = await cancel_agent_schedule("not-a-uuid")
+
+        assert result["success"] is False
+        assert "Invalid" in result["error"]
+
+    async def test_successful_cancellation(self) -> None:
+        caller_id = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+        schedule_id = str(uuid.uuid4())
+
+        # rowcount = 1 → success
+        exec_result = MagicMock()
+        exec_result.rowcount = 1
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=exec_result)
+        session.commit = AsyncMock()
+
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=session)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@yupp.ai"),
+            patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
+            patch(
+                "ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email",
+                new=AsyncMock(return_value=(caller_id, None)),
+            ),
+            patch("ypl.mcp_server.tools.agent_schedules.get_async_session", return_value=ctx),
+        ):
+            result = await cancel_agent_schedule(schedule_id)
+
+        assert result["success"] is True
+        assert result["status"] == "CANCELLED"
+
+    async def test_schedule_not_found(self) -> None:
+        caller_id = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+        schedule_id = str(uuid.uuid4())
+
+        # First execute: rowcount=0 (update failed)
+        # Second execute: one_or_none=None (schedule doesn't exist)
+        update_result = MagicMock()
+        update_result.rowcount = 0
+        check_result = MagicMock()
+        check_result.one_or_none = MagicMock(return_value=None)
+
+        session = AsyncMock()
+        session.execute = AsyncMock(side_effect=[update_result, check_result])
+        session.commit = AsyncMock()
+
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=session)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@yupp.ai"),
+            patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
+            patch(
+                "ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email",
+                new=AsyncMock(return_value=(caller_id, None)),
+            ),
+            patch("ypl.mcp_server.tools.agent_schedules.get_async_session", return_value=ctx),
+        ):
+            result = await cancel_agent_schedule(schedule_id)
+
+        assert result["success"] is False
+        assert "not found" in result["error"].lower()
+
+    async def test_wrong_owner_returns_error(self) -> None:
+        caller_id = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+        other_id = uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+        schedule_id = str(uuid.uuid4())
+
+        update_result = MagicMock()
+        update_result.rowcount = 0
+
+        existing = MagicMock()
+        existing.created_by_user = other_id
+        from ypl.db.agent_harness import AgentScheduleStatus
+
+        existing.status = AgentScheduleStatus.PENDING
+
+        check_result = MagicMock()
+        check_result.one_or_none = MagicMock(return_value=existing)
+
+        session = AsyncMock()
+        session.execute = AsyncMock(side_effect=[update_result, check_result])
+        session.commit = AsyncMock()
+
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=session)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@yupp.ai"),
+            patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
+            patch(
+                "ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email",
+                new=AsyncMock(return_value=(caller_id, None)),
+            ),
+            patch("ypl.mcp_server.tools.agent_schedules.get_async_session", return_value=ctx),
+        ):
+            result = await cancel_agent_schedule(schedule_id)
+
+        assert result["success"] is False
+        assert "only cancel" in result["error"].lower()
+
+    async def test_wrong_status_returns_error(self) -> None:
+        caller_id = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+        schedule_id = str(uuid.uuid4())
+
+        update_result = MagicMock()
+        update_result.rowcount = 0
+
+        from ypl.db.agent_harness import AgentScheduleStatus
+
+        existing = MagicMock()
+        existing.created_by_user = caller_id
+        existing.status = AgentScheduleStatus.COMPLETED
+
+        check_result = MagicMock()
+        check_result.one_or_none = MagicMock(return_value=existing)
+
+        session = AsyncMock()
+        session.execute = AsyncMock(side_effect=[update_result, check_result])
+        session.commit = AsyncMock()
+
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=session)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@yupp.ai"),
+            patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
+            patch(
+                "ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email",
+                new=AsyncMock(return_value=(caller_id, None)),
+            ),
+            patch("ypl.mcp_server.tools.agent_schedules.get_async_session", return_value=ctx),
+        ):
+            result = await cancel_agent_schedule(schedule_id)
+
+        assert result["success"] is False
+        assert "Cannot cancel" in result["error"]
+
+    async def test_user_id_resolution_failure(self) -> None:
+        with (
+            patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@yupp.ai"),
+            patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
+            patch(
+                "ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email",
+                new=AsyncMock(return_value=(None, "User not found")),
+            ),
+        ):
+            result = await cancel_agent_schedule(str(uuid.uuid4()))
+
+        assert result["success"] is False
+        assert "User not found" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# list_agent_schedules
+# ---------------------------------------------------------------------------
+
+
+class TestListAgentSchedules:
+    async def test_limit_zero_returns_error(self) -> None:
+        with patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@yupp.ai"):
+            result = await list_agent_schedules(limit=0)
+
+        assert result["success"] is False
+        assert "limit" in result["error"].lower()
+
+    async def test_unauthenticated_returns_error(self) -> None:
+        with patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="unknown"):
+            result = await list_agent_schedules()
+
+        assert result["success"] is False
+        assert "Authentication required" in result["error"]
+
+    async def test_no_permission_returns_error(self) -> None:
+        with (
+            patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@yupp.ai"),
+            patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=False)),
+        ):
+            result = await list_agent_schedules()
+
+        assert result["success"] is False
+        assert "permission" in result["error"].lower()
+
+    async def test_invalid_status_returns_error(self) -> None:
+        caller_id = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+        with (
+            patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@yupp.ai"),
+            patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
+            patch(
+                "ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email",
+                new=AsyncMock(return_value=(caller_id, None)),
+            ),
+        ):
+            result = await list_agent_schedules(status="BOGUS")
+
+        assert result["success"] is False
+        assert "Invalid status" in result["error"]
+
+    async def test_invalid_schedule_type_returns_error(self) -> None:
+        caller_id = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+        with (
+            patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@yupp.ai"),
+            patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
+            patch(
+                "ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email",
+                new=AsyncMock(return_value=(caller_id, None)),
+            ),
+        ):
+            result = await list_agent_schedules(schedule_type="WEEKLY")
+
+        assert result["success"] is False
+        assert "Invalid schedule_type" in result["error"]
+
+    async def test_success_returns_schedules(self) -> None:
+        caller_id = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+        rows = [_make_schedule_row(), _make_schedule_row(agent_name="bookkeeper")]
+
+        exec_result = MagicMock()
+        exec_result.all = MagicMock(return_value=rows)
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=exec_result)
+
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=session)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@yupp.ai"),
+            patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
+            patch(
+                "ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email",
+                new=AsyncMock(return_value=(caller_id, None)),
+            ),
+            patch("ypl.mcp_server.tools.agent_schedules.get_async_session_read_replica", return_value=ctx),
+        ):
+            result = await list_agent_schedules()
+
+        assert result["success"] is True
+        assert result["count"] == 2
+
+    async def test_message_truncated_at_100_chars(self) -> None:
+        caller_id = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+        long_message = "A" * 150
+        rows = [_make_schedule_row(message=long_message)]
+
+        exec_result = MagicMock()
+        exec_result.all = MagicMock(return_value=rows)
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=exec_result)
+
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=session)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@yupp.ai"),
+            patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
+            patch(
+                "ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email",
+                new=AsyncMock(return_value=(caller_id, None)),
+            ),
+            patch("ypl.mcp_server.tools.agent_schedules.get_async_session_read_replica", return_value=ctx),
+        ):
+            result = await list_agent_schedules()
+
+        assert result["success"] is True
+        msg = result["agent_schedules"][0]["message"]
+        assert msg.endswith("...")
+        assert len(msg) == 103  # 100 + "..."
+
+    async def test_created_by_filter_resolve_error(self) -> None:
+        with (
+            patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@yupp.ai"),
+            patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
+            patch(
+                "ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email",
+                new=AsyncMock(return_value=(None, "Not found")),
+            ),
+        ):
+            result = await list_agent_schedules(created_by="other@yupp.ai")
+
+        assert result["success"] is False
+        assert "Invalid created_by filter" in result["error"]
