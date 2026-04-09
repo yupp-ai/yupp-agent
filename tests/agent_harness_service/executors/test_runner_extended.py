@@ -645,11 +645,6 @@ class TestRawExecutorRunnerRunOnce:
         runner = self._make_runner()
         ctx = _make_context()
 
-        received_events: list[dict[str, Any]] = []
-
-        def _capture_event(e: dict[str, Any]) -> None:
-            received_events.append(e)
-
         mock_result = ExecutorResult(text="done", estimated_cost_usd=0.001, duration_ms=100)
 
         def _fake_executor(**kwargs: Any) -> Any:
@@ -674,9 +669,15 @@ class TestRawExecutorRunnerRunOnce:
             mock_mcp_cls.return_value.__aenter__ = AsyncMock(return_value=mock_mcp)
             mock_mcp_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
-            # We just check this runs without errors; the event filtering
-            # is implemented inside _run_executor which calls on_event
-            _ = [e async for e in runner._run_once("do stuff", ctx)]
+            events = [e async for e in runner._run_once("do stuff", ctx)]
+
+        # "tool_use" is not in SKIP_EVENT_TYPES so it should be yielded
+        tool_use_events = [e for e in events if e.type == "tool_use"]
+        assert len(tool_use_events) == 1
+        assert tool_use_events[0].raw == {"type": "tool_use", "name": "bash"}
+        # "assistant" and "result" from on_event are filtered (only the final result assistant is yielded)
+        on_event_assistant = [e for e in events if e.type == "assistant" and e.raw.get("message") == {}]
+        assert len(on_event_assistant) == 0
 
 
 # ---------------------------------------------------------------------------

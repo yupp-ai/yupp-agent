@@ -38,7 +38,7 @@ sys.modules.setdefault("together.types", together_types_module)
 try:
     import croniter as _real_croniter  # type: ignore[import-untyped]  # noqa: F401
 except ImportError:
-    croniter_module.croniter = lambda *args, **kwargs: None  # type: ignore[attr-defined]
+    croniter_module.croniter = lambda *args, **kwargs: None
     sys.modules.setdefault("croniter", croniter_module)
 
 from ypl.agent_harness_service.service import _extract_tool_uses  # noqa: E402
