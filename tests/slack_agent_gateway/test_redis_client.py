@@ -23,7 +23,6 @@ from ypl.slack_agent_gateway.constants import (
     REDIS_KEY_PREFIX_REPLY,
     REDIS_KEY_PREFIX_SESSION,
     REDIS_KEY_PREFIX_STATUS_FLUSH_SCHEDULE,
-    REDIS_KEY_PREFIX_STATUS_PENDING,
     REDIS_KEY_PREFIX_STATUS_RATELIMIT,
     REDIS_KEY_PREFIX_SURVEY_RESPONSE,
     REDIS_KEY_PREFIX_THREAD_SESSION,
@@ -445,28 +444,6 @@ class TestStatusOperations:
         result = await rc.try_acquire_status_ratelimit("sess-1")
 
         assert result is False
-
-    async def test_set_pending_status(self, patch_get_redis: AsyncMock) -> None:
-        await rc.set_pending_status("sess-1", "Thinking...")
-
-        patch_get_redis.set.assert_awaited_once()
-        key_arg = patch_get_redis.set.call_args[0][0]
-        assert key_arg == f"{REDIS_KEY_PREFIX_STATUS_PENDING}:sess-1"
-
-    async def test_get_and_clear_pending_status(self, patch_get_redis: AsyncMock) -> None:
-        patch_get_redis.getdel.return_value = "Running Bash..."
-
-        result = await rc.get_and_clear_pending_status("sess-1")
-
-        assert result == "Running Bash..."
-        patch_get_redis.getdel.assert_awaited_once_with(f"{REDIS_KEY_PREFIX_STATUS_PENDING}:sess-1")
-
-    async def test_peek_pending_status(self, patch_get_redis: AsyncMock) -> None:
-        patch_get_redis.get.return_value = "Searching..."
-
-        result = await rc.peek_pending_status("sess-1")
-
-        assert result == "Searching..."
 
     async def test_set_tool_cluster_pending(self, patch_get_redis: AsyncMock) -> None:
         await rc.set_tool_cluster_pending("sess-1")

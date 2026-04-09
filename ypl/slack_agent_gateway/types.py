@@ -317,33 +317,6 @@ class SendToolEventResponse(BaseModel):
     error: str | None = Field(None, description="Error message if failed")
 
 
-# Status update (live tool-use hints — legacy plain-text path)
-
-
-class SendStatusUpdateRequest(BaseModel):
-    """Request body for POST /sessions/status (called by AHS).
-
-    AHS sends incremental status updates during agent execution — e.g. which
-    tools were used so far.  SAG renders these as a muted context block that is
-    edited in-place; no new message is created until AHS sends a real reply.
-    Rate-limited to at most one Slack API call per STATUS_RATELIMIT_SECONDS.
-    """
-
-    session_id: str = Field(..., description="Session identifier")
-    text: str = Field(
-        ...,
-        description="Short status line, e.g. '🔧 5 tools used: Bash, Grep, Read'. Truncated to 3000 chars if longer.",
-    )
-
-
-class SendStatusUpdateResponse(BaseModel):
-    """Response for POST /sessions/status."""
-
-    success: bool = Field(..., description="Whether the update was accepted")
-    message_ts: str | None = Field(None, description="Slack ts of the status context block (may be None if deferred)")
-    error: str | None = Field(None, description="Error message if failed")
-
-
 # Questionnaire (interactive multiple-choice prompt)
 
 

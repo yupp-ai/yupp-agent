@@ -435,10 +435,6 @@ class TestAddReply:
                 new_callable=AsyncMock,
             ),
             patch(
-                "ypl.slack_agent_gateway.callbacks.get_and_clear_pending_status",
-                new_callable=AsyncMock,
-            ),
-            patch(
                 "ypl.slack_agent_gateway.callbacks.get_and_clear_tool_cluster_pending",
                 new_callable=AsyncMock,
             ),
@@ -471,10 +467,6 @@ class TestAddReply:
             patch("ypl.slack_agent_gateway.callbacks.clear_tool_entries", new_callable=AsyncMock),
             patch(
                 "ypl.slack_agent_gateway.callbacks.remove_from_status_flush_schedule",
-                new_callable=AsyncMock,
-            ),
-            patch(
-                "ypl.slack_agent_gateway.callbacks.get_and_clear_pending_status",
                 new_callable=AsyncMock,
             ),
             patch(

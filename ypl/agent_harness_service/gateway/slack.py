@@ -25,7 +25,7 @@ class SlackGateway(Gateway):
         self._api_key: str | None = config.settings.get("api_key")
         self._client: httpx.AsyncClient | None = None
         # Sessions that returned 404 (expired/not found in SAG). We skip all
-        # future send_status_update calls for these to stop the 404 storm.
+        # future send_tool_event calls for these to stop the 404 storm.
         self._dead_session_ids: set[str] = set()
 
     @property
@@ -409,78 +409,4 @@ class SlackGateway(Gateway):
             return False
         except Exception:
             logger.warning("Error calling gateway /sessions/tool", session_id=session_id, exc_info=True)
-            return False
-
-    # ------------------------------------------------------------------
-    # send_status_update (live tool-use hints — Slack-only, legacy)
-    # ------------------------------------------------------------------
-
-    async def send_status_update(self, session_id: str, text: str) -> bool:
-        """Push a live status hint to SAG, which renders it as a muted context block.
-
-        Returns False immediately (without calling SAG) if the session was previously
-        found to be expired (404).  Once a session returns 404, it is added to an
-        in-memory dead-session set so the 404 storm terminates after the first miss.
-        """
-        # Skip dead sessions immediately — no HTTP round-trip, no log noise.
-        if session_id in self._dead_session_ids:
-            return False
-
-        url = f"{self._base_url}/slack-agent-gateway/sessions/status"
-
-        logger.debug(
-            "Calling gateway /sessions/status",
-            session_id=session_id,
-            url=url,
-            text_length=len(text),
-        )
-
-        try:
-            resp = await self._get_client().post(
-                url,
-                json={"session_id": session_id, "text": text},
-                headers=self._headers(),
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            if not data.get("success"):
-                error_msg = data.get("error", "")
-                # SAG may return success=False with "Session not found" if the
-                # session has expired (e.g. SAG was redeployed and Redis was
-                # cleared).  Evict the session so we don't keep hammering SAG.
-                if error_msg == "Session not found":
-                    logger.info(
-                        "SAG session not found, evicting from status updates",
-                        session_id=session_id,
-                    )
-                    self._dead_session_ids.add(session_id)
-                else:
-                    logger.warning(
-                        "Gateway rejected status update",
-                        session_id=session_id,
-                        error=error_msg,
-                    )
-                return False
-            return True
-        except httpx.TimeoutException:
-            logger.warning("Timeout calling gateway /sessions/status", session_id=session_id)
-            return False
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
-                # Session expired or was never registered in SAG. Evict it so
-                # we don't produce a 404 storm on every subsequent tool event.
-                logger.info(
-                    "SAG session expired (404), evicting from status updates",
-                    session_id=session_id,
-                )
-                self._dead_session_ids.add(session_id)
-            else:
-                logger.warning(
-                    "HTTP error calling gateway /sessions/status",
-                    session_id=session_id,
-                    status_code=e.response.status_code,
-                )
-            return False
-        except Exception:
-            logger.warning("Error calling gateway /sessions/status", session_id=session_id, exc_info=True)
             return False
