@@ -322,9 +322,22 @@ async def query_yuppdb(
 @mcp_server.tool(
     name="query_agentdb",
     description=(
-        "Execute read-only SQL query on the Agent database (yadb). Contains agent harness data: "
-        "agent sessions, tasks, projects, schedules, artifacts, and memory indexes. "
-        "IMPORTANT: Only SELECT queries are allowed - no writes/updates."
+        "Execute read-only SQL query on the Agent database (agentdb / yadb). "
+        "Contains agent harness data: sessions, tasks, projects, schedules, artifacts, memory indexes. "
+        "IMPORTANT: Only SELECT queries are allowed - no writes/updates.\n\n"
+        "SCHEMA: Read the ORM files for exact column names, types, and enum values before writing queries:\n"
+        "  • ypl/db/agent_harness.py — all core tables (agents, agent_sessions,\n"
+        "    agent_session_messages, agent_tasks, agent_projects, agent_schedules,\n"
+        "    agent_schedule_runs, agent_artifacts, agent_messages, agent_feedbacks,\n"
+        "    agent_security_incidents)\n"
+        "  • ypl/db/agent_memory_index.py — memory tables (agent_memory_sections,\n"
+        "    agent_memory_section_embeddings)\n\n"
+        "⚠ Common hallucination traps — verify against the schema files above:\n"
+        "  • agent_sessions PK is agent_session_id — there is no 'id' column\n"
+        "  • No turn_count column — count turns via agent_session_messages\n"
+        "  • No end_reason column — use completion_status / error_type in agent_session_messages\n"
+        "  • priority stores enum names ('NORMAL', 'HIGH') not integers\n"
+        "  • depends_on is a JSONB array of UUIDs — use @> containment syntax, not equality"
     ),
 )
 @retry_db
