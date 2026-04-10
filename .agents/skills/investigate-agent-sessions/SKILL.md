@@ -28,6 +28,15 @@ SELECT agent_session_id FROM agent_session_messages
 WHERE agent_session_message_id = '<message_id>'
 ```
 
+## Schema Reference
+
+If you need to write custom queries beyond the examples below, read the ORM files first for exact column names and enum values — do not guess:
+
+```
+Read("yupp-agent/ypl/db/agent_harness.py")         # all core tables
+Read("yupp-agent/ypl/db/agent_memory_index.py")    # memory tables
+```
+
 ## Agent Memory
 
 Before investigating, use the `/agent-memory` skill to check for relevant learnings from past AHS investigations:
