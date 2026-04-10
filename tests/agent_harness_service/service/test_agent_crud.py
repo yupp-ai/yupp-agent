@@ -60,6 +60,7 @@ from ypl.agent_harness_service.common.types import (  # noqa: E402
     SandboxConfigRequest,
 )
 from ypl.db.agent_harness import Agent  # noqa: E402
+from ypl.db.users import User  # noqa: E402
 
 
 def _make_mock_session_factory(mock_db: AsyncMock) -> Any:
@@ -160,7 +161,10 @@ class TestCreateAgent:
             result = await create_agent(req)
             assert result.name == "brand-new-agent"
             assert result.status == "created"
-            mock_db.add.assert_called_once()
+            # create_agent adds two rows: the Agent and its User identity record
+            assert mock_db.add.call_count == 2
+            assert isinstance(mock_db.add.call_args_list[0][0][0], Agent)
+            assert isinstance(mock_db.add.call_args_list[1][0][0], User)
             mock_db.commit.assert_called_once()
 
     async def test_creates_agent_with_role_md(self) -> None:
@@ -185,8 +189,9 @@ class TestCreateAgent:
             req.soul_md = "# Soul"
             result = await create_agent(req)
             assert result.status == "created"
-            # Verify the agent added has role_md in its config
-            added_agent: Agent = mock_db.add.call_args[0][0]
+            # Verify the agent added has role_md in its config.
+            # call_args_list[0] is the Agent add (first); call_args_list[1] is the User add (second).
+            added_agent: Agent = mock_db.add.call_args_list[0][0][0]
             assert added_agent.config is not None
             assert added_agent.config.get("role_md") == "# My Role"
             assert added_agent.config.get("soul_md") == "# Soul"
