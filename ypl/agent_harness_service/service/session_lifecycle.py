@@ -724,18 +724,21 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
             _ctx_agent_msg_id = context.get("agent_message_id")
             if not _ctx_agent_msg_id:
                 raise AHSValidationError("context.agent_message_id is required when trigger=AGENT")
+            # Narrow the ValueError catch to just the UUID parse — same pattern as the
+            # from_agent_id block.  AHSValidationError (ValueError subclass) raised below
+            # must not be caught here and replaced with a misleading "not a valid UUID" message.
             try:
                 _verify_msg_uuid = uuid.UUID(str(_ctx_agent_msg_id))
-                _verify_msg = await session.get(AgentMessage, _verify_msg_uuid)
-                if _verify_msg is None or _verify_msg.from_agent_id != _from_agent_uuid:
-                    raise AHSValidationError(
-                        f"A2A identity verification failed: agent_message_id {_ctx_agent_msg_id!r} "
-                        f"does not belong to from_agent {_from_agent_id_ctx!r}"
-                    )
             except ValueError as exc:
                 raise AHSValidationError(
                     f"context.agent_message_id is not a valid UUID: {_ctx_agent_msg_id!r}"
                 ) from exc
+            _verify_msg = await session.get(AgentMessage, _verify_msg_uuid)
+            if _verify_msg is None or _verify_msg.from_agent_id != _from_agent_uuid:
+                raise AHSValidationError(
+                    f"A2A identity verification failed: agent_message_id {_ctx_agent_msg_id!r} "
+                    f"does not belong to from_agent {_from_agent_id_ctx!r}"
+                )
 
             # Grant full MCP permissions — AGENT-triggered sessions are trusted internal callers.
             # Identity is bound above by cross-checking agent_message_id against the DB record.
