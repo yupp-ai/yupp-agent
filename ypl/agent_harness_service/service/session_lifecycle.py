@@ -715,33 +715,30 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
                 from_session_id=context.get("from_session_id"),
             )
 
-            # Identity verification: if agent_message_id is provided, load the persisted
-            # AgentMessage record and confirm its from_agent_id matches the caller's claim.
-            # This binds the trusted identity to a server-side DB record rather than relying
-            # solely on the request body (which any holder of the AHS API key could forge).
+            # Identity verification: load the persisted AgentMessage record and confirm its
+            # from_agent_id matches the caller's claim.  agent_message_id is required for all
+            # AGENT-triggered sessions — it binds the trusted identity to a server-side DB
+            # record rather than relying on the request body (which any AHS API key holder
+            # could forge).  trigger=AGENT is a new code path with no legacy callers, so
+            # there is no backward-compat reason to allow missing agent_message_id.
             _ctx_agent_msg_id = context.get("agent_message_id")
-            if _ctx_agent_msg_id:
-                try:
-                    _verify_msg_uuid = uuid.UUID(str(_ctx_agent_msg_id))
-                    _verify_msg = await session.get(AgentMessage, _verify_msg_uuid)
-                    if _verify_msg is None or _verify_msg.from_agent_id != _from_agent_uuid:
-                        raise AHSValidationError(
-                            f"A2A identity verification failed: agent_message_id {_ctx_agent_msg_id!r} "
-                            f"does not belong to from_agent {_from_agent_id_ctx!r}"
-                        )
-                except ValueError as exc:
+            if not _ctx_agent_msg_id:
+                raise AHSValidationError("context.agent_message_id is required when trigger=AGENT")
+            try:
+                _verify_msg_uuid = uuid.UUID(str(_ctx_agent_msg_id))
+                _verify_msg = await session.get(AgentMessage, _verify_msg_uuid)
+                if _verify_msg is None or _verify_msg.from_agent_id != _from_agent_uuid:
                     raise AHSValidationError(
-                        f"context.agent_message_id is not a valid UUID: {_ctx_agent_msg_id!r}"
-                    ) from exc
-            else:
-                logger.warning(
-                    "AGENT trigger: no agent_message_id in context — "
-                    "trusting from_agent_id claim without DB verification",
-                    from_agent_id=str(_from_agent_uuid),
-                )
+                        f"A2A identity verification failed: agent_message_id {_ctx_agent_msg_id!r} "
+                        f"does not belong to from_agent {_from_agent_id_ctx!r}"
+                    )
+            except ValueError as exc:
+                raise AHSValidationError(
+                    f"context.agent_message_id is not a valid UUID: {_ctx_agent_msg_id!r}"
+                ) from exc
 
             # Grant full MCP permissions — AGENT-triggered sessions are trusted internal callers.
-            # Identity is further bound by agent_message_id verification above when available.
+            # Identity is bound above by cross-checking agent_message_id against the DB record.
             if "permissions" not in context:
                 context["permissions"] = SessionPermissions.full_access().model_dump(mode="json")
 
