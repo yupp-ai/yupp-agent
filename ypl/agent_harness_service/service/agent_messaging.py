@@ -6,30 +6,66 @@ agent's ``allowed_to_message`` config field must explicitly list the
 recipient agent's name (or contain ``'*'`` for unrestricted access).
 """
 
-from ypl.db.agent_harness import Agent
+from ypl.agent_harness_service.common.config import AgentConfig
+from ypl.structured_logger import get_logger
+
+logger = get_logger()
 
 
-def check_agent_message_authz(from_agent: Agent, to_agent: Agent) -> None:
-    """Verify that *from_agent* is authorized to message *to_agent*.
+class AgentAuthorizationError(Exception):
+    """Raised when an agent is not permitted to message another agent.
 
-    Authorization is deny-by-default.  The sending agent's config must
-    include the recipient's name in its ``allowed_to_message`` list, or
-    include ``'*'`` to grant unrestricted outbound messaging.
+    This is a domain-specific exception (not ``PermissionError`` / ``OSError``)
+    so it can be caught precisely at the API boundary and translated to HTTP 403
+    without being accidentally swallowed by ``OSError`` handlers.
+    """
+
+
+def check_agent_message_authz(from_config: AgentConfig, to_agent_name: str) -> None:
+    """Verify that the agent described by *from_config* is authorized to message *to_agent_name*.
+
+    Authorization is deny-by-default.  The sending agent's ``allowed_to_message``
+    list must explicitly include the recipient's name, or contain ``'*'`` for
+    unrestricted outbound messaging.  Comparison is case-insensitive to avoid
+    silent bypass or unexpected denial from casing inconsistencies.
+
+    Accepts both filesystem-loaded and DB-loaded ``AgentConfig`` objects uniformly
+    — the check does not require a DB session or an ``Agent`` ORM object.
 
     Args:
-        from_agent: The agent attempting to send a message.
-        to_agent: The intended recipient agent.
+        from_config: The ``AgentConfig`` of the agent attempting to send a message.
+        to_agent_name: The name of the intended recipient agent.
 
     Raises:
-        PermissionError: If *from_agent* is not permitted to message
-            *to_agent* according to its ``allowed_to_message`` config.
+        AgentAuthorizationError: If the sending agent is not permitted to message
+            the recipient according to its ``allowed_to_message`` config.
 
     Example::
 
-        # Raises PermissionError if eng-raccoon's config doesn't list sre-james
-        check_agent_message_authz(eng_raccoon_agent, sre_james_agent)
+        # Raises AgentAuthorizationError if eng-raccoon's config doesn't list sre-james
+        check_agent_message_authz(eng_raccoon_config, "sre-james")
     """
-    config: dict = from_agent.config or {}
-    allowed: list[str] = config.get("allowed_to_message", [])
-    if to_agent.name not in allowed and "*" not in allowed:
-        raise PermissionError(f"Agent '{from_agent.name}' is not permitted to message '{to_agent.name}'")
+    if not to_agent_name:
+        raise AgentAuthorizationError("Cannot authorize A2A message: recipient agent name is empty or None")
+
+    allowed: list[str] = from_config.allowed_to_message
+    to_lower = to_agent_name.lower()
+    allowed_lower = [a.lower() for a in allowed]
+
+    if to_lower not in allowed_lower and "*" not in allowed_lower:
+        logger.warning(
+            "A2A authorization denied",
+            from_agent=from_config.name,
+            to_agent=to_agent_name,
+            allowed_to_message=allowed,
+        )
+        raise AgentAuthorizationError(
+            f"Agent '{from_config.name}' is not permitted to message '{to_agent_name}'. "
+            f"Add '{to_agent_name}' to its allowed_to_message config, or use '*' for unrestricted access."
+        )
+
+    logger.info(
+        "A2A authorization granted",
+        from_agent=from_config.name,
+        to_agent=to_agent_name,
+    )
