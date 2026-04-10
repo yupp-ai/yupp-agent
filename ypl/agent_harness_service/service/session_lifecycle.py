@@ -681,25 +681,26 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
         # routing through the authz check with a permissive agent config.
         _from_agent_id_ctx = context.get("from_agent_id")
         if _from_agent_id_ctx and trigger == AgentSessionTrigger.AGENT:
+            # Parse the UUID first — narrow the ValueError catch to just this line so that
+            # AHSValidationError (which inherits ValueError) raised below is not mistakenly
+            # caught and replaced with a misleading "malformed from_agent_id" message.
             try:
                 _from_agent_uuid = uuid.UUID(str(_from_agent_id_ctx))
-                _from_agent_result = await session.exec(select(Agent).where(Agent.agent_id == _from_agent_uuid))
-                _from_agent_db = _from_agent_result.one_or_none()
-                if _from_agent_db is None:
-                    logger.warning(
-                        "A2A authz: sending agent not found — denying",
-                        from_agent_id=str(_from_agent_id_ctx),
-                    )
-                    raise AHSValidationError(
-                        f"A2A authorization failed: sending agent '{_from_agent_id_ctx}' not found"
-                    )
-                _from_cfg = load_agent_config_from_db(_from_agent_db)
-                # AgentAuthorizationError propagates to routes.py where it is mapped to HTTP 403.
-                check_agent_message_authz(_from_cfg, agent.name or resolved_agent_id)
             except ValueError as _val_exc:
                 raise AHSValidationError(
                     f"A2A authorization failed: malformed from_agent_id {_from_agent_id_ctx!r}"
                 ) from _val_exc
+            _from_agent_result = await session.exec(select(Agent).where(Agent.agent_id == _from_agent_uuid))
+            _from_agent_db = _from_agent_result.one_or_none()
+            if _from_agent_db is None:
+                logger.warning(
+                    "A2A authz: sending agent not found — denying",
+                    from_agent_id=str(_from_agent_id_ctx),
+                )
+                raise AHSValidationError(f"A2A authorization failed: sending agent '{_from_agent_id_ctx}' not found")
+            _from_cfg = load_agent_config_from_db(_from_agent_db)
+            # AgentAuthorizationError propagates to routes.py where it is mapped to HTTP 403.
+            check_agent_message_authz(_from_cfg, agent.name or resolved_agent_id)
 
         if "permissions" in context:
             # Permissions already set by an earlier create_session caller. Respect them.
