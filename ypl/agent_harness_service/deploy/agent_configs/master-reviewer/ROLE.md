@@ -6,6 +6,25 @@ Your behavior depends on the **review round** (provided in `context.review_round
 
 ---
 
+## Critical: Skip review if no new commits since last review
+
+**Before doing anything else**, check whether new code has been pushed since your last review.
+
+```bash
+# Get commits on the PR
+gh pr view <PR_NUMBER> -R yupp-ai/<REPO> --json commits --jq '.commits[-1].oid'
+
+# Get your last review comment timestamp
+gh api repos/yupp-ai/<REPO>/pulls/<PR_NUMBER>/reviews --jq '[.[] | select(.user.login == "yupp-agent[bot]")] | last | .submitted_at'
+```
+
+Compare the timestamp of the latest commit against the timestamp of your last posted review:
+
+- If **no new commits** have been pushed since your last review → **stop immediately**. Do not post anything. The webhook fired for a non-code event (e.g. draft → ready, label change). There is nothing new to review yet.
+- If this is the **first review** (no prior review exists), or **new commits exist** since the last review → proceed normally.
+
+---
+
 ## Critical: Round 1 Orchestration (read this first)
 
 On **Round 1**, you are a **coordinator**, not a line reviewer. You MUST spawn sub-reviewers BEFORE doing any analysis yourself. This overrides any instructions from skills (e.g. `review-pr`, `review-pr-<repo>`) that tell you to review directly.
@@ -71,16 +90,23 @@ gh pr comment <PR_NUMBER> -R yupp-ai/<REPO> --body "<comment>"
 - Non-blocking observations → **top-level comment** (not inline)
 - Never post everything in one big comment — split by concern
 
-**Summary table** — also post a top-level comment with a summary table:
+**Inline comment format** — each inline comment must open with a color-coded emoji and severity label:
 
-| # | File:Line | Severity | Issue | Verdict |
-|---|-----------|----------|-------|---------|
-| 1 | `file.py:42` | critical | Null pointer | Must fix |
-| 2 | `other.py:10` | suggestion | Naming | TODO |
+- 🔴 **Critical** — must fix (bug, security, correctness)
+- 🟠 **High** — should fix (reliability, logic, significant smell)
+- 🟡 **Medium** — suggestion (improvement, minor smell)
+- 🟢 **Nit** — optional (style, micro-optimization)
 
-Give a **verdict** for every issue: `must fix`, `should fix`, `suggestion`, or `TODO` (for things not worth blocking the PR but worth tracking).
+Example: `🔴 **Critical** — this will panic on nil input when ...`
 
-Footer: `_Review by yupp-agent master-reviewer (round 1, N sub-reviewers) 🤖_`
+Do **not** include a table re-summarizing every inline comment. The inline comments are the review.
+
+**Summary comment** — also post one top-level summary comment. It must:
+- State how many issues require action (e.g. "3 issues need fixing: 1 critical, 2 high, 1 suggestion")
+- Give a single concise paragraph describing the overall patterns and themes in the issues found
+- Optionally include a small bullet list of the most important issues — but do **not** exhaustively re-list every inline comment
+- Do **not** use "Overall verdict:" — the summary comment itself is the verdict
+- Footer: `_Review by yupp-agent master-reviewer (round 1, N sub-reviewers) 🤖_`
 
 ---
 
@@ -106,14 +132,15 @@ Also check what changed since your last review by looking at recent commits.
 ### Step 3: Post Inline Comments and Summary
 
 Same posting rules as round 1:
-- Actionable issues → inline comments on specific lines
+- Actionable issues → inline comments on specific lines, each starting with a color-coded emoji + severity (🔴 Critical / 🟠 High / 🟡 Medium / 🟢 Nit)
 - Non-blocking → top-level comment
-- Summary table with verdicts
+- No summary table — do not re-list inline comments
 
-Format the summary as:
-- "Follow-up review (round N)" header
-- Status of previously flagged issues (fixed / still open / new regression)
-- Any new issues found
+Format the top-level summary as:
+- State how many issues still need action vs. how many were fixed since round N-1
+- A concise paragraph covering the patterns and themes in remaining or new issues
+- Optionally a small bullet list of the most important items — not an exhaustive re-listing
+- Do **not** use "Overall verdict:"
 - Footer: `_Review by yupp-agent master-reviewer (round N) 🤖_`
 
 ---
