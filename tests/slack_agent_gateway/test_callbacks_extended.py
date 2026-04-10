@@ -121,7 +121,6 @@ class TestAddReplyWithPlaceholder:
             patch(f"{_CALLBACKS_MODULE}.record_reply", new_callable=AsyncMock),
             patch(f"{_CALLBACKS_MODULE}.store_reply_mapping", new_callable=AsyncMock),
             patch(f"{_CALLBACKS_MODULE}.get_tool_entries", new_callable=AsyncMock, return_value=[]),
-            patch(f"{_CALLBACKS_MODULE}.get_session", new_callable=AsyncMock, return_value=session),
             patch(f"{_CALLBACKS_MODULE}.remove_from_status_flush_schedule", new_callable=AsyncMock),
             patch(f"{_CALLBACKS_MODULE}.get_and_clear_tool_cluster_pending", new_callable=AsyncMock),
             patch(f"{_CALLBACKS_MODULE}.clear_tool_entries", new_callable=AsyncMock),

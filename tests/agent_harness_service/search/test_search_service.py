@@ -605,7 +605,7 @@ class TestSearchSessions:
 
         row_high = self._make_session_row(title="deploy script", created_at=recent)
         row_low = self._make_session_row(
-            title="Completely unrelated - deploy mention in context",
+            title="Completely unrelated session",
             created_at=old,
             context_text="deploy here",
         )

@@ -286,8 +286,9 @@ class TestResolveProjectId:
         client = _make_client(
             post_responses=[
                 _name_search_response([]),  # exact name: no results
-                _name_search_response([proj]),  # contains search: found
-                _name_search_response([]),  # slug direct search: no results
+                _name_search_response([proj]),  # contains search: found; exact name match returns early
+                # No 3rd call — name "My Awesome Project" matches proj exactly, so the function
+                # returns before ever reaching the slug-direct API call
             ]
         )
         result = resolve_project_id("My Awesome Project", client)
@@ -390,8 +391,9 @@ class TestResolveProjectId:
         client = _make_client(
             post_responses=[
                 _name_search_response([]),  # exact: no match
-                _name_search_response([proj1, proj2]),  # contains: 2 results
-                _name_search_response([]),  # slug direct: not found
+                _name_search_response([proj1, proj2]),  # contains: 2 results; slug match on proj2 returns early
+                # No 3rd call — proj2.slugId == "the-slug" matches input, so function returns
+                # before ever reaching the slug-direct API call
             ]
         )
         result = resolve_project_id("the-slug", client)
