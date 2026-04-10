@@ -16,6 +16,7 @@ Covers:
 
 from __future__ import annotations
 import time
+from collections.abc import Iterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -52,7 +53,7 @@ def _reset_singletons() -> None:
 
 
 @pytest.fixture(autouse=True)
-def reset_state() -> None:  # type: ignore[misc]
+def reset_state() -> Iterator[None]:
     """Ensure each test starts with uninitialized store."""
     _reset_singletons()
     yield

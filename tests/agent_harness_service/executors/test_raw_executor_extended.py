@@ -924,28 +924,24 @@ class TestRunRawExecutorExtended:
         return_value=MagicMock(spec=anthropic.AsyncAnthropic),
     )
     @patch("ypl.agent_harness_service.executors.raw_executor._run_anthropic")
-    async def test_result_subtype_context_overflow(
+    async def test_result_subtype_max_steps(
         self,
         mock_run: AsyncMock,
         mock_client: Any,
         mock_raw_prompt: Any,
     ) -> None:
-        """result subtype = stopped_context_overflow when overflow occurs."""
-        # Simulate context overflow by making estimated_tokens exceed limit
-        # We do this by returning [STOPPED] Context overflow text after max_steps
-        mock_run.return_value = _anthropic_response(tool_calls=[_tool_call("bash", "tc_1")])
+        """result subtype = error_max_turns when max steps are exhausted."""
         agent = _make_agent(max_steps=1)
         agent.executor.max_tool_result_spill_chars = 0
 
-        # Make the loop hit max_steps immediately
-        mock_run.side_effect = None
+        # Always return a tool call so the loop never finishes naturally
         mock_run.return_value = _anthropic_response(tool_calls=[_tool_call("bash", "tc_1")])
 
         tool_executor = AsyncMock(return_value="ok")
         events: list[dict[str, Any]] = []
         result = await run_raw_executor(
             agent,
-            "overflow test",
+            "max steps test",
             "anthropic/claude-sonnet-4-6",
             mcp_tools=[{"name": "bash", "description": "cmd", "inputSchema": {}}],
             tool_executor=tool_executor,
@@ -953,9 +949,45 @@ class TestRunRawExecutorExtended:
         )
         # With max_steps=1 and always-tool-call response, should hit max steps
         assert "[STOPPED]" in result.text
+        assert "Context overflow" not in result.text
         result_events = [e for e in events if e.get("type") == "result"]
         assert len(result_events) == 1
         assert result_events[0].get("subtype") == "error_max_turns"
+
+    @patch("ypl.agent_harness_service.executors.raw_executor._load_raw_executor_prompt", return_value=None)
+    @patch(
+        "ypl.agent_harness_service.executors.raw_executor._create_client",
+        return_value=MagicMock(spec=anthropic.AsyncAnthropic),
+    )
+    @patch("ypl.agent_harness_service.executors.raw_executor._run_anthropic")
+    @patch("ypl.agent_harness_service.executors.raw_executor.estimate_messages_tokens")
+    async def test_result_subtype_context_overflow(
+        self,
+        mock_estimate_tokens: MagicMock,
+        mock_run: AsyncMock,
+        mock_client: Any,
+        mock_raw_prompt: Any,
+    ) -> None:
+        """result subtype = stopped_context_overflow when context overflow is detected."""
+        agent = _make_agent(max_steps=10)
+        # Disable compaction so overflow triggers immediately
+        agent.executor.compaction.enabled = False
+
+        # Make token estimation always return a huge number to trigger pre-emptive overflow
+        mock_estimate_tokens.return_value = 999_999_999
+
+        events: list[dict[str, Any]] = []
+        result = await run_raw_executor(
+            agent,
+            "overflow test",
+            "anthropic/claude-sonnet-4-6",
+            on_event=events.append,
+        )
+        # Should have stopped due to context overflow, not max steps
+        assert "[STOPPED] Context overflow" in result.text
+        result_events = [e for e in events if e.get("type") == "result"]
+        assert len(result_events) == 1
+        assert result_events[0].get("subtype") == "stopped_context_overflow"
 
     @patch("ypl.agent_harness_service.executors.raw_executor._load_raw_executor_prompt", return_value=None)
     @patch(

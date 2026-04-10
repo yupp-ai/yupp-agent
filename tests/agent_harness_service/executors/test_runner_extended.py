@@ -405,9 +405,10 @@ class TestBuildSubprocessEnvVenvBin:
             ),
         ):
             result = build_subprocess_env()
-        # PATH should contain both ~/.local/bin (prepended) and possibly venv bin
-        # The important thing is it doesn't crash and PATH is a string
-        assert isinstance(result.get("PATH", ""), str)
+        # When isdir returns True, the venv bin should be prepended to PATH
+        venv_bin_path = "/opt/yupp-mind/.venv/bin"
+        assert "PATH" in result
+        assert venv_bin_path in result["PATH"].split(":")
 
     def test_venv_bin_not_duplicated(self) -> None:
         """If venv/bin is already in PATH, it is not added a second time."""
