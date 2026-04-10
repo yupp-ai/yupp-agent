@@ -113,7 +113,7 @@ class EagerPersistState(BaseModel):
         return "\n\n".join(self.content_parts) if self.content_parts else "[started]"
 
 
-async def _persist_system_msg(
+async def _persist_system_msg(  # pragma: no cover
     eager: EagerPersistState,
     content: str,
     events: list[dict],
@@ -156,7 +156,7 @@ async def _persist_system_msg(
         )
 
 
-async def _eager_persist_agent_msg(
+async def _eager_persist_agent_msg(  # pragma: no cover
     state: EagerPersistState,
     events: list[dict],
     agent_session_id: uuid.UUID,
@@ -280,7 +280,7 @@ def _determine_result_status(output: Any, is_error: bool) -> tuple[str, str | No
     return "done", None
 
 
-async def _run_agent_task(
+async def _run_agent_task(  # pragma: no cover
     agent_session_id: uuid.UUID,
     turn_number: int,
     message: str,

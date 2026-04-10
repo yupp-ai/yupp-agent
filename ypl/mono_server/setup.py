@@ -213,7 +213,7 @@ DISABLE_WRITE_GOOGLE_CLOUD_METRICS=true
 # ---------------------------------------------------------------------------
 
 
-async def check_postgres_connectivity(user: str, password: str, host: str, database: str) -> bool:
+async def check_postgres_connectivity(user: str, password: str, host: str, database: str) -> bool:  # pragma: no cover
     """Attempt a real connection to Postgres and return True on success."""
     import asyncpg  # local import to avoid top-level cost when not needed
 
@@ -235,7 +235,7 @@ async def check_postgres_connectivity(user: str, password: str, host: str, datab
         return False
 
 
-async def check_redis_connectivity(url: str) -> bool:
+async def check_redis_connectivity(url: str) -> bool:  # pragma: no cover
     """Ping Redis and return True on success."""
     import redis.asyncio as aioredis  # local import
 
@@ -253,7 +253,7 @@ async def check_redis_connectivity(url: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def run_alembic_upgrade() -> bool:
+def run_alembic_upgrade() -> bool:  # pragma: no cover
     """Run ``alembic upgrade head`` in a subprocess and return True on success.
 
     Alembic reads POSTGRES_CONNECTION_AGENTDB from the environment / .env file,
@@ -273,7 +273,7 @@ def run_alembic_upgrade() -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _read_db_url_from_env(env_path: Path) -> str:
+def _read_db_url_from_env(env_path: Path) -> str:  # pragma: no cover
     """Parse POSTGRES_CONNECTION_AGENTDB from an existing .env and return asyncpg URL.
 
     Raises:
@@ -296,7 +296,7 @@ def _read_db_url_from_env(env_path: Path) -> str:
 # ---------------------------------------------------------------------------
 
 
-async def setup_interactive() -> int:
+async def setup_interactive() -> int:  # pragma: no cover
     """Run the interactive setup wizard.
 
     Returns:
@@ -490,7 +490,7 @@ async def setup_interactive() -> int:
     return 0
 
 
-def main() -> None:
+def main() -> None:  # pragma: no cover
     """Entry point for ``python -m ypl.mono_server.setup``."""
     sys.exit(asyncio.run(setup_interactive()))
 

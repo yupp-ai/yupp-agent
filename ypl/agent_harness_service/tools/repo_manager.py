@@ -79,7 +79,7 @@ def _validate_repo_name(repo: str) -> None:
         raise ValueError(f"Repo not found: {repo!r}")
 
 
-def _validate_branch_name(branch: str) -> None:
+def _validate_branch_name(branch: str) -> None:  # pragma: no cover
     """Validate a git branch name using git check-ref-format.
 
     Raises ValueError if the branch name is invalid.
@@ -115,7 +115,7 @@ def list_repos() -> list[dict[str, str]]:
     return repos
 
 
-def create_worktree(
+def create_worktree(  # pragma: no cover
     repo: str,
     session_id: str,
     branch: str | None = None,
@@ -222,7 +222,7 @@ def create_worktree(
     }
 
 
-def create_worktree_for_branch(
+def create_worktree_for_branch(  # pragma: no cover
     repo: str,
     session_id: str,
     branch: str,
@@ -273,7 +273,7 @@ def create_worktree_for_branch(
     return workspace
 
 
-def cleanup_worktree(session_id: str, repo: str, worktree_dir: str | None = None) -> None:
+def cleanup_worktree(session_id: str, repo: str, worktree_dir: str | None = None) -> None:  # pragma: no cover
     """Remove a worktree for a session.
 
     Args:
@@ -315,7 +315,7 @@ def cleanup_worktree(session_id: str, repo: str, worktree_dir: str | None = None
         )
 
 
-def push_and_create_pr(
+def push_and_create_pr(  # pragma: no cover
     workspace: str,
     title: str,
     body: str,
@@ -415,7 +415,7 @@ def push_and_create_pr(
     return {"status": "created", "pr_url": pr_url, "branch": branch}
 
 
-def pull_repo(repo_path: str) -> bool:
+def pull_repo(repo_path: str) -> bool:  # pragma: no cover
     """Pull latest main for a repo.
 
     Returns:
@@ -438,7 +438,7 @@ def pull_repo(repo_path: str) -> bool:
         return False
 
 
-def pull_all_repos() -> dict[str, bool]:
+def pull_all_repos() -> dict[str, bool]:  # pragma: no cover
     """Pull all repos in the repos directory.
 
     Returns:
@@ -467,7 +467,7 @@ def pull_all_repos() -> dict[str, bool]:
     return results
 
 
-def parse_pr_url(pr_url: str) -> tuple[str, str]:
+def parse_pr_url(pr_url: str) -> tuple[str, str]:  # pragma: no cover
     """Extract repo name and branch from a GitHub PR URL.
 
     Uses `gh` CLI to get the branch name from the PR.
@@ -502,7 +502,7 @@ def parse_pr_url(pr_url: str) -> tuple[str, str]:
     return repo_name, branch
 
 
-def setup_workspace(
+def setup_workspace(  # pragma: no cover
     session_id: str,
     context: dict,
     default_repo: str = "yupp-agent",

@@ -68,7 +68,7 @@ def generate_yuppaste_slug_link(named_slug: str, version: int | None = None) -> 
     return f"http://go/p/{named_slug}"
 
 
-async def get_max_version_for_slug(named_slug: str) -> int | None:
+async def get_max_version_for_slug(named_slug: str) -> int | None:  # pragma: no cover
     """Get the maximum version number for a named slug.
 
     Includes archived versions to prevent version number reuse.
@@ -105,7 +105,7 @@ async def get_max_version_for_slug(named_slug: str) -> int | None:
     return await asyncio.to_thread(_execute_query)
 
 
-async def slug_exists(named_slug: str) -> bool:
+async def slug_exists(named_slug: str) -> bool:  # pragma: no cover
     """Check if a named slug exists (has any non-archived versions).
 
     Args:
@@ -136,7 +136,7 @@ async def slug_exists(named_slug: str) -> bool:
     return await asyncio.to_thread(_execute_query)
 
 
-async def get_pastes_metadata_from_bigquery(
+async def get_pastes_metadata_from_bigquery(  # pragma: no cover
     page: int,
     page_size: int,
     created_by: str | None,
@@ -244,7 +244,7 @@ async def get_pastes_metadata_from_bigquery(
     )
 
 
-async def create_yuppaste(
+async def create_yuppaste(  # pragma: no cover
     data: str,
     created_by: str,
     name: str | None = None,
@@ -352,7 +352,7 @@ def _replace_attachment_placeholders(data: str, file_uuid: str, filenames: set[s
     return ATTACHMENT_PLACEHOLDER_PATTERN.sub(_replacer, data)
 
 
-async def create_yuppaste_with_attachments(
+async def create_yuppaste_with_attachments(  # pragma: no cover
     data: str,
     created_by: str,
     name: str | None = None,
@@ -499,7 +499,7 @@ async def create_yuppaste_with_attachments(
     )
 
 
-async def get_yuppaste_by_uuid(paste_uuid: str) -> YuppasteContentResponse:
+async def get_yuppaste_by_uuid(paste_uuid: str) -> YuppasteContentResponse:  # pragma: no cover
     """Get yuppaste content and metadata by UUID."""
     # Get metadata from BigQuery (including attachments)
     client = get_bigquery_client()
@@ -597,7 +597,9 @@ async def get_yuppaste_by_uuid(paste_uuid: str) -> YuppasteContentResponse:
     )
 
 
-async def get_yuppaste_by_slug(named_slug: str, version: int | None = None) -> YuppasteContentResponse:
+async def get_yuppaste_by_slug(  # pragma: no cover
+    named_slug: str, version: int | None = None
+) -> YuppasteContentResponse:
     """Get yuppaste content and metadata by named slug.
 
     Args:
@@ -723,7 +725,7 @@ async def get_yuppaste_by_slug(named_slug: str, version: int | None = None) -> Y
     )
 
 
-async def archive_yuppaste(paste_uuid: str, archived_by: str) -> YuppasteMetadata:
+async def archive_yuppaste(paste_uuid: str, archived_by: str) -> YuppasteMetadata:  # pragma: no cover
     """Archive a yuppaste by UUID.
 
     Sets is_archived=True on the paste. Archived pastes:
@@ -799,7 +801,7 @@ async def archive_yuppaste(paste_uuid: str, archived_by: str) -> YuppasteMetadat
     )
 
 
-async def archive_yuppaste_by_slug(named_slug: str, version: int | None, archived_by: str) -> int:
+async def archive_yuppaste_by_slug(named_slug: str, version: int | None, archived_by: str) -> int:  # pragma: no cover
     """Archive yuppaste(s) by named slug.
 
     Args:
@@ -875,7 +877,7 @@ async def archive_yuppaste_by_slug(named_slug: str, version: int | None, archive
     return await asyncio.to_thread(_execute_archive)
 
 
-async def update_yuppaste_metadata(
+async def update_yuppaste_metadata(  # pragma: no cover
     paste_uuid: str, name: str | None = None, update_by: str | None = None
 ) -> YuppasteMetadata:
     """Update yuppaste metadata."""

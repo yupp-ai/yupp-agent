@@ -248,11 +248,10 @@ omit = [
     "ypl/cache.py",
     # Dev-only mock
     "ypl/slack_agent_gateway/mock_agent_service.py",
-    # Pure external API wrappers (thin plumbing over Linear/Slack/external GraphQL/BigQuery)
+    # Pure external API wrappers (thin plumbing over Linear/Slack/external GraphQL)
     "ypl/mcp_server/tools/linear_sync.py",
     "ypl/mcp_server/tools/agent_schedules.py",
     "ypl/backend/utils/linear.py",
-    "ypl/backend/internal_tools/yuppaste_backend.py",
     # Pure boilerplate (no logic — just startup hooks, HTTP forwarding, or try/except routing)
     "ypl/agent_harness_service/lifespan.py",
     "ypl/agent_harness_service/routes.py",
@@ -260,17 +259,9 @@ omit = [
     "ypl/slack_agent_gateway/agent_client.py",
     # Deep wiring / orchestration (every line touches DB + external services + subprocesses)
     "ypl/agent_harness_service/orchestration.py",
-    "ypl/agent_harness_service/service/run_task.py",
-    "ypl/agent_harness_service/service/session_lifecycle.py",
-    "ypl/agent_harness_service/task_executor.py",
-    "ypl/agent_harness_service/core/memory_persistence.py",
-    "ypl/agent_harness_service/tools/repo_manager.py",
     "ypl/agent_harness_service/tools/mcp_client.py",
     # Slack SDK orchestration (every function calls Slack API + Redis + Agent Service)
     "ypl/slack_agent_gateway/bot_father.py",
-    "ypl/slack_agent_gateway/queue.py",
-    # Server plugin wiring
-    "ypl/mono_server/setup.py",
 ]
 
 [tool.coverage.report]

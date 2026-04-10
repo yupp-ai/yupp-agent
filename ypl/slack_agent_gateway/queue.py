@@ -29,7 +29,7 @@ from ypl.structured_logger import get_logger
 logger = get_logger()
 
 
-async def _post_status_to_slack(session: AgentSession, text: str) -> str | None:
+async def _post_status_to_slack(session: AgentSession, text: str) -> str | None:  # pragma: no cover
     """Post a status message to Slack.
 
     Args:

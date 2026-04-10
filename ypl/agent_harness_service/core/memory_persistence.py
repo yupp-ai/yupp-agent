@@ -29,7 +29,7 @@ logger = get_logger()
 _INDEX_MANIFEST_FILENAME = ".private_memory_index_manifest.json"
 
 
-async def sync_agent_memory_to_gcs(agent_name: str) -> int:
+async def sync_agent_memory_to_gcs(agent_name: str) -> int:  # pragma: no cover
     """Sync an agent's memory directory to GCS.
 
     Uploads only files that are new or modified since the last sync
