@@ -1036,19 +1036,12 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
             # not a USER message.  We write it directly (bypassing send_message) to
             # preserve provenance (from_agent_id + agent_message_id_ref).
             #
-            # _from_agent_uuid was validated (and its identity verified) in the AGENT
-            # identity resolution block above — reuse it directly rather than re-parsing
-            # the same context key (which would lose the ValueError on re-parse).
-            _fellow_from_agent_id: uuid.UUID | None = _from_agent_uuid
-            _fellow_agent_msg_ref: uuid.UUID | None = None
-            _ctx_agent_message_id = context.get("agent_message_id")
-            if _ctx_agent_message_id:
-                try:
-                    _fellow_agent_msg_ref = uuid.UUID(str(_ctx_agent_message_id))
-                except ValueError as exc:
-                    raise AHSValidationError(
-                        f"context.agent_message_id is not a valid UUID: {_ctx_agent_message_id!r}"
-                    ) from exc
+            # Both _from_agent_uuid and _verify_msg_uuid were validated (and identity-
+            # verified) in the AGENT identity resolution block above.  agent_message_id is
+            # now unconditionally required, so both values are always non-None here — reuse
+            # them directly rather than re-parsing the same context keys.
+            _fellow_from_agent_id: uuid.UUID = _from_agent_uuid
+            _fellow_agent_msg_ref: uuid.UUID = _verify_msg_uuid
 
             async with get_async_session() as _msg_db:
                 _fellow_turn = await _next_turn_number(_msg_db, agent_session.agent_session_id)
@@ -1068,8 +1061,8 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
                 "AGENT trigger: injected FELLOW_AGENT turn",
                 session_id=str(agent_session.agent_session_id),
                 turn_number=_fellow_turn,
-                from_agent_id=str(_fellow_from_agent_id) if _fellow_from_agent_id else None,
-                agent_message_id_ref=str(_fellow_agent_msg_ref) if _fellow_agent_msg_ref else None,
+                from_agent_id=str(_fellow_from_agent_id),
+                agent_message_id_ref=str(_fellow_agent_msg_ref),
             )
 
             # Fire agent task for this turn.
