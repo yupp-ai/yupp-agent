@@ -53,7 +53,6 @@ from ypl.agent_harness_service.executors.runner import (
 from ypl.agent_harness_service.gateway import TRIGGER_TO_GATEWAY, GatewayRegistry
 from ypl.agent_harness_service.gateway.slack_prefetch import fetch_slack_thread_content
 from ypl.agent_harness_service.service.agent_messaging import (
-    AgentAuthorizationError,
     check_agent_message_authz,
 )
 from ypl.agent_harness_service.service.resolvers import (
@@ -676,11 +675,12 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
             await session.flush()
 
         # A2A authorization: enforce deny-by-default when the session is initiated by a peer agent.
-        # ``from_agent_id`` is injected into context by the AGENT trigger path (see PR #128).
-        # We check here — after the target agent is resolved but before any session is persisted —
-        # so an unauthorized caller is rejected with a clean 400/403 before any side effects.
+        # Only checked when trigger == AGENT — ``from_agent_id`` is a server-side field set by the
+        # AGENT trigger path (see PR #128) and is NOT available to arbitrary API callers.  Gating
+        # on trigger prevents a non-AGENT caller from injecting ``from_agent_id`` into context and
+        # routing through the authz check with a permissive agent config.
         _from_agent_id_ctx = context.get("from_agent_id")
-        if _from_agent_id_ctx:
+        if _from_agent_id_ctx and trigger == AgentSessionTrigger.AGENT:
             try:
                 _from_agent_uuid = uuid.UUID(str(_from_agent_id_ctx))
                 _from_agent_result = await session.exec(select(Agent).where(Agent.agent_id == _from_agent_uuid))
@@ -694,9 +694,8 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
                         f"A2A authorization failed: sending agent '{_from_agent_id_ctx}' not found"
                     )
                 _from_cfg = load_agent_config_from_db(_from_agent_db)
+                # AgentAuthorizationError propagates to routes.py where it is mapped to HTTP 403.
                 check_agent_message_authz(_from_cfg, agent.name or resolved_agent_id)
-            except AgentAuthorizationError as _authz_exc:
-                raise AHSValidationError(str(_authz_exc)) from _authz_exc
             except ValueError as _val_exc:
                 raise AHSValidationError(
                     f"A2A authorization failed: malformed from_agent_id {_from_agent_id_ctx!r}"
