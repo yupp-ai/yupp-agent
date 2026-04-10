@@ -150,15 +150,20 @@ async def _next_turn_number(session: AsyncSession, agent_session_id: uuid.UUID) 
 
 
 async def _has_inflight_turn(session: AsyncSession, agent_session_id: uuid.UUID) -> bool:
-    """Check if there's a USER message whose turn has no AGENT/SYSTEM response yet.
+    """Check if there's an inbound turn (USER or FELLOW_AGENT) with no completed response yet.
 
     Must be called under FOR UPDATE lock on the session row.
+
+    FELLOW_AGENT turns originate from A2A messaging (trigger=AGENT) and must be treated
+    as inflight sentinels on equal footing with USER turns so that:
+    - Concurrent AGENT messages are serialized rather than spawning parallel tasks.
+    - stop_session() correctly detects and cancels inflight A2A-triggered turns.
     """
-    # Find the latest turn that has a USER message
+    # Find the latest turn that has an inbound (USER or FELLOW_AGENT) message
     latest_user_turn = await session.exec(
         select(func.max(AgentSessionMessage.turn_number)).where(
             AgentSessionMessage.agent_session_id == agent_session_id,
-            col(AgentSessionMessage.role) == AgentSessionMessageRole.USER,
+            col(AgentSessionMessage.role).in_([AgentSessionMessageRole.USER, AgentSessionMessageRole.FELLOW_AGENT]),
         )
     )
     max_user_turn: int | None = latest_user_turn.one()

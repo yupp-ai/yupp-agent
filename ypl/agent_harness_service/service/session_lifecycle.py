@@ -90,6 +90,7 @@ from ypl.backend.utils.slack_utils import resolve_slack_user_to_yupp_user_id
 from ypl.backend.utils.soul_utils import has_permission_by_user_id_cached
 from ypl.db.agent_harness import (
     Agent,
+    AgentMessage,
     AgentSession,
     AgentSessionMessage,
     AgentSessionMessageCompletionStatus,
@@ -713,7 +714,34 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
                 from_agent_user_id=user_id,
                 from_session_id=context.get("from_session_id"),
             )
-            # Grant full MCP permissions — AGENT-triggered sessions are trusted callers.
+
+            # Identity verification: if agent_message_id is provided, load the persisted
+            # AgentMessage record and confirm its from_agent_id matches the caller's claim.
+            # This binds the trusted identity to a server-side DB record rather than relying
+            # solely on the request body (which any holder of the AHS API key could forge).
+            _ctx_agent_msg_id = context.get("agent_message_id")
+            if _ctx_agent_msg_id:
+                try:
+                    _verify_msg_uuid = uuid.UUID(str(_ctx_agent_msg_id))
+                    _verify_msg = await session.get(AgentMessage, _verify_msg_uuid)
+                    if _verify_msg is None or _verify_msg.from_agent_id != _from_agent_uuid:
+                        raise AHSValidationError(
+                            f"A2A identity verification failed: agent_message_id {_ctx_agent_msg_id!r} "
+                            f"does not belong to from_agent {_from_agent_id_ctx!r}"
+                        )
+                except ValueError as exc:
+                    raise AHSValidationError(
+                        f"context.agent_message_id is not a valid UUID: {_ctx_agent_msg_id!r}"
+                    ) from exc
+            else:
+                logger.warning(
+                    "AGENT trigger: no agent_message_id in context — "
+                    "trusting from_agent_id claim without DB verification",
+                    from_agent_id=str(_from_agent_uuid),
+                )
+
+            # Grant full MCP permissions — AGENT-triggered sessions are trusted internal callers.
+            # Identity is further bound by agent_message_id verification above when available.
             if "permissions" not in context:
                 context["permissions"] = SessionPermissions.full_access().model_dump(mode="json")
 
@@ -998,24 +1026,33 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
     # If a message was provided, kick off the first turn.
     if request.message:
         if trigger == AgentSessionTrigger.AGENT:
+            # Attachments are not yet supported for AGENT-triggered sessions —
+            # the AGENT path bypasses send_message() which handles attachment downloads.
+            # Fail fast rather than silently drop the files.
+            if request.attachments:
+                raise AHSValidationError(
+                    "Attachments are not yet supported for AGENT-triggered sessions. "
+                    "Send text-based content only until attachment handling is implemented."
+                )
+
             # For AGENT-triggered sessions the initial turn is a FELLOW_AGENT message,
             # not a USER message.  We write it directly (bypassing send_message) to
             # preserve provenance (from_agent_id + agent_message_id_ref).
-            _ctx_from_agent_id = context.get("from_agent_id")
-            _ctx_agent_message_id = context.get("agent_message_id")
-            _fellow_from_agent_id: uuid.UUID | None = None
+            #
+            # _from_agent_uuid was validated (and its identity verified) in the AGENT
+            # identity resolution block above — reuse it directly rather than re-parsing
+            # the same context key (which would lose the ValueError on re-parse).
+            _fellow_from_agent_id: uuid.UUID | None = _from_agent_uuid
             _fellow_agent_msg_ref: uuid.UUID | None = None
-            try:
-                if _ctx_from_agent_id:
-                    _fellow_from_agent_id = uuid.UUID(str(_ctx_from_agent_id))
-                if _ctx_agent_message_id:
+            _ctx_agent_message_id = context.get("agent_message_id")
+            if _ctx_agent_message_id:
+                try:
                     _fellow_agent_msg_ref = uuid.UUID(str(_ctx_agent_message_id))
-            except ValueError:
-                logger.warning(
-                    "AGENT trigger: could not parse UUID from context",
-                    from_agent_id=_ctx_from_agent_id,
-                    agent_message_id=_ctx_agent_message_id,
-                )
+                except ValueError as exc:
+                    raise AHSValidationError(
+                        f"context.agent_message_id is not a valid UUID: {_ctx_agent_message_id!r}"
+                    ) from exc
+
             async with get_async_session() as _msg_db:
                 _fellow_turn = await _next_turn_number(_msg_db, agent_session.agent_session_id)
                 _fellow_msg = AgentSessionMessage(
@@ -1039,25 +1076,39 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
             )
 
             # Fire agent task for this turn.
+            # Guard: if task creation fails after message commit, mark the session as
+            # COMPLETED (terminal) so it doesn't persist as a zombie with an unanswered
+            # FELLOW_AGENT turn and no running responder.
             _active_tasks[agent_session.agent_session_id] = None  # type: ignore[assignment]
-            _agent_task = create_background_task(
-                _run_agent_task(
-                    agent_session_id=agent_session.agent_session_id,
-                    turn_number=_fellow_turn,
-                    message=request.message,
-                    agent_config_name=resolved_agent_id,
-                    workspace=agent_session.workspace,
-                    llm_session_id=agent_session.llm_session_id,
-                    extra_dirs=agent_session.extra_dirs or [],
-                    slack_session_id=agent_session.slack_session_id,
-                    is_slack=False,
-                    is_task=False,
-                    session_context=dict(agent_session.context) if agent_session.context else {},
-                    trigger=agent_session.trigger.value,
-                    session_created_at=agent_session.created_at,
+            try:
+                _agent_task = create_background_task(
+                    _run_agent_task(
+                        agent_session_id=agent_session.agent_session_id,
+                        turn_number=_fellow_turn,
+                        message=request.message,
+                        agent_config_name=resolved_agent_id,
+                        workspace=agent_session.workspace,
+                        llm_session_id=agent_session.llm_session_id,
+                        extra_dirs=agent_session.extra_dirs or [],
+                        slack_session_id=agent_session.slack_session_id,
+                        is_slack=False,
+                        is_task=False,
+                        session_context=dict(agent_session.context) if agent_session.context else {},
+                        trigger=agent_session.trigger.value,
+                        session_created_at=agent_session.created_at,
+                    )
                 )
-            )
-            _active_tasks[agent_session.agent_session_id] = _agent_task
+                _active_tasks[agent_session.agent_session_id] = _agent_task
+            except Exception:
+                logger.exception(
+                    "AGENT trigger: background task creation failed after message commit "
+                    "— marking session COMPLETED to prevent zombie state",
+                    session_id=str(agent_session.agent_session_id),
+                )
+                _active_tasks.pop(agent_session.agent_session_id, None)
+                async with get_async_session() as _fail_db:
+                    await _mark_session_completed(_fail_db, agent_session.agent_session_id)
+                    await _fail_db.commit()
         else:
             # Pass user IDs so send_message can re-check USE_MCP for the sender
             # (without these, it defaults to restricted and overrides permissions).
@@ -1412,10 +1463,11 @@ async def stop_session(session_id: str) -> SessionStopResponse:
 
         # Capture the inflight turn number so Phase 3 writes [INTERRUPTED]
         # for this specific turn, not a newer one that might start later.
+        # Check both USER and FELLOW_AGENT roles — A2A-triggered turns are inflight too.
         latest_user_turn_result = await session.exec(
             select(func.max(AgentSessionMessage.turn_number)).where(
                 AgentSessionMessage.agent_session_id == agent_session.agent_session_id,
-                col(AgentSessionMessage.role) == AgentSessionMessageRole.USER,
+                col(AgentSessionMessage.role).in_([AgentSessionMessageRole.USER, AgentSessionMessageRole.FELLOW_AGENT]),
             )
         )
         inflight_turn = latest_user_turn_result.one() or 0
