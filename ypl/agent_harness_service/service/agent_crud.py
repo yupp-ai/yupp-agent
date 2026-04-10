@@ -72,7 +72,11 @@ async def create_agent(request: AgentCreateRequest) -> AgentCreateResponse:
         user = User(
             user_id=str(agent.agent_id),
             name=f"agent:{agent.name}",
-            email=f"agent-{agent.name}@yupp.ai",
+            # Use agent_id (not name) for uniqueness: names can collide or be
+            # reused; agent_id is stable and UUID-unique. Use @agents.yupp.ai
+            # (not @yupp.ai) to keep agent identities out of human employee flows
+            # (e.g. _resolve_personal_agent_for_user gates on @yupp.ai suffix).
+            email=f"agent-{agent.agent_id}@agents.yupp.ai",
             user_type=UserType.AGENT,
             status=UserStatus.ACTIVE,
         )

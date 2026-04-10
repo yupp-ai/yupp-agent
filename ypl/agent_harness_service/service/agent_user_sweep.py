@@ -4,6 +4,7 @@ This module is intentionally NOT wired into server.py — that happens in a late
 """
 
 from sqlalchemy import text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from ypl.backend.db import get_async_session
 from ypl.db.users import User, UserStatus, UserType
@@ -14,10 +15,16 @@ logger = get_logger()
 _FIND_AGENTS_WITHOUT_USER = text("""
     SELECT agent_id, name
     FROM agents
-    WHERE agent_user_id IS NULL
-       OR NOT EXISTS (
-           SELECT 1 FROM users WHERE user_id = agents.agent_id::text
-       )
+    WHERE agents.deleted_at IS NULL
+      AND (
+          agent_user_id IS NULL
+          OR (
+              agent_user_id IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM users WHERE user_id = agents.agent_user_id
+              )
+          )
+      )
 """)
 
 
@@ -40,25 +47,32 @@ async def sweep_agent_user_identities() -> None:
 
         # Process each agent in its own short transaction so one failure
         # doesn't block the rest.
+        backfilled_count = 0
         for row in incomplete_agents:
             agent_id = row.agent_id
             name = row.name
             try:
                 async with get_async_session() as session:
-                    user = User(
-                        user_id=str(agent_id),
-                        name=f"agent:{name}",
-                        email=f"agent-{name}@yupp.ai",
-                        user_type=UserType.AGENT,
-                        status=UserStatus.ACTIVE,
+                    # INSERT ... ON CONFLICT DO NOTHING is truly idempotent —
+                    # it never overwrites existing data unlike session.merge.
+                    stmt = (
+                        pg_insert(User)
+                        .values(
+                            user_id=str(agent_id),
+                            name=f"agent:{name}",
+                            email=f"agent-{agent_id}@agents.yupp.ai",
+                            user_type=UserType.AGENT,
+                            status=UserStatus.ACTIVE,
+                        )
+                        .on_conflict_do_nothing(index_elements=["user_id"])
                     )
-                    # merge is idempotent — safe if the row already exists
-                    await session.merge(user)
+                    await session.execute(stmt)
                     await session.execute(
                         text("UPDATE agents SET agent_user_id = :uid WHERE agent_id = :aid"),
                         {"uid": str(agent_id), "aid": agent_id},
                     )
                     await session.commit()
+                    backfilled_count += 1
             except Exception:
                 logger.exception(
                     "sweep_agent_user_identities: failed for agent — skipping",
@@ -66,6 +80,11 @@ async def sweep_agent_user_identities() -> None:
                     agent_name=name,
                 )
 
-        logger.info("sweep_agent_user_identities: completed", backfilled=len(incomplete_agents))
+        logger.info(
+            "sweep_agent_user_identities: completed",
+            found=len(incomplete_agents),
+            backfilled=backfilled_count,
+            failed=len(incomplete_agents) - backfilled_count,
+        )
     except Exception:
         logger.exception("sweep_agent_user_identities: unexpected failure — non-fatal")
