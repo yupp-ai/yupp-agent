@@ -214,22 +214,67 @@ DISABLE_WRITE_GOOGLE_CLOUD_METRICS=true
 
 
 async def check_postgres_connectivity(user: str, password: str, host: str, database: str) -> bool:
-    """Attempt a real connection to Postgres and return True on success."""
+    """Attempt a real connection to Postgres, creating the database if it doesn't exist.
+
+    Connects to the default ``postgres`` database first to check server reachability.
+    If the target database doesn't exist, creates it automatically.
+    Returns True on success, False if the server itself is unreachable.
+    """
     import asyncpg  # local import to avoid top-level cost when not needed
 
     host_part, _, port_str = host.rpartition(":")
     if not host_part:
         host_part, port_str = port_str, ""
+    port = int(port_str) if port_str else 5432
+
+    # First, check if the server is reachable by connecting to the default 'postgres' DB.
     try:
         conn: asyncpg.Connection[asyncpg.Record] = await asyncpg.connect(
             host=host_part,
-            port=int(port_str) if port_str else 5432,
+            port=port,
+            user=user,
+            password=password,
+            database="postgres",
+            timeout=5.0,
+        )
+    except Exception:
+        return False
+
+    # Check if the target database exists; create it if not.
+    try:
+        exists = await conn.fetchval(
+            "SELECT 1 FROM pg_database WHERE datname = $1",
+            database,
+        )
+        if not exists:
+            # Validate the database name to prevent SQL injection.
+            # CREATE DATABASE doesn't support parameterized queries, so we must
+            # use quote_ident() on the server side for safe identifier escaping.
+            await conn.execute(
+                "SELECT pg_catalog.pg_terminate_backend(0) WHERE FALSE;"  # no-op to keep linters happy
+            )
+            safe_name = await conn.fetchval("SELECT quote_ident($1)", database)
+            await conn.execute(f"CREATE DATABASE {safe_name}")
+            console.print(f"  [green]Created database '{database}'[/green]")
+    except Exception:
+        # CREATEDB privilege missing, race condition (another process created it),
+        # or other error — fall through to the verification step below which will
+        # report success if the DB now exists, or failure if it truly doesn't.
+        pass
+    finally:
+        await conn.close()
+
+    # Verify we can connect to the target database.
+    try:
+        target_conn: asyncpg.Connection[asyncpg.Record] = await asyncpg.connect(
+            host=host_part,
+            port=port,
             user=user,
             password=password,
             database=database,
             timeout=5.0,
         )
-        await conn.close()
+        await target_conn.close()
         return True
     except Exception:
         return False
