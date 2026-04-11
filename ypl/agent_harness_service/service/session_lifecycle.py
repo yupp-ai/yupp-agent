@@ -51,7 +51,6 @@ from ypl.agent_harness_service.executors.runner import (
 )
 from ypl.agent_harness_service.gateway import TRIGGER_TO_GATEWAY, GatewayRegistry
 from ypl.agent_harness_service.gateway.slack_prefetch import fetch_slack_thread_content
-from ypl.agent_harness_service.orchestration import cancel_subagent_tasks
 from ypl.agent_harness_service.service.resolvers import (
     _download_attachments_to_workspace,
     _has_inflight_turn,
@@ -1312,6 +1311,8 @@ async def stop_session(session_id: str) -> SessionStopResponse:
     # Lock released — safe to wait on the task without risking deadlock.
 
     # Phase 2: Cancel subagent tasks and the main task outside the DB lock.
+    from ypl.agent_harness_service.orchestration import cancel_subagent_tasks
+
     try:
         await cancel_subagent_tasks(agent_session_id)
     except Exception:
