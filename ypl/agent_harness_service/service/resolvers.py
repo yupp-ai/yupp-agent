@@ -170,14 +170,18 @@ async def _has_inflight_turn(session: AsyncSession, agent_session_id: uuid.UUID)
     if max_user_turn is None:
         return False
 
-    # Check if that turn has a completed response.  Any message whose
-    # completion_status is not IN_PROGRESS counts — SYSTEM messages are always
-    # terminal; AGENT eager-persist draft rows carry IN_PROGRESS and are excluded.
+    # Check if that turn has a completed response.  Exclude both inbound roles
+    # (USER and FELLOW_AGENT) — a FELLOW_AGENT message is the *request*, not the
+    # response, and its default completion_status (SUCCESS) would otherwise make
+    # it count as a completed response the instant it is committed, causing
+    # _has_inflight_turn to always return False for A2A-triggered turns.
+    # AGENT eager-persist draft rows carry IN_PROGRESS and are excluded via the
+    # completion_status filter; SYSTEM messages are always terminal.
     response_result = await session.exec(
         select(func.count()).where(
             AgentSessionMessage.agent_session_id == agent_session_id,
             AgentSessionMessage.turn_number == max_user_turn,
-            col(AgentSessionMessage.role) != AgentSessionMessageRole.USER,
+            col(AgentSessionMessage.role).not_in([AgentSessionMessageRole.USER, AgentSessionMessageRole.FELLOW_AGENT]),
             col(AgentSessionMessage.completion_status) != AgentSessionMessageCompletionStatus.IN_PROGRESS,
         )
     )

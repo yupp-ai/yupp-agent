@@ -1498,14 +1498,17 @@ async def stop_session(session_id: str) -> SessionStopResponse:
     # still inflight — if the task completed between Phase 1 and now,
     # it already wrote an AGENT/SYSTEM message and we should not duplicate.
     async with get_async_session() as session:
-        # Check for a completed response: any non-USER message that is not
-        # IN_PROGRESS.  Eager-persist drafts (IN_PROGRESS) are excluded so we
-        # don't mistake an actively-running turn for one that finished naturally.
+        # Check for a completed response: exclude both inbound roles (USER and
+        # FELLOW_AGENT) — a FELLOW_AGENT message is the request, not the response.
+        # Eager-persist drafts (IN_PROGRESS) are excluded so we don't mistake an
+        # actively-running turn for one that finished naturally.
         response_count_result = await session.exec(
             select(func.count()).where(
                 AgentSessionMessage.agent_session_id == agent_session_id,
                 AgentSessionMessage.turn_number == inflight_turn,
-                col(AgentSessionMessage.role) != AgentSessionMessageRole.USER,
+                col(AgentSessionMessage.role).not_in(
+                    [AgentSessionMessageRole.USER, AgentSessionMessageRole.FELLOW_AGENT]
+                ),
                 col(AgentSessionMessage.completion_status) != AgentSessionMessageCompletionStatus.IN_PROGRESS,
             )
         )
