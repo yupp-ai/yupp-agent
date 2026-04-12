@@ -49,15 +49,16 @@ SECRET_NAME_REPLICA = "ym-postgres-connection-agentdb-replica-staging"
 LOCAL_DEFAULT_HOST = "127.0.0.1"
 LOCAL_DEFAULT_PORT = "5432"
 LOCAL_DEFAULT_USER = "postgres"
-LOCAL_DEFAULT_PASSWORD = "local"
+LOCAL_DEFAULT_PASSWORD = "postgres"
 LOCAL_DEFAULT_DB = "yadb"
 
 DUMPS_DIR = os.path.expanduser("~/tmp/yadb-dumps")
 
 # Tables to skip during dump (not real data, or permission issues).
-EXCLUDE_TABLES = [
-    "alembic_version",
-]
+# NOTE: alembic_version is intentionally included so that the restored DB
+# is stamped at the correct migration revision and `alembic upgrade head`
+# doesn't try to recreate existing schema.
+EXCLUDE_TABLES: list[str] = []
 
 BANNER = """
 ╔══════════════════════════════════════════════════════════╗
@@ -68,7 +69,7 @@ BANNER = """
   can develop and debug against real data.
 
   Source:  staging agentdb (read replica by default)
-  Dest:    local Postgres (postgres:local@127.0.0.1:5432/yadb)
+  Dest:    local Postgres (postgres:postgres@127.0.0.1:5432/yadb)
   Dumps:   ~/tmp/yadb-dumps/
 """.rstrip()
 
@@ -392,7 +393,7 @@ def _run_pg_dump(
     _print_info(f"Dump complete! Size: {size_mb:.1f} MB")
 
 
-def _confirm_and_clear_local(dest: dict[str, str]) -> None:
+def _confirm_and_clear_local(dest: dict[str, str], *, no_interactive: bool = False) -> None:
     """Ensure the DB exists, ask for confirmation, then drop+recreate the public schema."""
     _ensure_local_db_exists(dest)
     label = _dest_label(dest)
@@ -400,10 +401,11 @@ def _confirm_and_clear_local(dest: dict[str, str]) -> None:
     print("  About to DROP ALL TABLES in local database:")
     print(f"    {label}")
     print()
-    answer = input("  Continue? [y/N] ").strip().lower()
-    if answer not in ("y", "yes"):
-        print("\n  Aborted. Your local database was not modified.")
-        sys.exit(0)
+    if not no_interactive:
+        answer = input("  Continue? [y/N] ").strip().lower()
+        if answer not in ("y", "yes"):
+            print("\n  Aborted. Your local database was not modified.")
+            sys.exit(0)
     print()
     _drop_and_recreate_schema(dest)
 
@@ -479,7 +481,7 @@ def main() -> None:
         "--dest",
         default=os.environ.get("DEST_DB"),
         help="Local destination DB URL (default: built from POSTGRES_* env vars or .env, "
-        "falling back to postgres:local@127.0.0.1:5432/yadb)",
+        "falling back to postgres:postgres@127.0.0.1:5432/yadb)",
     )
     parser.add_argument("--list", action="store_true", dest="list_dumps", help="List saved dumps and exit")
     parser.add_argument(
@@ -494,6 +496,11 @@ def main() -> None:
     parser.add_argument("--data-only", action="store_true", help="Dump data only (assumes schema exists)")
     parser.add_argument("--use-primary", action="store_true", help="Use primary instead of replica (default: replica)")
     parser.add_argument("--tables", help="Comma-separated list of tables to dump (default: all)")
+    parser.add_argument(
+        "--no-interactive",
+        action="store_true",
+        help="Skip all confirmation prompts and proceed automatically",
+    )
 
     args = parser.parse_args()
 
@@ -571,6 +578,33 @@ def main() -> None:
     tables = [t.strip() for t in args.tables.split(",")] if args.tables else None
     replica_label = "primary" if args.use_primary else "read replica"
 
+    # In interactive mode, offer to reuse an existing local dump
+    if not args.no_interactive and not args.no_restore:
+        dumps = _list_dumps()
+        if dumps:
+            print()
+            _print_dumps_table(dumps)
+            print("  You can restore an existing dump instead of downloading a new one.")
+            choice = input("  Enter dump # to restore, or press Enter to download fresh: ").strip()
+            if choice:
+                try:
+                    idx = int(choice) - 1
+                    if 0 <= idx < len(dumps):
+                        selected = dumps[idx]
+                        _print_step(1, 3, "Checking tools")
+                        _check_pg_tools()
+                        _print_step(2, 3, "Clear local database")
+                        _print_info(f"Selected dump: {selected['name']} ({selected['size_mb']:.1f} MB)")
+                        _confirm_and_clear_local(dest)
+                        _print_step(3, 3, "Restore dump to local")
+                        _run_psql_restore(dest, selected["path"])
+                        _stamp_alembic(dest)
+                        _print_success(f"Done! Restored {selected['name']} into {dest['database']}.")
+                        return
+                    print(f"    Invalid number. Valid range: 1-{len(dumps)}. Proceeding with fresh dump.\n")
+                except ValueError:
+                    print("    Not a number. Proceeding with fresh dump.\n")
+
     # Show the plan and confirm with the user
     print("  Here's what we'll do:\n")
     print(f"    Source:      staging agentdb ({replica_label})")
@@ -587,10 +621,11 @@ def main() -> None:
     else:
         print("    Restore:     yes (will clear local DB first)")
     print()
-    answer = input("  Look good? [Y/n] ").strip().lower()
-    if answer in ("n", "no"):
-        print("\n  Aborted. Use --dest to change the destination.")
-        sys.exit(0)
+    if not args.no_interactive:
+        answer = input("  Look good? [Y/n] ").strip().lower()
+        if answer in ("n", "no"):
+            print("\n  Aborted. Use --dest to change the destination.")
+            sys.exit(0)
 
     total_steps = 3 if args.no_restore else 5
     step = 0
@@ -614,7 +649,7 @@ def main() -> None:
     if not args.no_restore:
         step += 1
         _print_step(step, total_steps, "Clear local database")
-        _confirm_and_clear_local(dest)
+        _confirm_and_clear_local(dest, no_interactive=args.no_interactive)
 
         step += 1
         _print_step(step, total_steps, "Restore dump to local")
