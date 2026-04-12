@@ -57,6 +57,24 @@ from ypl.slack_agent_gateway.types import (
 # Router without prefix - will be mounted at multiple prefixes in server.py
 router = APIRouter(tags=["slack-agent-gateway"])
 
+# ---------------------------------------------------------------------------
+# Test-only endpoints (enabled by SLACK_CAPTURE_MODE=true)
+# ---------------------------------------------------------------------------
+from ypl.slack_agent_gateway.capture import CAPTURE_MODE, get_capture  # noqa: E402
+
+if CAPTURE_MODE:
+
+    @router.get("/_captured")
+    async def get_captured_calls(method: str | None = None) -> JSONResponse:
+        """Return all captured Slack API calls (e2e testing only)."""
+        return JSONResponse({"calls": get_capture().get_calls(method)})
+
+    @router.delete("/_captured")
+    async def clear_captured_calls() -> JSONResponse:
+        """Clear all captured Slack API calls (e2e testing only)."""
+        get_capture().clear()
+        return JSONResponse({"cleared": True})
+
 
 @router.post("/slack/events")
 async def slack_events(request: Request) -> JSONResponse:

@@ -59,6 +59,12 @@ async def sag_startup() -> SAGState:
     if _sag_state is not None:
         raise RuntimeError("sag_startup() called while already running — sag_shutdown() must be called first")
     setup_asyncio_logging()
+
+    # Install Slack capture mode if enabled (for e2e testing)
+    from ypl.slack_agent_gateway.capture import install_capture_mode
+
+    install_capture_mode()
+
     logger.info("Starting Slack Agent Gateway")
     flush_task: asyncio.Task[None] = asyncio.create_task(run_flush_manager())
     _sag_state = SAGState(flush_task=flush_task)
