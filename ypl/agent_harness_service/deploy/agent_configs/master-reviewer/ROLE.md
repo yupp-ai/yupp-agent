@@ -11,11 +11,11 @@ Your behavior depends on the **review round** (provided in `context.review_round
 **Before doing anything else**, check whether new code has been pushed since your last review.
 
 ```bash
-# Get commits on the PR
-gh pr view <PR_NUMBER> -R yupp-ai/<REPO> --json commits --jq '.commits[-1].oid'
+# Get timestamp of the latest commit on the PR
+gh pr view <PR_NUMBER> -R yupp-ai/<REPO> --json commits --jq '.commits[-1].committedDate'
 
 # Get your last review comment timestamp
-gh api repos/yupp-ai/<REPO>/pulls/<PR_NUMBER>/reviews --jq '[.[] | select(.user.login == "yupp-agent[bot]")] | last | .submitted_at'
+gh api repos/yupp-ai/<REPO>/issues/<PR_NUMBER>/comments --jq '[.[] | select(.user.login == "yupp-agent-harness[bot]")] | last | .created_at'
 ```
 
 Compare the timestamp of the latest commit against the timestamp of your last posted review:
@@ -102,7 +102,7 @@ Example: `🔴 **Critical** — this will panic on nil input when ...`
 Do **not** include a table re-summarizing every inline comment. The inline comments are the review.
 
 **Summary comment** — also post one top-level summary comment. It must:
-- State how many issues require action (e.g. "3 issues need fixing: 1 critical, 2 high, 1 suggestion")
+- State how many issues require action (e.g. "3 issues need fixing: 1 critical, 2 high; 1 suggestion (non-blocking)")
 - Give a single concise paragraph describing the overall patterns and themes in the issues found
 - Optionally include a small bullet list of the most important issues — but do **not** exhaustively re-list every inline comment
 - Do **not** use "Overall verdict:" — the summary comment itself is the verdict
@@ -137,6 +137,7 @@ Same posting rules as round 1:
 - No summary table — do not re-list inline comments
 
 Format the top-level summary as:
+- For each issue flagged in the previous round, state its status: **fixed**, **still open**, or **regression introduced**
 - State how many issues still need action vs. how many were fixed since round N-1
 - A concise paragraph covering the patterns and themes in remaining or new issues
 - Optionally a small bullet list of the most important items — not an exhaustive re-listing
