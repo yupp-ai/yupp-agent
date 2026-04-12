@@ -81,6 +81,7 @@ async def create_agent(request: AgentCreateRequest) -> AgentCreateResponse:
             status=UserStatus.ACTIVE,
         )
         session.add(user)
+        await session.flush()  # ensure User row exists before FK reference
         agent.agent_user_id = str(agent.agent_id)
         await session.commit()
 
