@@ -90,6 +90,7 @@ from ypl.backend.utils.slack_utils import resolve_slack_user_to_yupp_user_id
 from ypl.backend.utils.soul_utils import has_permission_by_user_id_cached
 from ypl.db.agent_harness import (
     Agent,
+    AgentMessage,
     AgentSession,
     AgentSessionMessage,
     AgentSessionMessageCompletionStatus,
@@ -630,7 +631,9 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
                         slack_user_id=slack_user_id,
                     )
 
-    if not user_id:
+    # For AGENT-triggered sessions, user_id is derived from the sending agent's identity
+    # inside the DB session below (from_agent.agent_user_id).  Skip the early check.
+    if not user_id and trigger != AgentSessionTrigger.AGENT:
         logger.error(
             "Rejected session create: missing user_id",
             source=request.source,
@@ -674,33 +677,79 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
             session.add(agent)
             await session.flush()
 
-        # A2A authorization: enforce deny-by-default when the session is initiated by a peer agent.
-        # Only checked when trigger == AGENT — ``from_agent_id`` is a server-side field set by the
-        # AGENT trigger path (see PR #128) and is NOT available to arbitrary API callers.  Gating
-        # on trigger prevents a non-AGENT caller from injecting ``from_agent_id`` into context and
-        # routing through the authz check with a permissive agent config.
-        _from_agent_id_ctx = context.get("from_agent_id")
-        if _from_agent_id_ctx and trigger == AgentSessionTrigger.AGENT:
+        # For AGENT-triggered sessions: resolve from_agent, enforce A2A authorization,
+        # override creator identity, and guarantee full MCP permissions.
+        if trigger == AgentSessionTrigger.AGENT:
+            _from_agent_id_ctx = context.get("from_agent_id")
+            if not _from_agent_id_ctx:
+                raise AHSValidationError("context.from_agent_id is required when trigger=AGENT")
             # Parse the UUID first — narrow the ValueError catch to just this line so that
             # AHSValidationError (which inherits ValueError) raised below is not mistakenly
             # caught and replaced with a misleading "malformed from_agent_id" message.
             try:
                 _from_agent_uuid = uuid.UUID(str(_from_agent_id_ctx))
-            except ValueError as _val_exc:
+            except ValueError as exc:
+                raise AHSValidationError(f"context.from_agent_id is not a valid UUID: {_from_agent_id_ctx!r}") from exc
+            _from_agent_obj = await session.get(Agent, _from_agent_uuid)
+            if not _from_agent_obj:
+                raise AHSValidationError(f"Sending agent not found: {_from_agent_id_ctx!r}")
+            if not _from_agent_obj.agent_user_id:
                 raise AHSValidationError(
-                    f"A2A authorization failed: malformed from_agent_id {_from_agent_id_ctx!r}"
-                ) from _val_exc
-            _from_agent_result = await session.exec(select(Agent).where(Agent.agent_id == _from_agent_uuid))
-            _from_agent_db = _from_agent_result.one_or_none()
-            if _from_agent_db is None:
-                logger.warning(
-                    "A2A authz: sending agent not found — denying",
-                    from_agent_id=str(_from_agent_id_ctx),
+                    f"Sending agent {_from_agent_obj.name!r} has no agent_user_id. "
+                    "Ensure sweep_agent_user_identities() has run or re-create the agent."
                 )
-                raise AHSValidationError(f"A2A authorization failed: sending agent '{_from_agent_id_ctx}' not found")
-            _from_cfg = load_agent_config_from_db(_from_agent_db)
+
+            # A2A authorization: enforce deny-by-default messaging policy.
             # AgentAuthorizationError propagates to routes.py where it is mapped to HTTP 403.
+            _from_cfg = load_agent_config_from_db(_from_agent_obj)
             check_agent_message_authz(_from_cfg, agent.name or resolved_agent_id)
+
+            # Override user_id: session is attributed to the sending agent's user identity.
+            user_id = _from_agent_obj.agent_user_id
+            logger.info(
+                "AGENT trigger: resolved from_agent identity",
+                from_agent_id=str(_from_agent_uuid),
+                from_agent_name=_from_agent_obj.name,
+                from_agent_user_id=user_id,
+                from_session_id=context.get("from_session_id"),
+            )
+
+            # Identity verification: load the persisted AgentMessage record and confirm its
+            # from_agent_id matches the caller's claim.  agent_message_id is required for all
+            # AGENT-triggered sessions — it binds the trusted identity to a server-side DB
+            # record rather than relying on the request body (which any AHS API key holder
+            # could forge).  trigger=AGENT is a new code path with no legacy callers, so
+            # there is no backward-compat reason to allow missing agent_message_id.
+            _ctx_agent_msg_id = context.get("agent_message_id")
+            if not _ctx_agent_msg_id:
+                raise AHSValidationError("context.agent_message_id is required when trigger=AGENT")
+            # Narrow the ValueError catch to just the UUID parse — same pattern as the
+            # from_agent_id block.  AHSValidationError (ValueError subclass) raised below
+            # must not be caught here and replaced with a misleading "not a valid UUID" message.
+            try:
+                _verify_msg_uuid = uuid.UUID(str(_ctx_agent_msg_id))
+            except ValueError as exc:
+                raise AHSValidationError(
+                    f"context.agent_message_id is not a valid UUID: {_ctx_agent_msg_id!r}"
+                ) from exc
+            _verify_msg = await session.get(AgentMessage, _verify_msg_uuid)
+            if _verify_msg is None or _verify_msg.from_agent_id != _from_agent_uuid:
+                raise AHSValidationError(
+                    f"A2A identity verification failed: agent_message_id {_ctx_agent_msg_id!r} "
+                    f"does not belong to from_agent {_from_agent_id_ctx!r}"
+                )
+
+            # Grant full MCP permissions — AGENT-triggered sessions are trusted internal callers.
+            # Identity is bound above by cross-checking agent_message_id against the DB record.
+            if "permissions" not in context:
+                context["permissions"] = SessionPermissions.full_access().model_dump(mode="json")
+
+        # At this point user_id must be non-None:
+        #   - AGENT trigger: set above from from_agent.agent_user_id
+        #   - All other triggers: guarded by the early validation check above
+        # Help mypy narrow the type so the has_permission_by_user_id_cached call type-checks.
+        if user_id is None:
+            raise AHSValidationError("Internal: user_id could not be resolved for session creation")
 
         if "permissions" in context:
             # Permissions already set by an earlier create_session caller. Respect them.
@@ -974,18 +1023,96 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
                     )
 
     # If a message was provided, kick off the first turn.
-    # Pass user IDs so send_message can re-check USE_MCP for the sender
-    # (without these, it defaults to restricted and overrides permissions).
     if request.message:
-        msg_request = SessionMessageRequest(
-            session_id=str(agent_session.agent_session_id),
-            message=request.message,
-            slack_user_id=context.get("slack_user_id"),
-            user_id=context.get("user_id") or context.get("yupp_user_id") or request.user_id,
-            attachments=request.attachments,
-            source=request.source,
-        )
-        await send_message(msg_request)
+        if trigger == AgentSessionTrigger.AGENT:
+            # Attachments are not yet supported for AGENT-triggered sessions —
+            # the AGENT path bypasses send_message() which handles attachment downloads.
+            # Fail fast rather than silently drop the files.
+            if request.attachments:
+                raise AHSValidationError(
+                    "Attachments are not yet supported for AGENT-triggered sessions. "
+                    "Send text-based content only until attachment handling is implemented."
+                )
+
+            # For AGENT-triggered sessions the initial turn is a FELLOW_AGENT message,
+            # not a USER message.  We write it directly (bypassing send_message) to
+            # preserve provenance (from_agent_id + agent_message_id_ref).
+            #
+            # Both _from_agent_uuid and _verify_msg_uuid were validated (and identity-
+            # verified) in the AGENT identity resolution block above.  agent_message_id is
+            # now unconditionally required, so both values are always non-None here — reuse
+            # them directly rather than re-parsing the same context keys.
+            _fellow_from_agent_id: uuid.UUID = _from_agent_uuid
+            _fellow_agent_msg_ref: uuid.UUID = _verify_msg_uuid
+
+            async with get_async_session() as _msg_db:
+                _fellow_turn = await _next_turn_number(_msg_db, agent_session.agent_session_id)
+                _fellow_msg = AgentSessionMessage(
+                    agent_session_id=agent_session.agent_session_id,
+                    turn_number=_fellow_turn,
+                    role=AgentSessionMessageRole.FELLOW_AGENT,
+                    content=request.message,
+                    creator_user_id=user_id,
+                    from_agent_id=_fellow_from_agent_id,
+                    agent_message_id_ref=_fellow_agent_msg_ref,
+                )
+                _msg_db.add(_fellow_msg)
+                await _msg_db.commit()
+
+            logger.info(
+                "AGENT trigger: injected FELLOW_AGENT turn",
+                session_id=str(agent_session.agent_session_id),
+                turn_number=_fellow_turn,
+                from_agent_id=str(_fellow_from_agent_id),
+                agent_message_id_ref=str(_fellow_agent_msg_ref),
+            )
+
+            # Fire agent task for this turn.
+            # Guard: if task creation fails after message commit, mark the session as
+            # COMPLETED (terminal) so it doesn't persist as a zombie with an unanswered
+            # FELLOW_AGENT turn and no running responder.
+            _active_tasks[agent_session.agent_session_id] = None  # type: ignore[assignment]
+            try:
+                _agent_task = create_background_task(
+                    _run_agent_task(
+                        agent_session_id=agent_session.agent_session_id,
+                        turn_number=_fellow_turn,
+                        message=request.message,
+                        agent_config_name=resolved_agent_id,
+                        workspace=agent_session.workspace,
+                        llm_session_id=agent_session.llm_session_id,
+                        extra_dirs=agent_session.extra_dirs or [],
+                        slack_session_id=agent_session.slack_session_id,
+                        is_slack=False,
+                        is_task=False,
+                        session_context=dict(agent_session.context) if agent_session.context else {},
+                        trigger=agent_session.trigger.value,
+                        session_created_at=agent_session.created_at,
+                    )
+                )
+                _active_tasks[agent_session.agent_session_id] = _agent_task
+            except Exception:
+                logger.exception(
+                    "AGENT trigger: background task creation failed after message commit "
+                    "— marking session COMPLETED to prevent zombie state",
+                    session_id=str(agent_session.agent_session_id),
+                )
+                _active_tasks.pop(agent_session.agent_session_id, None)
+                async with get_async_session() as _fail_db:
+                    await _mark_session_completed(_fail_db, agent_session.agent_session_id)
+                    await _fail_db.commit()
+        else:
+            # Pass user IDs so send_message can re-check USE_MCP for the sender
+            # (without these, it defaults to restricted and overrides permissions).
+            msg_request = SessionMessageRequest(
+                session_id=str(agent_session.agent_session_id),
+                message=request.message,
+                slack_user_id=context.get("slack_user_id"),
+                user_id=context.get("user_id") or context.get("yupp_user_id") or request.user_id,
+                attachments=request.attachments,
+                source=request.source,
+            )
+            await send_message(msg_request)
 
     return SessionCreateResponse(
         session_id=str(agent_session.agent_session_id),
@@ -1328,10 +1455,11 @@ async def stop_session(session_id: str) -> SessionStopResponse:
 
         # Capture the inflight turn number so Phase 3 writes [INTERRUPTED]
         # for this specific turn, not a newer one that might start later.
+        # Check both USER and FELLOW_AGENT roles — A2A-triggered turns are inflight too.
         latest_user_turn_result = await session.exec(
             select(func.max(AgentSessionMessage.turn_number)).where(
                 AgentSessionMessage.agent_session_id == agent_session.agent_session_id,
-                col(AgentSessionMessage.role) == AgentSessionMessageRole.USER,
+                col(AgentSessionMessage.role).in_([AgentSessionMessageRole.USER, AgentSessionMessageRole.FELLOW_AGENT]),
             )
         )
         inflight_turn = latest_user_turn_result.one() or 0
@@ -1369,14 +1497,17 @@ async def stop_session(session_id: str) -> SessionStopResponse:
     # still inflight — if the task completed between Phase 1 and now,
     # it already wrote an AGENT/SYSTEM message and we should not duplicate.
     async with get_async_session() as session:
-        # Check for a completed response: any non-USER message that is not
-        # IN_PROGRESS.  Eager-persist drafts (IN_PROGRESS) are excluded so we
-        # don't mistake an actively-running turn for one that finished naturally.
+        # Check for a completed response: exclude both inbound roles (USER and
+        # FELLOW_AGENT) — a FELLOW_AGENT message is the request, not the response.
+        # Eager-persist drafts (IN_PROGRESS) are excluded so we don't mistake an
+        # actively-running turn for one that finished naturally.
         response_count_result = await session.exec(
             select(func.count()).where(
                 AgentSessionMessage.agent_session_id == agent_session_id,
                 AgentSessionMessage.turn_number == inflight_turn,
-                col(AgentSessionMessage.role) != AgentSessionMessageRole.USER,
+                col(AgentSessionMessage.role).not_in(
+                    [AgentSessionMessageRole.USER, AgentSessionMessageRole.FELLOW_AGENT]
+                ),
                 col(AgentSessionMessage.completion_status) != AgentSessionMessageCompletionStatus.IN_PROGRESS,
             )
         )
