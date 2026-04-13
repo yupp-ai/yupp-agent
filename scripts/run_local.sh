@@ -69,6 +69,7 @@ NC='\033[0m' # No Color
 # ---------------------------------------------------------------------------
 STREAMLIT=false
 NO_INTERACTIVE=false
+E2E_MODE=false
 PG_HOST=localhost
 PG_PORT=5432
 REDIS_HOST=localhost
@@ -78,6 +79,7 @@ for arg in "$@"; do
     case "$arg" in
         --streamlit) STREAMLIT=true ;;
         --no-interactive) NO_INTERACTIVE=true ;;
+        --e2e) E2E_MODE=true ;;
         --pg-host=*) PG_HOST="${arg#*=}" ;;
         --pg-port=*) PG_PORT="${arg#*=}" ;;
         --redis-host=*) REDIS_HOST="${arg#*=}" ;;
@@ -87,6 +89,7 @@ for arg in "$@"; do
             echo ""
             echo "Options:"
             echo "  --streamlit          Also start Streamlit dashboards on port 8501"
+            echo "  --e2e                Enable Slack capture mode + load .env.e2e overrides"
             echo "  --no-interactive     Never prompt or auto-start services; fail on error"
             echo "  --pg-host=HOST       Postgres host (default: localhost)"
             echo "  --pg-port=PORT       Postgres port (default: 5432)"
@@ -279,6 +282,20 @@ export SANDBOX_ENABLED="${SANDBOX_ENABLED:-false}"
 export USE_GOOGLE_CLOUD_LOGGING="${USE_GOOGLE_CLOUD_LOGGING:-false}"
 export DISABLE_WRITE_GOOGLE_CLOUD_METRICS="${DISABLE_WRITE_GOOGLE_CLOUD_METRICS:-true}"
 export PYTHONPATH="$REPO_ROOT"
+
+# E2E mode: source .env.e2e to override .env values
+if [ "$E2E_MODE" = true ]; then
+    if [ -f "$REPO_ROOT/.env.e2e" ]; then
+        echo -e "  ${YELLOW}E2E mode: loading .env.e2e overrides${NC}"
+        set -a
+        # shellcheck disable=SC1091
+        source "$REPO_ROOT/.env.e2e"
+        set +a
+    else
+        echo -e "  ${RED}.env.e2e not found — create it for e2e testing${NC}"
+        exit 1
+    fi
+fi
 
 # Start Streamlit in background if requested
 if [ "$STREAMLIT" = true ]; then
