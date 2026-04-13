@@ -266,6 +266,10 @@ def create_app() -> FastAPI:
     # Auth is handled by UnifiedMcpAuthMiddleware (already attached to the app):
     #   - x-ahs-token header -> agent context (process-local secret, no DB)
     #   - Bearer yupp_dev_* -> developer context (validated against yuppdb)
+    # Mount /mcp/harness BEFORE /mcp — Starlette matches mounts by prefix,
+    # so /mcp would intercept /mcp/harness/ requests and pass "/harness/" as
+    # the path to the MCP app (which returns 404). The longer prefix must come first.
+    application.mount("/mcp/harness", unified_mcp_http_app)
     application.mount("/mcp", unified_mcp_http_app)
 
     # --- Gateway plugins (all enabled plugins, each at /gw/<name>/) ----------
@@ -276,6 +280,10 @@ def create_app() -> FastAPI:
     for plugin in discover_plugins(config):
         if router := plugin.get_router():
             application.include_router(router, prefix=f"/gw/{plugin.name}")
+            # Also mount at legacy prefix for backward compatibility with
+            # AHS gateway callbacks that use /slack-agent-gateway/ paths.
+            if plugin.name == "slack":
+                application.include_router(router, prefix="/slack-agent-gateway")
 
     # --- Health check (always registered, no auth) ---------------------------
     @application.get("/health", tags=["health"])
