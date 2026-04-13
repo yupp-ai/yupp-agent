@@ -91,13 +91,13 @@ class TestRouteRegistration:
         mounts = _mount_paths(app)
         assert "/mcp" in mounts, f"Missing /mcp mount. Mounts: {mounts}"
 
-    def test_old_split_mcp_mounts_removed(self) -> None:
-        """Stage 5 unified MCP: /mcp/harness and /mcp/yuppster are no longer separate mounts."""
+    def test_legacy_mcp_harness_mount_present(self) -> None:
+        """Legacy /mcp/harness mount is present for backward compat with AHS executor MCP client."""
         from ypl.mono_server.server import app
 
         mounts = _mount_paths(app)
-        assert "/mcp/harness" not in mounts, f"Unexpected /mcp/harness mount in Stage 5: {mounts}"
-        assert "/mcp/yuppster" not in mounts, f"Unexpected /mcp/yuppster mount in Stage 5: {mounts}"
+        assert "/mcp/harness" in mounts, f"Missing /mcp/harness legacy mount: {mounts}"
+        assert "/mcp/yuppster" not in mounts, f"Unexpected /mcp/yuppster mount: {mounts}"
 
     def test_slack_gateway_routes_present_by_default(self) -> None:
         """SAG routes are present when GATEWAY_SLACK_ENABLED=true (default)."""
