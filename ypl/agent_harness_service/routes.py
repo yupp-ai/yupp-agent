@@ -78,6 +78,7 @@ from ypl.agent_harness_service.projects.schedule_service import (
 )
 from ypl.agent_harness_service.search.search_routes import search_router
 from ypl.agent_harness_service.service import (
+    AgentAuthorizationError,
     attach_slack_to_session,
     create_agent,
     create_session,
@@ -111,6 +112,9 @@ async def session_create(request: SessionCreateRequest) -> SessionCreateResponse
     """
     try:
         return await create_session(request)
+    except AgentAuthorizationError as e:
+        # A2A deny-by-default: sending agent not in recipient's allowed_to_message list.
+        raise HTTPException(status_code=403, detail=str(e)) from None
     except AHSValidationError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
     except ValueError as e:

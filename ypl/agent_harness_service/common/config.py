@@ -88,6 +88,17 @@ class AgentConfig(BaseModel):
     # Used by DB-only agents (e.g., personal agents created via create_agent MCP tool).
     additional_system_prompt: str | None = None
 
+    # Agent-to-Agent (A2A) messaging authorization.
+    # Lists the agent names that this agent is permitted to send messages to.
+    # Use ``'*'`` as a wildcard to allow messaging any agent (unrestricted).
+    # Omitting the field (or providing an empty list) enforces deny-by-default:
+    # the agent cannot initiate messages to any other agent.
+    #
+    # Example (config.json):
+    #   "allowed_to_message": ["eng-raccoon", "sre-james"]
+    #   "allowed_to_message": ["*"]   # unrestricted outbound messaging
+    allowed_to_message: list[str] = Field(default_factory=list)
+
     # Deferred MCP tools to pre-load at session start via a Phase 0 ToolSearch call.
     # When non-empty, build_system_prompt() injects a "## Phase 0: Load Tools" section
     # that instructs the agent to call ToolSearch(query="select:<tools>") as its very
@@ -195,6 +206,7 @@ def load_agent_config(name: str) -> AgentConfig | None:
         allowed_subagents=raw.get("allowed_subagents", []),
         allowed_gateways=raw.get("allowed_gateways", ["*"]),
         required_tools=raw.get("required_tools", []),
+        allowed_to_message=raw.get("allowed_to_message", []),
     )
 
     logger.info("Loaded agent config", name=name, model=config.model, max_turns=config.max_turns)
@@ -248,6 +260,7 @@ def load_agent_config_from_db(agent: Any) -> AgentConfig:
         allowed_gateways=raw.get("allowed_gateways", ["*"]),
         additional_system_prompt=agent.additional_system_prompt,
         required_tools=raw.get("required_tools", []),
+        allowed_to_message=raw.get("allowed_to_message", []),
     )
 
 
