@@ -14,12 +14,12 @@ from typing import Any
 
 from sqlmodel import select
 
-from ypl.agent_harness_service.common.config import load_agent_config, load_agent_config_from_db
-from ypl.agent_harness_service.common.constants import mcp_session_id_var
-from ypl.agent_harness_service.service.agent_messaging import (
+from ypl.agent_harness_service.common.agent_messaging_authz import (
     AgentAuthorizationError,
     check_agent_message_authz,
 )
+from ypl.agent_harness_service.common.config import load_agent_config, load_agent_config_from_db
+from ypl.agent_harness_service.common.constants import mcp_session_id_var
 from ypl.agent_harness_service.tools.mcp_instance import _validate_session_id, mcp
 from ypl.backend.db import get_async_session
 from ypl.db.agent_harness import (
@@ -33,6 +33,9 @@ from ypl.db.redis import get_redis_client
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
+
+# Maximum allowed size for the message content field (matches DB column limit).
+MAX_CONTENT_BYTES = 64 * 1024  # 64 KB
 
 
 # ---------------------------------------------------------------------------
@@ -72,6 +75,12 @@ async def send_agent_message(
         ``{"agent_message_id": "<uuid>", "status": "queued"}`` on success, or
         ``{"error": "<reason>"}`` on failure.
     """
+    # ------------------------------------------------------------------
+    # 0. Validate content size
+    # ------------------------------------------------------------------
+    if len(content.encode()) > MAX_CONTENT_BYTES:
+        return {"error": f"content exceeds maximum size ({MAX_CONTENT_BYTES} bytes)"}
+
     # ------------------------------------------------------------------
     # 1. Resolve and validate the caller's session ID
     # ------------------------------------------------------------------
@@ -152,12 +161,19 @@ async def send_agent_message(
             # 3. If to_session_id is set: load session; reopen if COMPLETED/STALE
             # ------------------------------------------------------------------
             if to_session_uuid is not None:
+                # with_for_update() makes the status check + update atomic, preventing TOCTOU
+                # races where two concurrent senders both read COMPLETED and both reopen.
                 to_session_result = await db.execute(
-                    select(AgentSession).where(AgentSession.agent_session_id == to_session_uuid)
+                    select(AgentSession).where(AgentSession.agent_session_id == to_session_uuid).with_for_update()
                 )
                 to_session = to_session_result.scalar_one_or_none()
                 if to_session is None:
                     return {"error": f"Target session '{to_session_id}' not found"}
+
+                # Verify session ownership — prevents injecting a message into another
+                # agent's session even when the caller is authorized to message that agent.
+                if to_session.agent_id != to_agent.agent_id:
+                    return {"error": f"Session '{to_session_id}' does not belong to agent '{to_agent_name}'"}
 
                 if to_session.status in (AgentSessionStatus.COMPLETED, AgentSessionStatus.STALE):
                     logger.info(
@@ -192,7 +208,9 @@ async def send_agent_message(
         #    If Redis is unavailable, the message is still durably queued in
         #    DB and will be re-enqueued by the startup recovery sweep.
         # ------------------------------------------------------------------
-        redis_key = f"session_inbox:{to_session_id}" if to_session_uuid is not None else "a2a_dispatch"
+        # Use the normalised UUID (lowercase) — not the raw caller-supplied string — so the
+        # key matches exactly what every other component in the system produces via str(uuid.UUID(...)).
+        redis_key = f"session_inbox:{to_session_uuid}" if to_session_uuid is not None else "a2a_dispatch"
         try:
             redis_client = await get_redis_client()
             await redis_client.rpush(redis_key, msg_id)  # type: ignore[misc]
