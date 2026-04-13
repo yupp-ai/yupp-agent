@@ -15,6 +15,7 @@ from sqlmodel import col, select
 import ypl.db.all_models  # noqa: F401 — register all tables so FK references resolve
 from ypl.agent_harness_service.common.config import (
     load_agent_config,
+    load_agent_config_from_db,
 )
 from ypl.agent_harness_service.common.constants import (
     AHS_MEMORIES_DIR,
@@ -51,6 +52,9 @@ from ypl.agent_harness_service.executors.runner import (
 )
 from ypl.agent_harness_service.gateway import TRIGGER_TO_GATEWAY, GatewayRegistry
 from ypl.agent_harness_service.gateway.slack_prefetch import fetch_slack_thread_content
+from ypl.agent_harness_service.service.agent_messaging import (
+    check_agent_message_authz,
+)
 from ypl.agent_harness_service.service.resolvers import (
     _download_attachments_to_workspace,
     _has_inflight_turn,
@@ -593,6 +597,7 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
         "webhook": AgentSessionTrigger.WEBHOOK,  # not currently used; reserved for future integrations
         "cron": AgentSessionTrigger.CRON,
         "task": AgentSessionTrigger.TASK,  # Triggered by project task executor
+        "agent": AgentSessionTrigger.AGENT,  # Triggered by a peer agent via A2A messaging
         "api": AgentSessionTrigger.API,
     }
     trigger = trigger_map.get(request.trigger.lower(), AgentSessionTrigger.API)
@@ -668,6 +673,34 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
             )
             session.add(agent)
             await session.flush()
+
+        # A2A authorization: enforce deny-by-default when the session is initiated by a peer agent.
+        # Only checked when trigger == AGENT — ``from_agent_id`` is a server-side field set by the
+        # AGENT trigger path (see PR #128) and is NOT available to arbitrary API callers.  Gating
+        # on trigger prevents a non-AGENT caller from injecting ``from_agent_id`` into context and
+        # routing through the authz check with a permissive agent config.
+        _from_agent_id_ctx = context.get("from_agent_id")
+        if _from_agent_id_ctx and trigger == AgentSessionTrigger.AGENT:
+            # Parse the UUID first — narrow the ValueError catch to just this line so that
+            # AHSValidationError (which inherits ValueError) raised below is not mistakenly
+            # caught and replaced with a misleading "malformed from_agent_id" message.
+            try:
+                _from_agent_uuid = uuid.UUID(str(_from_agent_id_ctx))
+            except ValueError as _val_exc:
+                raise AHSValidationError(
+                    f"A2A authorization failed: malformed from_agent_id {_from_agent_id_ctx!r}"
+                ) from _val_exc
+            _from_agent_result = await session.exec(select(Agent).where(Agent.agent_id == _from_agent_uuid))
+            _from_agent_db = _from_agent_result.one_or_none()
+            if _from_agent_db is None:
+                logger.warning(
+                    "A2A authz: sending agent not found — denying",
+                    from_agent_id=str(_from_agent_id_ctx),
+                )
+                raise AHSValidationError(f"A2A authorization failed: sending agent '{_from_agent_id_ctx}' not found")
+            _from_cfg = load_agent_config_from_db(_from_agent_db)
+            # AgentAuthorizationError propagates to routes.py where it is mapped to HTTP 403.
+            check_agent_message_authz(_from_cfg, agent.name or resolved_agent_id)
 
         if "permissions" in context:
             # Permissions already set by an earlier create_session caller. Respect them.

@@ -25,6 +25,14 @@ from ypl.agent_harness_service.service.agent_crud import (
 )
 
 # ---------------------------------------------------------------------------
+# Agent messaging authorization
+# ---------------------------------------------------------------------------
+from ypl.agent_harness_service.service.agent_messaging import (
+    AgentAuthorizationError,
+    check_agent_message_authz,
+)
+
+# ---------------------------------------------------------------------------
 # Message / data helpers
 # ---------------------------------------------------------------------------
 from ypl.agent_harness_service.service.message_helpers import (
@@ -152,4 +160,7 @@ __all__ = [
     # Agent CRUD
     "create_agent",
     "edit_agent",
+    # Agent messaging authorization
+    "AgentAuthorizationError",
+    "check_agent_message_authz",
 ]
