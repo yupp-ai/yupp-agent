@@ -150,29 +150,38 @@ async def _next_turn_number(session: AsyncSession, agent_session_id: uuid.UUID) 
 
 
 async def _has_inflight_turn(session: AsyncSession, agent_session_id: uuid.UUID) -> bool:
-    """Check if there's a USER message whose turn has no AGENT/SYSTEM response yet.
+    """Check if there's an inbound turn (USER or FELLOW_AGENT) with no completed response yet.
 
     Must be called under FOR UPDATE lock on the session row.
+
+    FELLOW_AGENT turns originate from A2A messaging (trigger=AGENT) and must be treated
+    as inflight sentinels on equal footing with USER turns so that:
+    - Concurrent AGENT messages are serialized rather than spawning parallel tasks.
+    - stop_session() correctly detects and cancels inflight A2A-triggered turns.
     """
-    # Find the latest turn that has a USER message
+    # Find the latest turn that has an inbound (USER or FELLOW_AGENT) message
     latest_user_turn = await session.exec(
         select(func.max(AgentSessionMessage.turn_number)).where(
             AgentSessionMessage.agent_session_id == agent_session_id,
-            col(AgentSessionMessage.role) == AgentSessionMessageRole.USER,
+            col(AgentSessionMessage.role).in_([AgentSessionMessageRole.USER, AgentSessionMessageRole.FELLOW_AGENT]),
         )
     )
     max_user_turn: int | None = latest_user_turn.one()
     if max_user_turn is None:
         return False
 
-    # Check if that turn has a completed response.  Any message whose
-    # completion_status is not IN_PROGRESS counts — SYSTEM messages are always
-    # terminal; AGENT eager-persist draft rows carry IN_PROGRESS and are excluded.
+    # Check if that turn has a completed response.  Exclude both inbound roles
+    # (USER and FELLOW_AGENT) — a FELLOW_AGENT message is the *request*, not the
+    # response, and its default completion_status (SUCCESS) would otherwise make
+    # it count as a completed response the instant it is committed, causing
+    # _has_inflight_turn to always return False for A2A-triggered turns.
+    # AGENT eager-persist draft rows carry IN_PROGRESS and are excluded via the
+    # completion_status filter; SYSTEM messages are always terminal.
     response_result = await session.exec(
         select(func.count()).where(
             AgentSessionMessage.agent_session_id == agent_session_id,
             AgentSessionMessage.turn_number == max_user_turn,
-            col(AgentSessionMessage.role) != AgentSessionMessageRole.USER,
+            col(AgentSessionMessage.role).not_in([AgentSessionMessageRole.USER, AgentSessionMessageRole.FELLOW_AGENT]),
             col(AgentSessionMessage.completion_status) != AgentSessionMessageCompletionStatus.IN_PROGRESS,
         )
     )
