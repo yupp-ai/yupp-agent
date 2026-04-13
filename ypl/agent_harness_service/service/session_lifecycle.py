@@ -600,7 +600,6 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
         "task": AgentSessionTrigger.TASK,  # Triggered by project task executor
         "agent": AgentSessionTrigger.AGENT,  # Triggered by a peer agent via A2A messaging
         "api": AgentSessionTrigger.API,
-        "agent": AgentSessionTrigger.AGENT,  # Session initiated by another agent (A2A messaging)
     }
     trigger = trigger_map.get(request.trigger.lower(), AgentSessionTrigger.API)
 
