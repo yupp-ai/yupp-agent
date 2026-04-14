@@ -213,7 +213,7 @@ async def health_check(request: Request) -> JSONResponse:
 # notifications over the SSE channel; the drain stream is semantically equivalent.
 
 _SSE_KEEPALIVE_INTERVAL_S: int = 30  # seconds between SSE keep-alive comments
-_SSE_MAX_DURATION_S: int = 480  # 8 minutes — safely under Cloud Run's 10-minute limit
+_SSE_MAX_DURATION_S: int = 480  # must be < Cloud Run --timeout with a ~2 min safety buffer
 
 
 async def mcp_get_sse_drain(request: Request) -> StreamingResponse:
@@ -242,9 +242,14 @@ async def mcp_get_sse_drain(request: Request) -> StreamingResponse:
     """
 
     async def _sse_generator() -> AsyncGenerator[str, None]:
-        deadline = asyncio.get_event_loop().time() + _SSE_MAX_DURATION_S
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _SSE_MAX_DURATION_S
         while True:
-            remaining = deadline - asyncio.get_event_loop().time()
+            # Exit early if the client has already disconnected (e.g. IDE closed).
+            if await request.is_disconnected():
+                logger.info("SSE client disconnected", http_path="/mcp")
+                return
+            remaining = deadline - loop.time()
             if remaining <= 0:
                 # Yield a final drain comment so the client sees an SSE frame,
                 # then let the generator return — this closes the stream cleanly.
@@ -457,6 +462,9 @@ app = Starlette(
         # 'Truncated response body' warnings.  POST /mcp (tool calls) and
         # DELETE /mcp (session termination) still fall through to mcp_http_app.
         # See mcp_get_sse_drain docstring for full explanation.
+        # IMPORTANT: only valid when mcp_http_app is configured with stateless_http=True
+        # (see mcp_http_app definition above); a stateful server would need its own
+        # SSE channel and this interceptor would break session-level notifications.
         Route("/mcp", mcp_get_sse_drain, methods=["GET"]),
         # Mount MCP at root - FastMCP handles /mcp path internally
         Mount("/", app=mcp_http_app),
