@@ -189,8 +189,8 @@ def _parse_priority(value: str, context: str) -> tuple[AgentTaskPriority | None,
         "Create a new agent project. Projects group related tasks with dependencies "
         "and track progress toward a common goal. Projects start in PAUSED status; "
         "set to ACTIVE via set_project_status to begin task execution. "
-        "slack_channel defaults to 'agent-project' if not specified. "
-        "Prefer a plain channel name (e.g. 'agent-project'); channel IDs are also accepted."
+        "slack_channel defaults to 'agentic-projects' if not specified. "
+        "Prefer a plain channel name (e.g. 'agentic-projects'); channel IDs are also accepted."
     ),
 )
 @retry_db
@@ -204,8 +204,8 @@ async def add_project(
     Args:
         name: Human-readable project name (e.g. "Q3 model migration")
         description: Goal description and completion criteria — what "done" looks like
-        slack_channel: Slack channel for progress updates (e.g. "agent-project").
-            Prefer a plain channel name; channel IDs are also accepted. Defaults to "agent-project" if not specified.
+        slack_channel: Slack channel for progress updates (e.g. "agentic-projects").
+            Prefer a plain channel name; channel IDs are also accepted. Defaults to "agentic-projects" if not specified.
 
     Returns:
         Dictionary with project ID and metadata

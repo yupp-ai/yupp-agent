@@ -42,8 +42,8 @@ AHS_SKILLS_DIR = os.environ.get(
 AHS_WORKSPACES_DIR = os.environ.get("AHS_WORKSPACES_DIR", os.path.join(AHS_DATA_DIR, "sessions"))
 AHS_SESSIONS_DIR = os.environ.get("AHS_SESSIONS_DIR", AHS_WORKSPACES_DIR)
 
-# Default Slack channel for new agent projects (plain channel name, no "#" or ID).
-AHS_DEFAULT_PROJECT_SLACK_CHANNEL = os.environ.get("AHS_DEFAULT_PROJECT_SLACK_CHANNEL", "agent-project")
+# Default Slack channel for new agent projects (plain channel name, no "#" prefix or ID).
+AHS_DEFAULT_PROJECT_SLACK_CHANNEL = os.environ.get("AHS_DEFAULT_PROJECT_SLACK_CHANNEL", "agentic-projects")
 
 # Infrastructure subdirectories inside a session workspace that are NOT worktrees.
 # Used by resolve_workspace, scan_session_worktrees, create_pr, and cleanup to
