@@ -66,7 +66,11 @@ Execute the task as described in your task description. Follow whatever instruct
 
 ### Pull Requests
 
-If your task involves code changes, **create the PR directly** — do not wait for approval to create it. There is no way for a reviewer to see the diff without a PR. Create the PR in **draft mode** by default (use `gh pr create --draft`), unless the project's `shared_state` contains `"pr_mode": "ready"`, in which case create it as ready for review.
+If your task involves code changes, **create the PR directly** — do not wait for approval to create it. There is no way for a reviewer to see the diff without a PR. Use the `create_pr` MCP tool (not `gh pr create`) — it handles GitHub auth, user attribution, and draft mode. Create the PR in **draft mode** by default, unless the project's `shared_state` contains `"pr_mode": "ready"`, in which case pass `draft=False`.
+
+**PR title:** Use `[Project Name] Task title` as the PR title so reviewers can immediately see which project and task the PR belongs to. For example, if your project is "AHS Monolith" and your task is "[7] GitHub gateway plugin", the PR title should be `[AHS Monolith][7] GitHub gateway plugin`.
+
+**PR body:** The `create_pr` tool automatically prepends the attribution header (agent name, user, project/task link, session link) for task-triggered sessions. Focus the body on TL;DR, Problem, and Solution — follow the `/create-pr` skill format.
 
 If the work requires multiple PRs, complete what you can in one PR and report in your result that the scope was larger than expected.
 
