@@ -236,7 +236,15 @@ Use `AskUserQuestion`:
 > 2. SLACK_E2E_CHANNEL_ID
 > 3. SLACK_E2E_BOT_USER_ID
 
-Store these values — they're needed by `/run-e2e-tests`.
+After the user provides the values, **append them to `.env.e2e`** so they persist across sessions and are automatically loaded by `source .env.e2e` in `/run-e2e-tests`:
+
+```bash
+cat >> .env.e2e <<EOF
+SLACK_E2E_USER_TOKEN=<provided_token>
+SLACK_E2E_CHANNEL_ID=<provided_channel_id>
+SLACK_E2E_BOT_USER_ID=<provided_bot_user_id>
+EOF
+```
 
 ---
 
