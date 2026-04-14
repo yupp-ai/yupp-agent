@@ -181,7 +181,12 @@ async def create_pr(
         }
 
     # For task-triggered sessions, prepend the attribution header if not already present.
-    attribution = await _resolve_pr_attribution(session_id)
+    # Attribution is cosmetic — must not block PR creation on DB errors.
+    try:
+        attribution = await _resolve_pr_attribution(session_id)
+    except Exception:
+        logger.warning("Failed to resolve PR attribution, skipping", session_id=session_id)
+        attribution = None
     if attribution and not body.startswith("\U0001f916"):
         body = attribution + "\n\n" + body
 

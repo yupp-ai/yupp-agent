@@ -228,7 +228,7 @@ async def _resolve_pr_attribution(session_id: str) -> str | None:
                     select(AgentTask.title).where(AgentTask.agent_task_id == _uuid.UUID(task_id))
                 )
                 task_title = task_result.scalar_one_or_none() or ""
-            except (ValueError, Exception):
+            except Exception:
                 logger.warning("Failed to fetch task title for PR attribution", task_id=task_id)
 
     # Build attribution lines

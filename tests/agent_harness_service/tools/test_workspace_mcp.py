@@ -183,6 +183,10 @@ class TestCreatePr:
                 new=AsyncMock(return_value="ghp_token123"),
             ),
             patch(
+                "ypl.agent_harness_service.tools.workspace._resolve_pr_attribution",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
                 "ypl.agent_harness_service.tools.workspace.push_and_create_pr",
                 return_value=expected_result,
             ),
