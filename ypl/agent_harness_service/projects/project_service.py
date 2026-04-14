@@ -27,6 +27,7 @@ from ypl.agent_harness_service.projects.project_types import (
 )
 from ypl.agent_harness_service.projects.task_utils import (
     TERMINAL_TASK_STATUSES,
+    are_dependencies_completed,
     complete_task,
     validate_task_status_change,
 )
@@ -751,6 +752,74 @@ async def set_task_dependencies_service(
             new_status=task.status.value,
         )
 
+        return _format_task(task, resolved_agent_name, creator_user_id, creator_user_name)
+
+
+@retry_db
+async def restart_task_service(project_id: str, task_id: str) -> TaskResponse:
+    """Restart a task by clearing execution state and resetting to READY (or PENDING if deps unmet)."""
+    proj_uuid = uuid.UUID(project_id)
+    task_uuid = uuid.UUID(task_id)
+
+    async with get_async_session() as session:
+        task_result = await session.execute(
+            select(AgentTask)
+            .where(col(AgentTask.agent_task_id) == task_uuid)
+            .where(col(AgentTask.agent_project_id) == proj_uuid)
+            .where(col(AgentTask.deleted_at).is_(None))
+            .with_for_update()
+        )
+        task = task_result.scalars().first()
+        if not task:
+            raise LookupError(f"Task not found: {task_id} in project {project_id}")
+
+        old_status = task.status.value
+
+        # Clear execution state
+        task.result = None
+        task.completed_at = None
+        task.actual_spending_usd = None
+        task.assigned_session_ids = None
+
+        # Set to READY if deps are met, otherwise PENDING
+        if await are_dependencies_completed(session, task):
+            task.status = AgentTaskStatus.READY
+        else:
+            task.status = AgentTaskStatus.PENDING
+
+        session.add(task)
+        await session.commit()
+        await session.refresh(task)
+
+        # Resolve agent name
+        resolved_agent_name: str | None = None
+        if task.agent_id:
+            agent_result = await session.execute(
+                select(Agent.name).where(col(Agent.agent_id) == task.agent_id).where(Agent.deleted_at.is_(None))  # type: ignore[union-attr]
+            )
+            agent_row = agent_result.first()
+            resolved_agent_name = agent_row.name if agent_row else None
+
+        # Resolve project creator
+        proj_result = await session.execute(
+            select(AgentProject.creator_user_id).where(col(AgentProject.agent_project_id) == proj_uuid)
+        )
+        proj_row = proj_result.first()
+        creator_user_id = proj_row.creator_user_id if proj_row else None
+
+        creator_user_name: str | None = None
+        if creator_user_id:
+            user_result = await session.execute(select(User.name).where(col(User.user_id) == creator_user_id))
+            user_row = user_result.first()
+            creator_user_name = user_row.name if user_row else None
+
+        logger.info(
+            "Restarted task via REST",
+            task_id=task_id,
+            project_id=project_id,
+            old_status=old_status,
+            new_status=task.status.value,
+        )
         return _format_task(task, resolved_agent_name, creator_user_id, creator_user_name)
 
 
