@@ -318,7 +318,7 @@ class TestRunAgentTaskTeardown:
         # Manager should still be registered.
         assert _command_handlers.get(sid) is mgr
         assert get_command_handler_manager(str(sid)) is mgr
-        mgr.stop.assert_not_awaited()
+        mgr.stop.assert_not_awaited()  # type: ignore[union-attr]
 
         # Cleanup.
         _command_handlers.pop(sid, None)
