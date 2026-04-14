@@ -44,7 +44,7 @@ _together_types.ChatCompletion = _ChatCompletion  # type: ignore[attr-defined]
 sys.modules.setdefault("together", _together)
 sys.modules.setdefault("together.types", _together_types)
 try:
-    import croniter as _real_croniter  # type: ignore[import-untyped]  # noqa: F401
+    import croniter as _real_croniter  # type: ignore[import-untyped,unused-ignore]  # noqa: F401
 except ImportError:
     _croniter.croniter = lambda *args, **kwargs: None  # type: ignore[attr-defined]
     sys.modules.setdefault("croniter", _croniter)
