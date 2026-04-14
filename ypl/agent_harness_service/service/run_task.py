@@ -1145,9 +1145,19 @@ async def _run_agent_task(
         # Drain pending messages unless the user explicitly stopped the session.
         # On cancellation, stop_session() clears the pending queue itself.
         if not was_cancelled:
-            from ypl.agent_harness_service.service.session_lifecycle import _drain_pending_messages
+            from ypl.agent_harness_service.service.session_lifecycle import (
+                _drain_pending_messages,
+                _drain_session_inbox,
+            )
 
             await _drain_pending_messages(agent_session_id)
+
+            # Scenario B (A2A inject): drain any messages that arrived in the
+            # session's Redis inbox while this turn was running.  Runs after
+            # _drain_pending_messages so all user-queued messages are already
+            # dispatched before we pick up peer-agent messages.
+            async with get_async_session() as _inbox_db:
+                await _drain_session_inbox(agent_session_id, _inbox_db)
         # Only remove if the mapping still points to *this* task. A newer message
         # (or a drained turn) may have already replaced it with a different task.
         current = asyncio.current_task()
