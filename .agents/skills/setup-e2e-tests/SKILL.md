@@ -212,11 +212,45 @@ If not, debug by checking monolith logs for:
 
 ---
 
-## Step 11: Run e2e tests
+## Step 11: Set up Slack test token (for automated e2e tests)
+
+The e2e test suite sends real messages to Slack programmatically. It needs a **user token** (not a bot token).
+
+Use `AskUserQuestion`:
+
+> **Set up Slack user token for e2e tests**
+>
+> The tests need a Slack user token (`xoxp-...`) to send messages. Bot tokens (`xoxb-...`) don't work — Slack only fires `app_mention` events for user-sent messages.
+>
+> **To create one:**
+> 1. Go to https://api.slack.com/apps → Create New App (or use an existing one)
+> 2. OAuth & Permissions → User Token Scopes → add `chat:write`, `channels:history`, `channels:read`
+> 3. Install to Workspace → copy the **User OAuth Token** (`xoxp-...`)
+>
+> **Also needed:**
+> - **Channel ID**: Right-click `#ahs-e2e-testing` → View channel details → Channel ID (starts with `C`)
+> - **Bot User ID**: Click the e2e test bot's name in Slack → View app details → Member ID (starts with `U`)
+>
+> Please provide:
+> 1. SLACK_E2E_USER_TOKEN
+> 2. SLACK_E2E_CHANNEL_ID
+> 3. SLACK_E2E_BOT_USER_ID
+
+After the user provides the values, **append them to `.env.e2e`** so they persist across sessions and are automatically loaded by `source .env.e2e` in `/run-e2e-tests`:
 
 ```bash
-poetry run pytest tests/e2e/ -v -m e2e --timeout=60
+cat >> .env.e2e <<EOF
+SLACK_E2E_USER_TOKEN=<provided_token>
+SLACK_E2E_CHANNEL_ID=<provided_channel_id>
+SLACK_E2E_BOT_USER_ID=<provided_bot_user_id>
+EOF
 ```
+
+---
+
+## Step 12: Verify with e2e tests
+
+Run `/run-e2e-tests` to verify the full setup works.
 
 ---
 
