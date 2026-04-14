@@ -52,7 +52,7 @@ When the user shares a discussion (Slack thread, meeting notes) or a design doc 
 Read the source material and identify:
 - **Project name**: Short, descriptive (e.g. "Q3 model migration", "Fix routing latency")
 - **Description**: 1-3 sentences covering the goal and what "done" looks like
-- **Slack channel**: Used for progress updates and human confirmations. Defaults to `agent-project` — you usually don't need to specify this. If the user wants a different channel, use a plain channel name — no `#` prefix, no Slack channel ID. The corresponding Slack bot must already be a member of the chosen channel — remind the user to verify this.
+- **Slack channel**: Used for progress updates and human confirmations. Defaults to `agent-project` — you usually don't need to specify this. If the user wants a different channel, prefer a plain channel name (channel IDs are also accepted). The corresponding Slack bot must already be a member of the chosen channel — remind the user to verify this.
 - **Default agent**: Required for task execution. The scheduler uses this agent for any task that doesn't have its own `agent_name` set. Always ask: "Which agent should execute tasks in this project? (default: sre)". If the user is unsure, call `list_ahs_agents` to show available agents. If the user doesn't specify, use `sre`.
 
 Before creating, check for duplicates using `list_projects` or `get_project(name=...)`.
@@ -185,7 +185,7 @@ Shall I create these?
 ### Step 4: Create the Project and Tasks
 
 After user approval:
-1. Call `add_project` with the agreed name, description, and `default_agent_name` (default `sre`). The `slack_channel` defaults to `agent-project` — only pass it if the user wants a different channel. Use a plain channel name, no `#` prefix.
+1. Call `add_project` with the agreed name, description, and `default_agent_name` (default `sre`). The `slack_channel` defaults to `agent-project` — only pass it if the user wants a different channel. Prefer a plain channel name; channel IDs are also accepted.
 2. Call `add_tasks` with the full task list, using `name` fields for local dependency references
 3. Seed project shared state with creator context:
    - `set_project_state(project_id, "creator_slack_user_id", '"<slack_user_id>"')` — the Slack user ID of the project owner, used by executor agents for @mentions in human checkpoints
