@@ -331,6 +331,29 @@ class TestGCSBlobStoreExists:
             result = await store.exists(SAMPLE_PATH)
         assert result is True
 
+    async def test_exists_false_when_blob_is_none(self) -> None:
+        from ypl.backend.utils.blob_store_gcs import GCSBlobStore
+
+        store = GCSBlobStore(bucket="test-bucket")
+
+        mock_bucket = MagicMock()
+        mock_bucket.get_blob = AsyncMock(return_value=None)
+        mock_storage = MagicMock()
+        mock_storage.get_bucket = MagicMock(return_value=mock_bucket)
+        mock_storage.__aenter__ = AsyncMock(return_value=mock_storage)
+        mock_storage.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("ypl.backend.utils.blob_store_gcs.aiohttp.ClientSession", return_value=mock_session),
+            patch("ypl.backend.utils.blob_store_gcs.Storage", return_value=mock_storage),
+        ):
+            result = await store.exists(SAMPLE_PATH)
+        assert result is False
+
     async def test_exists_false_on_404(self) -> None:
         import aiohttp as _aiohttp
         from ypl.backend.utils.blob_store_gcs import GCSBlobStore

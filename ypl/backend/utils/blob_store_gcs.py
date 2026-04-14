@@ -71,8 +71,8 @@ class GCSBlobStore:
         try:
             async with aiohttp.ClientSession() as session, Storage(session=session) as storage:  # type: ignore[arg-type]
                 bucket = storage.get_bucket(self.bucket)
-                await bucket.get_blob(path)
-            return True
+                blob = await bucket.get_blob(path)
+            return blob is not None
         except aiohttp.ClientResponseError as exc:
             if exc.status == 404:
                 return False
