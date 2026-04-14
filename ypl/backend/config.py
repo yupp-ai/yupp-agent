@@ -359,6 +359,12 @@ class Settings(BaseSettings):
     GCS_BUCKET_NAME: str = os.getenv("GCS_BUCKET_NAME", "yupp-data")
     AGENT_MEMORY_BUCKET: str = os.getenv("AGENT_MEMORY_BUCKET", "yupp-agents")
 
+    # Blob store settings — pluggable storage backend for artifact/paste blobs.
+    # BLOB_STORE_BACKEND: "local" uses the filesystem; "gcs" uses GCS_BUCKET_NAME.
+    BLOB_STORE_BACKEND: str = "local"
+    BLOB_STORE_LOCAL_ROOT: str = "/data/artifacts"
+    BLOB_STORE_LOCAL_BASE_URL: str = ""
+
     # Data Takeout settings
     DATA_TAKEOUT_BUCKET: str = "yupp-data-takeouts-staging"  # GCS bucket for takeout ZIPs
     DATA_TAKEOUT_OUTPUT_DIR: str = "/tmp/data-takeouts"  # Local/FUSE path for writing ZIPs
