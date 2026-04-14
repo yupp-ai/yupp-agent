@@ -168,11 +168,36 @@ You should see:
 2. A "Looking into it..." placeholder message
 3. A reply from the parrot-bubba agent (synthetic response, no LLM)
 
-### 12. Run e2e tests
+### 12. Set up e2e test tokens
+
+The e2e tests need a Slack user token to send messages programmatically. Create a simple Slack app for this:
+
+1. Go to https://api.slack.com/apps → **Create New App** → "From scratch"
+2. Name: `e2e-test-sender`, workspace: your workspace
+3. **OAuth & Permissions** → under **User Token Scopes**, add:
+   - `chat:write` (send messages as you)
+   - `channels:history` (read replies)
+   - `channels:read` (list channels)
+4. **Install to Workspace** → Authorize
+5. Copy the **User OAuth Token** (`xoxp-...`)
+
+Then find your bot's Slack user ID:
+- In Slack, click on the bot's name → "View app details" → copy the **Member ID** (starts with `U`)
+- Or search messages from the bot and look for the `<@U...>` mention format
+
+The channel ID for `#ahs-e2e-testing` can be found by:
+- Right-clicking the channel name → "View channel details" → copy the **Channel ID** at the bottom
+
+### 13. Run e2e tests
 
 ```bash
-poetry run pytest tests/e2e/ -v -m e2e --timeout=60
+SLACK_E2E_USER_TOKEN="xoxp-..." \
+SLACK_E2E_CHANNEL_ID="C..." \
+SLACK_E2E_BOT_USER_ID="U..." \
+poetry run pytest tests/e2e/ -v -m e2e --timeout=120
 ```
+
+> **Important**: You must use a **user token** (`xoxp-...`), not a bot token (`xoxb-...`). Slack only triggers `app_mention` events for messages sent by users — bot-to-bot mentions are ignored silently.
 
 ## Troubleshooting
 
