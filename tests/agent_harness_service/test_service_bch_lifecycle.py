@@ -53,7 +53,7 @@ together_types_module.ChatCompletion = _ChatCompletion
 sys.modules.setdefault("together", together_module)
 sys.modules.setdefault("together.types", together_types_module)
 try:
-    import croniter as _real_croniter  # type: ignore[import-untyped,unused-ignore]  # noqa: F401
+    import croniter as _real_croniter  # type: ignore[import-untyped]  # noqa: F401
 except ImportError:
     croniter_module.croniter = lambda *args, **kwargs: None
     sys.modules.setdefault("croniter", croniter_module)
@@ -318,7 +318,7 @@ class TestRunAgentTaskTeardown:
         # Manager should still be registered.
         assert _command_handlers.get(sid) is mgr
         assert get_command_handler_manager(str(sid)) is mgr
-        mgr.stop.assert_not_awaited()  # type: ignore[union-attr]
+        mgr.stop.assert_not_awaited()
 
         # Cleanup.
         _command_handlers.pop(sid, None)

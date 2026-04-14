@@ -1,17 +1,30 @@
-"""HMAC-based signed URL generation and verification for the artifact viewer.
+"""HMAC-based signed path generation and verification for the artifact viewer.
 
-URLs take the form ``/p/{uuid}?sig=<hex>&exp=<unix_timestamp>``.
+Signed paths take the form ``/p/{uuid}?sig=<hex>&exp=<unix_timestamp>``.
+Note: these are **relative paths**, not absolute URLs.  Callers that need a
+full link must prepend the base host (e.g. ``https://yupp-soul.vercel.app``).
+
 The HMAC message is the string ``"{uuid}:{exp}"``, signed with
 HMAC-SHA256 using the ``ARTIFACT_SIGNING_SECRET`` environment variable.
 
 Configuration
 -------------
 - ``ARTIFACT_SIGNING_SECRET``  — required; raw string secret (≥ 32 chars recommended).
+  Set on the host directly (not via GCP Secret Manager for this env var).
   Generate a suitable value with::
 
       python -c "import secrets; print(secrets.token_hex(32))"
 
 - TTL defaults to 30 days but is overridable per call.
+
+No-revocation tradeoff
+-----------------------
+These tokens are stateless; there is no mechanism to invalidate a signed URL
+once issued.  If a link is shared unintentionally, it remains valid until
+``exp``.  This is an intentional design choice — revocation would require a
+server-side token store, which is out of scope for this utility.  Choose a TTL
+appropriate to your sensitivity requirements; the 30-day default is suited for
+internal agent outputs.
 
 Usage
 -----
@@ -19,11 +32,15 @@ Usage
 
     from ypl.agent_harness_service.common.signing import sign_artifact_url, verify_artifact_sig
 
-    url = sign_artifact_url("550e8400-e29b-41d4-a716-446655440000")
+    path = sign_artifact_url("550e8400-e29b-41d4-a716-446655440000")
     # → "/p/550e8400-e29b-41d4-a716-446655440000?sig=abcdef...&exp=1234567890"
 
     ok = verify_artifact_sig("550e8400-...", sig="abcdef...", exp="1234567890")
     # → True (or False if expired / tampered)
+
+    # To build an absolute URL for display:
+    base = "https://yupp-soul.vercel.app"
+    full_url = base + path
 """
 
 import hashlib

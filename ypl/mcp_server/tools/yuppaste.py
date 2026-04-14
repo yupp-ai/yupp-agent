@@ -26,11 +26,16 @@ _MAX_YUPPASTE_CONTENT_SIZE_BYTES = 10 * 1024 * 1024
 
 
 def _try_sign_url(uuid: str) -> str | None:
-    """Return a signed viewer URL for *uuid*, or ``None`` if signing is not configured."""
+    """Return a signed viewer path for *uuid*, or ``None`` if signing is not configured.
+
+    This is best-effort: if signing fails for any reason (missing secret,
+    unexpected config error, etc.) we silently return ``None`` so that the
+    paste write is never reported as failed due to signing.
+    """
     try:
         return sign_artifact_url(uuid)
-    except ValueError:
-        # ARTIFACT_SIGNING_SECRET not configured — signed URLs are optional.
+    except Exception:
+        # Signing is optional decoration — never let it surface as a write error.
         return None
 
 
