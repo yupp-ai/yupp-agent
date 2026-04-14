@@ -151,6 +151,16 @@ If any are missing, use `AskUserQuestion`:
 > - **SLACK_E2E_CHANNEL_ID**: The channel ID for `#ahs-e2e-testing`. Find it by right-clicking the channel → View channel details → Channel ID at the bottom.
 > - **SLACK_E2E_BOT_USER_ID**: The e2e test bot's Slack user ID. Find it by clicking the bot's name in Slack → View app details → Member ID.
 
+After the user provides the values, **append them to `.env.e2e`** so they persist across sessions:
+
+```bash
+cat >> .env.e2e <<EOF
+SLACK_E2E_USER_TOKEN=<provided_token>
+SLACK_E2E_CHANNEL_ID=<provided_channel_id>
+SLACK_E2E_BOT_USER_ID=<provided_bot_user_id>
+EOF
+```
+
 ---
 
 ## Step 3: Run the tests
@@ -163,7 +173,7 @@ set -a && source .env.e2e && set +a && \
 poetry run pytest tests/e2e/ -v -m e2e --timeout=120
 ```
 
-**Important**: Use `set -a && source .env.e2e && set +a` to export all variables from the file. This ensures `SLACK_E2E_*`, `AGENT_HARNESS_SERVICE_API_KEY`, and other vars are available to the tests.
+**Important**: Use `set -a && source .env.e2e && set +a` to export all variables from the file. This ensures `SLACK_E2E_*`, `AGENT_HARNESS_SERVICE_API_KEY`, and other vars are available to the tests. Do **not** add inline env var assignments (e.g. `SLACK_E2E_USER_TOKEN=...`) to the command — they would override the values sourced from `.env.e2e` and break the skip logic in `conftest.py` if set to placeholder strings.
 
 ---
 
