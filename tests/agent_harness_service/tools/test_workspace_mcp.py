@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from ypl.agent_harness_service.common.constants import AHS_LIT_BASE_URL
+from ypl.agent_harness_service.tools.mcp_instance import _resolve_pr_attribution
 from ypl.agent_harness_service.tools.workspace import (
     create_pr as _create_pr_tool,
 )
@@ -21,6 +23,8 @@ list_available_repos = _list_available_repos_tool.fn
 request_write_access = _request_write_access_tool.fn
 
 VALID_SESSION = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+VALID_TASK_ID = "11111111-2222-3333-4444-555555555555"
+VALID_PROJECT_ID = "66666666-7777-8888-9999-aaaaaaaaaaaa"
 INVALID_SESSION = "bad-uuid"
 
 
@@ -201,6 +205,10 @@ class TestCreatePr:
                 new=AsyncMock(return_value="ghp_token123"),
             ),
             patch(
+                "ypl.agent_harness_service.tools.workspace._resolve_pr_attribution",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
                 "ypl.agent_harness_service.tools.workspace.push_and_create_pr",
                 return_value={"status": "ok"},
             ) as mock_push,
@@ -257,3 +265,218 @@ class TestCreatePr:
         assert result["status"] == "error"
         assert result.get("auth_required") == "true"
         assert "next_step" in result
+
+    async def test_task_session_prepends_attribution(self, tmp_path: Path) -> None:
+        """Task-triggered sessions get attribution header prepended to body."""
+        session_dir = tmp_path / VALID_SESSION
+        session_dir.mkdir()
+        (session_dir / "yupp-agent-fix-bug").mkdir()
+        expected_result = {"status": "ok", "pr_url": "https://github.com/yupp-ai/yupp-agent/pull/42"}
+
+        attribution = (
+            "\U0001f916 *eng-raccoon* for *Tian Wang*"
+            " · \U0001f4cb [My Project / My Task]"
+            f"({AHS_LIT_BASE_URL}/agent_projects?project_id=proj-1&task_id=task-1)\n"
+            f"\U0001f517 [Session]({AHS_LIT_BASE_URL}/agent_harness_console?session_id={VALID_SESSION})"
+        )
+
+        with (
+            patch("ypl.agent_harness_service.tools.workspace.AHS_SESSIONS_DIR", str(tmp_path)),
+            patch(
+                "ypl.agent_harness_service.tools.workspace._get_valid_github_token",
+                new=AsyncMock(return_value="ghp_token123"),
+            ),
+            patch(
+                "ypl.agent_harness_service.tools.workspace._resolve_pr_attribution",
+                new=AsyncMock(return_value=attribution),
+            ),
+            patch(
+                "ypl.agent_harness_service.tools.workspace.push_and_create_pr",
+                return_value=expected_result,
+            ) as mock_push,
+        ):
+            result = await create_pr(session_id=VALID_SESSION, title="My PR", body="## Summary\nSome changes")
+
+        assert result["status"] == "ok"
+        body_sent = mock_push.call_args[1]["body"]
+        assert body_sent.startswith("\U0001f916")
+        assert "## Summary" in body_sent
+        assert "eng-raccoon" in body_sent
+        assert "Tian Wang" in body_sent
+
+    async def test_non_task_session_body_unchanged(self, tmp_path: Path) -> None:
+        """Non-task sessions don't get attribution prepended."""
+        session_dir = tmp_path / VALID_SESSION
+        session_dir.mkdir()
+        (session_dir / "yupp-agent-fix-bug").mkdir()
+        expected_result = {"status": "ok", "pr_url": "https://github.com/yupp-ai/yupp-agent/pull/42"}
+
+        with (
+            patch("ypl.agent_harness_service.tools.workspace.AHS_SESSIONS_DIR", str(tmp_path)),
+            patch(
+                "ypl.agent_harness_service.tools.workspace._get_valid_github_token",
+                new=AsyncMock(return_value="ghp_token123"),
+            ),
+            patch(
+                "ypl.agent_harness_service.tools.workspace._resolve_pr_attribution",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "ypl.agent_harness_service.tools.workspace.push_and_create_pr",
+                return_value=expected_result,
+            ) as mock_push,
+        ):
+            original_body = "## Summary\nSome changes"
+            await create_pr(session_id=VALID_SESSION, title="My PR", body=original_body)
+
+        body_sent = mock_push.call_args[1]["body"]
+        assert body_sent == original_body
+
+    async def test_agent_already_included_attribution_not_duplicated(self, tmp_path: Path) -> None:
+        """If the agent already put the 🤖 prefix, don't prepend again."""
+        session_dir = tmp_path / VALID_SESSION
+        session_dir.mkdir()
+        (session_dir / "yupp-agent-fix-bug").mkdir()
+        expected_result = {"status": "ok", "pr_url": "https://github.com/yupp-ai/yupp-agent/pull/42"}
+
+        with (
+            patch("ypl.agent_harness_service.tools.workspace.AHS_SESSIONS_DIR", str(tmp_path)),
+            patch(
+                "ypl.agent_harness_service.tools.workspace._get_valid_github_token",
+                new=AsyncMock(return_value="ghp_token123"),
+            ),
+            patch(
+                "ypl.agent_harness_service.tools.workspace._resolve_pr_attribution",
+                new=AsyncMock(return_value="\U0001f916 *eng-raccoon* for *Tian Wang*"),
+            ),
+            patch(
+                "ypl.agent_harness_service.tools.workspace.push_and_create_pr",
+                return_value=expected_result,
+            ) as mock_push,
+        ):
+            original_body = "\U0001f916 *eng-raccoon* for *Tian Wang*\n\n## Summary\nChanges"
+            await create_pr(session_id=VALID_SESSION, title="PR", body=original_body)
+
+        body_sent = mock_push.call_args[1]["body"]
+        # Should not have double attribution
+        assert body_sent == original_body
+
+
+# ---------------------------------------------------------------------------
+# _resolve_pr_attribution
+# ---------------------------------------------------------------------------
+
+
+def _mock_db_session(fetchone_return: object = None, scalar_return: object = None) -> AsyncMock:
+    """Create a mock async DB session context manager."""
+    mock_db = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.fetchone.return_value = fetchone_return
+    mock_result.scalar_one_or_none.return_value = scalar_return
+    mock_db.execute = AsyncMock(return_value=mock_result)
+
+    mock_ctx = AsyncMock()
+    mock_ctx.__aenter__ = AsyncMock(return_value=mock_db)
+    mock_ctx.__aexit__ = AsyncMock(return_value=None)
+    return mock_ctx
+
+
+class TestResolvePrAttribution:
+    async def test_task_session_returns_full_attribution(self) -> None:
+        """Task-triggered session produces attribution with all fields."""
+        context = {
+            "task_id": VALID_TASK_ID,
+            "project_id": VALID_PROJECT_ID,
+            "project_name": "My Project",
+            "user_name": "Jane Doe",
+        }
+        session_row = ("eng-raccoon", context, "TASK")
+
+        mock_db = AsyncMock()
+        # First execute: session query
+        session_result = MagicMock()
+        session_result.fetchone.return_value = session_row
+        # Second execute: task title query
+        task_result = MagicMock()
+        task_result.scalar_one_or_none.return_value = "Fix the bug"
+
+        mock_db.execute = AsyncMock(side_effect=[session_result, task_result])
+        mock_ctx = AsyncMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_db)
+        mock_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("ypl.agent_harness_service.tools.mcp_instance.get_async_session", return_value=mock_ctx):
+            result = await _resolve_pr_attribution(VALID_SESSION)
+
+        assert result is not None
+        assert "eng-raccoon" in result
+        assert "Jane Doe" in result
+        assert "My Project / Fix the bug" in result
+        assert f"session_id={VALID_SESSION}" in result
+        assert f"project_id={VALID_PROJECT_ID}" in result
+        assert f"task_id={VALID_TASK_ID}" in result
+
+    async def test_non_task_session_returns_none(self) -> None:
+        """Non-task sessions return None."""
+        context = {"user_name": "Jane Doe"}
+        session_row = ("eng-raccoon", context, "SLACK")
+
+        mock_db = AsyncMock()
+        session_result = MagicMock()
+        session_result.fetchone.return_value = session_row
+        mock_db.execute = AsyncMock(return_value=session_result)
+        mock_ctx = AsyncMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_db)
+        mock_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("ypl.agent_harness_service.tools.mcp_instance.get_async_session", return_value=mock_ctx):
+            result = await _resolve_pr_attribution(VALID_SESSION)
+
+        assert result is None
+
+    async def test_session_not_found_returns_none(self) -> None:
+        """Missing session returns None."""
+        mock_db = AsyncMock()
+        session_result = MagicMock()
+        session_result.fetchone.return_value = None
+        mock_db.execute = AsyncMock(return_value=session_result)
+        mock_ctx = AsyncMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_db)
+        mock_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("ypl.agent_harness_service.tools.mcp_instance.get_async_session", return_value=mock_ctx):
+            result = await _resolve_pr_attribution(VALID_SESSION)
+
+        assert result is None
+
+    async def test_invalid_session_id_returns_none(self) -> None:
+        """Invalid UUID returns None without DB call."""
+        result = await _resolve_pr_attribution("not-a-uuid")
+        assert result is None
+
+    async def test_missing_task_title_still_produces_attribution(self) -> None:
+        """If task title lookup fails, attribution still works with project name."""
+        context = {
+            "task_id": VALID_TASK_ID,
+            "project_id": VALID_PROJECT_ID,
+            "project_name": "My Project",
+            "user_name": "Jane Doe",
+        }
+        session_row = ("eng-raccoon", context, "TASK")
+
+        mock_db = AsyncMock()
+        session_result = MagicMock()
+        session_result.fetchone.return_value = session_row
+        task_result = MagicMock()
+        task_result.scalar_one_or_none.return_value = None
+        mock_db.execute = AsyncMock(side_effect=[session_result, task_result])
+        mock_ctx = AsyncMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_db)
+        mock_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("ypl.agent_harness_service.tools.mcp_instance.get_async_session", return_value=mock_ctx):
+            result = await _resolve_pr_attribution(VALID_SESSION)
+
+        assert result is not None
+        assert "eng-raccoon" in result
+        assert "My Project" in result

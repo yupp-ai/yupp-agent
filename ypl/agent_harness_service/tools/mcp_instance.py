@@ -16,8 +16,9 @@ from fastmcp import FastMCP
 from sqlalchemy import text
 from sqlmodel import select
 
+from ypl.agent_harness_service.common.constants import AHS_LIT_BASE_URL
 from ypl.backend.db import get_async_session
-from ypl.db.agent_harness import AgentSession
+from ypl.db.agent_harness import AgentSession, AgentTask
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -174,6 +175,80 @@ async def _resolve_parent_session(harness_session_id: str) -> dict[str, Any]:
             "permissions": permissions,
             "subagent_depth": subagent_depth,
         }
+
+
+# ---------------------------------------------------------------------------
+# PR attribution for task-triggered sessions
+# ---------------------------------------------------------------------------
+
+
+async def _resolve_pr_attribution(session_id: str) -> str | None:
+    """Build the PR attribution header for task-triggered sessions.
+
+    Returns a markdown attribution block (agent name, user, project/task links,
+    session link) if the session is task-triggered, or None otherwise.
+    """
+    try:
+        sid = _uuid.UUID(session_id)
+    except ValueError:
+        return None
+
+    async with get_async_session() as db:
+        # Fetch session context + agent name in one query
+        result = await db.execute(
+            text(
+                "SELECT a.name, s.context, s.trigger FROM agent_sessions s "
+                "JOIN agents a ON s.agent_id = a.agent_id "
+                "WHERE s.agent_session_id = :sid"
+            ),
+            {"sid": str(sid)},
+        )
+        row = result.fetchone()
+        if not row:
+            return None
+
+        agent_name: str = row[0] or "agent"
+        context: dict[str, Any] = row[1] or {}
+        trigger: str = row[2] or ""
+
+        # Only inject attribution for task-triggered sessions
+        if trigger != "TASK":
+            return None
+
+        task_id = context.get("task_id")
+        project_id = context.get("project_id")
+        project_name = context.get("project_name", "")
+        user_name = context.get("user_name", "")
+
+        # Fetch task title
+        task_title = ""
+        if task_id:
+            try:
+                task_result = await db.execute(
+                    select(AgentTask.title).where(AgentTask.agent_task_id == _uuid.UUID(task_id))
+                )
+                task_title = task_result.scalar_one_or_none() or ""
+            except (ValueError, Exception):
+                logger.warning("Failed to fetch task title for PR attribution", task_id=task_id)
+
+    # Build attribution lines
+    lines: list[str] = []
+
+    # Line 1: agent + user + project/task link
+    attribution = f"\U0001f916 *{agent_name}* for *{user_name}*"
+    if project_id and task_id:
+        task_url = f"{AHS_LIT_BASE_URL}/agent_projects?project_id={project_id}&task_id={task_id}"
+        label = (
+            f"{project_name} / {task_title}" if project_name and task_title else task_title or project_name or "Task"
+        )
+        attribution += f" · \U0001f4cb [{label}]({task_url})"
+    lines.append(attribution)
+
+    # Line 2: session link
+    session_url = f"{AHS_LIT_BASE_URL}/agent_harness_console?session_id={session_id}"
+    lines.append(f"\U0001f517 [Session]({session_url})")
+
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
