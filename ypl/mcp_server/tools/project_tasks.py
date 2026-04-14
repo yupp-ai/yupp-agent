@@ -13,6 +13,7 @@ from typing import Any
 import sqlalchemy as sa
 from sqlmodel import col, select
 
+from ypl.agent_harness_service.common.constants import AHS_DEFAULT_PROJECT_SLACK_CHANNEL
 from ypl.agent_harness_service.projects.task_utils import (
     TERMINAL_TASK_STATUSES,
     are_dependencies_completed,
@@ -187,7 +188,9 @@ def _parse_priority(value: str, context: str) -> tuple[AgentTaskPriority | None,
     description=(
         "Create a new agent project. Projects group related tasks with dependencies "
         "and track progress toward a common goal. Projects start in PAUSED status; "
-        "set to ACTIVE via set_project_status to begin task execution."
+        "set to ACTIVE via set_project_status to begin task execution. "
+        "slack_channel defaults to the system-configured channel (env AHS_DEFAULT_PROJECT_SLACK_CHANNEL, "
+        "typically 'agent-project'). Pass a plain channel name — no '#' prefix, no Slack channel ID."
     ),
 )
 @retry_db
@@ -201,7 +204,8 @@ async def add_project(
     Args:
         name: Human-readable project name (e.g. "Q3 model migration")
         description: Goal description and completion criteria — what "done" looks like
-        slack_channel: Slack channel ID (e.g. "C01ABCDEF") for automated progress updates
+        slack_channel: Plain Slack channel name for progress updates (e.g. "agent-project").
+            No "#" prefix, no Slack channel ID. Defaults to AHS_DEFAULT_PROJECT_SLACK_CHANNEL env var.
 
     Returns:
         Dictionary with project ID and metadata
@@ -216,11 +220,13 @@ async def add_project(
             if user_error:
                 return {"success": False, "error": user_error}
 
+        effective_channel = slack_channel if slack_channel is not None else AHS_DEFAULT_PROJECT_SLACK_CHANNEL
+
         project = AgentProject(
             name=name,
             description=description,
             creator_user_id=creator_user_id,
-            slack_channel=slack_channel,
+            slack_channel=effective_channel,
         )
 
         async with get_async_session() as session:
@@ -1556,7 +1562,7 @@ async def update_project(
         project_id: UUID of the project to update
         name: New project name (if provided)
         description: New description (if provided)
-        slack_channel: New Slack channel ID (if provided). Use empty string to clear.
+        slack_channel: Plain channel name (no "#" prefix, no ID). Use empty string to clear.
         default_agent_name: New default agent by name (if provided). Use empty string to clear.
         budget_usd: New budget cap in USD (if provided). Use 0 to clear.
         project_data: New project-level data as JSON string (if provided). Merged with existing data.
