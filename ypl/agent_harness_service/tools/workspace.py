@@ -13,7 +13,12 @@ from ypl.agent_harness_service.common.constants import AHS_SESSIONS_DIR, SESSION
 # TODO: Expose a narrow public function in github_auth.py (e.g. get_or_initiate_github_token)
 # to replace these private imports and make the module boundary explicit.
 from ypl.agent_harness_service.tools.github_auth import _get_valid_github_token, _initiate_device_flow
-from ypl.agent_harness_service.tools.mcp_instance import _get_current_message_user_id, _validate_session_id, mcp
+from ypl.agent_harness_service.tools.mcp_instance import (
+    _get_current_message_user_id,
+    _resolve_pr_attribution,
+    _validate_session_id,
+    mcp,
+)
 from ypl.agent_harness_service.tools.repo_manager import create_worktree, push_and_create_pr
 from ypl.agent_harness_service.tools.repo_manager import list_repos as _list_repos
 from ypl.structured_logger import get_logger
@@ -174,6 +179,16 @@ async def create_pr(
                 "After the user completes authorization, call check_github_auth_status to verify, then retry create_pr."
             ),
         }
+
+    # For task-triggered sessions, prepend the attribution header if not already present.
+    # Attribution is cosmetic — must not block PR creation on DB errors.
+    try:
+        attribution = await _resolve_pr_attribution(session_id)
+    except Exception:
+        logger.warning("Failed to resolve PR attribution, skipping", session_id=session_id)
+        attribution = None
+    if attribution and not body.startswith("\U0001f916"):
+        body = attribution + "\n\n" + body
 
     return push_and_create_pr(
         workspace=workspace,
