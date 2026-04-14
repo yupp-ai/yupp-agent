@@ -10,6 +10,7 @@ Authentication mode is controlled by MCP_SERVER_MODE setting:
 - OAUTH: Google OAuth via FastMCP's GoogleProvider
 """
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -24,7 +25,7 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse, PlainTextResponse, Response
+from starlette.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
 from starlette.routing import Mount, Route
 from structlog.contextvars import bind_contextvars, clear_contextvars
 
@@ -189,6 +190,86 @@ async def health_check(request: Request) -> JSONResponse:
             "mode": settings.MCP_SERVER_MODE,
             "timestamp": datetime.now(UTC).isoformat(),
         }
+    )
+
+
+# --- SSE connection drain constants ---
+
+# Cloud Run enforces an absolute per-request timeout (currently --timeout=10m = 600 s).
+# MCP clients (Claude Code, Cursor, etc.) open a long-lived GET /mcp SSE connection to
+# receive server-initiated messages.  When Cloud Run kills the connection at the hard
+# deadline the platform emits:
+#   "Truncated response body. Usually implies that the request timed out …"
+# and increments the Cloud Run error metric.
+#
+# Fix: intercept GET /mcp before FastMCP and serve a self-managed SSE stream that:
+#   1. Sends keep-alive comments every _SSE_KEEPALIVE_INTERVAL_S seconds (keeps TCP alive
+#      and proves to Cloud Run's idle-timeout logic that the connection is active).
+#   2. Closes the stream gracefully after _SSE_MAX_DURATION_S seconds (before Cloud Run's
+#      10-minute hard limit), allowing the MCP client to reconnect cleanly rather than
+#      experiencing an abrupt connection reset.
+#
+# The server runs with stateless_http=True so it never sends actual server-initiated
+# notifications over the SSE channel; the drain stream is semantically equivalent.
+
+_SSE_KEEPALIVE_INTERVAL_S: int = 30  # seconds between SSE keep-alive comments
+_SSE_MAX_DURATION_S: int = 480  # must be < Cloud Run --timeout with a ~2 min safety buffer
+
+
+async def mcp_get_sse_drain(request: Request) -> StreamingResponse:
+    """SSE drain handler for GET /mcp — prevents Cloud Run 'Truncated response body' warnings.
+
+    Intercepts GET /mcp before FastMCP so that the long-lived SSE connection is
+    managed by us rather than by the MCP SDK.  The handler sends periodic SSE
+    keep-alive comments and closes the connection gracefully after
+    ``_SSE_MAX_DURATION_S`` seconds, well before Cloud Run's 10-minute hard timeout.
+
+    Background
+    ----------
+    Cloud Run enforces an absolute per-request timeout (``--timeout=10m``).  MCP
+    clients open a persistent ``GET /mcp`` SSE stream to receive server-initiated
+    messages.  Because the server runs with ``stateless_http=True`` it never
+    actually pushes notifications, so the stream just sits idle.  Cloud Run kills
+    it after 10 minutes and logs a WARNING-severity "Truncated response body" entry
+    (~4 simultaneous occurrences every ~10 minutes = ~96 platform warnings/day).
+
+    Resolution
+    ----------
+    By closing the stream ourselves at 8 minutes the client sees a clean EOF,
+    resets its reconnect counter, and re-dials immediately.  Cloud Run logs a
+    normal 200 response with no truncation warning.  The observable effect to the
+    MCP client is identical to a server-initiated graceful stream close.
+    """
+
+    async def _sse_generator() -> AsyncGenerator[str, None]:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _SSE_MAX_DURATION_S
+        while True:
+            # Exit early if the client has already disconnected (e.g. IDE closed).
+            if await request.is_disconnected():
+                logger.info("SSE client disconnected", http_path="/mcp")
+                return
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                # Yield a final drain comment so the client sees an SSE frame,
+                # then let the generator return — this closes the stream cleanly.
+                yield ": connection-drain\n\n"
+                logger.info("SSE connection drained (max duration reached)", http_path="/mcp")
+                return
+            # SSE comment lines (": …") are not dispatched as events to the
+            # application but ARE sent over the wire — perfect for keep-alive.
+            yield ": keep-alive\n\n"
+            sleep_s = min(_SSE_KEEPALIVE_INTERVAL_S, remaining)
+            await asyncio.sleep(sleep_s)
+
+    return StreamingResponse(
+        _sse_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx/proxy buffering for SSE
+        },
     )
 
 
@@ -377,6 +458,14 @@ app = Starlette(
         Route("/healthz", health_check, methods=["GET"]),
         Route("/tools", list_tools, methods=["GET"]),
         Route("/tools/{tool_name}", invoke_tool, methods=["POST"]),
+        # GET /mcp: intercept SSE stream before FastMCP to prevent Cloud Run
+        # 'Truncated response body' warnings.  POST /mcp (tool calls) and
+        # DELETE /mcp (session termination) still fall through to mcp_http_app.
+        # See mcp_get_sse_drain docstring for full explanation.
+        # IMPORTANT: only valid when mcp_http_app is configured with stateless_http=True
+        # (see mcp_http_app definition above); a stateful server would need its own
+        # SSE channel and this interceptor would break session-level notifications.
+        Route("/mcp", mcp_get_sse_drain, methods=["GET"]),
         # Mount MCP at root - FastMCP handles /mcp path internally
         Mount("/", app=mcp_http_app),
     ],
