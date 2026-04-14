@@ -10,6 +10,7 @@ Endpoints:
 - PATCH  /projects/{project_id}/tasks/{task_id}     — update task fields
 - POST   /projects/{project_id}/tasks/{task_id}/status        — change task status
 - PUT    /projects/{project_id}/tasks/{task_id}/dependencies  — set task dependencies
+- POST   /projects/{project_id}/tasks/{task_id}/restart       — restart task (clear state, reset to READY)
 - POST   /projects/{project_id}/tasks/{task_id}/resume        — resume failed task
 """
 
@@ -21,6 +22,7 @@ from ypl.agent_harness_service.projects.project_service import (
     get_task_service,
     list_projects_service,
     list_tasks_service,
+    restart_task_service,
     resume_task_service,
     set_project_status_service,
     set_task_dependencies_service,
@@ -186,6 +188,20 @@ async def set_task_dependencies_route(project_id: str, task_id: str, request: Ta
     """Replace a task's dependency list."""
     try:
         return await set_task_dependencies_service(project_id, task_id, request)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from None
+
+
+@project_router.post(
+    "/{project_id}/tasks/{task_id}/restart",
+    dependencies=[Depends(verify_api_key)],
+)
+async def restart_task_route(project_id: str, task_id: str) -> TaskResponse:
+    """Restart a task: clear result/spending/sessions and reset to READY (or PENDING if deps unmet)."""
+    try:
+        return await restart_task_service(project_id, task_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
     except LookupError as e:
