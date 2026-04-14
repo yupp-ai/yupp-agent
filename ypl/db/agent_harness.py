@@ -17,7 +17,7 @@ from decimal import Decimal
 from typing import Any
 
 import sqlalchemy as sa
-from sqlalchemy import Column, Index, text
+from sqlalchemy import CheckConstraint, Column, Index, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlmodel import Field, Relationship
 
@@ -672,7 +672,24 @@ class AgentArtifact(BaseModel, table=True):
     # Flexible bag for type-specific data (e.g. {"pr_number": 123, "repo": "yupp-mind"})
     artifact_metadata: dict[str, Any] | None = Field(default=None, sa_column=Column(JSONB, nullable=True))
 
+    # Unify Yuppaste and Artifact: stable human-readable identity and versioning
+    named_slug: str | None = Field(default=None, nullable=True, sa_type=sa.Text)
+    version: int | None = Field(default=None, nullable=True)
+    content_type: str | None = Field(default=None, nullable=True, sa_type=sa.Text)
+
     __table_args__ = (
         Index("ix_agent_artifacts_type", "artifact_type"),
         Index("ix_agent_artifacts_session_type", "agent_session_id", "artifact_type"),
+        # Partial unique index mirrors the migration: only enforces uniqueness when both are non-NULL.
+        Index(
+            "uix_agent_artifacts_slug_version",
+            "named_slug",
+            "version",
+            unique=True,
+            postgresql_where=text("named_slug IS NOT NULL AND version IS NOT NULL"),
+        ),
+        CheckConstraint(
+            "content_type IN ('text/plain', 'text/markdown', 'text/html')",
+            name="ck_agent_artifacts_content_type",
+        ),
     )
