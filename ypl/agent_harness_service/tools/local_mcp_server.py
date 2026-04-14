@@ -31,6 +31,7 @@ Existing imports that continue to work::
 #    decorators lazily), but keeping it consistent helps readability.
 # ---------------------------------------------------------------------------
 from ypl.agent_harness_service.tools import (  # noqa: F401
+    agent_messaging,
     gateway_tools,
     github_auth,
     linear,
