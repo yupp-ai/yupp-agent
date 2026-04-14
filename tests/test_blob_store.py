@@ -46,7 +46,7 @@ class TestBlobStoreProtocol:
         from ypl.backend.utils.blob_store_gcs import GCSBlobStore
 
         store = GCSBlobStore(bucket="my-bucket")
-        assert isinstance(store, GCSBlobStore)
+        assert isinstance(store, BlobStore)
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +236,76 @@ class TestGCSBlobStoreGetSize:
             size = await store.get_size(SAMPLE_PATH)
         assert size == 42
 
+    async def test_get_size_raises_on_404(self) -> None:
+        import aiohttp as _aiohttp
+        from ypl.backend.utils.blob_store_gcs import GCSBlobStore
+
+        store = GCSBlobStore(bucket="test-bucket")
+        not_found = _aiohttp.ClientResponseError(request_info=MagicMock(), history=(), status=404)
+        mock_bucket = MagicMock()
+        mock_bucket.get_blob = AsyncMock(side_effect=not_found)
+        mock_storage = MagicMock()
+        mock_storage.get_bucket = MagicMock(return_value=mock_bucket)
+        mock_storage.__aenter__ = AsyncMock(return_value=mock_storage)
+        mock_storage.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("ypl.backend.utils.blob_store_gcs.aiohttp.ClientSession", return_value=mock_session),
+            patch("ypl.backend.utils.blob_store_gcs.Storage", return_value=mock_storage),
+            pytest.raises(FileNotFoundError),
+        ):
+            await store.get_size(SAMPLE_PATH)
+
+    async def test_get_size_raises_when_blob_is_none(self) -> None:
+        from ypl.backend.utils.blob_store_gcs import GCSBlobStore
+
+        store = GCSBlobStore(bucket="test-bucket")
+        mock_bucket = MagicMock()
+        mock_bucket.get_blob = AsyncMock(return_value=None)
+        mock_storage = MagicMock()
+        mock_storage.get_bucket = MagicMock(return_value=mock_bucket)
+        mock_storage.__aenter__ = AsyncMock(return_value=mock_storage)
+        mock_storage.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("ypl.backend.utils.blob_store_gcs.aiohttp.ClientSession", return_value=mock_session),
+            patch("ypl.backend.utils.blob_store_gcs.Storage", return_value=mock_storage),
+            pytest.raises(FileNotFoundError),
+        ):
+            await store.get_size(SAMPLE_PATH)
+
+    async def test_get_size_raises_when_size_is_none(self) -> None:
+        from ypl.backend.utils.blob_store_gcs import GCSBlobStore
+
+        store = GCSBlobStore(bucket="test-bucket")
+        mock_blob = MagicMock()
+        mock_blob.size = None
+        mock_bucket = MagicMock()
+        mock_bucket.get_blob = AsyncMock(return_value=mock_blob)
+        mock_storage = MagicMock()
+        mock_storage.get_bucket = MagicMock(return_value=mock_bucket)
+        mock_storage.__aenter__ = AsyncMock(return_value=mock_storage)
+        mock_storage.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("ypl.backend.utils.blob_store_gcs.aiohttp.ClientSession", return_value=mock_session),
+            patch("ypl.backend.utils.blob_store_gcs.Storage", return_value=mock_storage),
+            pytest.raises(ValueError, match="no size metadata"),
+        ):
+            await store.get_size(SAMPLE_PATH)
+
 
 class TestGCSBlobStoreExists:
     async def test_exists_true_when_blob_found(self) -> None:
@@ -308,6 +378,28 @@ class TestGCSBlobStoreDelete:
         ):
             await store.delete(SAMPLE_PATH)
         mock_storage.delete.assert_awaited_once_with("test-bucket", SAMPLE_PATH)
+
+    async def test_delete_raises_on_missing_blob(self) -> None:
+        import aiohttp as _aiohttp
+        from ypl.backend.utils.blob_store_gcs import GCSBlobStore
+
+        store = GCSBlobStore(bucket="test-bucket")
+        not_found = _aiohttp.ClientResponseError(request_info=MagicMock(), history=(), status=404)
+        mock_storage = MagicMock()
+        mock_storage.delete = AsyncMock(side_effect=not_found)
+        mock_storage.__aenter__ = AsyncMock(return_value=mock_storage)
+        mock_storage.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("ypl.backend.utils.blob_store_gcs.aiohttp.ClientSession", return_value=mock_session),
+            patch("ypl.backend.utils.blob_store_gcs.Storage", return_value=mock_storage),
+            pytest.raises(FileNotFoundError),
+        ):
+            await store.delete(SAMPLE_PATH)
 
 
 # ---------------------------------------------------------------------------

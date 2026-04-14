@@ -9,7 +9,6 @@ Objects are stored as ``gs://<bucket>/<path>``.
 """
 
 from __future__ import annotations
-
 from typing import cast
 
 import aiohttp
@@ -49,10 +48,22 @@ class GCSBlobStore:
     async def get_size(self, path: str) -> int:
         async with aiohttp.ClientSession() as session, Storage(session=session) as storage:  # type: ignore[arg-type]
             bucket = storage.get_bucket(self.bucket)
-            blob = await bucket.get_blob(path)
+            try:
+                blob = await bucket.get_blob(path)
+            except aiohttp.ClientResponseError as exc:
+                if exc.status == 404:
+                    raise FileNotFoundError(f"Blob not found: {path!r}") from exc
+                raise
+        if blob is None:
+            raise FileNotFoundError(f"Blob not found: {path!r}")
+        if blob.size is None:
+            raise ValueError(f"GCS blob has no size metadata: {path!r}")
         return int(blob.size)
 
     async def get_access_url(self, path: str, expiry_seconds: int = 3 * 24 * 3600) -> str:
+        # expiry_seconds is accepted for Protocol conformance but is best-effort:
+        # get_signed_url hard-codes a fixed TTL internally. Callers requiring a
+        # precise expiry should call get_signed_url directly.
         # async_timed_cache loses the return type annotation; cast restores it.
         return cast(str, await get_signed_url(self._gcs_url(path)))
 
@@ -69,4 +80,9 @@ class GCSBlobStore:
 
     async def delete(self, path: str) -> None:
         async with aiohttp.ClientSession() as session, Storage(session=session) as storage:  # type: ignore[arg-type]
-            await storage.delete(self.bucket, path)
+            try:
+                await storage.delete(self.bucket, path)
+            except aiohttp.ClientResponseError as exc:
+                if exc.status == 404:
+                    raise FileNotFoundError(f"Blob not found: {path!r}") from exc
+                raise

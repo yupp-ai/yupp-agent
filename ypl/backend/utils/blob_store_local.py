@@ -11,6 +11,7 @@ A path-traversal guard prevents callers from escaping the root directory.
 """
 
 from __future__ import annotations
+import asyncio
 import pathlib
 
 
@@ -58,20 +59,21 @@ class LocalBlobStore:
         content_type: str = "application/octet-stream",
     ) -> None:
         full = self._full_path(path)
-        full.parent.mkdir(parents=True, exist_ok=True)
-        full.write_bytes(data)
+        await asyncio.to_thread(full.parent.mkdir, parents=True, exist_ok=True)
+        await asyncio.to_thread(full.write_bytes, data)
 
     async def download(self, path: str) -> bytes:
         full = self._full_path(path)
-        if not full.exists():
+        if not await asyncio.to_thread(full.exists):
             raise FileNotFoundError(f"Blob not found: {path!r}")
-        return full.read_bytes()
+        return await asyncio.to_thread(full.read_bytes)
 
     async def get_size(self, path: str) -> int:
         full = self._full_path(path)
-        if not full.exists():
+        if not await asyncio.to_thread(full.exists):
             raise FileNotFoundError(f"Blob not found: {path!r}")
-        return full.stat().st_size
+        stat = await asyncio.to_thread(full.stat)
+        return stat.st_size
 
     async def get_access_url(self, path: str, expiry_seconds: int = 3 * 24 * 3600) -> str:
         if not self._base_url:
@@ -83,10 +85,10 @@ class LocalBlobStore:
         return f"{self._base_url}/{path}"
 
     async def exists(self, path: str) -> bool:
-        return self._full_path(path).exists()
+        return await asyncio.to_thread(self._full_path(path).exists)
 
     async def delete(self, path: str) -> None:
         full = self._full_path(path)
-        if not full.exists():
+        if not await asyncio.to_thread(full.exists):
             raise FileNotFoundError(f"Blob not found: {path!r}")
-        full.unlink()
+        await asyncio.to_thread(full.unlink)

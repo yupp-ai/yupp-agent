@@ -57,6 +57,13 @@ class BlobStore(Protocol):
         For GCS this is a signed URL; for local it is a plain HTTP URL
         constructed from the configured base URL.
 
+        Args:
+            path: Logical path of the object.
+            expiry_seconds: Hint for the desired URL lifetime in seconds.
+                Backends make a best-effort attempt to honour this value but
+                are not required to do so (e.g. ``GCSBlobStore`` uses an
+                internally configured TTL).
+
         Raises:
             ValueError: if the backend cannot generate a URL (e.g. no base URL
                 configured for LocalBlobStore).
