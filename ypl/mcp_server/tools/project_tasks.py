@@ -15,6 +15,7 @@ from sqlmodel import col, select
 
 from ypl.agent_harness_service.projects.task_utils import (
     TERMINAL_TASK_STATUSES,
+    are_dependencies_completed,
     complete_task,
     validate_task_status_change,
 )
@@ -802,6 +803,83 @@ async def set_task_status(
 
     except Exception as e:
         logger.error("Error setting task status", error=str(e), exc_info=True)
+        return {"success": False, "error": str(e)}
+
+
+@mcp_server.tool(
+    name="restart_task",
+    description=(
+        "Restart a task by resetting it to READY (or PENDING if it has unmet dependencies). "
+        "Clears the task's result, completed_at, actual_spending_usd, and assigned_session_ids. "
+        "Works from any status. Use this when a task needs to be re-executed from scratch."
+    ),
+)
+@retry_db
+async def restart_task(
+    task_id: str,
+) -> dict[str, Any]:
+    """Restart a task, clearing all execution state.
+
+    Args:
+        task_id: UUID of the task to restart
+
+    Returns:
+        Dictionary with the reset task details
+    """
+    try:
+        auth_email = get_authenticated_user_email()
+        if auth_email == "unknown":
+            return {"success": False, "error": "Authentication required"}
+
+        try:
+            task_uuid = uuid.UUID(task_id)
+        except ValueError:
+            return {"success": False, "error": f"Invalid task_id: {task_id}"}
+
+        async with get_async_session() as session:
+            task_result = await session.execute(
+                select(AgentTask)
+                .where(col(AgentTask.agent_task_id) == task_uuid)
+                .where(col(AgentTask.deleted_at).is_(None))
+                .with_for_update()
+            )
+            task = task_result.scalars().first()
+            if not task:
+                return {"success": False, "error": f"Task not found: {task_id}"}
+
+            old_status = task.status.value
+
+            # Clear execution state
+            task.result = None
+            task.completed_at = None
+            task.actual_spending_usd = None
+            task.assigned_session_ids = None
+
+            # Set to READY if deps are met, otherwise PENDING
+            if await are_dependencies_completed(session, task):
+                task.status = AgentTaskStatus.READY
+            else:
+                task.status = AgentTaskStatus.PENDING
+
+            session.add(task)
+            await session.commit()
+
+            agent_name = await _resolve_agent_name_by_id(session, task.agent_id) if task.agent_id else None
+
+            logger.info(
+                "Restarted task",
+                task_id=task_id,
+                old_status=old_status,
+                new_status=task.status.value,
+            )
+
+            return {
+                "success": True,
+                "task": _format_task_row(task, agent_name),
+            }
+
+    except Exception as e:
+        logger.error("Error restarting task", error=str(e), exc_info=True)
         return {"success": False, "error": str(e)}
 
 
