@@ -70,6 +70,7 @@ NC='\033[0m' # No Color
 STREAMLIT=false
 NO_INTERACTIVE=false
 E2E_MODE=false
+BACKGROUND=false
 PG_HOST=localhost
 PG_PORT=5432
 REDIS_HOST=localhost
@@ -80,6 +81,7 @@ for arg in "$@"; do
         --streamlit) STREAMLIT=true ;;
         --no-interactive) NO_INTERACTIVE=true ;;
         --e2e) E2E_MODE=true ;;
+        --background) BACKGROUND=true ;;
         --pg-host=*) PG_HOST="${arg#*=}" ;;
         --pg-port=*) PG_PORT="${arg#*=}" ;;
         --redis-host=*) REDIS_HOST="${arg#*=}" ;;
@@ -89,7 +91,8 @@ for arg in "$@"; do
             echo ""
             echo "Options:"
             echo "  --streamlit          Also start Streamlit dashboards on port 8501"
-            echo "  --e2e                Enable Slack capture mode + load .env.e2e overrides"
+            echo "  --e2e                Load .env.e2e overrides (staging env for e2e testing)"
+            echo "  --background         Run monolith in background (logs to /tmp/monolith_local.log)"
             echo "  --no-interactive     Never prompt or auto-start services; fail on error"
             echo "  --pg-host=HOST       Postgres host (default: localhost)"
             echo "  --pg-port=PORT       Postgres port (default: 5432)"
@@ -276,14 +279,7 @@ fi
 # ---------------------------------------------------------------------------
 echo -e "${YELLOW}[4/4] Starting services...${NC}"
 
-# Export env vars for local development (don't override if already set)
-export ENVIRONMENT="${ENVIRONMENT:-local}"
-export SANDBOX_ENABLED="${SANDBOX_ENABLED:-false}"
-export USE_GOOGLE_CLOUD_LOGGING="${USE_GOOGLE_CLOUD_LOGGING:-false}"
-export DISABLE_WRITE_GOOGLE_CLOUD_METRICS="${DISABLE_WRITE_GOOGLE_CLOUD_METRICS:-true}"
-export PYTHONPATH="$REPO_ROOT"
-
-# E2E mode: source .env.e2e to override .env values
+# E2E mode: source .env.e2e FIRST so its values take priority over defaults below
 if [ "$E2E_MODE" = true ]; then
     if [ -f "$REPO_ROOT/.env.e2e" ]; then
         echo -e "  ${YELLOW}E2E mode: loading .env.e2e overrides${NC}"
@@ -297,6 +293,13 @@ if [ "$E2E_MODE" = true ]; then
     fi
 fi
 
+# Export env vars for local development (don't override if already set by .env.e2e)
+export ENVIRONMENT="${ENVIRONMENT:-local}"
+export SANDBOX_ENABLED="${SANDBOX_ENABLED:-false}"
+export USE_GOOGLE_CLOUD_LOGGING="${USE_GOOGLE_CLOUD_LOGGING:-false}"
+export DISABLE_WRITE_GOOGLE_CLOUD_METRICS="${DISABLE_WRITE_GOOGLE_CLOUD_METRICS:-true}"
+export PYTHONPATH="$REPO_ROOT"
+
 # Start Streamlit in background if requested
 if [ "$STREAMLIT" = true ]; then
     echo -e "  Starting Streamlit on port 8501..."
@@ -308,6 +311,8 @@ if [ "$STREAMLIT" = true ]; then
     echo -e "  Streamlit ... ${GREEN}started${NC} (logs: /tmp/streamlit_local.log)"
 fi
 
+MONOLITH_LOG="/tmp/monolith_local.log"
+
 echo -e "  Starting monolith on port 8090..."
 echo ""
 echo -e "  ${GREEN}AHS + MCP + SAG running at http://localhost:8090${NC}"
@@ -316,12 +321,48 @@ echo -e "  API docs:     ${GREEN}http://localhost:8090/docs${NC}"
 if [ "$STREAMLIT" = true ]; then
     echo -e "  Streamlit:    ${GREEN}http://localhost:8501${NC}"
 fi
-echo ""
-echo -e "  Press Ctrl+C to stop."
-echo ""
+echo -e "  Logs:         ${GREEN}$MONOLITH_LOG${NC}"
 
-# Start monolith in foreground (Ctrl+C stops everything via trap)
-poetry run uvicorn ypl.mono_server.server:app \
-    --host 0.0.0.0 \
-    --port 8090 \
-    --log-level info
+if [ "$BACKGROUND" = true ]; then
+    echo ""
+    echo -e "  ${YELLOW}Running in background mode...${NC}"
+
+    # Start in background, tee output to log file
+    poetry run uvicorn ypl.mono_server.server:app \
+        --host 0.0.0.0 \
+        --port 8090 \
+        --log-level info \
+        > "$MONOLITH_LOG" 2>&1 &
+    MONOLITH_PID=$!
+    echo "$MONOLITH_PID" > /tmp/monolith_local.pid
+
+    # Wait for health check
+    for i in $(seq 1 30); do
+        if curl -sf http://localhost:8090/health > /dev/null 2>&1; then
+            echo -e "  ${GREEN}Monolith started (PID $MONOLITH_PID)${NC}"
+            echo -e "  To stop: kill $MONOLITH_PID (or: kill \$(cat /tmp/monolith_local.pid))"
+            echo -e "  To view logs: tail -f $MONOLITH_LOG"
+            exit 0
+        fi
+        if ! kill -0 "$MONOLITH_PID" 2>/dev/null; then
+            echo -e "  ${RED}Monolith crashed during startup. Check logs:${NC}"
+            tail -20 "$MONOLITH_LOG"
+            exit 1
+        fi
+        sleep 1
+    done
+    echo -e "  ${RED}Monolith did not become healthy within 30s. Check logs:${NC}"
+    tail -20 "$MONOLITH_LOG"
+    exit 1
+else
+    echo ""
+    echo -e "  Press Ctrl+C to stop."
+    echo ""
+
+    # Start monolith in foreground, tee to log file
+    poetry run uvicorn ypl.mono_server.server:app \
+        --host 0.0.0.0 \
+        --port 8090 \
+        --log-level info \
+        2>&1 | tee "$MONOLITH_LOG"
+fi
