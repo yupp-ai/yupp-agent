@@ -6,6 +6,7 @@ Provides tools to create and read yuppastes (shareable text snippets).
 import json
 from typing import Any
 
+from ypl.agent_harness_service.common.signing import sign_artifact_url
 from ypl.backend.internal_tools.yuppaste_backend import (
     create_yuppaste,
     create_yuppaste_with_attachments,
@@ -22,6 +23,15 @@ logger = get_logger()
 
 # Maximum content size for yuppaste uploads (10MB)
 _MAX_YUPPASTE_CONTENT_SIZE_BYTES = 10 * 1024 * 1024
+
+
+def _try_sign_url(uuid: str) -> str | None:
+    """Return a signed viewer URL for *uuid*, or ``None`` if signing is not configured."""
+    try:
+        return sign_artifact_url(uuid)
+    except ValueError:
+        # ARTIFACT_SIGNING_SECRET not configured — signed URLs are optional.
+        return None
 
 
 @mcp_server.tool(
@@ -56,7 +66,8 @@ async def mcp_create_yuppaste(
         create_new_slug: True to create a new slug (version 1), False to add version to existing slug
 
     Returns:
-        Dictionary containing the paste UUID and shareable go-link URL
+        Dictionary containing the paste UUID, shareable go-link URL, and (when signing is
+        configured) a ``signed_url`` path of the form ``/p/{uuid}?sig=...&exp=...``.
     """
     import base64
     import binascii
@@ -146,6 +157,9 @@ async def mcp_create_yuppaste(
             if result.named_slug:
                 response["named_slug"] = result.named_slug
                 response["version"] = result.version
+            signed_url = _try_sign_url(result.uuid)
+            if signed_url is not None:
+                response["signed_url"] = signed_url
             return response
 
         result_simple = await create_yuppaste(
@@ -173,6 +187,9 @@ async def mcp_create_yuppaste(
         if result_simple.named_slug:
             response["named_slug"] = result_simple.named_slug
             response["version"] = result_simple.version
+        signed_url = _try_sign_url(result_simple.uuid)
+        if signed_url is not None:
+            response["signed_url"] = signed_url
         return response
 
     except ValueError as e:

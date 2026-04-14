@@ -446,6 +446,11 @@ class Settings(BaseSettings):
     # Generate with: python -c "import secrets; print(secrets.token_hex(32))"
     AHS_GITHUB_WEBHOOK_SECRET: str = ""
 
+    # HMAC secret for signing artifact viewer URLs (/p/{uuid}?sig=...&exp=...).
+    # Required to enable signed-URL auth on the artifact viewer.
+    # Generate with: python -c "import secrets; print(secrets.token_hex(32))"
+    ARTIFACT_SIGNING_SECRET: str = ""
+
     def _get_gcp_secret(self, secret_name: str) -> str:
         """Retrieve secret from Google Cloud Secret Manager."""
 
