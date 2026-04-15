@@ -83,6 +83,7 @@ from ypl.agent_harness_service.service.run_task import (
 # ---------------------------------------------------------------------------
 from ypl.agent_harness_service.service.session_lifecycle import (
     _drain_pending_messages,
+    _drain_session_inbox,
     _inject_internal_message,
     _maybe_update_task_completion,
     attach_slack_to_session,
@@ -140,6 +141,7 @@ __all__ = [
     "_run_agent_task",
     # Session lifecycle
     "_drain_pending_messages",
+    "_drain_session_inbox",
     "_inject_internal_message",
     "_maybe_update_task_completion",
     "attach_slack_to_session",
