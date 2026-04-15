@@ -1155,9 +1155,9 @@ async def _run_agent_task(
             # Scenario B (A2A inject): drain any messages that arrived in the
             # session's Redis inbox while this turn was running.  Runs after
             # _drain_pending_messages so all user-queued messages are already
-            # dispatched before we pick up peer-agent messages.
-            async with get_async_session() as _inbox_db:
-                await _drain_session_inbox(agent_session_id, _inbox_db)
+            # dispatched before we pick up peer-agent messages.  Each message
+            # gets its own AsyncSession internally; no db parameter needed here.
+            await _drain_session_inbox(agent_session_id)
         # Only remove if the mapping still points to *this* task. A newer message
         # (or a drained turn) may have already replaced it with a different task.
         current = asyncio.current_task()
