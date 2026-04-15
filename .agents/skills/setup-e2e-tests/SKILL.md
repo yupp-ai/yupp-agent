@@ -56,7 +56,7 @@ fi
 **Critical overrides to verify** (these are the most common sources of errors):
 
 ```bash
-grep -E "^(ENVIRONMENT|AGENT_HARNESS_SERVICE_BASE_URL|GATEWAY_BASE_URL|ENABLE_CLOUDSQL_PROXY|POSTGRES_CONNECTION_YUPPDB)=" .env.e2e
+grep -E "^(ENVIRONMENT|AGENT_HARNESS_SERVICE_BASE_URL|GATEWAY_BASE_URL|ENABLE_CLOUDSQL_PROXY|POSTGRES_CONNECTION_YUPPDB|GOOGLE_APPLICATION_CREDENTIALS)=" .env.e2e
 ```
 
 Expected values:
@@ -65,6 +65,7 @@ Expected values:
 - `GATEWAY_BASE_URL="http://localhost:8090"` — MUST be `http`, not `https`
 - `ENABLE_CLOUDSQL_PROXY="true"` — disables SSL for local Postgres (counterintuitive name)
 - `POSTGRES_CONNECTION_YUPPDB=""` — must be empty (staging validator rejects test credentials)
+- `GOOGLE_APPLICATION_CREDENTIALS="<path to service account with Secret Manager access>"` — must point to a service account with `secretmanager.versions.access` (e.g. `yupp-llms-github-actions-service-account.json`). The default local dev SA does NOT have this permission.
 
 Also verify DB connection points to `yadb` (not `yupp_agent`):
 ```bash
