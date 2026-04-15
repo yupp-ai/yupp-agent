@@ -11,7 +11,11 @@ Example .env::
     GATEWAY_GITHUB_ENABLED=false   # off by default; requires AHS_GITHUB_WEBHOOK_SECRET
 """
 
+import os
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_ENV_FILE = os.environ.get("DOTENV_PATH", ".env")
 
 
 class MonoConfig(BaseSettings):
@@ -27,8 +31,8 @@ class MonoConfig(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        # Read from .env if present, but don't require it
-        env_file=".env",
+        # Read from .env (or DOTENV_PATH override) if present, but don't require it
+        env_file=_ENV_FILE,
         env_file_encoding="utf-8",
         # Ignore extra env vars so the monolith shares the same .env as the
         # individual services without errors on unknown keys
