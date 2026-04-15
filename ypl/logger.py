@@ -20,7 +20,7 @@ from ypl.loggers.processors import normalize_error_message_string
 MAX_LOGGED_FIELD_LENGTH_CHARS = 32000
 MAX_LOG_ENTRY_SIZE_BYTES = 250 * 1024
 
-load_dotenv()
+load_dotenv(os.environ["DOTENV_PATH"]) if "DOTENV_PATH" in os.environ else load_dotenv()
 
 GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "default")
 

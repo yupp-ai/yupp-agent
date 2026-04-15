@@ -9,6 +9,8 @@
 #
 # Usage:
 #   ./scripts/run_local.sh                                    # Start monolith on :8090
+#   ./scripts/run_local.sh --e2e                              # Use .env.e2e instead of .env
+#   ./scripts/run_local.sh --env-file=.env.staging            # Use a custom env file
 #   ./scripts/run_local.sh --streamlit                        # Also start Streamlit on :8501
 #   ./scripts/run_local.sh --no-interactive                   # Never prompt, fail on error
 #   ./scripts/run_local.sh --pg-host=mydb --pg-port=5433      # Custom Postgres
@@ -69,7 +71,7 @@ NC='\033[0m' # No Color
 # ---------------------------------------------------------------------------
 STREAMLIT=false
 NO_INTERACTIVE=false
-E2E_MODE=false
+ENV_FILE=".env"
 BACKGROUND=false
 PG_HOST=localhost
 PG_PORT=5432
@@ -80,7 +82,8 @@ for arg in "$@"; do
     case "$arg" in
         --streamlit) STREAMLIT=true ;;
         --no-interactive) NO_INTERACTIVE=true ;;
-        --e2e) E2E_MODE=true ;;
+        --e2e) ENV_FILE=".env.e2e" ;;
+        --env-file=*) ENV_FILE="${arg#*=}" ;;
         --background) BACKGROUND=true ;;
         --pg-host=*) PG_HOST="${arg#*=}" ;;
         --pg-port=*) PG_PORT="${arg#*=}" ;;
@@ -91,7 +94,8 @@ for arg in "$@"; do
             echo ""
             echo "Options:"
             echo "  --streamlit          Also start Streamlit dashboards on port 8501"
-            echo "  --e2e                Load .env.e2e overrides (staging env for e2e testing)"
+            echo "  --e2e                Shorthand for --env-file=.env.e2e"
+            echo "  --env-file=PATH      Use a custom env file instead of .env (default: .env)"
             echo "  --background         Run monolith in background (logs to /tmp/monolith_local.log)"
             echo "  --no-interactive     Never prompt or auto-start services; fail on error"
             echo "  --pg-host=HOST       Postgres host (default: localhost)"
@@ -279,16 +283,22 @@ fi
 # ---------------------------------------------------------------------------
 echo -e "${YELLOW}[4/4] Starting services...${NC}"
 
-# E2E mode: source .env.e2e FIRST so its values take priority over defaults below
-if [ "$E2E_MODE" = true ]; then
-    if [ -f "$REPO_ROOT/.env.e2e" ]; then
-        echo -e "  ${YELLOW}E2E mode: loading .env.e2e overrides${NC}"
+# Source the env file — defaults to .env, overridden by --env-file or --e2e
+if [ "$ENV_FILE" != ".env" ]; then
+    # Resolve to absolute path so Python can find it regardless of CWD
+    case "$ENV_FILE" in
+        /*) ENV_PATH="$ENV_FILE" ;;
+        *)  ENV_PATH="$REPO_ROOT/$ENV_FILE" ;;
+    esac
+    if [ -f "$ENV_PATH" ]; then
+        echo -e "  ${YELLOW}Loading env file: $ENV_PATH${NC}"
         set -a
-        # shellcheck disable=SC1091
-        source "$REPO_ROOT/.env.e2e"
+        # shellcheck disable=SC1090
+        source "$ENV_PATH"
         set +a
+        export DOTENV_PATH="$ENV_PATH"
     else
-        echo -e "  ${RED}.env.e2e not found — create it for e2e testing${NC}"
+        echo -e "  ${RED}$ENV_FILE not found (resolved to $ENV_PATH)${NC}"
         exit 1
     fi
 fi

@@ -25,7 +25,7 @@ from ypl.loggers.processors import (
 )
 
 # Load environment variables
-load_dotenv()
+load_dotenv(os.environ["DOTENV_PATH"]) if "DOTENV_PATH" in os.environ else load_dotenv()
 
 
 def _service_field_processor(logger: Any, name: str, event_dict: dict[str, Any]) -> dict[str, Any]:
