@@ -448,6 +448,12 @@ class Settings(BaseSettings):
     # Generate with: python -c "import secrets; print(secrets.token_hex(32))"
     AHS_GITHUB_WEBHOOK_SECRET: str = ""
 
+    # HMAC secret for signing artifact viewer URLs (/p/{uuid}?sig=...&exp=...).
+    # Set on the production/staging host directly (not via GCP Secret Manager).
+    # Generate with: python -c "import secrets; print(secrets.token_hex(32))"
+    # The default below is a dev/test placeholder — override in real deployments.
+    ARTIFACT_SIGNING_SECRET: str = "changethis-dev-placeholder-not-for-production"
+
     def _get_gcp_secret(self, secret_name: str) -> str:
         """Retrieve secret from Google Cloud Secret Manager."""
 
