@@ -285,15 +285,20 @@ echo -e "${YELLOW}[4/4] Starting services...${NC}"
 
 # Source the env file — defaults to .env, overridden by --env-file or --e2e
 if [ "$ENV_FILE" != ".env" ]; then
-    if [ -f "$REPO_ROOT/$ENV_FILE" ]; then
-        echo -e "  ${YELLOW}Loading env file: $ENV_FILE${NC}"
+    # Resolve to absolute path so Python can find it regardless of CWD
+    case "$ENV_FILE" in
+        /*) ENV_PATH="$ENV_FILE" ;;
+        *)  ENV_PATH="$REPO_ROOT/$ENV_FILE" ;;
+    esac
+    if [ -f "$ENV_PATH" ]; then
+        echo -e "  ${YELLOW}Loading env file: $ENV_PATH${NC}"
         set -a
         # shellcheck disable=SC1090
-        source "$REPO_ROOT/$ENV_FILE"
+        source "$ENV_PATH"
         set +a
-        export DOTENV_PATH="$ENV_FILE"
+        export DOTENV_PATH="$ENV_PATH"
     else
-        echo -e "  ${RED}$ENV_FILE not found${NC}"
+        echo -e "  ${RED}$ENV_FILE not found (resolved to $ENV_PATH)${NC}"
         exit 1
     fi
 fi
