@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+import uuid
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -32,6 +33,8 @@ from slack_sdk.web.async_client import AsyncWebClient
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
+
+E2E_PREFIX = "e2e-"
 
 BASE_URL = os.environ.get("E2E_BASE_URL", "http://localhost:8090")
 
@@ -48,6 +51,13 @@ if not API_KEY:
                         break
             if API_KEY:
                 break
+
+# MCP auth — use a dedicated e2e dev token (separate from production YUPPSTER_MCP_TOKEN)
+MCP_TOKEN = os.environ.get("YUPPSTER_MCP_TOKEN_E2E", "")
+
+# User email for resolving user_id
+E2E_USER_EMAIL = os.environ.get("E2E_USER_EMAIL", "lguan@yupp.ai")
+E2E_USER_ID = os.environ.get("E2E_USER_ID", "")
 
 # Slack credentials
 SLACK_USER_TOKEN = os.environ.get("SLACK_E2E_USER_TOKEN", "")
@@ -105,6 +115,60 @@ def bot_user_id() -> str:
     return SLACK_BOT_USER_ID
 
 
+@pytest.fixture(scope="session")
+def user_id(api_key: str) -> str:
+    """Resolve a test user_id via /ahs/resolve_user or E2E_USER_ID env var."""
+    if E2E_USER_ID:
+        return E2E_USER_ID
+    try:
+        resp = httpx.post(
+            f"{BASE_URL}/ahs/resolve_user",
+            json={"email": E2E_USER_EMAIL},
+            headers={"X-API-Key": api_key},
+            timeout=10.0,
+        )
+        if resp.status_code == 200:
+            return resp.json()["user_id"]
+    except Exception:
+        pass
+    pytest.skip(f"Could not resolve user_id for {E2E_USER_EMAIL} — set E2E_USER_ID env var")
+    return ""  # unreachable, keeps mypy happy
+
+
+@pytest.fixture
+def tag() -> str:
+    """Unique tag for test isolation."""
+    return uuid.uuid4().hex[:8]
+
+
+@pytest.fixture(scope="session")
+def mcp_headers() -> dict[str, str]:
+    """Auth headers for calling MCP tools via /mcp/ endpoint using dev token."""
+    if not MCP_TOKEN:
+        pytest.skip("YUPPSTER_MCP_TOKEN_E2E not set — cannot run MCP-dependent tests")
+    return {"Authorization": f"Bearer {MCP_TOKEN}", "Content-Type": "application/json", "Accept": "application/json"}
+
+
+@pytest.fixture
+async def session_cleanup(client: httpx.AsyncClient, auth_headers: dict[str, str]) -> AsyncGenerator[list[str], None]:
+    """Track and stop sessions created during a test."""
+    created: list[str] = []
+    yield created
+    for sid in created:
+        await client.post("/ahs/session/stop", json={"session_id": sid}, headers=auth_headers)
+
+
+@pytest.fixture
+async def schedule_cleanup(
+    client: httpx.AsyncClient, auth_headers: dict[str, str], user_id: str
+) -> AsyncGenerator[list[str], None]:
+    """Track and cancel schedules created during a test."""
+    created: list[str] = []
+    yield created
+    for sid in created:
+        await client.delete(f"/ahs/schedule/{sid}", params={"user_id": user_id}, headers=auth_headers)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _check_server_running() -> None:
     """Skip all e2e tests if the monolith isn't running."""
@@ -155,3 +219,47 @@ async def wait_for_bot_reply(
                     return dict(msg)
         await asyncio.sleep(poll_interval)
     return None
+
+
+async def wait_for_assistant_reply(
+    client: httpx.AsyncClient,
+    session_id: str,
+    headers: dict[str, str],
+    timeout: float = 15.0,
+    poll_interval: float = 2.0,
+) -> list[dict[str, Any]]:
+    """Poll session history until an assistant message appears. Returns all messages."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        resp = await client.get(
+            f"/ahs/session/{session_id}/history",
+            params={"limit": 50},
+            headers=headers,
+        )
+        if resp.status_code == 200:
+            messages = resp.json().get("messages", [])
+            if any(m.get("role") in ("assistant", "AGENT") for m in messages):
+                return messages
+        await asyncio.sleep(poll_interval)
+    return []
+
+
+async def call_mcp_tool(
+    client: httpx.AsyncClient,
+    headers: dict[str, str],
+    tool_name: str,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    """Call an MCP tool via JSON-RPC 2.0 over the /mcp/ endpoint."""
+    resp = await client.post(
+        "/mcp/",
+        headers=headers,
+        json={
+            "jsonrpc": "2.0",
+            "id": uuid.uuid4().hex,
+            "method": "tools/call",
+            "params": {"name": tool_name, "arguments": arguments},
+        },
+    )
+    assert resp.status_code == 200, f"MCP call to {tool_name} failed: {resp.status_code} {resp.text}"
+    return resp.json()
