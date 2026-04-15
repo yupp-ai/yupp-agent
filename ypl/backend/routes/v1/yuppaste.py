@@ -51,7 +51,7 @@ async def get_yuppaste_metadata(
     """
     Get metadata for yuppaste entries with pagination.
 
-    Returns metadata for pastes stored in BigQuery table yupp_pastes.pastes.
+    Returns metadata for pastes stored in the agent_artifacts Postgres table.
     """
     logger.info("Processing yuppaste metadata request", page=page, page_size=page_size)
     return await get_pastes_metadata_from_bigquery(
@@ -67,7 +67,7 @@ async def create_yuppaste_endpoint(
     """
     Create a new yuppaste with the provided data.
 
-    Stores the data in Google Cloud Storage and metadata in BigQuery.
+    Stores the data in the configured blob store and metadata in Postgres.
     The creator email is taken from the X-Creator-Email header.
 
     For named pastes with versioning:
@@ -181,8 +181,8 @@ async def get_yuppaste_by_uuid_endpoint(paste_uuid: str) -> YuppasteContentRespo
     """
     Get yuppaste content and metadata by UUID.
 
-    Retrieves both the content from Google Cloud Storage and metadata from BigQuery.
-    For large files (>1MB), returns a redirect URL instead of content.
+    Retrieves content from the configured blob store and metadata from Postgres.
+    For large files (>10MB), returns a redirect URL instead of content.
     """
     logger.info("Retrieving yuppaste by UUID", paste_uuid=paste_uuid)
     try:
@@ -227,9 +227,9 @@ async def get_yuppaste_by_slug_endpoint(
     """
     Get yuppaste content and metadata by named slug.
 
-    Retrieves both the content from Google Cloud Storage and metadata from BigQuery.
+    Retrieves content from the configured blob store and metadata from Postgres.
     If version is not specified, returns the latest non-archived version.
-    For large files (>1MB), returns a redirect URL instead of content.
+    For large files (>10MB), returns a redirect URL instead of content.
     """
     try:
         validate_named_slug(named_slug)

@@ -1,18 +1,30 @@
+"""Yuppaste backend — async Postgres (agent_artifacts) + blob_store.
+
+Replaces the previous BigQuery + direct-GCS implementation.  All metadata is
+persisted to the ``agent_artifacts`` table via async SQLModel queries; all
+content (main file and attachments) is stored through the pluggable BlobStore
+abstraction (GCS in production, local filesystem in development).
+
+Blob-store path layout:
+    pastes/{uuid[:2]}/{uuid}/{uuid}.{ext}       ← main content file
+    pastes/{uuid[:2]}/{uuid}/{filename}          ← attachment (sibling)
+
+Archiving maps to ``deleted_at IS NOT NULL`` (soft-delete via BaseModel).
+Attachment metadata is stored in ``artifact_metadata`` JSONB.
+"""
+
 import asyncio
-import json
 import logging
 import os
 import re
-import uuid
+import uuid as _uuid_module
 from datetime import UTC, datetime
 from typing import Any
 
-import aiohttp
-from gcloud.aio.storage import Storage
-from google.api_core import exceptions as google_exceptions
-from google.cloud import bigquery
+from sqlalchemy import asc, desc, func
+from sqlmodel import select
 
-from ypl.backend.config import settings
+from ypl.backend.db import get_async_session_for
 from ypl.backend.internal_tools.yuppaste_types import (
     AttachmentInfo,
     YuppasteContentResponse,
@@ -22,10 +34,11 @@ from ypl.backend.internal_tools.yuppaste_types import (
     YuppasteMetadata,
     validate_named_slug,
 )
-from ypl.backend.utils.bigquery_utils import get_bigquery_client
+from ypl.backend.utils.blob_store import get_blob_store
 from ypl.backend.utils.json import json_dumps
+from ypl.db.agent_harness import AgentArtifact, AgentArtifactType
 
-MAX_RESPONSE_CONTENT_SIZE_BYTES = 10 * 1024 * 1024  # 10MB
+MAX_RESPONSE_CONTENT_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
 
 ALLOWED_IMAGE_CONTENT_TYPES = frozenset(
     {
@@ -36,13 +49,38 @@ ALLOWED_IMAGE_CONTENT_TYPES = frozenset(
         "image/svg+xml",
     }
 )
-MAX_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024  # 10MB per attachment
+MAX_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB per attachment
 MAX_ATTACHMENTS_PER_PASTE = 20
 ATTACHMENT_PLACEHOLDER_PATTERN = re.compile(r"!\[([^\]]*)\]\(attachment:([^)]+)\)")
 
 # Characters not allowed in attachment filenames
 _INVALID_FILENAME_CHARS = frozenset({"/", "\\", "\x00"})
 _INVALID_FILENAMES = frozenset({".", "..", ""})
+
+# Maps MIME content-type → file extension used in blob-store paths.
+# Must stay in sync with the CHECK constraint on agent_artifacts.content_type.
+YUPPASTE_CONTENT_TYPES: dict[str, str] = {
+    "text/plain": "txt",
+    "text/markdown": "md",
+    "text/html": "html",
+}
+
+_DEFAULT_EXT = "txt"
+
+
+# ---------------------------------------------------------------------------
+# Path helpers
+# ---------------------------------------------------------------------------
+
+
+def _content_path(file_uuid: str, ext: str) -> str:
+    """Return the blob-store logical path for a paste's main content file."""
+    return f"pastes/{file_uuid[:2]}/{file_uuid}/{file_uuid}.{ext}"
+
+
+def _attachment_path(file_uuid: str, filename: str) -> str:
+    """Return the blob-store logical path for an attachment (sibling of main file)."""
+    return f"pastes/{file_uuid[:2]}/{file_uuid}/{filename}"
 
 
 def _sanitize_attachment_filename(filename: str) -> str:
@@ -54,6 +92,11 @@ def _sanitize_attachment_filename(filename: str) -> str:
     if filename in _INVALID_FILENAMES or any(c in filename for c in _INVALID_FILENAME_CHARS):
         raise ValueError(f"Invalid attachment filename: {filename!r}")
     return filename
+
+
+# ---------------------------------------------------------------------------
+# Link generators (public API, callers import these)
+# ---------------------------------------------------------------------------
 
 
 def generate_yuppaste_link(paste_uuid: str) -> str:
@@ -68,72 +111,115 @@ def generate_yuppaste_slug_link(named_slug: str, version: int | None = None) -> 
     return f"http://go/p/{named_slug}"
 
 
+# ---------------------------------------------------------------------------
+# Internal conversion helpers
+# ---------------------------------------------------------------------------
+
+
+def _artifact_to_metadata(artifact: AgentArtifact) -> YuppasteMetadata:
+    """Convert an AgentArtifact ORM row to a YuppasteMetadata response model."""
+    meta: dict[str, Any] = artifact.artifact_metadata or {}
+    content_path: str = meta.get("content_path", "")
+    return YuppasteMetadata(
+        uuid=str(artifact.agent_artifact_id),
+        name=artifact.title or None,
+        created_by=artifact.creator_user_id or "",
+        content_url=content_path,
+        created_at=artifact.created_at or datetime.now(UTC),
+        named_slug=artifact.named_slug,
+        version=artifact.version,
+        is_archived=artifact.deleted_at is not None,
+    )
+
+
+def _meta_to_attachments(meta: dict[str, Any]) -> list[AttachmentInfo]:
+    """Extract attachment info list from artifact_metadata JSONB."""
+    raw = meta.get("attachments")
+    if not raw or not isinstance(raw, list):
+        return []
+    result: list[AttachmentInfo] = []
+    for item in raw:
+        try:
+            result.append(AttachmentInfo(**item))
+        except Exception:
+            logging.warning("Skipping malformed attachment metadata: %r", item)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Slug versioning helpers
+# ---------------------------------------------------------------------------
+
+
 async def get_max_version_for_slug(named_slug: str) -> int | None:
     """Get the maximum version number for a named slug.
 
-    Includes archived versions to prevent version number reuse.
+    Includes archived versions to prevent version-number reuse.
 
     Args:
-        named_slug: The slug to query
+        named_slug: The slug to query.
 
     Returns:
-        Maximum version number (including archived), or None if slug never existed
+        Maximum version number (including archived), or None if slug never existed.
     """
-    client = get_bigquery_client()
-    # Include ALL versions (even archived) to prevent version number reuse
-    query = f"""
-    SELECT MAX(version) as max_version
-    FROM `{settings.GCP_PROJECT_ID}.{settings.YUPPASTE_BQ_DATASET}.{settings.YUPPASTE_BQ_TABLE}`
-    WHERE named_slug = @named_slug
-    """
-
-    job_config = bigquery.QueryJobConfig(
-        query_parameters=[
-            bigquery.ScalarQueryParameter("named_slug", "STRING", named_slug),
-        ]
-    )
-
-    def _execute_query() -> int | None:
-        query_job = client.query(query, job_config=job_config)
-        result = query_job.result()
-        row = next(result, None)
+    async with get_async_session_for("agentdb") as session:
+        result = await session.execute(
+            select(func.max(AgentArtifact.version))
+            .where(AgentArtifact.named_slug == named_slug)
+            .where(AgentArtifact.artifact_type == AgentArtifactType.YUPPASTE)
+        )
+        row = result.one_or_none()
         if row is None:
             return None
-        max_version = row.max_version
-        return int(max_version) if max_version is not None else None
-
-    return await asyncio.to_thread(_execute_query)
+        val = row[0]
+        return int(val) if val is not None else None
 
 
 async def slug_exists(named_slug: str) -> bool:
-    """Check if a named slug exists (has any non-archived versions).
+    """Return True if the slug has at least one active (non-archived) version.
 
     Args:
-        named_slug: The slug to check
+        named_slug: The slug to check.
 
     Returns:
-        True if the slug exists with at least one active version
+        True if the slug exists with at least one active version.
     """
-    client = get_bigquery_client()
-    query = f"""
-    SELECT 1
-    FROM `{settings.GCP_PROJECT_ID}.{settings.YUPPASTE_BQ_DATASET}.{settings.YUPPASTE_BQ_TABLE}`
-    WHERE named_slug = @named_slug AND (is_archived IS NULL OR is_archived = FALSE)
-    LIMIT 1
+    async with get_async_session_for("agentdb") as session:
+        result = await session.exec(
+            select(AgentArtifact.agent_artifact_id)
+            .where(AgentArtifact.named_slug == named_slug)
+            .where(AgentArtifact.artifact_type == AgentArtifactType.YUPPASTE)
+            .where(AgentArtifact.deleted_at.is_(None))  # type: ignore[union-attr]
+            .limit(1)
+        )
+        return result.first() is not None
+
+
+# ---------------------------------------------------------------------------
+# Versioning logic (shared by create functions)
+# ---------------------------------------------------------------------------
+
+
+async def _resolve_version(named_slug: str, create_new_slug: bool) -> int:
+    """Determine the next version number for a named slug.
+
+    Raises:
+        ValueError: If the slug state contradicts ``create_new_slug``.
     """
+    exists = await slug_exists(named_slug)
+    if create_new_slug:
+        if exists:
+            raise ValueError(f"named_slug '{named_slug}' already exists")
+    else:
+        if not exists:
+            raise ValueError(f"named_slug '{named_slug}' does not exist. Use create_new_slug=True to create it.")
+    max_version = await get_max_version_for_slug(named_slug)
+    return (max_version or 0) + 1
 
-    job_config = bigquery.QueryJobConfig(
-        query_parameters=[
-            bigquery.ScalarQueryParameter("named_slug", "STRING", named_slug),
-        ]
-    )
 
-    def _execute_query() -> bool:
-        query_job = client.query(query, job_config=job_config)
-        result = query_job.result()
-        return next(result, None) is not None
-
-    return await asyncio.to_thread(_execute_query)
+# ---------------------------------------------------------------------------
+# List / metadata
+# ---------------------------------------------------------------------------
 
 
 async def get_pastes_metadata_from_bigquery(
@@ -145,92 +231,62 @@ async def get_pastes_metadata_from_bigquery(
     named_slug: str | None = None,
     include_archived: bool = False,
 ) -> YuppasteListResponse:
-    client = get_bigquery_client()
+    """Return a paginated list of yuppaste metadata from Postgres.
 
-    # Calculate offset for pagination
+    Function name kept for caller compatibility (was BigQuery-backed).
+    """
     offset = (page - 1) * page_size
 
-    # Build WHERE clauses
-    where_clauses = []
-    query_parameters = [
-        bigquery.ScalarQueryParameter("page_size", "INT64", page_size),
-        bigquery.ScalarQueryParameter("offset", "INT64", offset),
-    ]
+    # Build a reusable base filter
+    def _base_stmt() -> Any:
+        stmt: Any = select(AgentArtifact).where(AgentArtifact.artifact_type == AgentArtifactType.YUPPASTE)
+        if created_by:
+            stmt = stmt.where(AgentArtifact.creator_user_id == created_by)
+        if named_slug:
+            stmt = stmt.where(AgentArtifact.named_slug == named_slug)
+        if not include_archived:
+            stmt = stmt.where(AgentArtifact.deleted_at.is_(None))  # type: ignore[union-attr]
+        return stmt
 
-    if created_by:
-        where_clauses.append("created_by = @created_by")
-        query_parameters.append(bigquery.ScalarQueryParameter("created_by", "STRING", created_by))
+    # Determine sort expression
+    sort_col_attr: Any = AgentArtifact.created_at
+    if sort_by == "created_by":
+        sort_col_attr = AgentArtifact.creator_user_id
+    elif sort_by == "name":
+        sort_col_attr = AgentArtifact.title
 
-    if named_slug:
-        where_clauses.append("named_slug = @named_slug")
-        query_parameters.append(bigquery.ScalarQueryParameter("named_slug", "STRING", named_slug))
-
-    if not include_archived:
-        where_clauses.append("(is_archived IS NULL OR is_archived = FALSE)")
-
-    where_clause = " AND ".join(where_clauses) if where_clauses else "1=1"
-
-    count_query = f"""
-    SELECT COUNT(*) as total_count
-    FROM `{settings.GCP_PROJECT_ID}.{settings.YUPPASTE_BQ_DATASET}.{settings.YUPPASTE_BQ_TABLE}`
-    WHERE {where_clause}
-    """
-
-    data_query = f"""
-    SELECT uuid, name, created_by, gcs_url, created_at, named_slug, version, is_archived
-    FROM `{settings.GCP_PROJECT_ID}.{settings.YUPPASTE_BQ_DATASET}.{settings.YUPPASTE_BQ_TABLE}`
-    WHERE {where_clause}
-    ORDER BY {sort_by} {sort_order}
-    LIMIT @page_size
-    OFFSET @offset
-    """
-
-    job_config = bigquery.QueryJobConfig(query_parameters=query_parameters)
-
-    def _execute_bigquery_queries() -> tuple[int, list]:
-        count_job = client.query(count_query, job_config=job_config)
-        count_result = count_job.result()
-        total_count = next(count_result).total_count
-
-        data_job = client.query(data_query, job_config=job_config)
-        data_result = data_job.result()
-        return total_count, list(data_result)
+    order_expr = desc(sort_col_attr) if sort_order == "desc" else asc(sort_col_attr)
 
     try:
-        total_count, data_result = await asyncio.to_thread(_execute_bigquery_queries)
-    except google_exceptions.Forbidden as e:
-        logging.error(
-            json_dumps(
-                {"message": "BigQuery permission denied for yuppaste table read", "facilitator": created_by},
-            ),
-            exc_info=True,
-        )
-        raise ValueError("BigQuery table access denied. Please check permissions.") from e
+        async with get_async_session_for("agentdb") as session:
+            # Total count — reuse the same filter logic as _base_stmt()
+            count_stmt: Any = (
+                select(func.count())
+                .select_from(AgentArtifact)
+                .where(AgentArtifact.artifact_type == AgentArtifactType.YUPPASTE)
+            )
+            if created_by:
+                count_stmt = count_stmt.where(AgentArtifact.creator_user_id == created_by)
+            if named_slug:
+                count_stmt = count_stmt.where(AgentArtifact.named_slug == named_slug)
+            if not include_archived:
+                count_stmt = count_stmt.where(AgentArtifact.deleted_at.is_(None))  # type: ignore[union-attr]
+            count_result = await session.execute(count_stmt)
+            total_count: int = count_result.scalar() or 0
+
+            # Data page
+            data_stmt = _base_stmt().order_by(order_expr).offset(offset).limit(page_size)
+            data_result = await session.exec(data_stmt)
+            artifacts = data_result.all()
+
     except Exception as e:
         logging.error(
-            json_dumps(
-                {"message": "BigQuery error during yuppaste metadata retrieval", "facilitator": created_by},
-            ),
+            json_dumps({"message": "Postgres error during yuppaste metadata retrieval", "created_by": created_by}),
             exc_info=True,
         )
-        raise ValueError("Failed to retrieve yuppaste metadata from BigQuery.") from e
+        raise ValueError("Failed to retrieve yuppaste metadata.") from e
 
-    # Convert results to Pydantic models
-    pastes = []
-    for row in data_result:
-        paste = YuppasteMetadata(
-            uuid=str(row.uuid),
-            name=str(row.name) if row.name is not None else None,
-            created_by=str(row.created_by),
-            gcs_url=str(row.gcs_url),
-            created_at=row.created_at,
-            named_slug=str(row.named_slug) if getattr(row, "named_slug", None) is not None else None,
-            version=int(row.version) if getattr(row, "version", None) is not None else None,
-            is_archived=bool(row.is_archived) if getattr(row, "is_archived", None) is not None else False,
-        )
-        pastes.append(paste)
-
-    # Calculate pagination info
+    pastes = [_artifact_to_metadata(a) for a in artifacts]
     has_next = (page * page_size) < total_count
     has_previous = page > 1
 
@@ -242,6 +298,11 @@ async def get_pastes_metadata_from_bigquery(
         has_next=has_next,
         has_previous=has_previous,
     )
+
+
+# ---------------------------------------------------------------------------
+# Create
+# ---------------------------------------------------------------------------
 
 
 async def create_yuppaste(
@@ -268,67 +329,44 @@ async def create_yuppaste(
     Raises:
         ValueError: If slug validation fails or slug exists/doesn't exist as expected.
     """
-    # Handle versioning logic
     version: int | None = None
     if named_slug:
         validate_named_slug(named_slug)
-        exists = await slug_exists(named_slug)
-        if create_new_slug:
-            if exists:
-                raise ValueError(f"named_slug '{named_slug}' already exists")
-            # Check for archived versions to prevent version reuse
-            max_version = await get_max_version_for_slug(named_slug)
-            version = (max_version or 0) + 1
-        else:
-            if not exists:
-                raise ValueError(f"named_slug '{named_slug}' does not exist. Use create_new_slug=True to create it.")
-            max_version = await get_max_version_for_slug(named_slug)
-            version = (max_version or 0) + 1
+        version = await _resolve_version(named_slug, create_new_slug)
 
-    # Generate UUID and GCS URL
-    file_uuid = str(uuid.uuid4())
-    gcs_url = f"gs://{settings.GCS_BUCKET_NAME}/pastes/{file_uuid}.txt"
+    file_uuid = str(_uuid_module.uuid4())
+    ext = YUPPASTE_CONTENT_TYPES.get(content_type, _DEFAULT_EXT)
+    path = _content_path(file_uuid, ext)
     created_at = datetime.now(UTC)
 
-    # Upload data to GCS using async client
-    async with Storage() as async_client:
-        await async_client.upload(
-            bucket=settings.GCS_BUCKET_NAME,
-            object_name=f"pastes/{file_uuid}.txt",
-            file_data=data.encode("utf-8"),
-            content_type=content_type,
-        )
+    # Upload content to blob store
+    blob_store = get_blob_store()
+    await blob_store.upload(path, data.encode("utf-8"), content_type)
 
-    # Insert metadata into BigQuery
-    client = get_bigquery_client()
-    query = f"""
-    INSERT INTO `{settings.GCP_PROJECT_ID}.{settings.YUPPASTE_BQ_DATASET}.{settings.YUPPASTE_BQ_TABLE}`
-    (uuid, name, created_by, gcs_url, created_at, named_slug, version, is_archived)
-    VALUES (@uuid, @name, @created_by, @gcs_url, @created_at, @named_slug, @version, @is_archived)
-    """
-
-    job_config = bigquery.QueryJobConfig(
-        query_parameters=[
-            bigquery.ScalarQueryParameter("uuid", "STRING", file_uuid),
-            bigquery.ScalarQueryParameter("name", "STRING", name),
-            bigquery.ScalarQueryParameter("created_by", "STRING", created_by),
-            bigquery.ScalarQueryParameter("gcs_url", "STRING", gcs_url),
-            bigquery.ScalarQueryParameter("created_at", "TIMESTAMP", created_at),
-            bigquery.ScalarQueryParameter("named_slug", "STRING", named_slug),
-            bigquery.ScalarQueryParameter("version", "INT64", version),
-            bigquery.ScalarQueryParameter("is_archived", "BOOL", False),
-        ]
+    # Persist metadata to Postgres
+    stored_content_type = content_type if content_type in YUPPASTE_CONTENT_TYPES else None
+    artifact = AgentArtifact(
+        agent_artifact_id=_uuid_module.UUID(file_uuid),
+        artifact_type=AgentArtifactType.YUPPASTE,
+        title=name or "",
+        url=generate_yuppaste_link(file_uuid),
+        creator_user_id=created_by,
+        named_slug=named_slug,
+        version=version,
+        content_type=stored_content_type,
+        artifact_metadata={"content_path": path},
+        created_at=created_at,
     )
+    async with get_async_session_for("agentdb") as session:
+        session.add(artifact)
+        await session.commit()
+        await session.refresh(artifact)
 
-    def _execute_bigquery_insert() -> None:
-        client.query(query, job_config=job_config).result()
-
-    await asyncio.to_thread(_execute_bigquery_insert)
     return YuppasteCreateResponse(
         uuid=file_uuid,
         name=name,
-        gcs_url=gcs_url,
-        created_at=created_at,
+        content_url=path,
+        created_at=artifact.created_at or created_at,
         named_slug=named_slug,
         version=version,
         is_archived=False,
@@ -336,17 +374,17 @@ async def create_yuppaste(
 
 
 def _replace_attachment_placeholders(data: str, file_uuid: str, filenames: set[str]) -> str:
-    """Replace attachment placeholders with GCS URLs.
+    """Replace attachment placeholders with blob-store paths.
 
-    Converts `![alt](attachment:filename)` to `![alt](gs://bucket/pastes/attachments/uuid/filename)`.
+    Converts ``![alt](attachment:filename)`` to
+    ``![alt](pastes/{uuid[:2]}/{uuid}/{filename})``.
     """
 
     def _replacer(match: re.Match[str]) -> str:
         alt_text = match.group(1)
         filename = match.group(2)
         if filename in filenames:
-            gcs_url = f"gs://{settings.GCS_BUCKET_NAME}/pastes/attachments/{file_uuid}/{filename}"
-            return f"![{alt_text}]({gcs_url})"
+            return f"![{alt_text}]({_attachment_path(file_uuid, filename)})"
         return match.group(0)
 
     return ATTACHMENT_PLACEHOLDER_PATTERN.sub(_replacer, data)
@@ -378,32 +416,20 @@ async def create_yuppaste_with_attachments(
     Raises:
         ValueError: If slug validation fails or slug exists/doesn't exist as expected.
     """
-    # Handle versioning logic
     version: int | None = None
     if named_slug:
         validate_named_slug(named_slug)
-        exists = await slug_exists(named_slug)
-        if create_new_slug:
-            if exists:
-                raise ValueError(f"named_slug '{named_slug}' already exists")
-            # Check for archived versions to prevent version reuse
-            max_version = await get_max_version_for_slug(named_slug)
-            version = (max_version or 0) + 1
-        else:
-            if not exists:
-                raise ValueError(f"named_slug '{named_slug}' does not exist. Use create_new_slug=True to create it.")
-            max_version = await get_max_version_for_slug(named_slug)
-            version = (max_version or 0) + 1
+        version = await _resolve_version(named_slug, create_new_slug)
 
     attachments = attachments or []
 
     if len(attachments) > MAX_ATTACHMENTS_PER_PASTE:
         raise ValueError(f"Too many attachments: {len(attachments)} (max {MAX_ATTACHMENTS_PER_PASTE})")
 
-    # Sanitize filenames and validate attachments
+    # Sanitize filenames and validate attachment content
     attachments = [(_sanitize_attachment_filename(fn), content, ct) for fn, content, ct in attachments]
 
-    # Reject duplicate filenames — later uploads would silently overwrite earlier ones in GCS
+    # Reject duplicate filenames
     seen_filenames: set[str] = set()
     for fn, _, _ in attachments:
         if fn in seen_filenames:
@@ -417,81 +443,64 @@ async def create_yuppaste_with_attachments(
             max_mb = MAX_ATTACHMENT_SIZE_BYTES // (1024 * 1024)
             raise ValueError(f"Attachment '{filename}' exceeds maximum size of {max_mb}MB")
 
-    file_uuid = str(uuid.uuid4())
-    gcs_url = f"gs://{settings.GCS_BUCKET_NAME}/pastes/{file_uuid}.txt"
+    file_uuid = str(_uuid_module.uuid4())
+    ext = YUPPASTE_CONTENT_TYPES.get(content_type, _DEFAULT_EXT)
+    main_path = _content_path(file_uuid, ext)
     created_at = datetime.now(UTC)
 
-    # Upload attachments concurrently
+    blob_store = get_blob_store()
+
+    # Replace placeholders in content before uploading
     attachment_infos: list[AttachmentInfo] = []
     if attachments:
-        filenames = {filename for filename, _, _ in attachments}
-        # Replace placeholders before uploading text
+        filenames = {fn for fn, _, _ in attachments}
         data = _replace_attachment_placeholders(data, file_uuid, filenames)
 
-        async def _upload_attachment(filename: str, content: bytes, content_type: str) -> AttachmentInfo:
-            object_name = f"pastes/attachments/{file_uuid}/{filename}"
-            async with Storage() as client:
-                await client.upload(
-                    bucket=settings.GCS_BUCKET_NAME,
-                    object_name=object_name,
-                    file_data=content,
-                    content_type=content_type,
-                )
+        async def _upload_attachment(filename: str, att_data: bytes, att_ctype: str) -> AttachmentInfo:
+            att_path = _attachment_path(file_uuid, filename)
+            await blob_store.upload(att_path, att_data, att_ctype)
             return AttachmentInfo(
                 filename=filename,
-                gcs_url=f"gs://{settings.GCS_BUCKET_NAME}/{object_name}",
-                content_type=content_type,
-                size_bytes=len(content),
+                content_url=att_path,
+                content_type=att_ctype,
+                size_bytes=len(att_data),
             )
 
         attachment_infos = list(
-            await asyncio.gather(*[_upload_attachment(fn, content, ctype) for fn, content, ctype in attachments])
+            await asyncio.gather(*[_upload_attachment(fn, content, ct) for fn, content, ct in attachments])
         )
 
-    # Upload text content
-    async with Storage() as async_client:
-        await async_client.upload(
-            bucket=settings.GCS_BUCKET_NAME,
-            object_name=f"pastes/{file_uuid}.txt",
-            file_data=data.encode("utf-8"),
-            content_type=content_type,
-        )
+    # Upload main content
+    await blob_store.upload(main_path, data.encode("utf-8"), content_type)
 
-    # Insert metadata into BigQuery with attachments JSON
-    client = get_bigquery_client()
-    attachments_json = json.dumps([ai.model_dump() for ai in attachment_infos]) if attachment_infos else None
+    # Build artifact_metadata
+    artifact_meta: dict[str, Any] = {"content_path": main_path}
+    if attachment_infos:
+        artifact_meta["attachments"] = [ai.model_dump() for ai in attachment_infos]
 
-    query = f"""
-    INSERT INTO `{settings.GCP_PROJECT_ID}.{settings.YUPPASTE_BQ_DATASET}.{settings.YUPPASTE_BQ_TABLE}`
-    (uuid, name, created_by, gcs_url, created_at, attachments, named_slug, version, is_archived)
-    VALUES (@uuid, @name, @created_by, @gcs_url, @created_at,
-            PARSE_JSON(@attachments), @named_slug, @version, @is_archived)
-    """
-
-    job_config = bigquery.QueryJobConfig(
-        query_parameters=[
-            bigquery.ScalarQueryParameter("uuid", "STRING", file_uuid),
-            bigquery.ScalarQueryParameter("name", "STRING", name),
-            bigquery.ScalarQueryParameter("created_by", "STRING", created_by),
-            bigquery.ScalarQueryParameter("gcs_url", "STRING", gcs_url),
-            bigquery.ScalarQueryParameter("created_at", "TIMESTAMP", created_at),
-            bigquery.ScalarQueryParameter("attachments", "STRING", attachments_json),
-            bigquery.ScalarQueryParameter("named_slug", "STRING", named_slug),
-            bigquery.ScalarQueryParameter("version", "INT64", version),
-            bigquery.ScalarQueryParameter("is_archived", "BOOL", False),
-        ]
+    stored_content_type = content_type if content_type in YUPPASTE_CONTENT_TYPES else None
+    artifact = AgentArtifact(
+        agent_artifact_id=_uuid_module.UUID(file_uuid),
+        artifact_type=AgentArtifactType.YUPPASTE,
+        title=name or "",
+        url=generate_yuppaste_link(file_uuid),
+        creator_user_id=created_by,
+        named_slug=named_slug,
+        version=version,
+        content_type=stored_content_type,
+        artifact_metadata=artifact_meta,
+        created_at=created_at,
     )
-
-    def _execute_bigquery_insert() -> None:
-        client.query(query, job_config=job_config).result()
-
-    await asyncio.to_thread(_execute_bigquery_insert)
+    async with get_async_session_for("agentdb") as session:
+        session.add(artifact)
+        await session.commit()
+        await session.refresh(artifact)
 
     return YuppasteCreateWithAttachmentsResponse(
         uuid=file_uuid,
         name=name,
-        gcs_url=gcs_url,
-        created_at=created_at,
+        content_url=main_path,
+        created_at=artifact.created_at or created_at,
         attachments=attachment_infos,
         named_slug=named_slug,
         version=version,
@@ -499,101 +508,65 @@ async def create_yuppaste_with_attachments(
     )
 
 
+# ---------------------------------------------------------------------------
+# Read
+# ---------------------------------------------------------------------------
+
+
+async def _fetch_content(content_path: str, paste_uuid: str) -> tuple[str | None, str | None, int]:
+    """Download paste content from the blob store.
+
+    Returns:
+        (content_str, redirect_url, file_size):
+        - If the file is within the inline size limit: (content, None, size)
+        - If the file is too large: (None, redirect_url, size)
+
+    Raises:
+        ValueError: If the blob does not exist.
+    """
+    blob_store = get_blob_store()
+    try:
+        file_size = await blob_store.get_size(content_path)
+    except FileNotFoundError:
+        raise ValueError(f"Yuppaste content not found for UUID {paste_uuid}") from None
+
+    if file_size > MAX_RESPONSE_CONTENT_SIZE_BYTES:
+        redirect_url = await blob_store.get_access_url(content_path)
+        return None, redirect_url, file_size
+
+    raw = await blob_store.download(content_path)
+    return raw.decode("utf-8"), None, file_size
+
+
 async def get_yuppaste_by_uuid(paste_uuid: str) -> YuppasteContentResponse:
     """Get yuppaste content and metadata by UUID."""
-    # Get metadata from BigQuery (including attachments)
-    client = get_bigquery_client()
-    query = f"""
-    SELECT uuid, name, created_by, gcs_url, created_at, TO_JSON_STRING(attachments) as attachments_json,
-           named_slug, version, is_archived
-    FROM `{settings.GCP_PROJECT_ID}.{settings.YUPPASTE_BQ_DATASET}.{settings.YUPPASTE_BQ_TABLE}`
-    WHERE uuid = @uuid
-    """
+    async with get_async_session_for("agentdb") as session:
+        artifact = await session.get(AgentArtifact, _uuid_module.UUID(paste_uuid))
 
-    job_config = bigquery.QueryJobConfig(
-        query_parameters=[
-            bigquery.ScalarQueryParameter("uuid", "STRING", paste_uuid),
-        ]
-    )
-
-    def _execute_bigquery_query() -> list:
-        query_job = client.query(query, job_config=job_config)
-        result = query_job.result()
-        return list(result)
-
-    result = await asyncio.to_thread(_execute_bigquery_query)
-
-    # Check if paste exists
-    if not result:
+    if artifact is None:
         raise ValueError(f"Yuppaste with UUID {paste_uuid} not found")
 
-    row = result[0]
+    meta: dict[str, Any] = artifact.artifact_metadata or {}
+    content_path: str = meta.get("content_path", "")
+    if not content_path:
+        raise ValueError(f"Yuppaste {paste_uuid} has no content path in metadata")
 
-    # Parse attachments from JSON
-    attachment_infos: list[AttachmentInfo] = []
-    attachments_json = getattr(row, "attachments_json", None)
-    if attachments_json:
-        try:
-            parsed = json.loads(attachments_json)
-            if isinstance(parsed, list):
-                attachment_infos = [AttachmentInfo(**item) for item in parsed]
-        except (json.JSONDecodeError, TypeError):
-            logging.warning(f"Failed to parse attachments JSON for paste {paste_uuid}")
-
-    # Check object size in GCS then download if it's small enough
-    try:
-        async with Storage() as async_client:
-            bucket = async_client.get_bucket(settings.GCS_BUCKET_NAME)
-            async with aiohttp.ClientSession() as session:
-                blob = await bucket.get_blob(f"pastes/{paste_uuid}.txt", session=session)  # type: ignore[arg-type]
-
-                if blob is None:
-                    raise ValueError(f"Yuppaste content not found in GCS for UUID {paste_uuid}")
-
-                if blob.size > MAX_RESPONSE_CONTENT_SIZE_BYTES:
-                    # Use the blob's authenticated URL for direct access
-                    authenticated_url = (
-                        f"https://storage.cloud.google.com/{settings.GCS_BUCKET_NAME}/pastes/{paste_uuid}.txt"
-                    )
-                    return YuppasteContentResponse(
-                        uuid=str(row.uuid),
-                        name=str(row.name) if row.name is not None else None,
-                        data=None,
-                        created_by=str(row.created_by),
-                        gcs_url=str(row.gcs_url),
-                        redirect_url=authenticated_url,
-                        file_size=blob.size,
-                        created_at=row.created_at,
-                        attachments=attachment_infos,
-                        named_slug=str(row.named_slug) if getattr(row, "named_slug", None) is not None else None,
-                        version=int(row.version) if getattr(row, "version", None) is not None else None,
-                        is_archived=bool(row.is_archived) if getattr(row, "is_archived", None) is not None else False,
-                    )
-
-                # Download content for smaller files
-                content_bytes = await async_client.download(
-                    bucket=settings.GCS_BUCKET_NAME,
-                    object_name=f"pastes/{paste_uuid}.txt",
-                )
-                content = content_bytes.decode("utf-8")
-    except Exception as e:
-        if "Not Found" in str(e) or "404" in str(e):
-            raise ValueError(f"Yuppaste content not found in GCS for UUID {paste_uuid}") from None
-        raise
+    attachment_infos = _meta_to_attachments(meta)
+    content, redirect_url, file_size = await _fetch_content(content_path, paste_uuid)
 
     return YuppasteContentResponse(
-        uuid=str(row.uuid),
-        name=str(row.name) if row.name is not None else None,
+        uuid=paste_uuid,
+        name=artifact.title or None,
         data=content,
-        created_by=str(row.created_by),
-        gcs_url=str(row.gcs_url),
-        redirect_url=None,
-        file_size=blob.size,
-        created_at=row.created_at,
+        created_by=artifact.creator_user_id or "",
+        content_url=content_path,
+        redirect_url=redirect_url,
+        file_size=file_size,
+        created_at=artifact.created_at or datetime.now(UTC),
         attachments=attachment_infos,
-        named_slug=str(row.named_slug) if getattr(row, "named_slug", None) is not None else None,
-        version=int(row.version) if getattr(row, "version", None) is not None else None,
-        is_archived=bool(row.is_archived) if getattr(row, "is_archived", None) is not None else False,
+        named_slug=artifact.named_slug,
+        version=artifact.version,
+        is_archived=artifact.deleted_at is not None,
     )
 
 
@@ -601,348 +574,185 @@ async def get_yuppaste_by_slug(named_slug: str, version: int | None = None) -> Y
     """Get yuppaste content and metadata by named slug.
 
     Args:
-        named_slug: The slug to look up
+        named_slug: The slug to look up.
         version: Optional specific version. If None, returns the latest non-archived version.
 
     Returns:
-        YuppasteContentResponse with paste content and metadata
+        YuppasteContentResponse with paste content and metadata.
 
     Raises:
-        ValueError: If no paste found with the given slug/version
+        ValueError: If no paste found with the given slug/version.
     """
-    client = get_bigquery_client()
+    async with get_async_session_for("agentdb") as session:
+        if version is not None:
+            stmt = (
+                select(AgentArtifact)
+                .where(AgentArtifact.named_slug == named_slug)
+                .where(AgentArtifact.version == version)
+                .where(AgentArtifact.artifact_type == AgentArtifactType.YUPPASTE)
+            )
+        else:
+            stmt = (
+                select(AgentArtifact)
+                .where(AgentArtifact.named_slug == named_slug)
+                .where(AgentArtifact.artifact_type == AgentArtifactType.YUPPASTE)
+                .where(AgentArtifact.deleted_at.is_(None))  # type: ignore[union-attr]
+                .order_by(desc(AgentArtifact.version))  # type: ignore[arg-type]
+                .limit(1)
+            )
+        result = await session.exec(stmt)
+        artifact = result.first()
 
-    if version is not None:
-        # Get specific version
-        query = f"""
-        SELECT uuid, name, created_by, gcs_url, created_at, TO_JSON_STRING(attachments) as attachments_json,
-               named_slug, version, is_archived
-        FROM `{settings.GCP_PROJECT_ID}.{settings.YUPPASTE_BQ_DATASET}.{settings.YUPPASTE_BQ_TABLE}`
-        WHERE named_slug = @named_slug AND version = @version
-        """
-        job_config = bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ScalarQueryParameter("named_slug", "STRING", named_slug),
-                bigquery.ScalarQueryParameter("version", "INT64", version),
-            ]
-        )
-    else:
-        # Get latest non-archived version
-        query = f"""
-        SELECT uuid, name, created_by, gcs_url, created_at, TO_JSON_STRING(attachments) as attachments_json,
-               named_slug, version, is_archived
-        FROM `{settings.GCP_PROJECT_ID}.{settings.YUPPASTE_BQ_DATASET}.{settings.YUPPASTE_BQ_TABLE}`
-        WHERE named_slug = @named_slug AND (is_archived IS NULL OR is_archived = FALSE)
-        ORDER BY version DESC
-        LIMIT 1
-        """
-        job_config = bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ScalarQueryParameter("named_slug", "STRING", named_slug),
-            ]
-        )
-
-    def _execute_bigquery_query() -> list:
-        query_job = client.query(query, job_config=job_config)
-        result = query_job.result()
-        return list(result)
-
-    result = await asyncio.to_thread(_execute_bigquery_query)
-
-    if not result:
+    if artifact is None:
         if version is not None:
             raise ValueError(f"Yuppaste with slug '{named_slug}' version {version} not found")
         raise ValueError(f"Yuppaste with slug '{named_slug}' not found")
 
-    row = result[0]
-    paste_uuid = str(row.uuid)
+    paste_uuid = str(artifact.agent_artifact_id)
+    meta: dict[str, Any] = artifact.artifact_metadata or {}
+    content_path: str = meta.get("content_path", "")
+    if not content_path:
+        raise ValueError(f"Yuppaste {paste_uuid} has no content path in metadata")
 
-    # Parse attachments from JSON
-    attachment_infos: list[AttachmentInfo] = []
-    attachments_json = getattr(row, "attachments_json", None)
-    if attachments_json:
-        try:
-            parsed = json.loads(attachments_json)
-            if isinstance(parsed, list):
-                attachment_infos = [AttachmentInfo(**item) for item in parsed]
-        except (json.JSONDecodeError, TypeError):
-            logging.warning(f"Failed to parse attachments JSON for paste {paste_uuid}")
-
-    # Check object size in GCS then download if it's small enough
-    try:
-        async with Storage() as async_client:
-            bucket = async_client.get_bucket(settings.GCS_BUCKET_NAME)
-            async with aiohttp.ClientSession() as session:
-                blob = await bucket.get_blob(f"pastes/{paste_uuid}.txt", session=session)  # type: ignore[arg-type]
-
-                if blob is None:
-                    raise ValueError(f"Yuppaste content not found in GCS for slug '{named_slug}'")
-
-                if blob.size > MAX_RESPONSE_CONTENT_SIZE_BYTES:
-                    authenticated_url = (
-                        f"https://storage.cloud.google.com/{settings.GCS_BUCKET_NAME}/pastes/{paste_uuid}.txt"
-                    )
-                    return YuppasteContentResponse(
-                        uuid=paste_uuid,
-                        name=str(row.name) if row.name is not None else None,
-                        data=None,
-                        created_by=str(row.created_by),
-                        gcs_url=str(row.gcs_url),
-                        redirect_url=authenticated_url,
-                        file_size=blob.size,
-                        created_at=row.created_at,
-                        attachments=attachment_infos,
-                        named_slug=str(row.named_slug) if getattr(row, "named_slug", None) is not None else None,
-                        version=int(row.version) if getattr(row, "version", None) is not None else None,
-                        is_archived=bool(row.is_archived) if getattr(row, "is_archived", None) is not None else False,
-                    )
-
-                content_bytes = await async_client.download(
-                    bucket=settings.GCS_BUCKET_NAME,
-                    object_name=f"pastes/{paste_uuid}.txt",
-                )
-                content = content_bytes.decode("utf-8")
-    except Exception as e:
-        if "Not Found" in str(e) or "404" in str(e):
-            raise ValueError(f"Yuppaste content not found in GCS for UUID {paste_uuid}") from None
-        raise
+    attachment_infos = _meta_to_attachments(meta)
+    content, redirect_url, file_size = await _fetch_content(content_path, paste_uuid)
 
     return YuppasteContentResponse(
         uuid=paste_uuid,
-        name=str(row.name) if row.name is not None else None,
+        name=artifact.title or None,
         data=content,
-        created_by=str(row.created_by),
-        gcs_url=str(row.gcs_url),
-        redirect_url=None,
-        file_size=blob.size,
-        created_at=row.created_at,
+        created_by=artifact.creator_user_id or "",
+        content_url=content_path,
+        redirect_url=redirect_url,
+        file_size=file_size,
+        created_at=artifact.created_at or datetime.now(UTC),
         attachments=attachment_infos,
-        named_slug=str(row.named_slug) if getattr(row, "named_slug", None) is not None else None,
-        version=int(row.version) if getattr(row, "version", None) is not None else None,
-        is_archived=bool(row.is_archived) if getattr(row, "is_archived", None) is not None else False,
+        named_slug=artifact.named_slug,
+        version=artifact.version,
+        is_archived=artifact.deleted_at is not None,
     )
+
+
+# ---------------------------------------------------------------------------
+# Archive
+# ---------------------------------------------------------------------------
 
 
 async def archive_yuppaste(paste_uuid: str, archived_by: str) -> YuppasteMetadata:
     """Archive a yuppaste by UUID.
 
-    Sets is_archived=True on the paste. Archived pastes:
-    - Are excluded from default list queries (unless include_archived=True)
-    - Are excluded when resolving a slug without a specific version
-    - Can still be accessed directly by UUID or by slug@version
-    - Preserve their version number (prevents version reuse)
+    Sets deleted_at to mark the paste as archived. Archived pastes:
+    - Are excluded from default list queries (unless include_archived=True).
+    - Are excluded when resolving a slug without a specific version.
+    - Can still be accessed directly by UUID or by slug@version.
+    - Preserve their version number (prevents version reuse).
 
     Args:
-        paste_uuid: UUID of the paste to archive
-        archived_by: Email of the user archiving the paste
+        paste_uuid: UUID of the paste to archive.
+        archived_by: Email of the user archiving the paste.
 
     Returns:
-        Updated metadata of the archived paste (with is_archived=True)
+        Updated metadata of the archived paste (is_archived=True).
 
     Raises:
-        ValueError: If paste not found
-        PermissionError: If user is not the creator
+        ValueError: If paste not found.
+        PermissionError: If user is not the creator.
     """
-    client = get_bigquery_client()
+    async with get_async_session_for("agentdb") as session:
+        artifact = await session.get(AgentArtifact, _uuid_module.UUID(paste_uuid))
+        if artifact is None:
+            raise ValueError(f"Yuppaste with UUID {paste_uuid} not found")
+        if artifact.creator_user_id != archived_by:
+            raise PermissionError("You can only archive yuppastes created by yourself")
+        artifact.deleted_at = datetime.now(UTC)
+        session.add(artifact)
+        await session.commit()
+        await session.refresh(artifact)
 
-    # First, get the current paste to check authorization
-    select_query = f"""
-    SELECT uuid, name, created_by, gcs_url, created_at, named_slug, version, is_archived
-    FROM `{settings.GCP_PROJECT_ID}.{settings.YUPPASTE_BQ_DATASET}.{settings.YUPPASTE_BQ_TABLE}`
-    WHERE uuid = @uuid
-    """
-
-    select_job_config = bigquery.QueryJobConfig(
-        query_parameters=[bigquery.ScalarQueryParameter("uuid", "STRING", paste_uuid)]
-    )
-
-    def _execute_bigquery_select() -> Any:
-        select_job = client.query(select_query, job_config=select_job_config)
-        select_result = select_job.result()
-        return next(select_result, None)
-
-    row = await asyncio.to_thread(_execute_bigquery_select)
-
-    if row is None:
-        raise ValueError(f"Yuppaste with UUID {paste_uuid} not found")
-
-    if str(row.created_by) != archived_by:
-        raise PermissionError("You can only archive yuppastes created by yourself")
-
-    # Update is_archived to True
-    update_query = f"""
-    UPDATE `{settings.GCP_PROJECT_ID}.{settings.YUPPASTE_BQ_DATASET}.{settings.YUPPASTE_BQ_TABLE}`
-    SET is_archived = TRUE
-    WHERE uuid = @uuid
-    """
-
-    update_job_config = bigquery.QueryJobConfig(
-        query_parameters=[bigquery.ScalarQueryParameter("uuid", "STRING", paste_uuid)]
-    )
-
-    def _execute_bigquery_update() -> int:
-        query_job = client.query(update_query, job_config=update_job_config)
-        result = query_job.result()
-        return result.num_dml_affected_rows or 0
-
-    await asyncio.to_thread(_execute_bigquery_update)
-
-    return YuppasteMetadata(
-        uuid=str(row.uuid),
-        name=str(row.name) if row.name is not None else None,
-        created_by=str(row.created_by),
-        gcs_url=str(row.gcs_url),
-        created_at=row.created_at,
-        named_slug=str(row.named_slug) if getattr(row, "named_slug", None) is not None else None,
-        version=int(row.version) if getattr(row, "version", None) is not None else None,
-        is_archived=True,
-    )
+    return _artifact_to_metadata(artifact)
 
 
 async def archive_yuppaste_by_slug(named_slug: str, version: int | None, archived_by: str) -> int:
     """Archive yuppaste(s) by named slug.
 
     Args:
-        named_slug: The slug to archive
-        version: Specific version to archive. If None, archives all versions (no ownership check).
-        archived_by: Email of the user archiving
+        named_slug: The slug to archive.
+        version: Specific version to archive. If None, archives all active versions.
+        archived_by: Email of the user archiving.
 
     Returns:
-        Number of pastes archived
+        Number of pastes archived.
 
     Raises:
-        PermissionError: If archiving a specific version not owned by archived_by
+        PermissionError: If archiving a specific version not owned by archived_by.
     """
-    client = get_bigquery_client()
+    async with get_async_session_for("agentdb") as session:
+        # Build fetch statement
+        stmt = (
+            select(AgentArtifact)
+            .where(AgentArtifact.named_slug == named_slug)
+            .where(AgentArtifact.artifact_type == AgentArtifactType.YUPPASTE)
+            .where(AgentArtifact.deleted_at.is_(None))  # type: ignore[union-attr]
+        )
+        if version is not None:
+            stmt = stmt.where(AgentArtifact.version == version)
 
-    # Verify ownership only for single-version archive.
-    # Bulk archive (version=None) trusts slug-level access - anyone who knows
-    # the slug can archive all versions, supporting collaborative slug workflows.
-    if version is not None:
-        check_query = f"""
-        SELECT created_by
-        FROM `{settings.GCP_PROJECT_ID}.{settings.YUPPASTE_BQ_DATASET}.{settings.YUPPASTE_BQ_TABLE}`
-        WHERE named_slug = @named_slug AND version = @version
-        """
-        check_params = [
-            bigquery.ScalarQueryParameter("named_slug", "STRING", named_slug),
-            bigquery.ScalarQueryParameter("version", "INT64", version),
-        ]
-        check_job_config = bigquery.QueryJobConfig(query_parameters=check_params)
+        result = await session.exec(stmt)
+        artifacts = result.all()
 
-        def _check_ownership() -> list[str]:
-            query_job = client.query(check_query, job_config=check_job_config)
-            result = query_job.result()
-            return [str(row.created_by) for row in result]
-
-        creators = await asyncio.to_thread(_check_ownership)
-
-        if not creators:
+        if not artifacts:
             return 0
 
-        for creator in creators:
-            if creator != archived_by:
-                raise PermissionError("You can only archive yuppastes created by yourself")
+        # Ownership check — only for single-version archive
+        if version is not None:
+            for art in artifacts:
+                if art.creator_user_id != archived_by:
+                    raise PermissionError("You can only archive yuppastes created by yourself")
 
-    # Archive
-    if version is not None:
-        update_query = f"""
-        UPDATE `{settings.GCP_PROJECT_ID}.{settings.YUPPASTE_BQ_DATASET}.{settings.YUPPASTE_BQ_TABLE}`
-        SET is_archived = TRUE
-        WHERE named_slug = @named_slug AND version = @version
-        """
-        update_params = [
-            bigquery.ScalarQueryParameter("named_slug", "STRING", named_slug),
-            bigquery.ScalarQueryParameter("version", "INT64", version),
-        ]
-    else:
-        update_query = f"""
-        UPDATE `{settings.GCP_PROJECT_ID}.{settings.YUPPASTE_BQ_DATASET}.{settings.YUPPASTE_BQ_TABLE}`
-        SET is_archived = TRUE
-        WHERE named_slug = @named_slug AND (is_archived IS NULL OR is_archived = FALSE)
-        """
-        update_params = [
-            bigquery.ScalarQueryParameter("named_slug", "STRING", named_slug),
-        ]
+        now = datetime.now(UTC)
+        for art in artifacts:
+            art.deleted_at = now
+            session.add(art)
+        await session.commit()
 
-    update_job_config = bigquery.QueryJobConfig(query_parameters=update_params)
+    return len(artifacts)
 
-    def _execute_archive() -> int:
-        query_job = client.query(update_query, job_config=update_job_config)
-        result = query_job.result()
-        return result.num_dml_affected_rows or 0
 
-    return await asyncio.to_thread(_execute_archive)
+# ---------------------------------------------------------------------------
+# Update metadata
+# ---------------------------------------------------------------------------
 
 
 async def update_yuppaste_metadata(
     paste_uuid: str, name: str | None = None, update_by: str | None = None
 ) -> YuppasteMetadata:
-    """Update yuppaste metadata."""
-    client = get_bigquery_client()
+    """Update yuppaste metadata (currently: name/title only).
 
-    # First, get the current paste to check authorization
-    select_query = f"""
-    SELECT uuid, name, created_by, gcs_url, created_at, named_slug, version, is_archived
-    FROM `{settings.GCP_PROJECT_ID}.{settings.YUPPASTE_BQ_DATASET}.{settings.YUPPASTE_BQ_TABLE}`
-    WHERE uuid = @uuid
+    Args:
+        paste_uuid: UUID of the paste to update.
+        name: New name/title. If None, nothing is updated.
+        update_by: If provided, only allow updates by the original creator.
+
+    Returns:
+        Updated YuppasteMetadata.
+
+    Raises:
+        ValueError: If paste not found or no fields provided.
+        PermissionError: If update_by is provided and doesn't match the creator.
     """
-
-    select_job_config = bigquery.QueryJobConfig(
-        query_parameters=[bigquery.ScalarQueryParameter("uuid", "STRING", paste_uuid)]
-    )
-
-    def _execute_bigquery_select() -> Any:
-        select_job = client.query(select_query, job_config=select_job_config)
-        select_result = select_job.result()
-        return next(select_result)
-
-    row = await asyncio.to_thread(_execute_bigquery_select)
-
-    # Check authorization if created_by is provided
-    if update_by is not None and str(row.created_by) != update_by:
-        raise PermissionError("You can only update yuppastes created by yourself")
-
-    # Build update query based on provided fields
-    update_fields = []
-    query_parameters = [bigquery.ScalarQueryParameter("uuid", "STRING", paste_uuid)]
-
-    if name is not None:
-        update_fields.append("name = @name")
-        query_parameters.append(bigquery.ScalarQueryParameter("name", "STRING", name))
-
-    if not update_fields:
+    if name is None:
         raise ValueError("No fields provided for update")
 
-    query = f"""
-    UPDATE `{settings.GCP_PROJECT_ID}.{settings.YUPPASTE_BQ_DATASET}.{settings.YUPPASTE_BQ_TABLE}`
-    SET {", ".join(update_fields)}
-    WHERE uuid = @uuid
-    """
+    async with get_async_session_for("agentdb") as session:
+        artifact = await session.get(AgentArtifact, _uuid_module.UUID(paste_uuid))
+        if artifact is None:
+            raise ValueError(f"Yuppaste with UUID {paste_uuid} not found")
+        if update_by is not None and artifact.creator_user_id != update_by:
+            raise PermissionError("You can only update yuppastes created by yourself")
 
-    job_config = bigquery.QueryJobConfig(query_parameters=query_parameters)
+        artifact.title = name
+        session.add(artifact)
+        await session.commit()
+        await session.refresh(artifact)
 
-    def _execute_bigquery_update() -> int:
-        query_job = client.query(query, job_config=job_config)
-        result = query_job.result()
-        return result.num_dml_affected_rows or 0
-
-    num_affected_rows = await asyncio.to_thread(_execute_bigquery_update)
-
-    # Check if any rows were affected
-    if num_affected_rows is None or num_affected_rows == 0:
-        raise ValueError(f"Yuppaste with UUID {paste_uuid} not found")
-
-    # Get updated metadata
-    updated_row = await asyncio.to_thread(_execute_bigquery_select)
-
-    return YuppasteMetadata(
-        uuid=str(updated_row.uuid),
-        name=str(updated_row.name) if updated_row.name is not None else None,
-        created_by=str(updated_row.created_by),
-        gcs_url=str(updated_row.gcs_url),
-        created_at=updated_row.created_at,
-        named_slug=str(updated_row.named_slug) if getattr(updated_row, "named_slug", None) is not None else None,
-        version=int(updated_row.version) if getattr(updated_row, "version", None) is not None else None,
-        is_archived=bool(updated_row.is_archived) if getattr(updated_row, "is_archived", None) is not None else False,
-    )
+    return _artifact_to_metadata(artifact)

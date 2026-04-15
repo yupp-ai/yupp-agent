@@ -28,7 +28,7 @@ def _make_paste_result(
     r.uuid = paste_uuid
     r.name = name
     r.data = data
-    r.gcs_url = f"gs://bucket/{paste_uuid}"
+    r.content_url = f"pastes/{paste_uuid[:2]}/{paste_uuid}/{paste_uuid}.txt"
     r.created_by = "user@example.com"
     r.created_at = datetime(2024, 1, 15, tzinfo=UTC)
     r.named_slug = named_slug

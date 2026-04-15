@@ -155,7 +155,7 @@ async def mcp_create_yuppaste(
                 "uuid": result.uuid,
                 "name": result.name,
                 "go_link": go_link,
-                "gcs_url": result.gcs_url,
+                "content_url": result.content_url,
                 "created_at": result.created_at.isoformat(),
                 "attachments": [ai.model_dump() for ai in result.attachments],
             }
@@ -186,7 +186,7 @@ async def mcp_create_yuppaste(
             "uuid": result_simple.uuid,
             "name": result_simple.name,
             "go_link": go_link,
-            "gcs_url": result_simple.gcs_url,
+            "content_url": result_simple.content_url,
             "created_at": result_simple.created_at.isoformat(),
         }
         if result_simple.named_slug:
@@ -255,7 +255,7 @@ async def mcp_read_yuppaste(
             "name": result.name,
             "go_link": go_link,
             "created_by": result.created_by,
-            "gcs_url": result.gcs_url,
+            "content_url": result.content_url,
             "created_at": result.created_at.isoformat() if result.created_at else None,
         }
 

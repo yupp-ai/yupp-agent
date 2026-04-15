@@ -27,7 +27,7 @@ class AttachmentInfo(BaseModel):
     """Metadata for a single attachment in a yuppaste."""
 
     filename: str = Field(..., description="Original filename of the attachment")
-    gcs_url: str = Field(..., description="GCS URL where the attachment is stored")
+    content_url: str = Field(..., description="Blob-store path where the attachment is stored")
     content_type: str = Field(..., description="MIME content type of the attachment")
     size_bytes: int = Field(..., description="Size of the attachment in bytes")
 
@@ -38,7 +38,7 @@ class YuppasteMetadata(BaseModel):
     uuid: str = Field(..., description="Unique identifier for the paste")
     name: str | None = Field(None, description="Name/title of the paste")
     created_by: str = Field(..., description="Email of the user who created the paste")
-    gcs_url: str = Field(..., description="Google Cloud Storage URL for the paste content")
+    content_url: str = Field(..., description="Blob-store path for the paste content")
     created_at: datetime = Field(..., description="Timestamp when the paste was created")
     named_slug: str | None = Field(None, description="URL-safe lookup key for named pastes")
     version: int | None = Field(None, description="Version number for named pastes")
@@ -88,7 +88,7 @@ class YuppasteCreateResponse(BaseModel):
 
     uuid: str = Field(..., description="Unique identifier for the created paste")
     name: str | None = Field(None, description="Name/title of the paste")
-    gcs_url: str = Field(..., description="Google Cloud Storage URL for the paste content")
+    content_url: str = Field(..., description="Blob-store path for the paste content")
     created_at: datetime = Field(..., description="Timestamp when the paste was created")
     named_slug: str | None = Field(None, description="URL-safe lookup key for named pastes")
     version: int | None = Field(None, description="Version number for named pastes")
@@ -100,7 +100,7 @@ class YuppasteCreateWithAttachmentsResponse(BaseModel):
 
     uuid: str = Field(..., description="Unique identifier for the created paste")
     name: str | None = Field(None, description="Name/title of the paste")
-    gcs_url: str = Field(..., description="Google Cloud Storage URL for the paste content")
+    content_url: str = Field(..., description="Blob-store path for the paste content")
     created_at: datetime = Field(..., description="Timestamp when the paste was created")
     attachments: list[AttachmentInfo] = Field(default_factory=list, description="List of uploaded attachments")
     named_slug: str | None = Field(None, description="URL-safe lookup key for named pastes")
@@ -115,7 +115,7 @@ class YuppasteContentResponse(BaseModel):
     name: str | None = Field(None, description="Name/title of the paste")
     data: str | None = Field(None, description="Content data of the paste (None if file is too large)")
     created_by: str = Field(..., description="Email of the user who created the paste")
-    gcs_url: str = Field(..., description="Google Cloud Storage URL for the paste content")
+    content_url: str = Field(..., description="Blob-store path for the paste content")
     redirect_url: str | None = Field(None, description="Authenticated URL for direct access to large files")
     file_size: int | None = Field(None, description="Size of the file in bytes")
     created_at: datetime = Field(..., description="Timestamp when the paste was created")
