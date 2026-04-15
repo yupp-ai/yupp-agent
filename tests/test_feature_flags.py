@@ -371,7 +371,7 @@ class TestGetDefaultFeatureFlags:
             {"name": "flag_b", "description": "B", "default_state": 42, "critical": True},
         ]
         with patch("ypl.backend.feature_flags.get_feature_flags_from_yml", return_value=flags):
-            get_default_feature_flags.cache_clear()
+            get_default_feature_flags.cache_clear()  # type: ignore[attr-defined, unused-ignore]
             result = get_default_feature_flags()
 
         assert result == {"flag_a": True, "flag_b": 42}

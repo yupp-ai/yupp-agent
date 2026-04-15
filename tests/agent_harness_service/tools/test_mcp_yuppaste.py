@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from ypl.mcp_server.tools.yuppaste import mcp_create_yuppaste, mcp_read_yuppaste
 
+_FAKE_SIGNED_URL = "/p/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee?sig=abc123&exp=9999999999"
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -62,12 +64,83 @@ class TestMcpCreateYuppaste:
                 AsyncMock(return_value=paste),
             ),
             patch("ypl.mcp_server.tools.yuppaste.generate_yuppaste_link", return_value="http://go/p/abc"),
+            patch("ypl.mcp_server.tools.yuppaste._try_sign_url", return_value=_FAKE_SIGNED_URL),
         ):
             result = await mcp_create_yuppaste.fn(content="hello")
 
         assert result["success"] is True
         assert result["go_link"] == "http://go/p/abc"
         assert result["uuid"] == VALID_UUID
+
+    async def test_signed_url_included_when_signing_configured(self) -> None:
+        paste = _make_paste_result()
+
+        with (
+            patch("ypl.mcp_server.tools.yuppaste.get_requesting_user_id", return_value=FAKE_USER_ID),
+            patch(
+                "ypl.mcp_server.tools.yuppaste.resolve_email_from_user_id",
+                AsyncMock(return_value="user@example.com"),
+            ),
+            patch("ypl.mcp_server.tools.yuppaste.get_authenticated_user_email", return_value="user@example.com"),
+            patch(
+                "ypl.mcp_server.tools.yuppaste.create_yuppaste",
+                AsyncMock(return_value=paste),
+            ),
+            patch("ypl.mcp_server.tools.yuppaste.generate_yuppaste_link", return_value="http://go/p/abc"),
+            patch("ypl.mcp_server.tools.yuppaste._try_sign_url", return_value=_FAKE_SIGNED_URL),
+        ):
+            result = await mcp_create_yuppaste.fn(content="hello")
+
+        assert result["success"] is True
+        assert "signed_url" in result
+        assert result["signed_url"] == _FAKE_SIGNED_URL
+
+    async def test_signed_url_omitted_when_signing_not_configured(self) -> None:
+        paste = _make_paste_result()
+
+        with (
+            patch("ypl.mcp_server.tools.yuppaste.get_requesting_user_id", return_value=FAKE_USER_ID),
+            patch(
+                "ypl.mcp_server.tools.yuppaste.resolve_email_from_user_id",
+                AsyncMock(return_value="user@example.com"),
+            ),
+            patch("ypl.mcp_server.tools.yuppaste.get_authenticated_user_email", return_value="user@example.com"),
+            patch(
+                "ypl.mcp_server.tools.yuppaste.create_yuppaste",
+                AsyncMock(return_value=paste),
+            ),
+            patch("ypl.mcp_server.tools.yuppaste.generate_yuppaste_link", return_value="http://go/p/abc"),
+            patch("ypl.mcp_server.tools.yuppaste._try_sign_url", return_value=None),
+        ):
+            result = await mcp_create_yuppaste.fn(content="hello")
+
+        assert result["success"] is True
+        assert "signed_url" not in result
+
+    async def test_signed_url_included_for_attachment_path(self) -> None:
+        paste = _make_paste_result()
+
+        valid_b64 = base64.b64encode(b"image data").decode()
+        attachments_json = __import__("json").dumps([{"filename": "img.png", "content_base64": valid_b64}])
+
+        with (
+            patch("ypl.mcp_server.tools.yuppaste.get_requesting_user_id", return_value=FAKE_USER_ID),
+            patch(
+                "ypl.mcp_server.tools.yuppaste.resolve_email_from_user_id",
+                AsyncMock(return_value="user@example.com"),
+            ),
+            patch("ypl.mcp_server.tools.yuppaste.get_authenticated_user_email", return_value="user@example.com"),
+            patch(
+                "ypl.mcp_server.tools.yuppaste.create_yuppaste_with_attachments",
+                AsyncMock(return_value=paste),
+            ),
+            patch("ypl.mcp_server.tools.yuppaste.generate_yuppaste_link", return_value="http://go/p/abc"),
+            patch("ypl.mcp_server.tools.yuppaste._try_sign_url", return_value=_FAKE_SIGNED_URL),
+        ):
+            result = await mcp_create_yuppaste.fn(content="test", attachments=attachments_json)
+
+        assert result["success"] is True
+        assert result["signed_url"] == _FAKE_SIGNED_URL
 
     async def test_content_too_large(self) -> None:
         big_content = "x" * (10 * 1024 * 1024 + 1)
