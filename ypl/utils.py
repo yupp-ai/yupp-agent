@@ -90,7 +90,7 @@ def ttl_cache_with_jitter(
     jitter: bool = True,
 ) -> Callable[[FuncType], FuncType]:
     ttl = int(ttl * random.uniform(0.85, 1.15)) if jitter else ttl
-    return ttl_cache(maxsize, ttl, timer, typed)
+    return ttl_cache(maxsize, ttl, timer, typed)  # type: ignore[return-value, unused-ignore]
 
 
 @no_type_check
