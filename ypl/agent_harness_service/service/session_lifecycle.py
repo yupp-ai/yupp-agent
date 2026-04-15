@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from ypl.agent_harness_service.core.subagent_queue import SubagentResult
 
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlmodel import col, select
 
 import ypl.db.all_models  # noqa: F401 — register all tables so FK references resolve
@@ -91,6 +91,7 @@ from ypl.backend.utils.soul_utils import has_permission_by_user_id_cached
 from ypl.db.agent_harness import (
     Agent,
     AgentMessage,
+    AgentMessageStatus,
     AgentSession,
     AgentSessionMessage,
     AgentSessionMessageCompletionStatus,
@@ -99,6 +100,7 @@ from ypl.db.agent_harness import (
     AgentSessionStatus,
     AgentSessionTrigger,
 )
+from ypl.db.redis import get_redis_client
 from ypl.db.soul_rbac import SoulPermission
 from ypl.structured_logger import get_logger
 
@@ -260,6 +262,298 @@ async def _drain_pending_messages(agent_session_id: uuid.UUID) -> None:
         # Re-queue so the messages aren't silently dropped after the user was told "queued".
         existing = _pending_messages.get(agent_session_id, [])
         _pending_messages[agent_session_id] = pending + existing
+
+
+async def _drain_session_inbox(session_id: uuid.UUID) -> None:
+    """Drain pending A2A messages from Redis at the turn boundary (Scenario B).
+
+    Called at the end of every turn, immediately after ``_drain_pending_messages``.
+    Pops message IDs from ``session_inbox:{session_id}``, atomically claims each
+    in its own ``AsyncSession`` (fresh per message to avoid ``PendingRollbackError``
+    cascade), constructs a ``FELLOW_AGENT`` ``AgentSessionMessage`` with provenance
+    fields, and finalises the ``AgentMessage`` row as delivered — all in a single
+    commit.
+
+    When no turn is currently running the function directly fires
+    ``_run_agent_task`` and breaks so that subsequent inbox messages are processed
+    at the next turn boundary (one direct turn per drain cycle).  When a turn IS
+    already running (started by ``_drain_pending_messages``) the message is queued
+    via ``_pending_messages`` as a fallback; in that path the ``AgentSessionMessage``
+    will be ``USER`` role rather than ``FELLOW_AGENT``, but the ``AgentMessage``
+    row retains full provenance.
+
+    On any per-message failure the ``AgentMessage`` row is reset to QUEUED (or
+    FAILED if ``attempt_count`` is exhausted) and the ID is re-pushed to the
+    session inbox so the next turn boundary retries delivery.
+    """
+    try:
+        redis = await get_redis_client()
+    except Exception:
+        logger.warning(
+            "A2A inbox drain: Redis unavailable — skipping",
+            session_id=str(session_id),
+        )
+        return
+
+    while True:
+        # Non-blocking pop — returns None immediately if the list is empty.
+        try:
+            raw = await redis.lpop(f"session_inbox:{session_id}")  # type: ignore[misc]
+        except Exception:
+            logger.warning(
+                "A2A inbox drain: Redis LPOP failed",
+                session_id=str(session_id),
+                exc_info=True,
+            )
+            break
+
+        if not raw:
+            break
+
+        msg_id = raw.decode() if isinstance(raw, bytes) else str(raw)
+
+        # ------------------------------------------------------------------
+        # Each message gets its own AsyncSession so a failed rollback on one
+        # message cannot leave subsequent iterations in PendingRollbackError.
+        # ------------------------------------------------------------------
+        async with get_async_session() as msg_db:
+            # ------------------------------------------------------------------
+            # Atomic DB claim — prevents double delivery if startup recovery
+            # re-enqueued this message concurrently.
+            # ------------------------------------------------------------------
+            try:
+                claim_result = await msg_db.execute(
+                    text("""
+                        UPDATE agent_messages
+                        SET status        = 'delivering',
+                            claimed_at    = now(),
+                            attempt_count = attempt_count + 1
+                        WHERE agent_message_id = :id
+                          AND status = 'queued'
+                          AND attempt_count < max_attempts
+                        RETURNING agent_message_id, content, from_agent_id, from_session_id,
+                                  to_session_id, attempt_count, max_attempts
+                    """),
+                    {"id": msg_id},
+                )
+                await msg_db.commit()
+            except Exception:
+                logger.error(
+                    "A2A inbox drain: DB claim failed",
+                    agent_message_id=msg_id,
+                    session_id=str(session_id),
+                    exc_info=True,
+                )
+                # Re-push the already-LPOP'd ID so the next turn boundary retries.
+                try:
+                    await redis.rpush(f"session_inbox:{session_id}", msg_id)  # type: ignore[misc]
+                except Exception:
+                    logger.error(
+                        "A2A inbox drain: failed to re-push after claim failure",
+                        agent_message_id=msg_id,
+                        exc_info=True,
+                    )
+                continue
+
+            row = claim_result.mappings().one_or_none()
+            if row is None:
+                # Already claimed by another worker, or max_attempts exhausted.
+                logger.debug(
+                    "A2A inbox drain: message already claimed or exhausted — skipping",
+                    agent_message_id=msg_id,
+                    session_id=str(session_id),
+                )
+                continue
+
+            # ------------------------------------------------------------------
+            # Guard: validate that this message was actually addressed to this
+            # session.  A bug in the sender, a Redis key collision, or corrupt
+            # RPUSH could land a wrong message ID in our inbox.
+            # ------------------------------------------------------------------
+            claimed_to_session = row["to_session_id"]
+            if claimed_to_session is None or str(claimed_to_session) != str(session_id):
+                logger.error(
+                    "A2A inbox drain: to_session_id mismatch — resetting",
+                    agent_message_id=msg_id,
+                    expected_session=str(session_id),
+                    got_session=str(claimed_to_session),
+                )
+                try:
+                    await msg_db.execute(
+                        text("""
+                            UPDATE agent_messages
+                            SET status = 'queued', claimed_at = NULL
+                            WHERE agent_message_id = :id
+                        """),
+                        {"id": msg_id},
+                    )
+                    await msg_db.commit()
+                    if claimed_to_session is not None:
+                        await redis.rpush(f"session_inbox:{claimed_to_session}", msg_id)  # type: ignore[misc]
+                except Exception:
+                    logger.error(
+                        "A2A inbox drain: failed to reset misrouted message",
+                        agent_message_id=msg_id,
+                        exc_info=True,
+                    )
+                continue
+
+            try:
+                # ------------------------------------------------------------------
+                # Load session + agent metadata.
+                # ------------------------------------------------------------------
+                session_obj = await msg_db.get(AgentSession, session_id)
+                if session_obj is None:
+                    raise ValueError(f"Session {session_id} not found — cannot inject FELLOW_AGENT turn")
+
+                agent_obj = await msg_db.get(Agent, session_obj.agent_id)
+                if agent_obj is None:
+                    raise ValueError(f"Agent not found for session {session_id}")
+
+                # ------------------------------------------------------------------
+                # Check whether a new turn is already running (started by
+                # _drain_pending_messages).  If so, fall back to _pending_messages
+                # rather than starting a second concurrent turn.
+                # ------------------------------------------------------------------
+                current_task = asyncio.current_task()
+                has_active_turn = _active_tasks.get(session_id) is not current_task
+
+                if has_active_turn:
+                    # Fallback path: queue via _pending_messages so the in-progress
+                    # turn's boundary will pick it up.  The AgentSessionMessage in
+                    # this path will be USER role (via send_message), not FELLOW_AGENT,
+                    # but the AgentMessage row retains provenance.
+                    _pending_messages.setdefault(session_id, []).append(
+                        PendingMessage(
+                            message=row["content"],
+                            user_id=session_obj.creator_user_id,
+                        )
+                    )
+                    await msg_db.execute(
+                        text("""
+                            UPDATE agent_messages
+                            SET status              = :delivered,
+                                delivered_at        = now(),
+                                resolved_session_id = :sid
+                            WHERE agent_message_id  = :id
+                        """),
+                        {
+                            "delivered": AgentMessageStatus.DELIVERED.value,
+                            "sid": str(session_id),
+                            "id": msg_id,
+                        },
+                    )
+                    await msg_db.commit()
+                    logger.info(
+                        "A2A inbox: queued via _pending_messages (turn already in progress)",
+                        session_id=str(session_id),
+                        agent_message_id=msg_id,
+                    )
+                    continue
+
+                # ------------------------------------------------------------------
+                # Normal path: write FELLOW_AGENT turn + mark delivered in one
+                # commit, then directly fire _run_agent_task.
+                # ------------------------------------------------------------------
+                # Re-activate session if it is in a terminal-but-resumable state.
+                if session_obj.status in (AgentSessionStatus.COMPLETED, AgentSessionStatus.STALE):
+                    session_obj.status = AgentSessionStatus.ACTIVE
+
+                turn_number = await _next_turn_number(msg_db, session_id)
+                fellow_turn = AgentSessionMessage(
+                    agent_session_id=session_id,
+                    turn_number=turn_number,
+                    role=AgentSessionMessageRole.FELLOW_AGENT,
+                    content=row["content"],
+                    creator_user_id=session_obj.creator_user_id,
+                    from_agent_id=uuid.UUID(str(row["from_agent_id"])),
+                    agent_message_id_ref=uuid.UUID(msg_id),
+                )
+                msg_db.add(fellow_turn)
+
+                # Single commit: FELLOW_AGENT AgentSessionMessage + AgentMessage delivered.
+                await msg_db.execute(
+                    text("""
+                        UPDATE agent_messages
+                        SET status              = :delivered,
+                            delivered_at        = now(),
+                            resolved_session_id = :sid
+                        WHERE agent_message_id  = :id
+                    """),
+                    {
+                        "delivered": AgentMessageStatus.DELIVERED.value,
+                        "sid": str(session_id),
+                        "id": msg_id,
+                    },
+                )
+                await msg_db.commit()
+
+                # Directly fire _run_agent_task — no _pending_messages involved,
+                # so no duplicate USER-role AgentSessionMessage is written.
+                trigger_val = session_obj.trigger.value if session_obj.trigger else None
+                _active_tasks[session_id] = None  # type: ignore[assignment]
+                task = create_background_task(
+                    _run_agent_task(
+                        agent_session_id=session_id,
+                        turn_number=turn_number,
+                        message=row["content"],
+                        agent_config_name=agent_obj.name,
+                        workspace=session_obj.workspace,
+                        llm_session_id=session_obj.llm_session_id,
+                        extra_dirs=session_obj.extra_dirs or [],
+                        slack_session_id=session_obj.slack_session_id,
+                        is_slack=(session_obj.trigger == AgentSessionTrigger.SLACK),
+                        is_task=(session_obj.trigger == AgentSessionTrigger.TASK),
+                        session_context=dict(session_obj.context or {}),
+                        trigger=trigger_val,
+                    )
+                )
+                _active_tasks[session_id] = task
+
+                logger.info(
+                    "A2A inbox: started FELLOW_AGENT turn directly",
+                    session_id=str(session_id),
+                    agent_message_id=msg_id,
+                    turn_number=turn_number,
+                    from_agent_id=str(row["from_agent_id"]),
+                )
+                # Break after firing one direct turn — remaining inbox messages wait
+                # for the next turn boundary so we never have two concurrent turns.
+                break
+
+            except Exception as exc:
+                logger.error(
+                    "A2A inbox drain: delivery failed — resetting message",
+                    session_id=str(session_id),
+                    agent_message_id=msg_id,
+                    exc_info=True,
+                )
+                # Roll back partial writes, reset status, re-push for retry.
+                try:
+                    await msg_db.rollback()
+                    await msg_db.execute(
+                        text("""
+                            UPDATE agent_messages
+                            SET status     = CASE
+                                               WHEN attempt_count >= max_attempts THEN 'failed'
+                                               ELSE 'queued'
+                                             END,
+                                error      = :err,
+                                claimed_at = NULL
+                            WHERE agent_message_id = :id
+                        """),
+                        {"err": str(exc)[:1000], "id": msg_id},
+                    )
+                    await msg_db.commit()
+                    if int(row["attempt_count"]) < int(row["max_attempts"]):
+                        await redis.rpush(f"session_inbox:{session_id}", msg_id)  # type: ignore[misc]
+                except Exception:
+                    logger.error(
+                        "A2A inbox drain: failed to reset message after delivery failure",
+                        agent_message_id=msg_id,
+                        session_id=str(session_id),
+                        exc_info=True,
+                    )
 
 
 async def _inject_internal_message(
