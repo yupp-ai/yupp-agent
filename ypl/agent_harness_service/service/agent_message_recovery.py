@@ -42,13 +42,14 @@ _FINALIZE_RESOLVED_SQL = _text("""
 # Step 1b: Stale DELIVERING rows where the worker died before (or during) delivery
 # and no session was created yet.  Reset to QUEUED so the listener can retry, or
 # FAILED if the attempt budget is exhausted.
-_RESET_STALE_DELIVERING_SQL = _text("""
+# f-string is safe here: _STALE_DELIVERING_THRESHOLD_MINUTES is a module-level int.
+_RESET_STALE_DELIVERING_SQL = _text(f"""
     UPDATE agent_messages
     SET    status     = CASE WHEN attempt_count >= max_attempts THEN 'FAILED' ELSE 'QUEUED' END,
            claimed_at = NULL
     WHERE  status              = 'DELIVERING'
       AND  resolved_session_id IS NULL
-      AND  claimed_at < now() - INTERVAL '5 minutes'
+      AND  claimed_at < now() - INTERVAL '{_STALE_DELIVERING_THRESHOLD_MINUTES} minutes'
     RETURNING agent_message_id, attempt_count, max_attempts
 """)
 
@@ -155,6 +156,10 @@ async def recover_agent_messages() -> None:
                 inbox_pushes.setdefault(key, []).append(msg_id)
 
         # Batch RPUSH: redis-py accepts multiple values in a single call.
+        # Blind RPUSH is intentional — if Redis survived the crash these IDs may already
+        # be in the queue, producing duplicates.  The atomic-claim protocol in the delivery
+        # workers (UPDATE … WHERE status='QUEUED' RETURNING) absorbs all duplicates: a
+        # second pop of the same ID finds status≠'QUEUED' and returns 0 rows → bail.
         if dispatch_ids:
             await redis_client.rpush(A2A_DISPATCH_KEY, *dispatch_ids)  # type: ignore[misc]
 
@@ -162,6 +167,14 @@ async def recover_agent_messages() -> None:
             await redis_client.rpush(inbox_key, *msg_ids)  # type: ignore[misc]
 
         re_enqueued = len(dispatch_ids) + sum(len(v) for v in inbox_pushes.values())
+        if re_enqueued > 0:
+            logger.info(
+                "recover_agent_messages: re-enqueued QUEUED rows (duplicates absorbed by atomic claim)",
+                re_enqueued=re_enqueued,
+                dispatch_count=len(dispatch_ids),
+                inbox_session_count=len(inbox_pushes),
+                note="duplicates are safe — delivery workers use UPDATE…RETURNING atomic claim",
+            )
         logger.info(
             "recover_agent_messages: completed",
             finalized=finalized,

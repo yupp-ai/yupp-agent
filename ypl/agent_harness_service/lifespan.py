@@ -104,7 +104,7 @@ class AHSState:
 
     scheduler_task: asyncio.Task[None] | None
     auto_stale_task: asyncio.Task[None]
-    a2a_listener_task: asyncio.Task[None]
+    a2a_listener_task: asyncio.Task[None] | None
     mcp_app: Any
     _mcp_lifespan_ctx: Any = field(repr=False)
 
@@ -479,24 +479,30 @@ async def ahs_startup(app: FastAPI, mcp_app: Any) -> AHSState:
     from ypl.agent_harness_service.service.agent_message_recovery import recover_agent_messages
     from ypl.agent_harness_service.service.agent_user_sweep import sweep_agent_user_identities
 
+    # Initialise to None so AHSState construction succeeds even if an exception
+    # interrupts startup before the create_task call — matches the scheduler_task pattern.
+    a2a_listener_task: asyncio.Task[None] | None = None
+
     # 1. Await crash recovery synchronously so all stale DELIVERING rows are reset
     #    and QUEUED rows are pushed onto Redis *before* the BLPOP listener starts
-    #    consuming the same queue.  Errors are non-fatal; startup continues.
-    try:
-        await recover_agent_messages()
-    except Exception:
-        logger.error("A2A message recovery failed — continuing startup", exc_info=True)
+    #    consuming the same queue.  recover_agent_messages() swallows all exceptions
+    #    internally; no outer try/except needed.
+    await recover_agent_messages()
 
     # 2. Backfill missing agent user-identity rows.  Fire-and-forget — completes
-    #    quickly and errors are swallowed inside the function itself.
-    asyncio.create_task(sweep_agent_user_identities(), name="a2a-identity-sweep")
+    #    quickly.  Attach a done_callback so any unexpected exception (despite the
+    #    internal guard) is logged rather than silently swallowed at GC time.
+    _a2a_sweep_task = asyncio.create_task(sweep_agent_user_identities(), name="a2a-identity-sweep")
+    _a2a_sweep_task.add_done_callback(
+        lambda t: logger.warning("a2a-identity-sweep exited unexpectedly", exc_info=t.exception())
+        if not t.cancelled() and t.exception() is not None
+        else None
+    )
 
     # 3. Start the BLPOP listener for Scenario A (new-session) messages.  Runs
     #    for the lifetime of the process; stored in AHSState so ahs_shutdown()
     #    can cancel it cleanly.
-    a2a_listener_task: asyncio.Task[None] = asyncio.create_task(
-        listen_new_session_messages(), name="a2a-dispatch-listener"
-    )
+    a2a_listener_task = asyncio.create_task(listen_new_session_messages(), name="a2a-dispatch-listener")
     logger.info("A2A dispatch listener started")
     # ────────────────────────────────────────────────────────────────────────
 
@@ -571,15 +577,19 @@ async def ahs_shutdown(state: AHSState) -> None:
             await state.auto_stale_task
         except asyncio.CancelledError:
             pass
+        except Exception:
+            logger.warning("Auto-stale sweep exited with unexpected exception during shutdown", exc_info=True)
         logger.info("Auto-stale sweep stopped")
 
     # Cancel A2A dispatch listener
-    if not state.a2a_listener_task.done():
+    if state.a2a_listener_task is not None and not state.a2a_listener_task.done():
         state.a2a_listener_task.cancel()
         try:
             await state.a2a_listener_task
         except asyncio.CancelledError:
             pass
+        except Exception:
+            logger.warning("A2A dispatch listener exited with unexpected exception during shutdown", exc_info=True)
         logger.info("A2A dispatch listener stopped")
 
     # Shutdown scheduler INSIDE MCP lifespan so in-flight tasks can still use MCP tools
