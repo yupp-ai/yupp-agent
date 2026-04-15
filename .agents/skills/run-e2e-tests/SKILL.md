@@ -34,11 +34,10 @@ curl -s http://localhost:4040/api/tunnels | python3 -c "import json,sys; t=json.
 If the monolith is not running, start it in background mode:
 
 ```bash
-GOOGLE_APPLICATION_CREDENTIALS=/Users/lguan/yupp-llms-github-actions-service-account.json \
-  ./scripts/run_local.sh --e2e --background
+./scripts/run_local.sh --e2e --background
 ```
 
-**Important**: The `GOOGLE_APPLICATION_CREDENTIALS` must point to a service account with Secret Manager access (`yupp-llms-github-actions-service-account.json`). The default local dev service account (`yupp-llms-shared-local-dev-service-account.json`) does NOT have `secretmanager.versions.access` permission, which causes "No Slack agent apps configured" errors.
+**Important**: `.env.e2e` must include `GOOGLE_APPLICATION_CREDENTIALS` pointing to a service account with `secretmanager.versions.access` permission (e.g. `yupp-llms-github-actions-service-account.json`). The default local dev service account (`yupp-llms-shared-local-dev-service-account.json`) does NOT have this permission, which causes "No Slack agent apps configured" errors. The `/setup-e2e-tests` skill guides you through setting this up.
 
 Background mode automatically logs to `/tmp/monolith_local.log` and waits for the health check to pass.
 
