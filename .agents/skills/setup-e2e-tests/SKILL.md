@@ -65,7 +65,10 @@ Expected values:
 - `GATEWAY_BASE_URL="http://localhost:8090"` — MUST be `http`, not `https`
 - `ENABLE_CLOUDSQL_PROXY="true"` — disables SSL for local Postgres (counterintuitive name)
 - `POSTGRES_CONNECTION_YUPPDB=""` — must be empty (staging validator rejects test credentials)
-- `GOOGLE_APPLICATION_CREDENTIALS="<path to service account with Secret Manager access>"` — must point to a service account with `secretmanager.versions.access` (e.g. `yupp-llms-github-actions-service-account.json`). The default local dev SA does NOT have this permission.
+- `GOOGLE_APPLICATION_CREDENTIALS="<path to SA key>"` — must point to a GCP service account with `secretmanager.versions.access` permission. The default local dev SA (`yupp-llms-shared-local-dev-service-account.json`) does NOT have this permission. To obtain a suitable key: ask a team lead for access to a SA with Secret Manager permissions, or create one in GCP Console → IAM & Admin → Service Accounts → create key (JSON). Store the key file locally (e.g. `~/yupp-secret-manager-sa.json`) and add to `.env.e2e`:
+  ```
+  GOOGLE_APPLICATION_CREDENTIALS=/Users/<you>/yupp-secret-manager-sa.json
+  ```
 
 Also verify DB connection points to `yadb` (not `yupp_agent`):
 ```bash
