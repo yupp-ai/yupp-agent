@@ -31,34 +31,24 @@ curl -s http://localhost:4040/api/tunnels | python3 -c "import json,sys; t=json.
 
 ## Step 1a: Start monolith if not running
 
-If the monolith is not running, ask the user to start it in a separate terminal.
+If the monolith is not running, start it in background mode:
 
-**Always tee output to a log file** so the agent can read it for debugging:
-
-> **The monolith is not running.** Please start it in a separate terminal:
-> ```bash
-> ./scripts/run_local.sh --e2e 2>&1 | tee /tmp/monolith_local.log
-> ```
-> Or in background mode:
-> ```bash
-> ./scripts/run_local.sh --e2e --background
-> ```
-> (Background mode automatically logs to `/tmp/monolith_local.log`)
-
-**Important**: The monolith must be started by the **user** (not the Bash tool) because it needs GCP Application Default Credentials to fetch Slack bot secrets from Secret Manager. The Bash tool sandbox may not have gcloud credentials in its environment.
-
-After the user confirms it's running, verify:
 ```bash
-curl -sf http://localhost:8090/health && echo "Monolith: OK" || echo "Still not running"
+./scripts/run_local.sh --e2e --background
 ```
 
-If the monolith starts but Slack events return 500 ("No Slack agent apps configured"), check the logs:
+**Important**: `.env.e2e` must include `GOOGLE_APPLICATION_CREDENTIALS` pointing to a service account with `secretmanager.versions.access` permission (e.g. `yupp-llms-github-actions-service-account.json`). The default local dev service account (`yupp-llms-shared-local-dev-service-account.json`) does NOT have this permission, which causes "No Slack agent apps configured" errors. The `/setup-e2e-tests` skill guides you through setting this up.
+
+Background mode automatically logs to `/tmp/monolith_local.log` and waits for the health check to pass.
+
+If background mode fails (e.g., "Monolith crashed during startup"), check the logs:
 ```bash
 tail -50 /tmp/monolith_local.log | grep -i "error\|fail\|No Slack\|Permission"
 ```
 
 Common startup failures:
-- "No Slack agent apps configured" → `ENVIRONMENT` not set to `staging`, or DB not dumped, or GCP Secret Manager permission denied
+- "No Slack agent apps configured" → wrong `GOOGLE_APPLICATION_CREDENTIALS`, `ENVIRONMENT` not `staging`, or DB not dumped
+- "Permission 'secretmanager.versions.access' denied" → wrong service account (see above)
 - "rejected SSL upgrade" → `.env.e2e` missing `ENABLE_CLOUDSQL_PROXY=true`
 - "type already exists" → run `poetry run alembic -c alembic.ini stamp head`
 

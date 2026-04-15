@@ -39,7 +39,9 @@ class PostgresConnection(pydantic.BaseModel):
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_ignore_empty=True, extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=os.environ.get("DOTENV_PATH", ".env"), env_ignore_empty=True, extra="ignore"
+    )
     API_PREFIX: str = "/api"
     SECRET_KEY: str = secrets.token_urlsafe(32)
     X_API_KEY: str = ""
