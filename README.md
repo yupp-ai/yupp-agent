@@ -193,6 +193,19 @@ streamlit run ypl/streamlit_server/app.py
 
 Accessible at `http://localhost:8501` by default.
 
+### War Room (Next.js admin UI)
+
+Ported from `yupp-head/apps/war-room`. Self-contained Bun/Next.js app on port 3009.
+
+```bash
+cd apps/war-room
+cp .env.example .env.local          # fill in AHS_API_KEY, Google OAuth, AUTH_SECRET
+bun install
+bun run dev                          # http://localhost:3009
+```
+
+The app talks REST to your local AHS (`AHS_HOST=http://localhost:8090` by default) and optionally SAG (`http://localhost:8080`). Requires a Google OAuth client registered in the `yupp-war-room` GCP project — see `apps/war-room/README.md` and `apps/war-room/AGENTS.md` for details.
+
 ## Architecture
 
 ```
