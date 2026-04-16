@@ -74,7 +74,7 @@ present.
 ### systemd on a Linux VM / bare-metal box
 
 ```ini
-# /etc/systemd/system/yupp-agent.service
+# /etc/systemd/system/ahs-mono.service
 [Unit]
 Description=Yupp Agent Platform (monolith)
 After=network.target
@@ -102,16 +102,16 @@ Query logs:
 
 ```bash
 # Tail live logs
-journalctl -u yupp-agent -f
+journalctl -u ahs-mono -f
 
 # Filter by log level
-journalctl -u yupp-agent -o json | jq 'select(.level == "error")'
+journalctl -u ahs-mono -o json | jq 'select(.level == "error")'
 
 # Filter by service field (useful in multi-service setups)
-journalctl -u yupp-agent -o json | jq 'select(.service == "ahs")'
+journalctl -u ahs-mono -o json | jq 'select(.service == "ahs")'
 
 # Search by session ID
-journalctl -u yupp-agent -o json | jq 'select(.session_id == "abc123")'
+journalctl -u ahs-mono -o json | jq 'select(.session_id == "abc123")'
 ```
 
 ### MacBook local development

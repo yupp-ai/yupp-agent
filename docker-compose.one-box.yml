@@ -60,7 +60,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: yupp-agent:local
+    image: ahs-mono:local
     ports:
       - "8090:8090"
     env_file: .env
@@ -95,7 +95,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: yupp-agent:local
+    image: ahs-mono:local
     ports:
       - "8501:8501"
     env_file: .env

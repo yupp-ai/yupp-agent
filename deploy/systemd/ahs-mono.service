@@ -1,10 +1,10 @@
 [Unit]
-Description=Yupp Agent Platform — monolith (AHS + MCP + gateways)
+Description=AHS Monolith — AHS + MCP + Slack/GitHub gateways
 Documentation=https://github.com/yupp-ai/yupp-agent/blob/main/DEPLOYMENT.md
 After=network-online.target postgresql.service redis.service
 Wants=network-online.target
 # Start streamlit only after this unit is healthy
-Before=yupp-streamlit.service
+Before=ahs-streamlit.service
 
 [Service]
 Type=simple
@@ -12,9 +12,9 @@ User=ahs
 Group=ahs
 WorkingDirectory=/opt/yupp-agent
 
-# .env file holds all secrets — chmod 600, owned by yupp user
+# .env file holds all secrets — chmod 600, owned by the ahs user.
 EnvironmentFile=/opt/yupp-agent/.env
-Environment=SERVICE_NAME_FOR_LOGGING=yupp-agent-monolith
+Environment=SERVICE_NAME_FOR_LOGGING=ahs-mono
 Environment=AHS_PORT=8090
 Environment=USE_GOOGLE_CLOUD_LOGGING=false
 Environment=DISABLE_WRITE_GOOGLE_CLOUD_METRICS=true
@@ -49,12 +49,12 @@ ProtectSystem=strict
 # Only grant write access to subdirs actually written by the app at runtime.
 # Keeping /opt/yupp-agent itself read-only prevents a compromised process from
 # modifying source files that get loaded on the next restart.
-ReadWritePaths=/opt/yupp-agent/data /opt/yupp-agent/.cache /tmp /var/log/yupp-agent
+ReadWritePaths=/opt/yupp-agent/data /opt/yupp-agent/.cache /tmp /var/log/ahs-mono
 
 # Logging — journald captures stdout/stderr automatically
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=yupp-agent
+SyslogIdentifier=ahs-mono
 
 [Install]
 WantedBy=multi-user.target

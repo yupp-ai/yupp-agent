@@ -175,27 +175,27 @@ The script installs Python 3.12, PostgreSQL 16, Redis 7, Poetry, the app, and th
 sudo -u ahs bash -c 'cd /opt/yupp-agent && python -m ypl.mono_server.setup'
 
 # Start services
-sudo systemctl start yupp-agent yupp-streamlit
+sudo systemctl start ahs-mono ahs-streamlit
 
 # Enable auto-start on boot (already done by install.sh)
-sudo systemctl enable yupp-agent yupp-streamlit
+sudo systemctl enable ahs-mono ahs-streamlit
 ```
 
 ### Managing the services
 
 ```bash
 # Status
-sudo systemctl status yupp-agent yupp-streamlit
+sudo systemctl status ahs-mono ahs-streamlit
 
 # Live logs
-journalctl -u yupp-agent    -f
-journalctl -u yupp-streamlit -f
+journalctl -u ahs-mono    -f
+journalctl -u ahs-streamlit -f
 
 # Restart after config change
-sudo systemctl restart yupp-agent
+sudo systemctl restart ahs-mono
 
 # Graceful reload (if/when uvicorn supports it)
-sudo systemctl reload yupp-agent
+sudo systemctl reload ahs-mono
 ```
 
 ### Manual systemd unit install
@@ -203,10 +203,10 @@ sudo systemctl reload yupp-agent
 If you prefer not to run the install script:
 
 ```bash
-sudo cp deploy/systemd/yupp-agent.service     /etc/systemd/system/
-sudo cp deploy/systemd/yupp-streamlit.service /etc/systemd/system/
+sudo cp deploy/systemd/ahs-mono.service     /etc/systemd/system/
+sudo cp deploy/systemd/ahs-streamlit.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now yupp-agent yupp-streamlit
+sudo systemctl enable --now ahs-mono ahs-streamlit
 ```
 
 The units expect:
@@ -328,12 +328,12 @@ sudo apt-get update && sudo apt-get install -y cloudflared
 cloudflared tunnel login
 
 # Create tunnel
-cloudflared tunnel create yupp-agent
+cloudflared tunnel create ahs-mono
 # → Note the tunnel UUID printed
 
 # Add DNS routes (replace yourdomain.com)
-cloudflared tunnel route dns yupp-agent agent.yourdomain.com
-cloudflared tunnel route dns yupp-agent agent-ui.yourdomain.com  # optional: streamlit
+cloudflared tunnel route dns ahs-mono agent.yourdomain.com
+cloudflared tunnel route dns ahs-mono agent-ui.yourdomain.com  # optional: streamlit
 ```
 
 ### Configure
@@ -352,7 +352,7 @@ nano ~/.cloudflared/config.yml
 
 ```bash
 # Foreground (test)
-cloudflared tunnel run yupp-agent
+cloudflared tunnel run ahs-mono
 
 # As a system service (VM)
 sudo cloudflared service install
@@ -368,7 +368,7 @@ Add to your MCP client (e.g. Claude Desktop):
 ```json
 {
   "mcpServers": {
-    "yupp-agent": {
+    "ahs-mono": {
       "url": "https://agent.yourdomain.com/mcp",
       "headers": {
         "Authorization": "Bearer yupp_dev_<your-token>"
@@ -422,7 +422,7 @@ curl http://localhost:8090/mcp \
 
 ```bash
 # Restart the VM / Mac, then verify services came back up
-sudo systemctl status yupp-agent yupp-streamlit
+sudo systemctl status ahs-mono ahs-streamlit
 # Both should show: active (running)
 ```
 
@@ -447,7 +447,7 @@ cd /opt/yupp-agent
 sudo -u ahs git pull
 sudo -u ahs poetry install --no-root --without dev --compile
 sudo -u ahs python -m alembic upgrade head
-sudo systemctl restart yupp-agent yupp-streamlit
+sudo systemctl restart ahs-mono ahs-streamlit
 ```
 
 ### MacBook
@@ -476,8 +476,8 @@ asyncpg.exceptions.ConnectionRefusedError: connection to server ... failed
 
 ### Streamlit shows blank page
 
-- Streamlit starts after AHS (`After=yupp-agent.service` in the unit file). Wait 20–30 s for AHS to finish startup.
-- Check logs: `journalctl -u yupp-streamlit -n 50` or `docker compose logs streamlit`
+- Streamlit starts after AHS (`After=ahs-mono.service` in the unit file). Wait 20–30 s for AHS to finish startup.
+- Check logs: `journalctl -u ahs-streamlit -n 50` or `docker compose logs streamlit`
 
 ### bwrap sandbox errors in Docker
 
@@ -512,7 +512,7 @@ python -m alembic -c alembic.ini current              # check current revision
 
 ```bash
 # Pretty-print journald JSON logs
-journalctl -u yupp-agent -f -o json | python3 -c "
+journalctl -u ahs-mono -f -o json | python3 -c "
 import sys, json
 for line in sys.stdin:
     try:

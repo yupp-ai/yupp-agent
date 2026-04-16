@@ -8,7 +8,7 @@
 #   Override via: VENV_BIN=/path/to/venv/bin ./entrypoint.sh
 set -euo pipefail
 
-export SERVICE_NAME_FOR_LOGGING="yupp-agent-monolith"
+export SERVICE_NAME_FOR_LOGGING="ahs-mono"
 
 exec "${VENV_BIN:-/opt/yupp-agent/.venv/bin}/uvicorn" \
     ypl.mono_server.server:app \

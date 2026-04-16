@@ -41,7 +41,7 @@ def _service_field_processor(logger: Any, name: str, event_dict: dict[str, Any])
     via ``structlog.contextvars.bind_contextvars(service=…)``) is never
     overwritten.
     """
-    event_dict.setdefault("service", os.environ.get("SERVICE_NAME", "yupp-agent"))
+    event_dict.setdefault("service", os.environ.get("SERVICE_NAME", "ahs-mono"))
     return event_dict
 
 
