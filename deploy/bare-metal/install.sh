@@ -91,7 +91,7 @@ repo_slug_from_url() {
 
 [[ $EUID -ne 0 ]] && error "Run this script as root (or with sudo)."
 
-TOTAL_STEPS=7
+TOTAL_STEPS=8
 
 # ---------------------------------------------------------------------------
 # Plan + confirm
@@ -117,6 +117,7 @@ It will do ${TOTAL_STEPS} steps:
   5. Install systemd units     — yupp-agent, yupp-streamlit (enabled, not started)
   6. Create data directories   — for logs, cache, etc.
   7. Install agent CLIs        — Claude Code + Codex (optional, prompted)
+  8. Create Postgres database  — 'yadb' (empty; migrations run in setup wizard)
 
 After that, you'll still need to:
 
@@ -445,85 +446,129 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Step 8. Postgres database
+# ---------------------------------------------------------------------------
+step 8 "$TOTAL_STEPS" "PostgreSQL database"
+
+# Database name matches the convention used everywhere else in the codebase
+# (dump_staging_to_local.py, alembic tests, prod). Overridable for non-default
+# setups.
+DB_NAME="${DB_NAME:-yadb}"
+
+if sudo -u postgres psql -lqt | cut -d\| -f1 | tr -d ' ' | grep -qx "$DB_NAME"; then
+    info "PostgreSQL database '${DB_NAME}' already exists."
+else
+    info "Creating PostgreSQL database '${DB_NAME}'…"
+    sudo -u postgres createdb "$DB_NAME"
+fi
+
+# ---------------------------------------------------------------------------
 # Done — comprehensive next-steps checklist
 # ---------------------------------------------------------------------------
+
+# Pre-expand ANSI escapes into variables — heredoc bodies don't interpret
+# \033 literals, so we interpolate these in instead.
+B=$'\033[1m'   # bold
+D=$'\033[2m'   # dim
+N=$'\033[0m'   # reset
+
 banner "✅ Installation complete!"
 
 cat <<EOF
-Everything below is now installed:
+Everything below is now installed and ready:
 
-  ✓ System packages (Python ${PYTHON_VERSION}, PostgreSQL 16, Redis 7, Poetry)
-  ✓ System user ${APP_USER} at ${INSTALL_DIR}
-  ✓ Repo cloned at ${INSTALL_DIR}
-  ✓ Python deps in ${VENV_DIR}
-  ✓ systemd units (yupp-agent, yupp-streamlit) — enabled but not started
-  ✓ Log dir /var/log/yupp-agent, data/ and .cache/ under ${INSTALL_DIR}
-$( [[ "$CLAUDE_CHOICE" == "yes" ]] && echo "  ✓ Claude Code CLI" || echo "  ✗ Claude Code CLI (skipped)" )
-$( [[ "$CODEX_CHOICE"  == "yes" ]] && echo "  ✓ Codex CLI"       || echo "  ✗ Codex CLI (skipped)" )
+  ✓ System packages  — Python ${PYTHON_VERSION}, PostgreSQL 16, Redis 7, Poetry ${POETRY_VERSION}
+  ✓ System user      — ${APP_USER} (home: ${INSTALL_DIR})
+  ✓ Repo             — ${INSTALL_DIR}
+  ✓ Python venv      — ${VENV_DIR}
+  ✓ systemd units    — yupp-agent, yupp-streamlit (enabled, not started)
+  ✓ Runtime dirs     — /var/log/yupp-agent, ${INSTALL_DIR}/data, ${INSTALL_DIR}/.cache
+  ✓ Database         — PostgreSQL '${DB_NAME}' (empty — Alembic migrations run in setup wizard)
+$( [[ "$CLAUDE_CHOICE" == "yes" ]] && echo "  ✓ Agent CLI        — Claude Code (needs 'claude login')" || echo "  ✗ Agent CLI        — Claude Code (skipped)" )
+$( [[ "$CODEX_CHOICE"  == "yes" ]] && echo "  ✓ Agent CLI        — Codex (needs 'codex login')"       || echo "  ✗ Agent CLI        — Codex (skipped)" )
 
-What's still left to do — in this order:
+
+${B}Services that will run on this box once started:${N}
+
+  ${D}Service       Port   Bound to         Purpose${N}
+  yupp-agent    8090   0.0.0.0          AHS + MCP + Slack/GitHub gateways (HTTP API)
+  yupp-streamlit 8501  0.0.0.0          Operational dashboards (UI)
+  postgresql    5432   localhost        Agent DB (${DB_NAME})
+  redis         6379   localhost        Session state / pub-sub
+
+  Internal-only by default. Don't open 5432 or 6379 to the internet.
+  Only 8090 (AHS API) needs to be publicly reachable, and only if you wire up
+  Slack webhooks or external MCP clients — use a Cloudflare Tunnel or a
+  reverse proxy with TLS (see step 7 below).
+
+
+${B}What's still left for you to do — in this order:${N}
 ─────────────────────────────────────────────────────────────────
 
- 1. ${BOLD}Create the database.${NC}
-
-      sudo -u postgres createdb yupp_agent
-
- 2. ${BOLD}Run the interactive setup wizard.${NC}
-    It asks for DB creds + Redis URL, generates secrets, writes
-    ${INSTALL_DIR}/.env, runs Alembic migrations, and seeds your admin user.
+ 1. ${B}Run the interactive setup wizard.${N}
+    Asks for DB password + admin email, auto-generates secrets, writes
+    ${INSTALL_DIR}/.env (mode 0600), runs Alembic migrations, seeds roles
+    and your admin user.
 
       sudo -u ${APP_USER} bash -c 'cd ${INSTALL_DIR} && python -m ypl.mono_server.setup'
 
- 3. ${BOLD}Add at least one LLM provider API key to the .env.${NC}
+ 2. ${B}Add at least one LLM provider API key to the .env.${N}
+    At least one of ANTHROPIC_API_KEY / OPENAI_API_KEY / GOOGLE_API_KEY.
 
       sudo -u ${APP_USER} nano ${INSTALL_DIR}/.env
-      # fill in one of:
-      #   ANTHROPIC_API_KEY=sk-ant-...
-      #   OPENAI_API_KEY=sk-...
-      #   GOOGLE_API_KEY=...
 
 EOF
 
+n=3
 if [[ "$CLAUDE_CHOICE" == "yes" ]]; then
 cat <<EOF
- 4. ${BOLD}Log the Claude Code CLI into your Anthropic account.${NC}
+ ${n}. ${B}Authenticate Claude Code.${N}
+    Opens a URL; paste into your browser, complete OAuth, paste code back.
 
-      sudo -u ${APP_USER} claude login
-      # Opens a URL; paste it into your browser and complete OAuth.
+      sudo -iu ${APP_USER} claude login
 
 EOF
+n=$((n+1))
 fi
 if [[ "$CODEX_CHOICE" == "yes" ]]; then
 cat <<EOF
- 5. ${BOLD}Log the Codex CLI into your OpenAI account.${NC}
+ ${n}. ${B}Authenticate Codex.${N}
 
-      sudo -u ${APP_USER} codex login
+      sudo -iu ${APP_USER} codex login
 
 EOF
+n=$((n+1))
 fi
 cat <<EOF
- 6. ${BOLD}Start the services.${NC}
+ ${n}. ${B}Start the services.${N}
 
       sudo systemctl start yupp-agent yupp-streamlit
       sudo systemctl status yupp-agent yupp-streamlit
 
- 7. ${BOLD}Verify.${NC}
+EOF
+n=$((n+1))
+cat <<EOF
+ ${n}. ${B}Verify.${N}
 
       curl http://localhost:8090/health
       # → {"status":"ok"}
 
- 8. ${BOLD}Expose the box to the internet (optional, needed for Slack webhooks).${NC}
-    Cloudflare Tunnel template lives at:
+EOF
+n=$((n+1))
+cat <<EOF
+ ${n}. ${B}Expose to the internet (optional — required for Slack webhooks).${N}
+    Cloudflare Tunnel template:
 
       ${INSTALL_DIR}/deploy/cloudflared/config.yml
 
     See ${INSTALL_DIR}/DEPLOYMENT.md for the full walkthrough.
 
-Live logs:
 
-      journalctl -u yupp-agent    -f
+${B}Live logs:${N}
+
+      journalctl -u yupp-agent     -f
       journalctl -u yupp-streamlit -f
 
-Re-run this script anytime (safe to do so) to upgrade / reconfigure.
+Re-run this script anytime — it's idempotent and safe to upgrade/reconfigure.
 
 EOF
