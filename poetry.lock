@@ -206,13 +206,13 @@ files = [
 
 [[package]]
 name = "anthropic"
-version = "0.95.0"
+version = "0.96.0"
 description = "The official Python library for the anthropic API"
 optional = false
 python-versions = ">=3.9"
 files = [
-    {file = "anthropic-0.95.0-py3-none-any.whl", hash = "sha256:9fd3503cb666446e28ab5a5d0ec7feda39968399e494bd2cca2f0b927f8aa7a6"},
-    {file = "anthropic-0.95.0.tar.gz", hash = "sha256:e4d815351489e5627f39806f12561c52b574e69be10d12fcab723264f955c11d"},
+    {file = "anthropic-0.96.0-py3-none-any.whl", hash = "sha256:9a6e335a354602a521cd9e777e92bfd46ba6e115bf9bbfe6135311e8fb2015b2"},
+    {file = "anthropic-0.96.0.tar.gz", hash = "sha256:9de947b737f39452f68aa520f1c2239d44119c9b73b0fb6d4e6ca80f00279ee6"},
 ]
 
 [package.dependencies]
@@ -346,13 +346,13 @@ files = [
 
 [[package]]
 name = "authlib"
-version = "1.6.10"
+version = "1.6.11"
 description = "The ultimate Python library in building OAuth and OpenID Connect servers and clients."
 optional = false
 python-versions = ">=3.9"
 files = [
-    {file = "authlib-1.6.10-py2.py3-none-any.whl", hash = "sha256:aa639b43292554539924a3b4aaa9e81cd67ab64d3e28b22428c61f1200240287"},
-    {file = "authlib-1.6.10.tar.gz", hash = "sha256:856a4f54d6ef3361ca6bb6d14a27e8b88f8097cca795fb428ffe13720e2ecde6"},
+    {file = "authlib-1.6.11-py2.py3-none-any.whl", hash = "sha256:c8687a9a26451c51a34a06fa17bb97cb15bba46a6a626755e2d7f50da8bff3e3"},
+    {file = "authlib-1.6.11.tar.gz", hash = "sha256:64db35b9b01aeccb4715a6c9a6613a06f2bd7be2ab9d2eb89edd1dfc7580a38f"},
 ]
 
 [package.dependencies]
@@ -732,17 +732,17 @@ files = [
 
 [[package]]
 name = "claude-agent-sdk"
-version = "0.1.59"
+version = "0.1.60"
 description = "Python SDK for Claude Code"
 optional = false
 python-versions = ">=3.10"
 files = [
-    {file = "claude_agent_sdk-0.1.59-py3-none-macosx_11_0_arm64.whl", hash = "sha256:b8734b5d630b75ad63b29a802fff40ba087adf463c1004dae65f7a5a912ab13a"},
-    {file = "claude_agent_sdk-0.1.59-py3-none-macosx_11_0_x86_64.whl", hash = "sha256:b333c0685db3f6e035acd2c6efa6ae4c4d8b077fef99de829ddb2a37ca1d9183"},
-    {file = "claude_agent_sdk-0.1.59-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:8ebe1f7e6dc18c5fae6483977ff16fcabe91cbb955f9c423c05a11f013db3957"},
-    {file = "claude_agent_sdk-0.1.59-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:cac6c42f3c554981597a3d023bc87fe5b4bc14da987d9ef30cc2596005c3bc12"},
-    {file = "claude_agent_sdk-0.1.59-py3-none-win_amd64.whl", hash = "sha256:92d8da9ea5f0b4a7492d074d612d54b5e6ce6800312992aa48b2bcaa6bf7bf5e"},
-    {file = "claude_agent_sdk-0.1.59.tar.gz", hash = "sha256:061af12a783a3456abfd0def3602a01249b2eee1be783fb3e242392c0ebbd2e2"},
+    {file = "claude_agent_sdk-0.1.60-py3-none-macosx_11_0_arm64.whl", hash = "sha256:176e8eba45869270174ec913067a02b15b6604055965a16ac5468ab88a60fbb7"},
+    {file = "claude_agent_sdk-0.1.60-py3-none-macosx_11_0_x86_64.whl", hash = "sha256:075d734aba7444f7588886b2dd2e3aa3ade59eea1707459d4ef0715c76e00f8c"},
+    {file = "claude_agent_sdk-0.1.60-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:2295a9dcdaa2f0ef67ea4c7d23be5af9c7350f70e55b15a9f565feaa64858375"},
+    {file = "claude_agent_sdk-0.1.60-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:cfd54d492883d906ac9695a82dd701e582fa2be6c63612756bba0d7734461a2e"},
+    {file = "claude_agent_sdk-0.1.60-py3-none-win_amd64.whl", hash = "sha256:fd6a20542aba455bb86d2c6cc50e958d5c7800608a70be9e9de080480c2c704f"},
+    {file = "claude_agent_sdk-0.1.60.tar.gz", hash = "sha256:3b57c1fa12eff0f2b2c3cc10f4542b697465c7186a3fcbdca814f209645265f1"},
 ]
 
 [package.dependencies]
@@ -751,6 +751,7 @@ mcp = ">=0.1.0"
 
 [package.extras]
 dev = ["anyio[trio] (>=4.0.0)", "mypy (>=1.0.0)", "pytest (>=7.0.0)", "pytest-asyncio (>=0.20.0)", "pytest-cov (>=4.0.0)", "ruff (>=0.1.0)"]
+otel = ["opentelemetry-api (>=1.20.0)"]
 
 [[package]]
 name = "click"
@@ -2576,13 +2577,13 @@ type = ["pygobject-stubs", "pytest-mypy (>=1.0.1)", "shtab", "types-pywin32"]
 
 [[package]]
 name = "langchain-core"
-version = "1.2.29"
+version = "1.2.31"
 description = "Building applications with LLMs through composability"
 optional = false
 python-versions = "<4.0.0,>=3.10.0"
 files = [
-    {file = "langchain_core-1.2.29-py3-none-any.whl", hash = "sha256:11f02e57ee1c24e6e0e6577acbd35df77b205d4692a3df956b03b5389cbe44a0"},
-    {file = "langchain_core-1.2.29.tar.gz", hash = "sha256:cfb89c92bca81ad083eafcdfe6ec40f9803c9abf7dd166d0f8a8de1d2de03ca6"},
+    {file = "langchain_core-1.2.31-py3-none-any.whl", hash = "sha256:c407193edb99311cc36ec3e4d3667a065bbc4d7d72fbb6e368538b9b134d4033"},
+    {file = "langchain_core-1.2.31.tar.gz", hash = "sha256:aad3ecc9e4dce2dd2bb79526c81b92e5322fd81db7834a031cb80359f2e3ebaa"},
 ]
 
 [package.dependencies]
@@ -2597,13 +2598,13 @@ uuid-utils = ">=0.12.0,<1.0"
 
 [[package]]
 name = "langsmith"
-version = "0.7.31"
+version = "0.7.32"
 description = "Client library to connect to the LangSmith Observability and Evaluation Platform."
 optional = false
 python-versions = ">=3.10"
 files = [
-    {file = "langsmith-0.7.31-py3-none-any.whl", hash = "sha256:0291d49203f6e80dda011af1afda61eb0595a4d697adb684590a8805e1d61fb6"},
-    {file = "langsmith-0.7.31.tar.gz", hash = "sha256:331ee4f7c26bb5be4022b9859b7d7b122cbf8c9d01d9f530114c1914b0349ffb"},
+    {file = "langsmith-0.7.32-py3-none-any.whl", hash = "sha256:e1fde928990c4c52f47dc5132708cec674355d9101723d564183e965f383bf5f"},
+    {file = "langsmith-0.7.32.tar.gz", hash = "sha256:b59b8e106d0e4c4842e158229296086e2aa7c561e3f602acda73d3ad0062e915"},
 ]
 
 [package.dependencies]
@@ -2748,76 +2749,78 @@ test = ["coverage", "pytest", "pytest-cov"]
 
 [[package]]
 name = "lupa"
-version = "2.7"
+version = "2.8"
 description = "Python wrapper around Lua and LuaJIT"
 optional = false
 python-versions = ">=3.8"
 files = [
-    {file = "lupa-2.7-cp310-abi3-win32.whl", hash = "sha256:9992c5afa5adddabb953685b205cfd42cb6cdaf44316f4e4e2cf1c5dc4815f74"},
-    {file = "lupa-2.7-cp310-abi3-win_arm64.whl", hash = "sha256:e353bad751b55d48d1b909a6b48fb5b306a2d6cd8404981a1554b356da2cf050"},
-    {file = "lupa-2.7-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:3b441227447001e2e4059fbe5cd0b4067a9af60bc77979eb9bad1b143b299c57"},
-    {file = "lupa-2.7-cp310-cp310-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:d986b406df775b6f092b91f57bbf26df17f02ad0da11b37e0f66d45c011b26ad"},
-    {file = "lupa-2.7-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:65f8b89da2f3c85b8f5e33855f07a8db8eb8a04264d020850d59e04f3f0a9615"},
-    {file = "lupa-2.7-cp310-cp310-win_amd64.whl", hash = "sha256:bd7e295c1f56f02786dc935cac2892fca6e6cde2ace0eac08915297306053779"},
-    {file = "lupa-2.7-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:4eff5282d76f57dc27067d1cfe668a40dc63c8d052004ee96831d4d8b15057d0"},
-    {file = "lupa-2.7-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:c30332ff60c6587dd4177d286516316e4fe63ef09bf4c25249c7e0d98f6100ff"},
-    {file = "lupa-2.7-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:51bbd28c639088028cbfa10aa001ea77b890609ab364fbd85d3fc36d3e0a6b0d"},
-    {file = "lupa-2.7-cp311-cp311-win_amd64.whl", hash = "sha256:87358e2bfd630a3cac05bd376aba6ce6a67acd0df44970be6c25b9134d400d2e"},
-    {file = "lupa-2.7-cp312-abi3-macosx_10_13_x86_64.whl", hash = "sha256:5bb4461f6127293c866819a22f39a3878d49314f4463b4adf45d3bf968d15c92"},
-    {file = "lupa-2.7-cp312-abi3-manylinux2010_i686.manylinux_2_12_i686.manylinux_2_28_i686.whl", hash = "sha256:9de6c9263a82bc4f0db73d0c8534bdb8a3a1fd13f448c967d7f3e085dbc50c05"},
-    {file = "lupa-2.7-cp312-abi3-manylinux2014_armv7l.manylinux_2_17_armv7l.manylinux_2_31_armv7l.whl", hash = "sha256:23915808a2475705582e7c8adc17fac5ca9f3a803be184798e06cbd8c7350580"},
-    {file = "lupa-2.7-cp312-abi3-manylinux2014_ppc64le.manylinux_2_17_ppc64le.manylinux_2_28_ppc64le.whl", hash = "sha256:5f720ce493fa9049917954ae1270a5d3c41987f792e34a633f725fa0fc85781e"},
-    {file = "lupa-2.7-cp312-abi3-manylinux_2_34_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:8046dedc75cbd93ee4ec01d3088511079425d9438ffddd7c0de8bac54db6701d"},
-    {file = "lupa-2.7-cp312-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:319c02f8e4ec2dbdccb47bb3676a139f8634b255efafbb433a2c705e315fbb76"},
-    {file = "lupa-2.7-cp312-abi3-musllinux_1_2_armv7l.whl", hash = "sha256:9545a538067f517330faa56d59ff08b0c74910711597dcccc24ad71a97c9cb8c"},
-    {file = "lupa-2.7-cp312-abi3-musllinux_1_2_i686.whl", hash = "sha256:90c0adf6519cac6f2ab1fc094e6ea40650198571e9aace52b8a7e69e316a2b89"},
-    {file = "lupa-2.7-cp312-abi3-musllinux_1_2_ppc64le.whl", hash = "sha256:ab47477a37c562c6512a222c0acaddb11d9d69ec16e50913214bc15b2ab3d8bc"},
-    {file = "lupa-2.7-cp312-abi3-musllinux_1_2_riscv64.whl", hash = "sha256:4615785072c1185b0ed1caf0dea188abd7890667e730c6d6717d84b317d10e78"},
-    {file = "lupa-2.7-cp312-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:d0bf6bd82d639d6cd527983ecff76450bc8878a75e4434c0fbde5edf16aa2bb4"},
-    {file = "lupa-2.7-cp312-abi3-win32.whl", hash = "sha256:093e03d520d294a372f2521e5948b5660874c889f189f23b538d59fa1841c365"},
-    {file = "lupa-2.7-cp312-abi3-win_arm64.whl", hash = "sha256:5b4630d86f3d97613f08cb0cb302ecb2a5266e67fbb2d50eb69ba69f259b5ee0"},
-    {file = "lupa-2.7-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:7b9c1340029815952fd7ed1f788274659298a73aabd3573a4753d14b1a9162db"},
-    {file = "lupa-2.7-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:7ec34c94e25f1c4bd66c9be714ff72376e3da6d7918a8a037fc6ba82fb9822cb"},
-    {file = "lupa-2.7-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:d1b05ef0c8075a1d5378f11998ddaa0f3af53b06970a337f3eb312ff837b7d94"},
-    {file = "lupa-2.7-cp312-cp312-win_amd64.whl", hash = "sha256:97376dbfaeecd8ee13ae08eaa18749c0e2142557552838d1da25c5102b22a504"},
-    {file = "lupa-2.7-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:d4d3cd6100dad6664992b60397a3d0731ffce663b966eaa0fdcb5cfcac26550b"},
-    {file = "lupa-2.7-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:b1c56c56e8ce7dd5f4daf1e926942983c1b419ef81da2a51f5e5dc717f1b8da7"},
-    {file = "lupa-2.7-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:446b2245b2b6265d8340c13c4d80eb2f0bfd0d918d399aea1590d3f57f867a7e"},
-    {file = "lupa-2.7-cp313-cp313-win_amd64.whl", hash = "sha256:2a7ae5b9bd275221311c7993c8c8f4d21eafa4502826130e2bb85d46f6d9224e"},
-    {file = "lupa-2.7-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:e1d832452975b2251bda891a12e5fc239151f347802fd2f6e2224b3adf5caf49"},
-    {file = "lupa-2.7-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:4fbc5dfabab4ef6da94284db04132da1702696cbdb39b57e83e7e577c30d12e3"},
-    {file = "lupa-2.7-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:c8b7012f1389e7b8399edf7520e6f3aba1ff99d192b269ccd0a1c452d1fc2064"},
-    {file = "lupa-2.7-cp314-cp314-win_amd64.whl", hash = "sha256:a2de0c293cb0c67c38963b676017ed2e38c5b76254316e956451ca21589b44fe"},
-    {file = "lupa-2.7-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:8e0fd2c9895e8a456f583ac05b210b406924cf25921a675c42b00806cb14a8f4"},
-    {file = "lupa-2.7-cp314-cp314t-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:f4abb197d3adb7607651df03853c0f7656d23a8f6d91f43b72d8d7a1032c6e82"},
-    {file = "lupa-2.7-cp314-cp314t-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:2dc4956154e0fb556f1b4d37f97ee83f8ab4288151172ebb869209fb1732070e"},
-    {file = "lupa-2.7-cp314-cp314t-win_amd64.whl", hash = "sha256:8e01cefd60857ab39a9fd648c594d9a77872f768d9411e3ba0d84373dafae8fc"},
-    {file = "lupa-2.7-cp38-cp38-macosx_11_0_arm64.whl", hash = "sha256:4716f26b9412a89e12b476fa2981ac87c38a1eaa1474747c436ad190f5aa13d8"},
-    {file = "lupa-2.7-cp38-cp38-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:f159a2d2449fc1bbde6cb527f60cdf67c83f9144f6cffe4822b3c0dbf35ea3d9"},
-    {file = "lupa-2.7-cp38-cp38-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:3e6bb7df38e17ca239155e3e518f214bea04697f070173392e963e63fff02fa6"},
-    {file = "lupa-2.7-cp38-cp38-win32.whl", hash = "sha256:20c3051080077b6ea31a159dccfe6c17d708cca436acbf50f4c6aee71f5bdc11"},
-    {file = "lupa-2.7-cp38-cp38-win_amd64.whl", hash = "sha256:71c336e6f0551cc0638ff23ff6ba632be3c7fae80d9f493da23be76e17c738d8"},
-    {file = "lupa-2.7-cp39-abi3-macosx_10_9_x86_64.whl", hash = "sha256:10d679932e759d628cd9df56590d6e90dd81040d10552172d01b2419e8f16565"},
-    {file = "lupa-2.7-cp39-abi3-manylinux2010_i686.manylinux_2_12_i686.manylinux_2_28_i686.whl", hash = "sha256:aa5d3f540fed4534cac696d0a5ee6cb267180b45241501a43db5ca1699d46746"},
-    {file = "lupa-2.7-cp39-abi3-manylinux2014_armv7l.manylinux_2_17_armv7l.manylinux_2_31_armv7l.whl", hash = "sha256:07f2cd100f7278888f23f79d7ad49f3544835501543fa65be74bc5bfd2369aea"},
-    {file = "lupa-2.7-cp39-abi3-manylinux2014_ppc64le.manylinux_2_17_ppc64le.manylinux_2_28_ppc64le.whl", hash = "sha256:c98d4d085e438d5fcee10e555baf67bc84553417efbe1d163fcc152466696a69"},
-    {file = "lupa-2.7-cp39-abi3-manylinux_2_34_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:3cd273b4fa9c0fcdaed0a541e37ced22117c7aeab8af14d75ece213ce4c37506"},
-    {file = "lupa-2.7-cp39-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:14b26aaa7f600c670eec2afeb5cf312cc398c0a1bd958f97f5328e8162d11f78"},
-    {file = "lupa-2.7-cp39-abi3-musllinux_1_2_armv7l.whl", hash = "sha256:02e24aaf1bc55242fdd4dd6c6b556f927f1c2a7a669deb902d4d1e73d2c9d1d6"},
-    {file = "lupa-2.7-cp39-abi3-musllinux_1_2_i686.whl", hash = "sha256:f810b920787dfb46b3bf3f54d370f2e3c78ea37db214954fc025d2d1e760eff7"},
-    {file = "lupa-2.7-cp39-abi3-musllinux_1_2_ppc64le.whl", hash = "sha256:1129d12951c221941c471251ea478db6faa34175ffafadd3dca1f75c9d83e84a"},
-    {file = "lupa-2.7-cp39-abi3-musllinux_1_2_riscv64.whl", hash = "sha256:6dcf4cba4bb5936859a675bb22f0d9291914f3e2840366653eb829b7d8b3035d"},
-    {file = "lupa-2.7-cp39-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:8f899ceacf2d38bdd4c54aa777cec4deafcc7a6b02a0aa65dbca96e57e11d260"},
-    {file = "lupa-2.7-cp39-cp39-macosx_11_0_arm64.whl", hash = "sha256:b6f671fb2cb285fdfe2a89c3bf9ddc006427a499afdaa7a89f59d2da93e778e0"},
-    {file = "lupa-2.7-cp39-cp39-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:56c82a3ee1c485ae69296e6ae4942a12e13165aae8cda36c5db94cdec9b197eb"},
-    {file = "lupa-2.7-cp39-cp39-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:82559205799433408306c716413455833e5310f294d0a3c40594b23b5aea5f6e"},
-    {file = "lupa-2.7-cp39-cp39-win32.whl", hash = "sha256:c5bf7c760e8d84c5008642a00fb124568c68001a504b6a7412921efe306e486f"},
-    {file = "lupa-2.7-cp39-cp39-win_amd64.whl", hash = "sha256:d659e82d4ee039b51f49559c0c846ddf81bd783320e656c7151f707a027a466a"},
-    {file = "lupa-2.7-cp39-cp39-win_arm64.whl", hash = "sha256:a0f37ee4fc99cc584a688b718227185f649541dbe4d7db39abd45732e603768d"},
-    {file = "lupa-2.7-pp311-pypy311_pp73-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:c5e441dc3b09875d38a75cd9a98a6da5378a6fe6307a58b2307c1de33d481b5f"},
-    {file = "lupa-2.7-pp311-pypy311_pp73-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:00bfc3d78479d2ee16babba46c9566fbd942203fe7212538cf4412fd6c857cf7"},
-    {file = "lupa-2.7-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:d794357fba342f3e2fb9145d0a21677a55f0d8dc285f629752942bd437d9f3ab"},
-    {file = "lupa-2.7.tar.gz", hash = "sha256:73a64ce5dc8cd95b75a330c1513e46e098d40fceed3fea516c09f6595eade889"},
+    {file = "lupa-2.8-cp310-abi3-win32.whl", hash = "sha256:c2a5fd15dc62374e1661a55f01744c9ec1c56f291ba4a0749d3af2174556e78f"},
+    {file = "lupa-2.8-cp310-abi3-win_arm64.whl", hash = "sha256:9e304fb1c50cf23fd8882afbe1aa87525ef8a72667bcab3b37b2bbb2bc542269"},
+    {file = "lupa-2.8-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:97bd01e90b8031e56a5fd5bb70605aea09f1dba675c1140308a52780f93d06f1"},
+    {file = "lupa-2.8-cp310-cp310-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:0b5ebe1a13c45767919c86750b84fe2da9f6288b6f3cea4ce7660bb2abc9d921"},
+    {file = "lupa-2.8-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:097e7d0f1719a88020b67c82e05d53d7973c166952393afcecfd8434c7e19a15"},
+    {file = "lupa-2.8-cp310-cp310-win_amd64.whl", hash = "sha256:7bb223ee8f72d0dc076b0d65296ee72f1c69450f9d2fed5315f7707d98c4a03d"},
+    {file = "lupa-2.8-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:b12e43c1fb787189dfc28cd604aef0baa2cb95e27da19498d520361d0ace070a"},
+    {file = "lupa-2.8-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:f6f603391dffb256e36a79fd2044084d5f4b8a0a4c0e5ad291cd3ab3aaf1fd0a"},
+    {file = "lupa-2.8-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:9f6f41c91366e7d0d474f87d81c1274af861f40812bf729c9f97ab4c8f3c7ac8"},
+    {file = "lupa-2.8-cp311-cp311-win_amd64.whl", hash = "sha256:f5a6af145b0ea818f01d27bfe2583a4b538570bef61d22c8773e0eccf011234c"},
+    {file = "lupa-2.8-cp312-abi3-macosx_10_13_x86_64.whl", hash = "sha256:f4342f4de76ae7ce2ab0672d36003bdb7e1a33252f293b569298ddd792e70e33"},
+    {file = "lupa-2.8-cp312-abi3-manylinux2010_i686.manylinux_2_12_i686.manylinux_2_28_i686.whl", hash = "sha256:4203fa1659315e939a5304e75001b8cc14234fb3cbb3ed86c049b0cc5d90fcee"},
+    {file = "lupa-2.8-cp312-abi3-manylinux2014_armv7l.manylinux_2_17_armv7l.manylinux_2_31_armv7l.whl", hash = "sha256:81f2d843ce668b653146c007467570210ae44be51dac6926666c51d49536f307"},
+    {file = "lupa-2.8-cp312-abi3-manylinux2014_ppc64le.manylinux_2_17_ppc64le.manylinux_2_28_ppc64le.whl", hash = "sha256:d3d0cde2c77588d1c60875a4f34f059513476c6e1775351897195b51e0f3df08"},
+    {file = "lupa-2.8-cp312-abi3-manylinux_2_34_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:9e0d11b8f3a8dac6413f704fef7161d048bb10c58bdac6cbffa5e60efa56e9a3"},
+    {file = "lupa-2.8-cp312-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:54cff414f21f8cd8c6be4aae52541f3b9cd39602b59e3a3db9b5c9f9f674ff18"},
+    {file = "lupa-2.8-cp312-abi3-musllinux_1_2_armv7l.whl", hash = "sha256:24b4d8af5558e549b70daf1547f5c1c1d664ecea9fc790f83efe5d75e9a93797"},
+    {file = "lupa-2.8-cp312-abi3-musllinux_1_2_i686.whl", hash = "sha256:ce86dff1ee7f7cf45f5622065ae991949dd7bb1703581cbc58a630137bb7ccf9"},
+    {file = "lupa-2.8-cp312-abi3-musllinux_1_2_ppc64le.whl", hash = "sha256:f4d01b2a08c70bbb883a9e082b6b36b89121ed5910b710f1ba11c73295ff4fba"},
+    {file = "lupa-2.8-cp312-abi3-musllinux_1_2_riscv64.whl", hash = "sha256:7f210d5a8353e510ea1199c42cf3cbdd630553bf2bc8fb4c00fea06fdec7c798"},
+    {file = "lupa-2.8-cp312-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:4f81a02806e7c7ad26d8c6fa222c8bef1b0c1b124347c879be880b41339d41e4"},
+    {file = "lupa-2.8-cp312-abi3-win32.whl", hash = "sha256:360056453a7a4eaa4ac5a204c31a5a014b1eb2ee5490603234d2ba831684f1f2"},
+    {file = "lupa-2.8-cp312-abi3-win_arm64.whl", hash = "sha256:1628371c6592a6d5650497a9e31fb2bb3a7e9883c1f301d1111265e484045af9"},
+    {file = "lupa-2.8-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:450650f91c48c2415b0d59ab3abfcfda3b6efb5b858205f4d4bda8ad141fa529"},
+    {file = "lupa-2.8-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:27044f3363047f946b3d3aab9157cbd172b3538ada9ec1baef43432bf7d03a78"},
+    {file = "lupa-2.8-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:8cf4f064a0e5531afce2d7d750120c10c10f9529139af6ca6150d13151034398"},
+    {file = "lupa-2.8-cp312-cp312-win_amd64.whl", hash = "sha256:281bedc5deb92d31e649a3552edd662449365a635904fa4d5cb4509c7245e34e"},
+    {file = "lupa-2.8-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:45fc9da0145ecb0083ef5ff9975116cc784bd0258bdc2bd131ba15483ce18398"},
+    {file = "lupa-2.8-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:58e18afed57955b41130e269c78f53d4123ab86e236b53816f4cbffa25cb5d30"},
+    {file = "lupa-2.8-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:fc47f536ac13a79cef47d29a2b205576a22841f042a2bcec1676b95806e7706a"},
+    {file = "lupa-2.8-cp313-cp313-win_amd64.whl", hash = "sha256:ce9404c661dbac65cc9bed351ad45e797af93d30d70be309a3fa8209ac86d93b"},
+    {file = "lupa-2.8-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:348c3f8ecabb6324dcbc05c2740d762ef8fcec7b06c79e45262ab97a217684e3"},
+    {file = "lupa-2.8-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:951496471056061598a7d1729a6cdf48d662fec777a9f2d8aa5a1e62fd30e5a5"},
+    {file = "lupa-2.8-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:a591b9947ca347b41a63370e121d6e2b1458fe6dde9ae065029ec10a37f25ff4"},
+    {file = "lupa-2.8-cp314-cp314-win_amd64.whl", hash = "sha256:3903c9cf628dae2f56405503247b77a61a3a61bd2dda470e336950c74776d55d"},
+    {file = "lupa-2.8-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:f711a8ab0486b9ac6fdda94a22ddcfbc9f0d4a27e3a8cf1bf79c6e48b33017c1"},
+    {file = "lupa-2.8-cp314-cp314t-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:dc51250e76367a3e27fcd01dc769b9bfcbbc34f48df48dde53d6af6e75b7eaa5"},
+    {file = "lupa-2.8-cp314-cp314t-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:f8a22088a552828958603323f0a5c4b3e11e03b75d0bf4c965ef879de9b60a8d"},
+    {file = "lupa-2.8-cp314-cp314t-win32.whl", hash = "sha256:4f7c553c1d8cfffbe85d81daef730d12cae4b6002d457542914da0ac8a1145b3"},
+    {file = "lupa-2.8-cp314-cp314t-win_amd64.whl", hash = "sha256:d8766aff03a78c80ad2d188a8bdb216de5ec838359cd87e05bbdfa56394a6105"},
+    {file = "lupa-2.8-cp314-cp314t-win_arm64.whl", hash = "sha256:91d622777febda3ab1bed1d45295f2f32a4680c7b3d7caf8c669998ed5c44118"},
+    {file = "lupa-2.8-cp38-cp38-macosx_11_0_arm64.whl", hash = "sha256:81b283bfb13cc43fa4910fc98ec110ab861bcb39680f48b266f99d6e3be1049e"},
+    {file = "lupa-2.8-cp38-cp38-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:5caf45d15d424cee52fd67341e96e2b1dde0658ae90eb156ac56aa0d8330bc38"},
+    {file = "lupa-2.8-cp38-cp38-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:33e7e5aebca64b154b0a1679caf79e19254ff37bba51e87abab6848f97cb2de1"},
+    {file = "lupa-2.8-cp38-cp38-win32.whl", hash = "sha256:e8d4f4dd4acf4a0e42adc6b1ad220e1c86fe3028402c2f78bd0728a6d241bbe9"},
+    {file = "lupa-2.8-cp38-cp38-win_amd64.whl", hash = "sha256:1ac2b1ec7504e6148cba1bc35ac36c74d18a0ca6d367ffe7e78a3773c2694c0e"},
+    {file = "lupa-2.8-cp39-abi3-macosx_10_9_x86_64.whl", hash = "sha256:b036738282a5acd2e71fdddb317c9df8b87c1673aa57f403d05fcc2be8abc4ba"},
+    {file = "lupa-2.8-cp39-abi3-manylinux2010_i686.manylinux_2_12_i686.manylinux_2_28_i686.whl", hash = "sha256:ac6b6e8d0e617e26a98cbb44880bcd75de5d32b3ad7b3b3793583909292b47ed"},
+    {file = "lupa-2.8-cp39-abi3-manylinux2014_armv7l.manylinux_2_17_armv7l.manylinux_2_31_armv7l.whl", hash = "sha256:ba3a7dd839f90c3d2e53bebe3c192b1f3f9fd720a6781256405123211fd0dce6"},
+    {file = "lupa-2.8-cp39-abi3-manylinux2014_ppc64le.manylinux_2_17_ppc64le.manylinux_2_28_ppc64le.whl", hash = "sha256:d7edb13a7a5250b5c6c22d1495d9e842b5c9fc5081c8fe6b5efe2112fe3e41f9"},
+    {file = "lupa-2.8-cp39-abi3-manylinux_2_34_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:891f72e0bffbed1e4175f975aeb2a083956586a100066525e1be485f617f7b25"},
+    {file = "lupa-2.8-cp39-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:a295f87b5b7ebbfd5191932e8cb0e51df3c7769101ac6b6c7d7c9fb27bfd1307"},
+    {file = "lupa-2.8-cp39-abi3-musllinux_1_2_armv7l.whl", hash = "sha256:4fe5d7a810b64ea8511eb885fc8cdde042ee5ff7b7d08ae78f32449756acb177"},
+    {file = "lupa-2.8-cp39-abi3-musllinux_1_2_i686.whl", hash = "sha256:bfc470012ef66ad064c7bd77416af03a3452ef630b04b9012595ea13f2e54518"},
+    {file = "lupa-2.8-cp39-abi3-musllinux_1_2_ppc64le.whl", hash = "sha256:250e035fdaffe8c87093e3ebc206ac29a26131b1568ea711d780c26001ce96e7"},
+    {file = "lupa-2.8-cp39-abi3-musllinux_1_2_riscv64.whl", hash = "sha256:b9bddb09acfffb4f828f790f444b11dc0cca591afea1a244d9329eea2d20c003"},
+    {file = "lupa-2.8-cp39-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:2e64acbbd47e9b82a64405a39e0d2b36a5a7dad8ab41c0f3437f572f7d282ba3"},
+    {file = "lupa-2.8-cp39-cp39-macosx_11_0_arm64.whl", hash = "sha256:f6ddca4774d5ca451768a95e378a3aa041076e29f4613b8562f8e98efb6690fd"},
+    {file = "lupa-2.8-cp39-cp39-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:3ffcfd8e19f943ad459136b3f60f085ae4948f024192a93ca4b4ac3023ec88d8"},
+    {file = "lupa-2.8-cp39-cp39-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:9f3f3955f65f9fde2dc6eda3041ccd394cf54d4bf083f0cdf6feb3d58e5f38d3"},
+    {file = "lupa-2.8-cp39-cp39-win32.whl", hash = "sha256:9e76e45057cfcaa20ee3422c2289a91f9d51783d020da3570ee226de8f6e71cd"},
+    {file = "lupa-2.8-cp39-cp39-win_amd64.whl", hash = "sha256:6fbcc9911f05c67affbd225fc024268e61e98a18ad1b1c2aed6c8796e4056554"},
+    {file = "lupa-2.8-cp39-cp39-win_arm64.whl", hash = "sha256:6c817d5421094507662e5f8feb8cd1e154c10879921c06079b6063be9d8f33c5"},
+    {file = "lupa-2.8-pp311-pypy311_pp73-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:32e4e5103bbddcdd2458fb2ccae6c8ba11c9997c711d7e379e0d45551d109c76"},
+    {file = "lupa-2.8-pp311-pypy311_pp73-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:7667001804657496dee9feced2daae5000b4604a3218dd8e6b7b754982ba88b8"},
+    {file = "lupa-2.8-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:86f6f668966965b15247dc32d064cfe7be67b71e584ccfacbe2f637575296878"},
+    {file = "lupa-2.8.tar.gz", hash = "sha256:d8022641b9ec8ecf2c5ecbe9f47e5a70e0b87c4b5ae921b92cb02a638e0acd08"},
 ]
 
 [[package]]
@@ -3391,13 +3394,13 @@ signedtoken = ["cryptography (>=3.0.0)", "pyjwt (>=2.0.0,<3)"]
 
 [[package]]
 name = "openai"
-version = "2.31.0"
+version = "2.32.0"
 description = "The official Python library for the openai API"
 optional = false
 python-versions = ">=3.9"
 files = [
-    {file = "openai-2.31.0-py3-none-any.whl", hash = "sha256:44e1344d87e56a493d649b17e2fac519d1368cbb0745f59f1957c4c26de50a0a"},
-    {file = "openai-2.31.0.tar.gz", hash = "sha256:43ca59a88fc973ad1848d86b98d7fac207e265ebbd1828b5e4bdfc85f79427a5"},
+    {file = "openai-2.32.0-py3-none-any.whl", hash = "sha256:4dcc9badeb4bf54ad0d187453742f290226d30150890b7890711bda4f32f192f"},
+    {file = "openai-2.32.0.tar.gz", hash = "sha256:c54b27a9e4cb8d51f0dd94972ffd1a04437efeb259a9e60d8922b8bd26fe55e0"},
 ]
 
 [package.dependencies]
@@ -4653,13 +4656,13 @@ setuptools = "*"
 
 [[package]]
 name = "pydeck"
-version = "0.9.1"
+version = "0.9.2"
 description = "Widget for deck.gl maps"
 optional = false
 python-versions = ">=3.8"
 files = [
-    {file = "pydeck-0.9.1-py2.py3-none-any.whl", hash = "sha256:b3f75ba0d273fc917094fa61224f3f6076ca8752b93d46faf3bcfd9f9d59b038"},
-    {file = "pydeck-0.9.1.tar.gz", hash = "sha256:f74475ae637951d63f2ee58326757f8d4f9cd9f2a457cf42950715003e2cb605"},
+    {file = "pydeck-0.9.2-py2.py3-none-any.whl", hash = "sha256:8213dfeacc5f6bfe6825f61c8ee34e3850e8a31fc43924379ec98edb34a75b25"},
+    {file = "pydeck-0.9.2.tar.gz", hash = "sha256:c10d9035e81ead6385264cac8d19402471f6866a15ca1f7df1400f52142bcf87"},
 ]
 
 [package.dependencies]
@@ -4668,7 +4671,7 @@ numpy = ">=1.16.4"
 
 [package.extras]
 carto = ["pydeck-carto"]
-jupyter = ["ipykernel (>=5.1.2)", "ipython (>=5.8.0)", "ipywidgets (>=7,<8)", "traitlets (>=4.3.2)"]
+jupyter = ["ipykernel (>=5.1.2)", "ipywidgets (>=7,<8)", "traitlets (>=4.3.2)"]
 
 [[package]]
 name = "pydocket"
@@ -5291,13 +5294,13 @@ requests = ">=2.0.1,<3.0.0"
 
 [[package]]
 name = "resend"
-version = "2.28.0"
+version = "2.29.0"
 description = "Resend Python SDK"
 optional = false
 python-versions = ">=3.7"
 files = [
-    {file = "resend-2.28.0-py2.py3-none-any.whl", hash = "sha256:9a6ce783c04a9df5aa79970059e501a87b1b195388aee9ee513cb77d17c986c4"},
-    {file = "resend-2.28.0.tar.gz", hash = "sha256:a330f2434cec8a8f0fedde88353e2ca50f25c6636449623401244fe8fb2c9062"},
+    {file = "resend-2.29.0-py2.py3-none-any.whl", hash = "sha256:aad7c6097c26cf2dbe46534a1fc8d92637fbdea28243b00a3363c8d3136331de"},
+    {file = "resend-2.29.0.tar.gz", hash = "sha256:cd905809a64128b29d5beda1d4a5bda8d60d438a66942ed736ca40238e9d2331"},
 ]
 
 [package.dependencies]
