@@ -125,8 +125,17 @@ DerivedData/
 # Weight and Biases
 wandb/
 
+# apps/** is polyglot (Node/Next.js etc). Root ignores above are Python-oriented
+# and would eat source files like lib/, *.json, .env.example. Un-ignore apps/
+# first, then re-ignore only the Node cruft.
+!apps/**
+
 # Node / Next.js (apps/war-room)
 apps/**/node_modules/
 apps/**/.next/
 apps/**/.turbo/
 apps/**/*.tsbuildinfo
+apps/**/.env
+apps/**/.env.local
+apps/**/.env~
+apps/**/.env.local~
