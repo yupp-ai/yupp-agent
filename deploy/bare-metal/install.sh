@@ -514,13 +514,15 @@ ALTER DATABASE "${DB_NAME}" OWNER TO schema_manager;
 SQL
 
 # Per-database grants: must be run inside yadb itself.
+# Bash-interpolated so we can emit a literal db name into GRANT CONNECT ON
+# DATABASE (which won't accept current_database() or function calls there).
 info "Granting privileges inside '${DB_NAME}' (public schema ownership, default privs for be_app_user)…"
-sudo -u postgres psql -v ON_ERROR_STOP=1 -d "$DB_NAME" >/dev/null <<'SQL'
+sudo -u postgres psql -v ON_ERROR_STOP=1 -d "$DB_NAME" >/dev/null <<SQL
 -- schema_manager owns the public schema so Alembic can CREATE TABLE freely.
 ALTER SCHEMA public OWNER TO schema_manager;
 
 -- be_app_user: connect + read/write existing and future objects.
-GRANT CONNECT ON DATABASE current_database() TO be_app_user;
+GRANT CONNECT ON DATABASE "${DB_NAME}" TO be_app_user;
 GRANT USAGE ON SCHEMA public TO be_app_user;
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES    IN SCHEMA public TO be_app_user;
