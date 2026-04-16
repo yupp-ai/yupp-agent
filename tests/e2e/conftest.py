@@ -132,7 +132,7 @@ def user_id(api_key: str) -> str:
         if resp.status_code == 200:
             uid: str = resp.json()["user_id"]
             return uid
-    except Exception:
+    except httpx.ConnectError:
         pass
     pytest.skip(f"Could not resolve user_id for {E2E_USER_EMAIL} — check E2E_USER_EMAIL or set E2E_USER_ID")
 

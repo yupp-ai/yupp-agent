@@ -240,6 +240,7 @@ class TestSessionStop:
         client: httpx.AsyncClient,
         auth_headers: dict[str, str],
         user_id: str,
+        session_cleanup: list[str],
     ) -> None:
         """Stop a session and verify response."""
         create_resp = await client.post(
@@ -248,6 +249,7 @@ class TestSessionStop:
             headers=auth_headers,
         )
         session_id = create_resp.json()["session_id"]
+        session_cleanup.append(session_id)
 
         stop_resp = await client.post(
             "/ahs/session/stop",

@@ -733,7 +733,10 @@ class Settings(BaseSettings):
     def validate_db_config(self) -> Self:
         if self.ENVIRONMENT in ["production", "staging"]:
             # Only validate during actual runtime, not during tests
-            if os.getenv("PYTEST_CURRENT_TEST") is None and not os.getenv("IN_AHS_E2E_TEST"):
+            # Skip when running under pytest, or in local e2e test mode (both signals required)
+            if os.getenv("PYTEST_CURRENT_TEST") is None and not (
+                os.getenv("IN_AHS_E2E_TEST") and self.ENABLE_CLOUDSQL_PROXY
+            ):
                 # Skip validation when yuppdb is not configured (e.g. SAG only uses agentdb)
                 if self.POSTGRES_CONNECTION_YUPPDB:
                     conn = self.yuppdb
