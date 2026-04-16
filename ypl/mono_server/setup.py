@@ -76,6 +76,29 @@ def generate_fernet_key() -> str:
     return urlsafe_b64encode(secrets.token_bytes(32)).decode()
 
 
+# Path to the role-password file written by deploy/bare-metal/install.sh.
+# If present, the wizard uses the two-role setup (schema_manager for DDL,
+# be_app_user for runtime) and skips interactive password prompts entirely.
+PG_CREDS_FILE = Path("/opt/yupp-agent/.pg-creds")
+
+
+def load_pg_creds_file() -> dict[str, str] | None:
+    """Read /opt/yupp-agent/.pg-creds into a dict, or return None if absent."""
+    try:
+        if not PG_CREDS_FILE.is_file():
+            return None
+    except OSError:
+        return None
+    creds: dict[str, str] = {}
+    for raw in PG_CREDS_FILE.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        creds[k.strip()] = v.strip()
+    return creds or None
+
+
 def build_postgres_connection_json(user: str, password: str, host: str, database: str) -> str:
     """Build the JSON value expected by POSTGRES_CONNECTION_AGENTDB."""
     return json.dumps({"user": user, "password": password, "host": host, "database": database})
@@ -136,7 +159,7 @@ DEFAULT_DB=agentdb
 # ---------------------------------------------------------------------------
 # Database
 # ---------------------------------------------------------------------------
-POSTGRES_CONNECTION_AGENTDB={pg_json}
+POSTGRES_CONNECTION_AGENTDB={pg_json}{params.get("_admin_conn_line", "")}
 
 # ---------------------------------------------------------------------------
 # Redis
@@ -371,33 +394,66 @@ async def setup_interactive() -> int:
         except (ValueError, KeyError, json.JSONDecodeError) as exc:
             console.print(f"[red]✗ Cannot read DB credentials from existing .env: {exc}[/red]")
             return 1
-        # Propagate the raw connection JSON into the subprocess environment so
-        # Alembic (invoked via subprocess in Step 5) connects to the correct
-        # database, regardless of what the parent shell has set.
+        # Propagate both connection JSONs into the subprocess environment so
+        # Alembic (invoked via subprocess in Step 5) connects with the right
+        # role, regardless of what the parent shell has set.
         for _line in env_path.read_text().splitlines():
             _line = _line.strip()
-            if _line.startswith("POSTGRES_CONNECTION_AGENTDB="):
-                os.environ["POSTGRES_CONNECTION_AGENTDB"] = _line[len("POSTGRES_CONNECTION_AGENTDB=") :]
-                break
+            for _key in ("POSTGRES_CONNECTION_AGENTDB=", "POSTGRES_CONNECTION_AGENTDB_ADMIN="):
+                if _line.startswith(_key):
+                    os.environ[_key.rstrip("=")] = _line[len(_key) :]
     else:
         # ------------------------------------------------------------------
         # Step 1 — Collect database credentials
         # ------------------------------------------------------------------
         console.print("\n[bold]Step 1 / 7 — PostgreSQL connection[/bold]")
-        pg_host = Prompt.ask("  Postgres host[:port]", default="localhost:5432")
-        pg_user = Prompt.ask("  Postgres user", default="postgres")
-        pg_password = Prompt.ask("  Postgres password", default="postgres", password=True)
-        pg_database = Prompt.ask("  Database name", default="yadb")
 
-        console.print("  Checking Postgres connectivity…", end=" ")
-        if not await check_postgres_connectivity(pg_user, pg_password, pg_host, pg_database):
-            console.print("[red]FAILED[/red]")
+        # Prefer the two-role setup written by deploy/bare-metal/install.sh.
+        # The file lives at /opt/yupp-agent/.pg-creds, mode 0600, owned by ahs,
+        # and contains passwords for schema_manager (DDL / Alembic) and
+        # be_app_user (runtime). In that case we skip password prompts entirely.
+        pg_creds_file = load_pg_creds_file()
+        pg_admin_user = ""
+        pg_admin_password = ""
+
+        if pg_creds_file and "SCHEMA_MANAGER_PASSWORD" in pg_creds_file and "BE_APP_USER_PASSWORD" in pg_creds_file:
+            pg_host = "localhost:5432"
+            pg_database = pg_creds_file.get("DB_NAME", "yadb")
+            pg_user = "be_app_user"
+            pg_password = pg_creds_file["BE_APP_USER_PASSWORD"]
+            pg_admin_user = "schema_manager"
+            pg_admin_password = pg_creds_file["SCHEMA_MANAGER_PASSWORD"]
+            console.print(f"  [green]✓ Found role creds at {PG_CREDS_FILE}[/green]")
             console.print(
-                f"[red]Cannot connect to Postgres at {pg_host} (db={pg_database}, user={pg_user}).[/red]\n"
-                "Ensure Postgres is running and the credentials are correct."
+                f"    [dim]Host: {pg_host}  DB: {pg_database}[/dim]\n"
+                f"    [dim]Runtime role: be_app_user · DDL/Alembic role: schema_manager[/dim]"
             )
-            return 1
-        console.print("[green]OK[/green]")
+            # Probe with schema_manager since be_app_user can't connect to the
+            # default 'postgres' database (it only has CONNECT on yadb).
+            console.print("  Checking Postgres connectivity…", end=" ")
+            if not await check_postgres_connectivity(pg_admin_user, pg_admin_password, pg_host, pg_database):
+                console.print("[red]FAILED[/red]")
+                console.print(
+                    f"[red]Cannot connect to Postgres at {pg_host} as schema_manager.[/red]\n"
+                    f"Ensure Postgres is running and {PG_CREDS_FILE} has the right password."
+                )
+                return 1
+            console.print("[green]OK[/green]")
+        else:
+            pg_host = Prompt.ask("  Postgres host[:port]", default="localhost:5432")
+            pg_user = Prompt.ask("  Postgres user", default="postgres")
+            pg_password = Prompt.ask("  Postgres password", default="postgres", password=True)
+            pg_database = Prompt.ask("  Database name", default="yadb")
+
+            console.print("  Checking Postgres connectivity…", end=" ")
+            if not await check_postgres_connectivity(pg_user, pg_password, pg_host, pg_database):
+                console.print("[red]FAILED[/red]")
+                console.print(
+                    f"[red]Cannot connect to Postgres at {pg_host} (db={pg_database}, user={pg_user}).[/red]\n"
+                    "Ensure Postgres is running and the credentials are correct."
+                )
+                return 1
+            console.print("[green]OK[/green]")
 
         # ------------------------------------------------------------------
         # Step 2 — Collect Redis URL
@@ -430,6 +486,17 @@ async def setup_interactive() -> int:
         # Step 4 — Auto-generate secrets, write .env
         # ------------------------------------------------------------------
         console.print("\n[bold]Step 4 / 7 — Generating secrets & writing .env[/bold]")
+        # In two-role mode, also emit a POSTGRES_CONNECTION_AGENTDB_ADMIN line
+        # so Alembic and CI (GitHub Actions) can do DDL via schema_manager
+        # without touching runtime credentials.
+        if pg_admin_user and pg_admin_password:
+            _admin_conn_json = build_postgres_connection_json(
+                pg_admin_user, pg_admin_password, pg_host, pg_database
+            )
+            _admin_conn_line = f"\nPOSTGRES_CONNECTION_AGENTDB_ADMIN={_admin_conn_json}"
+        else:
+            _admin_conn_line = ""
+
         params: dict[str, str] = {
             "postgres_user": pg_user,
             "postgres_password": pg_password,
@@ -444,6 +511,7 @@ async def setup_interactive() -> int:
             "mcp_jwt_key": generate_fernet_key(),
             "mcp_enc_key": generate_fernet_key(),
             "slack_enc_key": generate_fernet_key(),
+            "_admin_conn_line": _admin_conn_line,
         }
 
         env_content = generate_env_content(params)
@@ -456,7 +524,13 @@ async def setup_interactive() -> int:
         os.environ["POSTGRES_CONNECTION_AGENTDB"] = build_postgres_connection_json(
             pg_user, pg_password, pg_host, pg_database
         )
+        if pg_admin_user and pg_admin_password:
+            os.environ["POSTGRES_CONNECTION_AGENTDB_ADMIN"] = build_postgres_connection_json(
+                pg_admin_user, pg_admin_password, pg_host, pg_database
+            )
 
+        # Alembic runs with the admin creds when available; async runtime URL
+        # (used for seeding users below) uses the runtime role.
         db_url = build_async_db_url(pg_user, pg_password, pg_host, pg_database)
 
     # ------------------------------------------------------------------

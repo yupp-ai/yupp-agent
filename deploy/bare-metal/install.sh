@@ -117,7 +117,8 @@ It will do ${TOTAL_STEPS} steps:
   5. Install systemd units     — yupp-agent, yupp-streamlit (enabled, not started)
   6. Create data directories   — for logs, cache, etc.
   7. Install agent CLIs        — Claude Code + Codex (optional, prompted)
-  8. Create Postgres database  — 'yadb' (empty; migrations run in setup wizard)
+  8. Postgres DB + roles       — 'yadb' + schema_manager (DDL) + be_app_user (runtime)
+                                 passwords saved to /opt/yupp-agent/.pg-creds
 
 After that, you'll still need to:
 
@@ -446,21 +447,114 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 8. Postgres database
+# Step 8. Postgres database + app roles
 # ---------------------------------------------------------------------------
-step 8 "$TOTAL_STEPS" "PostgreSQL database"
+step 8 "$TOTAL_STEPS" "PostgreSQL database + app roles"
 
 # Database name matches the convention used everywhere else in the codebase
 # (dump_staging_to_local.py, alembic tests, prod). Overridable for non-default
 # setups.
 DB_NAME="${DB_NAME:-yadb}"
+CREDS_FILE="${INSTALL_DIR}/.pg-creds"
 
+# Two roles, least-privilege pattern matching prod:
+#   schema_manager — DDL / Alembic / initial setup. Owns yadb + public schema.
+#   be_app_user    — runtime. CRUD only, no DDL. What AHS / MCP / SAG use.
+#
+# Passwords are random per-role. Reuse existing passwords if .pg-creds already
+# exists — re-running install.sh must not rotate the running service out from
+# under itself.
+if sudo test -r "$CREDS_FILE"; then
+    info "Reusing Postgres role passwords from ${CREDS_FILE} (per your preference)."
+    SCHEMA_MANAGER_PASSWORD=$(sudo awk -F= '/^SCHEMA_MANAGER_PASSWORD=/{print $2}' "$CREDS_FILE")
+    BE_APP_USER_PASSWORD=$(sudo awk -F= '/^BE_APP_USER_PASSWORD=/{print $2}' "$CREDS_FILE")
+    if [[ -z "$SCHEMA_MANAGER_PASSWORD" || -z "$BE_APP_USER_PASSWORD" ]]; then
+        error "${CREDS_FILE} is malformed (missing SCHEMA_MANAGER_PASSWORD or BE_APP_USER_PASSWORD). Delete it and re-run to regenerate."
+    fi
+else
+    info "Generating fresh random passwords for schema_manager + be_app_user…"
+    SCHEMA_MANAGER_PASSWORD=$(openssl rand -hex 16)
+    BE_APP_USER_PASSWORD=$(openssl rand -hex 16)
+fi
+
+# Create DB if missing.
 if sudo -u postgres psql -lqt | cut -d\| -f1 | tr -d ' ' | grep -qx "$DB_NAME"; then
     info "PostgreSQL database '${DB_NAME}' already exists."
 else
     info "Creating PostgreSQL database '${DB_NAME}'…"
     sudo -u postgres createdb "$DB_NAME"
 fi
+
+# Create / update roles (idempotent).
+info "Configuring Postgres roles schema_manager + be_app_user…"
+sudo -u postgres psql -v ON_ERROR_STOP=1 \
+    -v sm_pw="$SCHEMA_MANAGER_PASSWORD" \
+    -v app_pw="$BE_APP_USER_PASSWORD" \
+    -v db_name="$DB_NAME" >/dev/null <<'SQL'
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'schema_manager') THEN
+        EXECUTE format('CREATE ROLE schema_manager LOGIN PASSWORD %L CREATEDB', :'sm_pw');
+    ELSE
+        EXECUTE format('ALTER ROLE schema_manager WITH LOGIN PASSWORD %L CREATEDB', :'sm_pw');
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'be_app_user') THEN
+        EXECUTE format('CREATE ROLE be_app_user LOGIN PASSWORD %L', :'app_pw');
+    ELSE
+        EXECUTE format('ALTER ROLE be_app_user WITH LOGIN PASSWORD %L', :'app_pw');
+    END IF;
+END
+$$;
+
+-- schema_manager owns the database (so it has free reign on DDL).
+-- quote_ident handles arbitrary database names safely.
+SELECT format('ALTER DATABASE %I OWNER TO schema_manager', :'db_name') \gexec
+SQL
+
+# Per-database grants: must be run inside yadb itself.
+info "Granting privileges inside '${DB_NAME}' (public schema ownership, default privs for be_app_user)…"
+sudo -u postgres psql -v ON_ERROR_STOP=1 -d "$DB_NAME" >/dev/null <<'SQL'
+-- schema_manager owns the public schema so Alembic can CREATE TABLE freely.
+ALTER SCHEMA public OWNER TO schema_manager;
+
+-- be_app_user: connect + read/write existing and future objects.
+GRANT CONNECT ON DATABASE current_database() TO be_app_user;
+GRANT USAGE ON SCHEMA public TO be_app_user;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES    IN SCHEMA public TO be_app_user;
+GRANT USAGE, SELECT, UPDATE            ON ALL SEQUENCES IN SCHEMA public TO be_app_user;
+GRANT EXECUTE                           ON ALL FUNCTIONS IN SCHEMA public TO be_app_user;
+
+-- Default privileges — apply to objects created by schema_manager in the
+-- future (which is what Alembic will do). This is the magic that keeps
+-- runtime working after every migration without re-running GRANT.
+ALTER DEFAULT PRIVILEGES FOR ROLE schema_manager IN SCHEMA public
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES    TO be_app_user;
+ALTER DEFAULT PRIVILEGES FOR ROLE schema_manager IN SCHEMA public
+    GRANT USAGE, SELECT, UPDATE            ON SEQUENCES TO be_app_user;
+ALTER DEFAULT PRIVILEGES FOR ROLE schema_manager IN SCHEMA public
+    GRANT EXECUTE                          ON FUNCTIONS TO be_app_user;
+SQL
+
+# Write the creds file. Owned by $APP_USER (mode 0600) — the setup wizard
+# reads it as that user; nothing else on the box should touch it.
+sudo tee "$CREDS_FILE" > /dev/null <<EOF
+# Postgres role passwords for the AHS monolith (written by install.sh).
+# The setup wizard reads this file automatically — no manual paste needed.
+#
+# For CI / GitHub Actions: copy SCHEMA_MANAGER_PASSWORD into a repo secret
+# and build POSTGRES_CONNECTION_AGENTDB_ADMIN from it, e.g.
+#   {"user":"schema_manager","password":"<secret>","host":"<dbhost>:5432","database":"${DB_NAME}"}
+#
+# Re-running install.sh reuses these values; to rotate, delete this file
+# first and let install.sh generate fresh passwords.
+DB_NAME=${DB_NAME}
+SCHEMA_MANAGER_PASSWORD=${SCHEMA_MANAGER_PASSWORD}
+BE_APP_USER_PASSWORD=${BE_APP_USER_PASSWORD}
+EOF
+sudo chown "${APP_USER}:${APP_USER}" "$CREDS_FILE"
+sudo chmod 600 "$CREDS_FILE"
+info "Role creds written to ${CREDS_FILE} (mode 0600, owner ${APP_USER})."
 
 # ---------------------------------------------------------------------------
 # Done — comprehensive next-steps checklist
@@ -484,6 +578,8 @@ Everything below is now installed and ready:
   ✓ systemd units    — yupp-agent, yupp-streamlit (enabled, not started)
   ✓ Runtime dirs     — /var/log/ahs-mono, ${INSTALL_DIR}/data, ${INSTALL_DIR}/.cache
   ✓ Database         — PostgreSQL '${DB_NAME}' (empty — Alembic migrations run in setup wizard)
+  ✓ Postgres roles   — schema_manager (DDL/Alembic), be_app_user (runtime)
+                       creds → /opt/yupp-agent/.pg-creds (mode 0600, owned by ${APP_USER})
 $( [[ "$CLAUDE_CHOICE" == "yes" ]] && echo "  ✓ Agent CLI        — Claude Code (needs 'claude login')" || echo "  ✗ Agent CLI        — Claude Code (skipped)" )
 $( [[ "$CODEX_CHOICE"  == "yes" ]] && echo "  ✓ Agent CLI        — Codex (needs 'codex login')"       || echo "  ✗ Agent CLI        — Codex (skipped)" )
 
@@ -506,9 +602,11 @@ ${B}What's still left for you to do — in this order:${N}
 ─────────────────────────────────────────────────────────────────
 
  1. ${B}Run the interactive setup wizard.${N}
-    Asks for DB password + admin email, auto-generates secrets, writes
-    ${INSTALL_DIR}/.env (mode 0600), runs Alembic migrations, seeds roles
-    and your admin user.
+    Auto-detects ${INSTALL_DIR}/.pg-creds and skips password prompts.
+    Asks for admin email, auto-generates secrets, writes ${INSTALL_DIR}/.env
+    (mode 0600) with both runtime (be_app_user) and admin (schema_manager)
+    connection strings, runs Alembic migrations as schema_manager, seeds
+    roles and your admin user.
 
       sudo -u ${APP_USER} bash -c 'cd ${INSTALL_DIR} && python -m ypl.mono_server.setup'
 

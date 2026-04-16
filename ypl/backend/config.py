@@ -94,6 +94,11 @@ class Settings(BaseSettings):
     POSTGRES_CONNECTION_YUPPDB_REPLICA: str = ""
     POSTGRES_CONNECTION_AGENTDB: str = ""
     POSTGRES_CONNECTION_AGENTDB_REPLICA: str = ""
+    # DDL / Alembic connection. Higher-privilege role (e.g. schema_manager)
+    # that can CREATE / ALTER / DROP. If empty, falls back to AGENTDB.
+    # Set in the monolith setup by the install.sh-generated .pg-creds file,
+    # and in CI via GitHub Actions secrets.
+    POSTGRES_CONNECTION_AGENTDB_ADMIN: str = ""
 
     CACHE_DIR: str = ".cache"
     USE_GOOGLE_CLOUD_LOGGING: bool = True
@@ -621,6 +626,21 @@ class Settings(BaseSettings):
     @cached_property
     def agentdb_replica(self) -> PostgresConnection:
         return self._parse_pg_connection(self.POSTGRES_CONNECTION_AGENTDB_REPLICA)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @cached_property
+    def agentdb_admin(self) -> PostgresConnection:
+        """Admin / DDL connection (e.g. schema_manager). Falls back to agentdb
+        if POSTGRES_CONNECTION_AGENTDB_ADMIN is not set, so existing deployments
+        that only have one role keep working."""
+        raw = self.POSTGRES_CONNECTION_AGENTDB_ADMIN or self.POSTGRES_CONNECTION_AGENTDB
+        return self._parse_pg_connection(raw)
+
+    def agentdb_admin_url(self, *, async_mode: bool = False) -> str:
+        """Build a SQLAlchemy URL for the agentdb admin connection — used by
+        Alembic to run DDL. If no admin creds are configured, returns the same
+        URL as the regular agentdb connection."""
+        return self._build_db_url(self.agentdb_admin, async_mode=async_mode)
 
     def get_pg_connection(self, db: DbName = "yuppdb", *, replica: bool = False) -> PostgresConnection:
         """Return the PostgresConnection for the given database and replica flag."""
