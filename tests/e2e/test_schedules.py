@@ -212,14 +212,20 @@ class TestScheduleRecurring:
         # Trigger
         await client.post(f"/ahs/schedule/{sid}/trigger", json={"user_id": user_id}, headers=auth_headers)
 
-        # List runs
+        # Poll for runs to appear (instead of fixed sleep)
         import asyncio
+        import time
 
-        await asyncio.sleep(3)
-        runs_resp = await client.get(f"/ahs/schedule/{sid}/runs", params={"limit": 10}, headers=auth_headers)
-        assert runs_resp.status_code == 200
-        data = runs_resp.json()
-        assert data["count"] >= 1
+        deadline = time.time() + 15.0
+        data: dict = {"count": 0, "runs": []}
+        while time.time() < deadline:
+            runs_resp = await client.get(f"/ahs/schedule/{sid}/runs", params={"limit": 10}, headers=auth_headers)
+            if runs_resp.status_code == 200:
+                data = runs_resp.json()
+                if data["count"] >= 1:
+                    break
+            await asyncio.sleep(2)
+        assert data["count"] >= 1, "Schedule run did not appear within 15s"
         assert len(data["runs"]) >= 1
         assert data["runs"][0]["session_id"] is not None
 

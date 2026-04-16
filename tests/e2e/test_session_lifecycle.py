@@ -159,18 +159,24 @@ class TestSessionMessageAndHistory:
             headers=auth_headers,
         )
 
-        # Wait for second reply
+        # Poll for second assistant reply (instead of fixed sleep)
         import asyncio
+        import time
 
-        await asyncio.sleep(5)
-        history_resp = await client.get(
-            f"/ahs/session/{session_id}/history",
-            params={"limit": 50},
-            headers=auth_headers,
-        )
-        assert history_resp.status_code == 200
-        all_messages = history_resp.json()["messages"]
-        assistant_msgs = [m for m in all_messages if m["role"] in ("assistant", "AGENT")]
+        deadline = time.time() + 15.0
+        assistant_msgs: list[dict] = []
+        while time.time() < deadline:
+            history_resp = await client.get(
+                f"/ahs/session/{session_id}/history",
+                params={"limit": 50},
+                headers=auth_headers,
+            )
+            if history_resp.status_code == 200:
+                all_messages = history_resp.json()["messages"]
+                assistant_msgs = [m for m in all_messages if m["role"] in ("assistant", "AGENT")]
+                if len(assistant_msgs) >= 2:
+                    break
+            await asyncio.sleep(2)
         assert len(assistant_msgs) >= 2, f"Expected 2+ assistant replies, got {len(assistant_msgs)}"
 
 
