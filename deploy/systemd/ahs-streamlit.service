@@ -1,10 +1,10 @@
 [Unit]
-Description=Yupp Agent Platform — Streamlit operational dashboards
+Description=AHS Streamlit — operational dashboards for the monolith
 Documentation=https://github.com/yupp-ai/yupp-agent/blob/main/DEPLOYMENT.md
-After=network-online.target yupp-agent.service
+After=network-online.target ahs-mono.service
 Wants=network-online.target
-# Streamlit is non-critical — don't take down AHS if it fails
-PartOf=yupp-agent.service
+# Streamlit is non-critical — don't take down AHS if it fails.
+PartOf=ahs-mono.service
 
 [Service]
 Type=simple
@@ -13,13 +13,13 @@ Group=ahs
 WorkingDirectory=/opt/yupp-agent
 
 EnvironmentFile=/opt/yupp-agent/.env
-Environment=SERVICE_NAME_FOR_LOGGING=yupp-streamlit
+Environment=SERVICE_NAME_FOR_LOGGING=ahs-streamlit
 Environment=PORT=8501
 Environment=USE_GOOGLE_CLOUD_LOGGING=false
 Environment=DISABLE_WRITE_GOOGLE_CLOUD_METRICS=true
 Environment=PYTHONPATH=/opt/yupp-agent
 Environment=PYTHONUNBUFFERED=1
-# Mirror yupp-agent's PATH so Streamlit subprocesses see the same tools.
+# Mirror ahs-mono's PATH so Streamlit subprocesses see the same tools.
 Environment=PATH=/opt/yupp-agent/.local/bin:/usr/local/bin:/usr/bin:/bin
 
 ExecStart=/opt/yupp-agent/.venv/bin/streamlit run \
@@ -42,11 +42,11 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectHome=yes
 ProtectSystem=strict
-ReadWritePaths=/opt/yupp-agent/data /opt/yupp-agent/.cache /tmp /var/log/yupp-agent
+ReadWritePaths=/opt/yupp-agent/data /opt/yupp-agent/.cache /tmp /var/log/ahs-mono
 
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=yupp-streamlit
+SyslogIdentifier=ahs-streamlit
 
 [Install]
 WantedBy=multi-user.target

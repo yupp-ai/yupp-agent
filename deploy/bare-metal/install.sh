@@ -124,7 +124,7 @@ After that, you'll still need to:
   a. Run the setup wizard:   sudo -u ${APP_USER} python -m ypl.mono_server.setup
   b. Add LLM API keys to ${INSTALL_DIR}/.env
   c. Authenticate the agent CLIs (claude login, codex login)
-  d. Start the services:     sudo systemctl start yupp-agent yupp-streamlit
+  d. Start the services:     sudo systemctl start ahs-mono ahs-streamlit
 
 The script is safe to re-run — it skips steps that are already done.
 
@@ -369,11 +369,11 @@ info "Virtual environment: ${VENV_DIR}"
 # ---------------------------------------------------------------------------
 step 5 "$TOTAL_STEPS" "systemd service units"
 
-info "Installing yupp-agent.service and yupp-streamlit.service…"
-cp "${INSTALL_DIR}/deploy/systemd/yupp-agent.service"     /etc/systemd/system/
-cp "${INSTALL_DIR}/deploy/systemd/yupp-streamlit.service" /etc/systemd/system/
+info "Installing ahs-mono.service and ahs-streamlit.service…"
+cp "${INSTALL_DIR}/deploy/systemd/ahs-mono.service"     /etc/systemd/system/
+cp "${INSTALL_DIR}/deploy/systemd/ahs-streamlit.service" /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable yupp-agent yupp-streamlit
+systemctl enable ahs-mono ahs-streamlit
 info "Units enabled (will auto-start on boot). Not started yet — need setup wizard first."
 
 # ---------------------------------------------------------------------------
@@ -381,11 +381,11 @@ info "Units enabled (will auto-start on boot). Not started yet — need setup wi
 # ---------------------------------------------------------------------------
 step 6 "$TOTAL_STEPS" "Runtime directories"
 
-mkdir -p /var/log/yupp-agent
-chown "${APP_USER}:${APP_USER}" /var/log/yupp-agent
+mkdir -p /var/log/ahs-mono
+chown "${APP_USER}:${APP_USER}" /var/log/ahs-mono
 mkdir -p "${INSTALL_DIR}/data" "${INSTALL_DIR}/.cache"
 chown "${APP_USER}:${APP_USER}" "${INSTALL_DIR}/data" "${INSTALL_DIR}/.cache"
-info "Created /var/log/yupp-agent, ${INSTALL_DIR}/data, ${INSTALL_DIR}/.cache"
+info "Created /var/log/ahs-mono, ${INSTALL_DIR}/data, ${INSTALL_DIR}/.cache"
 
 # ---------------------------------------------------------------------------
 # Step 7. Agent executor CLIs (optional)
@@ -482,7 +482,7 @@ Everything below is now installed and ready:
   ✓ Repo             — ${INSTALL_DIR}
   ✓ Python venv      — ${VENV_DIR}
   ✓ systemd units    — yupp-agent, yupp-streamlit (enabled, not started)
-  ✓ Runtime dirs     — /var/log/yupp-agent, ${INSTALL_DIR}/data, ${INSTALL_DIR}/.cache
+  ✓ Runtime dirs     — /var/log/ahs-mono, ${INSTALL_DIR}/data, ${INSTALL_DIR}/.cache
   ✓ Database         — PostgreSQL '${DB_NAME}' (empty — Alembic migrations run in setup wizard)
 $( [[ "$CLAUDE_CHOICE" == "yes" ]] && echo "  ✓ Agent CLI        — Claude Code (needs 'claude login')" || echo "  ✗ Agent CLI        — Claude Code (skipped)" )
 $( [[ "$CODEX_CHOICE"  == "yes" ]] && echo "  ✓ Agent CLI        — Codex (needs 'codex login')"       || echo "  ✗ Agent CLI        — Codex (skipped)" )
@@ -490,11 +490,11 @@ $( [[ "$CODEX_CHOICE"  == "yes" ]] && echo "  ✓ Agent CLI        — Codex (ne
 
 ${B}Services that will run on this box once started:${N}
 
-  ${D}Service       Port   Bound to         Purpose${N}
-  yupp-agent    8090   0.0.0.0          AHS + MCP + Slack/GitHub gateways (HTTP API)
-  yupp-streamlit 8501  0.0.0.0          Operational dashboards (UI)
-  postgresql    5432   localhost        Agent DB (${DB_NAME})
-  redis         6379   localhost        Session state / pub-sub
+  ${D}Service         Port   Bound to         Purpose${N}
+  ahs-mono        8090   0.0.0.0          AHS + MCP + Slack/GitHub gateways (HTTP API)
+  ahs-streamlit   8501   0.0.0.0          Operational dashboards (UI)
+  postgresql      5432   localhost        Agent DB (${DB_NAME})
+  redis           6379   localhost        Session state / pub-sub
 
   Internal-only by default. Don't open 5432 or 6379 to the internet.
   Only 8090 (AHS API) needs to be publicly reachable, and only if you wire up
@@ -542,8 +542,8 @@ fi
 cat <<EOF
  ${n}. ${B}Start the services.${N}
 
-      sudo systemctl start yupp-agent yupp-streamlit
-      sudo systemctl status yupp-agent yupp-streamlit
+      sudo systemctl start ahs-mono ahs-streamlit
+      sudo systemctl status ahs-mono ahs-streamlit
 
 EOF
 n=$((n+1))
@@ -566,8 +566,8 @@ cat <<EOF
 
 ${B}Live logs:${N}
 
-      journalctl -u yupp-agent     -f
-      journalctl -u yupp-streamlit -f
+      journalctl -u ahs-mono     -f
+      journalctl -u ahs-streamlit -f
 
 Re-run this script anytime — it's idempotent and safe to upgrade/reconfigure.
 

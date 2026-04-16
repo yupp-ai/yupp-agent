@@ -121,7 +121,7 @@ def init_console_logger(base_processors: list[Any]) -> structlog.BoundLogger:
     ``LOG_FORMAT=json`` (or any value starting with ``"json"``)
         One JSON object per line, emitted to stdout.  The ``event`` key is
         renamed to ``message`` for consistency with the GCL path.  Suitable
-        for systemd-journal capture (``journalctl -u yupp-agent -o json``),
+        for systemd-journal capture (``journalctl -u ahs-mono -o json``),
         Loki, CloudWatch, or any aggregator that ingests NDJSON.
 
     ``LOG_FORMAT=pretty`` (default / anything else)
