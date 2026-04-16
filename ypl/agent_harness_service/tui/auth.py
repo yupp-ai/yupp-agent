@@ -2,7 +2,17 @@
 
 Opens the user's browser for Google sign-in, caches tokens locally so
 re-login is only needed when the refresh token expires (rare).
-Only @yupp.ai emails are accepted.
+
+Configurable via env vars:
+    AHS_TUI_ALLOWED_DOMAIN      Restrict logins to this email domain
+                                 (empty = any domain accepted). Default: unset.
+    AHS_TUI_OAUTH_CLIENT_ID     Google OAuth Desktop client ID.
+    AHS_TUI_OAUTH_CLIENT_SECRET Client secret (not confidential for Desktop apps).
+    AHS_TUI_OAUTH_PROJECT_ID    GCP project that owns the OAuth client.
+
+The defaults point at the legacy yupp-llms Desktop OAuth client. When
+that project gets deleted, create a fresh Desktop OAuth client in
+whatever GCP project you use and set the three AHS_TUI_OAUTH_* env vars.
 """
 
 from __future__ import annotations
@@ -22,25 +32,46 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 # Scopes: we only need the user's email
 _SCOPES = ["openid", "https://www.googleapis.com/auth/userinfo.email"]
 
-_ALLOWED_DOMAIN = "yupp.ai"
+# Empty string = no domain restriction. Previously hard-coded to "yupp.ai".
+_ALLOWED_DOMAIN = os.environ.get("AHS_TUI_ALLOWED_DOMAIN", "")
 
 # Persist tokens under ~/.config/ahstui/
 _CONFIG_DIR = Path.home() / ".config" / "ahstui"
 _TOKEN_PATH = _CONFIG_DIR / "token.json"
 _EMAIL_CACHE_PATH = _CONFIG_DIR / "email.txt"
 
-# OAuth client config (Desktop/Installed app — secret is not confidential per Google docs)
+# OAuth client config (Desktop/Installed app — secret is not confidential per Google docs).
+# Overridable via env vars so users outside yupp-llms can register their own OAuth client.
 _CLIENT_CONFIG: dict[str, Any] = {
     "installed": {
-        "client_id": "451082535721-rt8inmimemumdhfm528ert2b37v09s8t.apps.googleusercontent.com",
-        "project_id": "yupp-llms",
+        "client_id": os.environ.get(
+            "AHS_TUI_OAUTH_CLIENT_ID",
+            "451082535721-rt8inmimemumdhfm528ert2b37v09s8t.apps.googleusercontent.com",
+        ),
+        "project_id": os.environ.get("AHS_TUI_OAUTH_PROJECT_ID", "yupp-llms"),
         "auth_uri": "https://accounts.google.com/o/oauth2/auth",
         "token_uri": "https://oauth2.googleapis.com/token",
         "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-        "client_secret": "***REMOVED***",
+        "client_secret": os.environ.get(
+            "AHS_TUI_OAUTH_CLIENT_SECRET",
+            "***REMOVED***",
+        ),
         "redirect_uris": ["http://localhost"],
     }
 }
+
+
+def _email_allowed(email: str) -> bool:
+    """Whether the email passes the configured domain allowlist."""
+    if not _ALLOWED_DOMAIN:
+        return True
+    return email.endswith(f"@{_ALLOWED_DOMAIN}")
+
+
+def _login_prompt_message() -> str:
+    if _ALLOWED_DOMAIN:
+        return f"Login required. You must sign in with a @{_ALLOWED_DOMAIN} Google account."
+    return "Login required. Sign in with your Google account."
 
 
 def _load_cached_credentials() -> Credentials | None:
@@ -94,19 +125,20 @@ def login() -> str:
     Uses cached credentials when available. Opens a browser for the OAuth
     consent flow when no valid credentials exist.
 
-    Raises SystemExit if the email is not @yupp.ai.
+    Raises SystemExit if the email is not in the allowed domain (when
+    AHS_TUI_ALLOWED_DOMAIN is set; any email passes otherwise).
     """
     creds = _load_cached_credentials()
 
     if creds and creds.valid:
         # Fast path: use cached email to skip the network call on every startup.
         cached_email = _load_cached_email()
-        if cached_email and cached_email.endswith(f"@{_ALLOWED_DOMAIN}"):
+        if cached_email and _email_allowed(cached_email):
             return cached_email
         # No cached email — fetch it (first run after upgrade, or cache cleared).
         try:
             email = _extract_email(creds)
-            if email.endswith(f"@{_ALLOWED_DOMAIN}"):
+            if _email_allowed(email):
                 _save_credentials(creds, email)
                 return email
         except (urllib.error.URLError, json.JSONDecodeError, RuntimeError):
@@ -117,14 +149,14 @@ def login() -> str:
             creds.refresh(Request())  # type: ignore[no-untyped-call]
             email = _extract_email(creds)
             _save_credentials(creds, email)
-            if email.endswith(f"@{_ALLOWED_DOMAIN}"):
+            if _email_allowed(email):
                 return email
         except (RefreshError, urllib.error.URLError, json.JSONDecodeError, RuntimeError):
             pass  # Refresh failed — fall through to full login
 
     # Run the browser-based OAuth flow
     print()
-    print("Login required. You must sign in with a @yupp.ai Google account.")
+    print(_login_prompt_message())
     input("Press Enter to open browser and sign in...")
 
     flow = InstalledAppFlow.from_client_config(_CLIENT_CONFIG, _SCOPES)
@@ -144,7 +176,7 @@ def login() -> str:
         print("Please run ahstui again — cached credentials will be used.", file=sys.stderr)
         sys.exit(1)
 
-    if not email.endswith(f"@{_ALLOWED_DOMAIN}"):
+    if not _email_allowed(email):
         print(f"ERROR: Only @{_ALLOWED_DOMAIN} accounts are allowed (got {email})", file=sys.stderr)
         _TOKEN_PATH.unlink(missing_ok=True)
         _EMAIL_CACHE_PATH.unlink(missing_ok=True)
