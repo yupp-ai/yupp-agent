@@ -289,12 +289,20 @@ class TestTaskDependencies:
             headers=auth_headers,
         )
 
-        # B should now be READY (dependency cascade)
-        b_detail2 = await client.get(
-            f"/ahs/projects/{project_id}/tasks/{task_b['agent_task_id']}",
-            headers=auth_headers,
-        )
-        assert b_detail2.json()["status"] == "READY"
+        # Poll for B to become READY (dependency cascade may be async)
+        import asyncio
+        import time
+
+        b_id = task_b["agent_task_id"]
+        deadline = time.time() + 10.0
+        b_status = "BLOCKED"
+        while time.time() < deadline:
+            b_detail2 = await client.get(f"/ahs/projects/{project_id}/tasks/{b_id}", headers=auth_headers)
+            b_status = b_detail2.json()["status"]
+            if b_status == "READY":
+                break
+            await asyncio.sleep(1)
+        assert b_status == "READY", f"Task B did not promote to READY within 10s (status={b_status})"
 
     async def test_multi_dependency_all_must_complete(
         self,
@@ -349,9 +357,20 @@ class TestTaskDependencies:
             headers=auth_headers,
         )
 
-        # Now C should be READY
-        c_resp2 = await client.get(f"/ahs/projects/{project_id}/tasks/{task_c['agent_task_id']}", headers=auth_headers)
-        assert c_resp2.json()["status"] == "READY"
+        # Poll for C to become READY
+        import asyncio
+        import time
+
+        c_id = task_c["agent_task_id"]
+        deadline = time.time() + 10.0
+        c_status = "BLOCKED"
+        while time.time() < deadline:
+            c_resp2 = await client.get(f"/ahs/projects/{project_id}/tasks/{c_id}", headers=auth_headers)
+            c_status = c_resp2.json()["status"]
+            if c_status == "READY":
+                break
+            await asyncio.sleep(1)
+        assert c_status == "READY", f"Task C did not promote to READY within 10s (status={c_status})"
 
     async def test_cycle_detection(
         self,
