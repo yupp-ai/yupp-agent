@@ -122,7 +122,8 @@ It will do ${TOTAL_STEPS} steps:
 
 After that, you'll still need to:
 
-  a. Run the setup wizard:   sudo -u ${APP_USER} python -m ypl.mono_server.setup
+  a. Run the setup wizard:
+       sudo -u ${APP_USER} bash -c 'cd ${INSTALL_DIR} && .venv/bin/python -m ypl.mono_server.setup'
   b. Add LLM API keys to ${INSTALL_DIR}/.env
   c. Authenticate the agent CLIs (claude login, codex login)
   d. Start the services:     sudo systemctl start ahs-mono ahs-streamlit
@@ -361,9 +362,26 @@ sudo -u "$APP_USER" env INSTALL_DIR="$INSTALL_DIR" PYTHON_VERSION="$PYTHON_VERSI
     poetry install --no-root --without dev --compile
 '
 
+# Resolve the venv path AFTER first nuking any stale `.venv` symlink. Otherwise
+# `poetry env info --path` can resolve through a previous-run's `.venv` symlink
+# and return ${INSTALL_DIR}/.venv itself — then ln -sfn creates a self-loop
+# and you get "Too many levels of symbolic links" on every later invocation.
+VENV_LINK="${INSTALL_DIR}/.venv"
+if [[ -L "$VENV_LINK" ]]; then
+    # Dereference once; if it points at itself, delete it before asking poetry.
+    link_target=$(readlink -f "$VENV_LINK" 2>/dev/null || true)
+    if [[ -z "$link_target" || "$link_target" == "$VENV_LINK" ]]; then
+        warn "Stale / self-referential .venv symlink at ${VENV_LINK} — removing."
+        rm -f "$VENV_LINK"
+    fi
+fi
 VENV_DIR=$(sudo -u "$APP_USER" env INSTALL_DIR="$INSTALL_DIR" bash -c 'cd "$INSTALL_DIR" && poetry env info --path')
-ln -sfn "$VENV_DIR" "${INSTALL_DIR}/.venv"
+if [[ -z "$VENV_DIR" || "$VENV_DIR" == "$VENV_LINK" ]]; then
+    error "poetry env info --path returned an unusable value: '${VENV_DIR}'. Check that step 4 (poetry install) actually succeeded."
+fi
+sudo -u "$APP_USER" ln -sfn "$VENV_DIR" "$VENV_LINK"
 info "Virtual environment: ${VENV_DIR}"
+info "  symlinked: ${VENV_LINK} -> ${VENV_DIR}"
 
 # ---------------------------------------------------------------------------
 # Step 5. systemd units
@@ -513,11 +531,17 @@ END
 ALTER DATABASE "${DB_NAME}" OWNER TO schema_manager;
 SQL
 
-# Per-database grants: must be run inside yadb itself.
+# Per-database grants + extensions: must be run inside yadb itself.
 # Bash-interpolated so we can emit a literal db name into GRANT CONNECT ON
 # DATABASE (which won't accept current_database() or function calls there).
-info "Granting privileges inside '${DB_NAME}' (public schema ownership, default privs for be_app_user)…"
+info "Configuring '${DB_NAME}': install pgvector, public-schema ownership, default privs for be_app_user…"
 sudo -u postgres psql -v ON_ERROR_STOP=1 -d "$DB_NAME" >/dev/null <<SQL
+-- pgvector must be created by a superuser (which schema_manager isn't — and
+-- shouldn't be). The baseline Alembic migration runs
+-- 'CREATE EXTENSION IF NOT EXISTS vector', which becomes a no-op once this
+-- has been done here as the postgres superuser.
+CREATE EXTENSION IF NOT EXISTS vector;
+
 -- schema_manager owns the public schema so Alembic can CREATE TABLE freely.
 ALTER SCHEMA public OWNER TO schema_manager;
 
@@ -612,7 +636,7 @@ ${B}What's still left for you to do — in this order:${N}
     connection strings, runs Alembic migrations as schema_manager, seeds
     roles and your admin user.
 
-      sudo -u ${APP_USER} bash -c 'cd ${INSTALL_DIR} && python -m ypl.mono_server.setup'
+      sudo -u ${APP_USER} bash -c 'cd ${INSTALL_DIR} && .venv/bin/python -m ypl.mono_server.setup'
 
  2. ${B}Add at least one LLM provider API key to the .env.${N}
     At least one of ANTHROPIC_API_KEY / OPENAI_API_KEY / GOOGLE_API_KEY.
