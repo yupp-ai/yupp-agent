@@ -409,6 +409,15 @@ if [[ "$CLAUDE_CHOICE" == "yes" ]]; then
     info "Installing Claude Code CLI as ${APP_USER}…"
     sudo -u "$APP_USER" bash -c 'curl -fsSL https://claude.ai/install.sh | bash' \
         || warn "Claude Code install failed — continuing. Retry manually later."
+    # The Claude installer drops the binary into $HOME/.local/bin but doesn't
+    # add it to PATH. Append an idempotent PATH export to ~/.bashrc so
+    # `sudo -iu $APP_USER claude …` just works.
+    BASHRC="${INSTALL_DIR}/.bashrc"
+    if ! sudo -u "$APP_USER" test -f "$BASHRC" || \
+       ! sudo -u "$APP_USER" grep -qF '.local/bin' "$BASHRC" 2>/dev/null; then
+        info "Adding ${APP_USER}'s .local/bin to its shell PATH (${BASHRC})…"
+        sudo -u "$APP_USER" bash -c "echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> '$BASHRC'"
+    fi
 else
     info "Skipping Claude Code CLI."
 fi

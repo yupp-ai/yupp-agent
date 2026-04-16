@@ -19,6 +19,8 @@ Environment=USE_GOOGLE_CLOUD_LOGGING=false
 Environment=DISABLE_WRITE_GOOGLE_CLOUD_METRICS=true
 Environment=PYTHONPATH=/opt/yupp-agent
 Environment=PYTHONUNBUFFERED=1
+# Mirror yupp-agent's PATH so Streamlit subprocesses see the same tools.
+Environment=PATH=/opt/yupp-agent/.local/bin:/usr/local/bin:/usr/bin:/bin
 
 ExecStart=/opt/yupp-agent/.venv/bin/streamlit run \
     ypl/streamlit_server/app.py \
