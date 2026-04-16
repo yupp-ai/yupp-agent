@@ -362,26 +362,39 @@ sudo -u "$APP_USER" env INSTALL_DIR="$INSTALL_DIR" PYTHON_VERSION="$PYTHON_VERSI
     poetry install --no-root --without dev --compile
 '
 
-# Resolve the venv path AFTER first nuking any stale `.venv` symlink. Otherwise
-# `poetry env info --path` can resolve through a previous-run's `.venv` symlink
-# and return ${INSTALL_DIR}/.venv itself — then ln -sfn creates a self-loop
-# and you get "Too many levels of symbolic links" on every later invocation.
+# Three legitimate states the venv can be in after `poetry install`:
+#   (a) In-project: poetry created ${INSTALL_DIR}/.venv as a real directory
+#       (the default in Poetry 1.8+ when virtualenvs.in-project=true or when
+#       no cache dir is writable). Nothing to symlink.
+#   (b) Cache dir: poetry created ~/.cache/pypoetry/virtualenvs/ypl-agent-xxx;
+#       we symlink ${INSTALL_DIR}/.venv → that path for convenient access.
+#   (c) Broken: a previous install.sh left a self-referential symlink at
+#       ${INSTALL_DIR}/.venv → ${INSTALL_DIR}/.venv. Delete before asking poetry.
 VENV_LINK="${INSTALL_DIR}/.venv"
+
+# Handle case (c) — self-referential symlink from an older install.sh bug.
 if [[ -L "$VENV_LINK" ]]; then
-    # Dereference once; if it points at itself, delete it before asking poetry.
     link_target=$(readlink -f "$VENV_LINK" 2>/dev/null || true)
     if [[ -z "$link_target" || "$link_target" == "$VENV_LINK" ]]; then
         warn "Stale / self-referential .venv symlink at ${VENV_LINK} — removing."
         rm -f "$VENV_LINK"
     fi
 fi
+
 VENV_DIR=$(sudo -u "$APP_USER" env INSTALL_DIR="$INSTALL_DIR" bash -c 'cd "$INSTALL_DIR" && poetry env info --path')
-if [[ -z "$VENV_DIR" || "$VENV_DIR" == "$VENV_LINK" ]]; then
-    error "poetry env info --path returned an unusable value: '${VENV_DIR}'. Check that step 4 (poetry install) actually succeeded."
+if [[ -z "$VENV_DIR" ]]; then
+    error "poetry env info --path returned empty. Check that step 4 (poetry install) actually succeeded."
 fi
-sudo -u "$APP_USER" ln -sfn "$VENV_DIR" "$VENV_LINK"
-info "Virtual environment: ${VENV_DIR}"
-info "  symlinked: ${VENV_LINK} -> ${VENV_DIR}"
+
+if [[ "$VENV_DIR" == "$VENV_LINK" ]]; then
+    # Case (a): poetry put the venv directly at .venv. Nothing to link.
+    info "Virtual environment (in-project): ${VENV_DIR}"
+else
+    # Case (b): venv lives in poetry's cache dir; symlink for convenience.
+    sudo -u "$APP_USER" ln -sfn "$VENV_DIR" "$VENV_LINK"
+    info "Virtual environment: ${VENV_DIR}"
+    info "  symlinked: ${VENV_LINK} -> ${VENV_DIR}"
+fi
 
 # ---------------------------------------------------------------------------
 # Step 5. systemd units
