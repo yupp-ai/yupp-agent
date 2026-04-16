@@ -120,7 +120,7 @@ def generate_env_content(params: dict[str, str]) -> str:
         params.get("postgres_user", "postgres"),
         params.get("postgres_password", "changethis"),
         params.get("postgres_host", "localhost:5432"),
-        params.get("postgres_database", "yupp_agent"),
+        params.get("postgres_database", "yadb"),
     )
     base_url = params.get("base_url", "http://localhost:8090")
     ahs_token_emails = params.get("ahs_token_emails", "")
@@ -387,7 +387,7 @@ async def setup_interactive() -> int:
         pg_host = Prompt.ask("  Postgres host[:port]", default="localhost:5432")
         pg_user = Prompt.ask("  Postgres user", default="postgres")
         pg_password = Prompt.ask("  Postgres password", default="postgres", password=True)
-        pg_database = Prompt.ask("  Database name", default="yupp_agent")
+        pg_database = Prompt.ask("  Database name", default="yadb")
 
         console.print("  Checking Postgres connectivity…", end=" ")
         if not await check_postgres_connectivity(pg_user, pg_password, pg_host, pg_database):

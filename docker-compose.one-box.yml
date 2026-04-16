@@ -19,7 +19,7 @@
 # Required .env variables (set BEFORE running setup):
 #   POSTGRES_USER      — e.g. postgres
 #   POSTGRES_PASSWORD  — choose a strong password; default is INSECURE
-#   POSTGRES_DB        — e.g. yupp_agent
+#   POSTGRES_DB        — e.g. yadb
 
 services:
   postgres:
@@ -31,7 +31,7 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_before_deployment}
-      POSTGRES_DB: ${POSTGRES_DB:-yupp_agent}
+      POSTGRES_DB: ${POSTGRES_DB:-yadb}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -71,7 +71,7 @@ services:
       # Override DB host to use the Docker internal network service name.
       # The .env written by setup wizard uses 'localhost', which resolves to
       # the container itself inside Docker — not the postgres service.
-      POSTGRES_CONNECTION_AGENTDB: '{"user":"${POSTGRES_USER:-postgres}","password":"${POSTGRES_PASSWORD:-changeme_before_deployment}","host":"postgres","database":"${POSTGRES_DB:-yupp_agent}"}'
+      POSTGRES_CONNECTION_AGENTDB: '{"user":"${POSTGRES_USER:-postgres}","password":"${POSTGRES_PASSWORD:-changeme_before_deployment}","host":"postgres","database":"${POSTGRES_DB:-yadb}"}'
       # Override Redis URL to use the Docker internal network service name.
       REDIS_URL: "redis://redis:6379/1"
       # bwrap is unavailable in unprivileged Docker — agents still run fine.
@@ -102,7 +102,7 @@ services:
     environment:
       SCRIPT_TO_RUN: /app/ypl/streamlit_server/streamlit_server_entrypoint.sh
       PORT: "8501"
-      POSTGRES_CONNECTION_AGENTDB: '{"user":"${POSTGRES_USER:-postgres}","password":"${POSTGRES_PASSWORD:-changeme_before_deployment}","host":"postgres","database":"${POSTGRES_DB:-yupp_agent}"}'
+      POSTGRES_CONNECTION_AGENTDB: '{"user":"${POSTGRES_USER:-postgres}","password":"${POSTGRES_PASSWORD:-changeme_before_deployment}","host":"postgres","database":"${POSTGRES_DB:-yadb}"}'
       REDIS_URL: "redis://redis:6379/1"
       USE_GOOGLE_CLOUD_LOGGING: "false"
       DISABLE_WRITE_GOOGLE_CLOUD_METRICS: "true"
