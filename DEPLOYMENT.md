@@ -172,7 +172,7 @@ The script installs Python 3.12, PostgreSQL 16, Redis 7, Poetry, the app, and th
 
 ```bash
 # Run the interactive setup wizard
-sudo -u ahs bash -c 'cd /opt/yupp-agent && python -m ypl.mono_server.setup'
+sudo -u ahs bash -c 'cd /opt/yupp-agent && .venv/bin/python -m ypl.mono_server.setup'
 
 # Start services
 sudo systemctl start ahs-mono ahs-streamlit
