@@ -1,0 +1,4763 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Agent Harness Service",
+    "description": "Hosts AI agents with persistent identity, memory, and sandboxed repo access",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/ahs/session/create": {
+      "post": {
+        "tags": [
+          "agent-harness-service"
+        ],
+        "summary": "Session Create",
+        "description": "Create a new session or resume an existing one.\n\nIf `message` is provided, the first agent turn is kicked off in the background.",
+        "operationId": "session_create_ahs_session_create_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionCreateResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ahs/session/message": {
+      "post": {
+        "tags": [
+          "agent-harness-service"
+        ],
+        "summary": "Session Message",
+        "description": "Send a message to an existing session. Returns immediately, agent runs in background.\n\nIf the session has an inflight turn, the message is queued and the response\nhas ``status=\"queued\"`` (HTTP 200). The queued messages are combined and\nprocessed as a single turn once the current turn completes.",
+        "operationId": "session_message_ahs_session_message_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionMessageResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ahs/session/attach-slack": {
+      "post": {
+        "tags": [
+          "agent-harness-service"
+        ],
+        "summary": "Session Attach Slack",
+        "description": "Attach Slack thread context to a headless session for thread re-attachment.",
+        "operationId": "session_attach_slack_ahs_session_attach_slack_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionAttachSlackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionAttachSlackResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ahs/session/stop": {
+      "post": {
+        "tags": [
+          "agent-harness-service"
+        ],
+        "summary": "Session Stop",
+        "description": "Stop a running agent task. Idempotent \u2014 stopping an idle session is a no-op.",
+        "operationId": "session_stop_ahs_session_stop_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionStopRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionStopResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ahs/session/feedback": {
+      "post": {
+        "tags": [
+          "agent-harness-service"
+        ],
+        "summary": "Session Feedback",
+        "description": "Record feedback on a session or specific message.",
+        "operationId": "session_feedback_ahs_session_feedback_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionFeedbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ahs/session/{session_id}/history": {
+      "get": {
+        "tags": [
+          "agent-harness-service"
+        ],
+        "summary": "Session History",
+        "description": "Get message history for a session with pagination.",
+        "operationId": "session_history_ahs_session__session_id__history_get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionHistoryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ahs/agents": {
+      "get": {
+        "tags": [
+          "agent-harness-service"
+        ],
+        "summary": "List Agents Route",
+        "description": "List agents. By default only returns agents created by user_id. Set include_all=true for all.",
+        "operationId": "list_agents_route_ahs_agents_get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by creator user ID",
+              "title": "User Id"
+            },
+            "description": "Filter by creator user ID"
+          },
+          {
+            "name": "include_all",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include all agents (filesystem + all DB agents)",
+              "default": false,
+              "title": "Include All"
+            },
+            "description": "Include all agents (filesystem + all DB agents)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ahs/agent/{agent_name}": {
+      "get": {
+        "tags": [
+          "agent-harness-service"
+        ],
+        "summary": "Get Agent Detail Route",
+        "description": "Get a single agent's config, optionally with system prompt contents.",
+        "operationId": "get_agent_detail_route_ahs_agent__agent_name__get",
+        "parameters": [
+          {
+            "name": "agent_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agent Name"
+            }
+          },
+          {
+            "name": "include_system_prompts",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include system prompt file contents",
+              "default": false,
+              "title": "Include System Prompts"
+            },
+            "description": "Include system prompt file contents"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentDetailResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ahs/agent/create": {
+      "post": {
+        "tags": [
+          "agent-harness-service"
+        ],
+        "summary": "Create Agent Route",
+        "description": "Create a new agent with config on disk and registration in DB.",
+        "operationId": "create_agent_route_ahs_agent_create_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentCreateResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ahs/agent/edit": {
+      "post": {
+        "tags": [
+          "agent-harness-service"
+        ],
+        "summary": "Edit Agent Route",
+        "description": "Edit an existing agent's configuration. Only updates provided fields.",
+        "operationId": "edit_agent_route_ahs_agent_edit_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentEditRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentEditResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ahs/sessions": {
+      "get": {
+        "tags": [
+          "agent-harness-service"
+        ],
+        "summary": "List Sessions Route",
+        "description": "List sessions with optional filters and pagination.",
+        "operationId": "list_sessions_route_ahs_sessions_get",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by status: ACTIVE, COMPLETED, STALE",
+              "title": "Status"
+            },
+            "description": "Filter by status: ACTIVE, COMPLETED, STALE"
+          },
+          {
+            "name": "agent_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by agent name",
+              "title": "Agent Name"
+            },
+            "description": "Filter by agent name"
+          },
+          {
+            "name": "trigger",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by trigger: SLACK, WEBHOOK, CRON, API",
+              "title": "Trigger"
+            },
+            "description": "Filter by trigger: SLACK, WEBHOOK, CRON, API"
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Created after (ISO-8601 datetime)",
+              "title": "Since"
+            },
+            "description": "Created after (ISO-8601 datetime)"
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Created before (ISO-8601 datetime)",
+              "title": "Until"
+            },
+            "description": "Created before (ISO-8601 datetime)"
+          },
+          {
+            "name": "root_sessions_only",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Only return top-level sessions (no subagent sessions)",
+              "default": true,
+              "title": "Root Sessions Only"
+            },
+            "description": "Only return top-level sessions (no subagent sessions)"
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by session creator user ID",
+              "title": "User Id"
+            },
+            "description": "Filter by session creator user ID"
+          },
+          {
+            "name": "include_all",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include all sessions regardless of creator",
+              "default": false,
+              "title": "Include All"
+            },
+            "description": "Include all sessions regardless of creator"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ahs/session/{session_id}": {
+      "get": {
+        "tags": [
+          "agent-harness-service"
+        ],
+        "summary": "Get Session Detail Route",
+        "description": "Get a single session with a flat list of all descendant subsessions.",
+        "operationId": "get_session_detail_route_ahs_session__session_id__get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionDetailResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ahs/resolve_user": {
+      "post": {
+        "tags": [
+          "agent-harness-service"
+        ],
+        "summary": "Resolve User Route",
+        "description": "Resolve a @yupp.ai email address to a Yupp user ID.",
+        "operationId": "resolve_user_route_ahs_resolve_user_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveUserRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolveUserResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ahs/schedules/create": {
+      "post": {
+        "tags": [
+          "agent-harness-service"
+        ],
+        "summary": "Create Schedule Route",
+        "description": "Create a one-time agent schedule to execute at a specific time.",
+        "operationId": "create_schedule_route_ahs_schedules_create_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduleCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleCreateResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ahs/schedules/create-recurring": {
+      "post": {
+        "tags": [
+          "agent-harness-service"
+        ],
+        "summary": "Create Recurring Schedule Route",
+        "description": "Create a recurring agent schedule using a cron expression.",
+        "operationId": "create_recurring_schedule_route_ahs_schedules_create_recurring_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecurringScheduleCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleCreateResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ahs/schedules": {
+      "get": {
+        "tags": [
+          "agent-harness-service"
+        ],
+        "summary": "List Schedules Route",
+        "description": "List agent schedules with optional filters.",
+        "operationId": "list_schedules_route_ahs_schedules_get",
+        "parameters": [
+          {
+            "name": "agent_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by agent name",
+              "title": "Agent Name"
+            },
+            "description": "Filter by agent name"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by status: PENDING, IN_PROGRESS, COMPLETED, etc.",
+              "title": "Status"
+            },
+            "description": "Filter by status: PENDING, IN_PROGRESS, COMPLETED, etc."
+          },
+          {
+            "name": "schedule_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by type: SCHEDULED or RECURRING",
+              "title": "Schedule Type"
+            },
+            "description": "Filter by type: SCHEDULED or RECURRING"
+          },
+          {
+            "name": "created_by",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by creator user ID",
+              "title": "Created By"
+            },
+            "description": "Filter by creator user ID"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ahs/schedule/{agent_schedule_id}": {
+      "get": {
+        "tags": [
+          "agent-harness-service"
+        ],
+        "summary": "Get Schedule Detail Route",
+        "description": "Get a single agent schedule by ID.",
+        "operationId": "get_schedule_detail_route_ahs_schedule__agent_schedule_id__get",
+        "parameters": [
+          {
+            "name": "agent_schedule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agent Schedule Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleDetailResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "agent-harness-service"
+        ],
+        "summary": "Delete Schedule Route",
+        "description": "Cancel an agent schedule. Only the creator can cancel PENDING/PAUSED schedules.",
+        "operationId": "delete_schedule_route_ahs_schedule__agent_schedule_id__delete",
+        "parameters": [
+          {
+            "name": "agent_schedule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agent Schedule Id"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Yupp user ID of the requester (must be the creator)",
+              "title": "User Id"
+            },
+            "description": "Yupp user ID of the requester (must be the creator)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleDeleteResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ahs/schedule/edit": {
+      "post": {
+        "tags": [
+          "agent-harness-service"
+        ],
+        "summary": "Edit Schedule Route",
+        "description": "Edit an existing agent schedule. Only the creator can edit PENDING/PAUSED schedules.",
+        "operationId": "edit_schedule_route_ahs_schedule_edit_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduleEditRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleEditResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ahs/schedule/{agent_schedule_id}/trigger": {
+      "post": {
+        "tags": [
+          "agent-harness-service"
+        ],
+        "summary": "Trigger Schedule Route",
+        "description": "Trigger a recurring schedule to run immediately without affecting its normal cadence.",
+        "operationId": "trigger_schedule_route_ahs_schedule__agent_schedule_id__trigger_post",
+        "parameters": [
+          {
+            "name": "agent_schedule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agent Schedule Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduleTriggerRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleTriggerResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ahs/projects": {
+      "get": {
+        "tags": [
+          "agent-harness-service",
+          "agent-projects"
+        ],
+        "summary": "List Projects Route",
+        "description": "List projects with optional filters and pagination.",
+        "operationId": "list_projects_route_ahs_projects_get",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by project status: ACTIVE, PAUSED, COMPLETED, ARCHIVED",
+              "title": "Status"
+            },
+            "description": "Filter by project status: ACTIVE, PAUSED, COMPLETED, ARCHIVED"
+          },
+          {
+            "name": "creator_user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by creator user ID",
+              "title": "Creator User Id"
+            },
+            "description": "Filter by creator user ID"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Max results per page",
+              "default": 20,
+              "title": "Limit"
+            },
+            "description": "Max results per page"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Pagination offset",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Pagination offset"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ahs/projects/{project_id}": {
+      "get": {
+        "tags": [
+          "agent-harness-service",
+          "agent-projects"
+        ],
+        "summary": "Get Project Route",
+        "description": "Get project detail with shared_state and task summary.",
+        "operationId": "get_project_route_ahs_projects__project_id__get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectDetailResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "agent-harness-service",
+          "agent-projects"
+        ],
+        "summary": "Update Project Route",
+        "description": "Update a project's mutable fields (name, description, slack_channel).",
+        "operationId": "update_project_route_ahs_projects__project_id__patch",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectDetailResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ahs/projects/{project_id}/status": {
+      "post": {
+        "tags": [
+          "agent-harness-service",
+          "agent-projects"
+        ],
+        "summary": "Set Project Status Route",
+        "description": "Change a project's status.",
+        "operationId": "set_project_status_route_ahs_projects__project_id__status_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectStatusRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectDetailResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ahs/projects/{project_id}/tasks": {
+      "get": {
+        "tags": [
+          "agent-harness-service",
+          "agent-projects"
+        ],
+        "summary": "List Tasks Route",
+        "description": "List all tasks in a project with optional filters and pagination.",
+        "operationId": "list_tasks_route_ahs_projects__project_id__tasks_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by task status",
+              "title": "Status"
+            },
+            "description": "Filter by task status"
+          },
+          {
+            "name": "parent_task_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by parent task ID",
+              "title": "Parent Task Id"
+            },
+            "description": "Filter by parent task ID"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "description": "Max results per page",
+              "default": 100,
+              "title": "Limit"
+            },
+            "description": "Max results per page"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Pagination offset",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Pagination offset"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ahs/projects/{project_id}/tasks/{task_id}": {
+      "get": {
+        "tags": [
+          "agent-harness-service",
+          "agent-projects"
+        ],
+        "summary": "Get Task Route",
+        "description": "Get task detail.",
+        "operationId": "get_task_route_ahs_projects__project_id__tasks__task_id__get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "agent-harness-service",
+          "agent-projects"
+        ],
+        "summary": "Update Task Route",
+        "description": "Update a task's mutable fields.",
+        "operationId": "update_task_route_ahs_projects__project_id__tasks__task_id__patch",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ahs/projects/{project_id}/tasks/{task_id}/status": {
+      "post": {
+        "tags": [
+          "agent-harness-service",
+          "agent-projects"
+        ],
+        "summary": "Set Task Status Route",
+        "description": "Change a task's status with validation and dependency cascade.",
+        "operationId": "set_task_status_route_ahs_projects__project_id__tasks__task_id__status_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskStatusRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskStatusResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ahs/projects/{project_id}/tasks/{task_id}/dependencies": {
+      "put": {
+        "tags": [
+          "agent-harness-service",
+          "agent-projects"
+        ],
+        "summary": "Set Task Dependencies Route",
+        "description": "Replace a task's dependency list.",
+        "operationId": "set_task_dependencies_route_ahs_projects__project_id__tasks__task_id__dependencies_put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskDependenciesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ahs/projects/{project_id}/tasks/{task_id}/resume": {
+      "post": {
+        "tags": [
+          "agent-harness-service",
+          "agent-projects"
+        ],
+        "summary": "Resume Task Route",
+        "description": "Resume a failed task that hit the turn limit.",
+        "operationId": "resume_task_route_ahs_projects__project_id__tasks__task_id__resume_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResumeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Health Health Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AgentCreateRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Unique agent name (lowercase, alphanumeric + hyphens, e.g., 'my-agent')"
+          },
+          "user_id": {
+            "type": "string",
+            "title": "User Id",
+            "description": "Yupp user ID of the agent creator"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name",
+            "description": "Human-readable display name",
+            "default": ""
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description",
+            "description": "Agent description"
+          },
+          "executor_config": {
+            "$ref": "#/components/schemas/ExecutorConfigRequest",
+            "description": "Executor type and model configuration"
+          },
+          "tool_permissions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Tool Permissions",
+            "description": "Tool permission map (e.g., {'*': 'allow'}, {'*': 'deny', '@readonly': 'allow'})"
+          },
+          "allowed_subagents": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Allowed Subagents",
+            "description": "Agent types this agent can spawn via new_task"
+          },
+          "default_repo": {
+            "type": "string",
+            "title": "Default Repo",
+            "description": "Default git repo to clone",
+            "default": "yupp-mind"
+          },
+          "sandbox": {
+            "$ref": "#/components/schemas/SandboxConfigRequest",
+            "description": "Sandbox configuration"
+          },
+          "max_turns": {
+            "type": "integer",
+            "title": "Max Turns",
+            "description": "Maximum agent turns per session",
+            "default": 20
+          },
+          "max_budget_usd": {
+            "type": "number",
+            "title": "Max Budget Usd",
+            "description": "Maximum cost budget per session in USD",
+            "default": 2.0
+          },
+          "feedback_probability": {
+            "type": "number",
+            "title": "Feedback Probability",
+            "description": "Probability of auto-feedback (0.0\u20131.0)",
+            "default": 0.2
+          },
+          "feedback_min_turns": {
+            "type": "integer",
+            "title": "Feedback Min Turns",
+            "description": "Min turns before auto-feedback",
+            "default": 5
+          },
+          "timeout_s": {
+            "type": "integer",
+            "title": "Timeout S",
+            "description": "Session timeout in seconds",
+            "default": 300
+          },
+          "allowed_gateways": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Allowed Gateways",
+            "description": "Allowed gateways (e.g., ['*'] for all, ['slack'] for Slack only)"
+          },
+          "role_md": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role Md",
+            "description": "Contents of ROLE.md (agent role, expertise, and personality)"
+          },
+          "soul_md": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Soul Md",
+            "description": "Deprecated \u2014 personality is now merged into ROLE.md"
+          },
+          "additional_system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Additional System Prompt",
+            "description": "Additional system prompt appended to the agent"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "user_id"
+        ],
+        "title": "AgentCreateRequest",
+        "description": "POST /agent/create \u2014 create a new agent on disk and register in DB."
+      },
+      "AgentCreateResponse": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "'created' or 'already_exists'"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "status"
+        ],
+        "title": "AgentCreateResponse",
+        "description": "Response for POST /agent/create."
+      },
+      "AgentDetailResponse": {
+        "properties": {
+          "agent": {
+            "$ref": "#/components/schemas/AgentInfo"
+          },
+          "system_prompts": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "System Prompts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "agent"
+        ],
+        "title": "AgentDetailResponse",
+        "description": "Response for GET /agent/{name} \u2014 single agent with optional system prompts."
+      },
+      "AgentEditRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Agent name to edit (must already exist)"
+          },
+          "user_id": {
+            "type": "string",
+            "title": "User Id",
+            "description": "Yupp user ID of the requester"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name",
+            "description": "New display name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description",
+            "description": "New description"
+          },
+          "executor_config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExecutorConfigRequest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "New executor configuration"
+          },
+          "tool_permissions": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Permissions",
+            "description": "New tool permission map"
+          },
+          "allowed_subagents": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowed Subagents",
+            "description": "New allowed subagent types"
+          },
+          "default_repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Repo",
+            "description": "New default repo"
+          },
+          "sandbox": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SandboxConfigRequest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "New sandbox configuration"
+          },
+          "max_turns": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Turns",
+            "description": "New max turns"
+          },
+          "max_budget_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Budget Usd",
+            "description": "New max budget in USD"
+          },
+          "timeout_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout S",
+            "description": "New timeout in seconds"
+          },
+          "allowed_gateways": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowed Gateways",
+            "description": "New allowed gateways"
+          },
+          "role_md": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role Md",
+            "description": "New ROLE.md contents"
+          },
+          "soul_md": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Soul Md",
+            "description": "Deprecated \u2014 personality is now merged into ROLE.md"
+          },
+          "additional_system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Additional System Prompt",
+            "description": "New additional system prompt"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "user_id"
+        ],
+        "title": "AgentEditRequest",
+        "description": "POST /agent/edit \u2014 edit an existing agent's configuration."
+      },
+      "AgentEditResponse": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "'updated'"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "status"
+        ],
+        "title": "AgentEditResponse",
+        "description": "Response for POST /agent/edit."
+      },
+      "AgentInfo": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "executor_type": {
+            "type": "string",
+            "title": "Executor Type"
+          },
+          "executor_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Executor Model"
+          },
+          "llm_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Model"
+          },
+          "tool_permissions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Tool Permissions"
+          },
+          "allowed_subagents": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Allowed Subagents"
+          },
+          "default_repo": {
+            "type": "string",
+            "title": "Default Repo"
+          },
+          "max_turns": {
+            "type": "integer",
+            "title": "Max Turns"
+          },
+          "max_budget_usd": {
+            "type": "number",
+            "title": "Max Budget Usd"
+          },
+          "timeout_s": {
+            "type": "integer",
+            "title": "Timeout S"
+          },
+          "sandbox_enabled": {
+            "type": "boolean",
+            "title": "Sandbox Enabled"
+          },
+          "allowed_gateways": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Allowed Gateways"
+          },
+          "creator_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Creator User Id"
+          },
+          "is_owner": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Owner"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "display_name",
+          "executor_type",
+          "tool_permissions",
+          "allowed_subagents",
+          "default_repo",
+          "max_turns",
+          "max_budget_usd",
+          "timeout_s",
+          "sandbox_enabled",
+          "allowed_gateways"
+        ],
+        "title": "AgentInfo",
+        "description": "Summary of an agent's configuration."
+      },
+      "AgentListResponse": {
+        "properties": {
+          "agents": {
+            "items": {
+              "$ref": "#/components/schemas/AgentInfo"
+            },
+            "type": "array",
+            "title": "Agents"
+          }
+        },
+        "type": "object",
+        "required": [
+          "agents"
+        ],
+        "title": "AgentListResponse",
+        "description": "Response for GET /agents."
+      },
+      "AttachmentInfo": {
+        "properties": {
+          "filename": {
+            "type": "string",
+            "title": "Filename",
+            "description": "Sanitized filename"
+          },
+          "content_type": {
+            "type": "string",
+            "title": "Content Type",
+            "description": "MIME type (e.g., 'image/png')"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size",
+            "description": "File size in bytes"
+          },
+          "gcs_url": {
+            "type": "string",
+            "title": "Gcs Url",
+            "description": "GCS URL (e.g., gs://yupp-agents/attachments/{session_id}/file.png)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "filename",
+          "content_type",
+          "size",
+          "gcs_url"
+        ],
+        "title": "AttachmentInfo",
+        "description": "Metadata for a file attachment stored in GCS."
+      },
+      "ExecutorConfigRequest": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "harnessed",
+              "raw"
+            ],
+            "title": "Type",
+            "description": "Executor type: 'harnessed' or 'raw'",
+            "default": "harnessed"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model",
+            "description": "CLI harness name or LLM model (provider/model_id)"
+          }
+        },
+        "type": "object",
+        "title": "ExecutorConfigRequest",
+        "description": "Executor configuration: type and model."
+      },
+      "FeedbackResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "recorded"
+          }
+        },
+        "type": "object",
+        "title": "FeedbackResponse",
+        "description": "Response for feedback recording."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "MessageHistoryItem": {
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "title": "Message Id"
+          },
+          "turn_number": {
+            "type": "integer",
+            "title": "Turn Number"
+          },
+          "role": {
+            "type": "string",
+            "title": "Role"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          },
+          "tool_uses": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ToolUseItem"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Uses"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "num_agent_turns": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Num Agent Turns"
+          },
+          "slack_ts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slack Ts"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message_id",
+          "turn_number",
+          "role",
+          "content"
+        ],
+        "title": "MessageHistoryItem",
+        "description": "A single message in session history."
+      },
+      "ProjectDetailResponse": {
+        "properties": {
+          "agent_project_id": {
+            "type": "string",
+            "title": "Agent Project Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "creator_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Creator User Id"
+          },
+          "creator_user_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Creator User Name"
+          },
+          "slack_channel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slack Channel"
+          },
+          "budget_usd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Budget Usd"
+          },
+          "budget_spent_usd": {
+            "type": "string",
+            "title": "Budget Spent Usd",
+            "default": "0"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "task_summary": {
+            "$ref": "#/components/schemas/TaskSummary"
+          },
+          "shared_state": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shared State"
+          }
+        },
+        "type": "object",
+        "required": [
+          "agent_project_id",
+          "name",
+          "status"
+        ],
+        "title": "ProjectDetailResponse",
+        "description": "Project detail includes shared_state."
+      },
+      "ProjectListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "offset",
+          "limit"
+        ],
+        "title": "ProjectListResponse",
+        "description": "Paginated list of projects."
+      },
+      "ProjectResponse": {
+        "properties": {
+          "agent_project_id": {
+            "type": "string",
+            "title": "Agent Project Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "creator_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Creator User Id"
+          },
+          "creator_user_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Creator User Name"
+          },
+          "slack_channel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slack Channel"
+          },
+          "budget_usd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Budget Usd"
+          },
+          "budget_spent_usd": {
+            "type": "string",
+            "title": "Budget Spent Usd",
+            "default": "0"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "task_summary": {
+            "$ref": "#/components/schemas/TaskSummary"
+          }
+        },
+        "type": "object",
+        "required": [
+          "agent_project_id",
+          "name",
+          "status"
+        ],
+        "title": "ProjectResponse",
+        "description": "A project with creator info and task summary."
+      },
+      "ProjectStatusRequest": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "ACTIVE | PAUSED | COMPLETED | ARCHIVED"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "ProjectStatusRequest",
+        "description": "POST /ahs/projects/{project_id}/status \u2014 change project status."
+      },
+      "ProjectUpdateRequest": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "slack_channel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slack Channel"
+          }
+        },
+        "type": "object",
+        "title": "ProjectUpdateRequest",
+        "description": "PATCH /ahs/projects/{project_id} \u2014 partial update."
+      },
+      "RecurringScheduleCreateRequest": {
+        "properties": {
+          "agent_name": {
+            "type": "string",
+            "title": "Agent Name",
+            "description": "Agent name to schedule"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "description": "Prompt message for the agent"
+          },
+          "cron_expression": {
+            "type": "string",
+            "title": "Cron Expression",
+            "description": "Cron expression (5-field: minute hour day month weekday)"
+          },
+          "timezone": {
+            "type": "string",
+            "title": "Timezone",
+            "description": "IANA timezone for cron evaluation",
+            "default": "UTC"
+          },
+          "user_id": {
+            "type": "string",
+            "title": "User Id",
+            "description": "Yupp user ID of the creator"
+          },
+          "context": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context",
+            "description": "Optional context to inject into the session"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name",
+            "description": "Human-readable name for the schedule"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description",
+            "description": "Description of what this schedule does"
+          },
+          "max_runs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Runs",
+            "description": "Maximum number of runs (null=unlimited)"
+          },
+          "created_by_agent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By Agent",
+            "description": "Agent name if created by an agent"
+          }
+        },
+        "type": "object",
+        "required": [
+          "agent_name",
+          "message",
+          "cron_expression",
+          "user_id"
+        ],
+        "title": "RecurringScheduleCreateRequest",
+        "description": "POST /schedules/create-recurring \u2014 create a recurring agent schedule."
+      },
+      "ResolveUserRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "title": "Email",
+            "description": "User email address (must be @yupp.ai)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "title": "ResolveUserRequest",
+        "description": "POST /resolve_user \u2014 resolve a user email to a user ID."
+      },
+      "ResolveUserResponse": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "title": "User Id",
+            "description": "Resolved Yupp user ID"
+          },
+          "email": {
+            "type": "string",
+            "title": "Email",
+            "description": "The email that was resolved"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "email"
+        ],
+        "title": "ResolveUserResponse",
+        "description": "Response for POST /resolve_user."
+      },
+      "SandboxConfigRequest": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "auto_allow_bash_if_sandboxed": {
+            "type": "boolean",
+            "title": "Auto Allow Bash If Sandboxed",
+            "default": true
+          },
+          "bwrap_enabled": {
+            "type": "boolean",
+            "title": "Bwrap Enabled",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "SandboxConfigRequest",
+        "description": "Sandbox configuration for an agent."
+      },
+      "ScheduleCreateRequest": {
+        "properties": {
+          "agent_name": {
+            "type": "string",
+            "title": "Agent Name",
+            "description": "Agent name to schedule"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "description": "Prompt message for the agent"
+          },
+          "execute_at": {
+            "type": "string",
+            "title": "Execute At",
+            "description": "ISO-8601 datetime for execution"
+          },
+          "timezone": {
+            "type": "string",
+            "title": "Timezone",
+            "description": "IANA timezone for interpreting execute_at",
+            "default": "UTC"
+          },
+          "user_id": {
+            "type": "string",
+            "title": "User Id",
+            "description": "Yupp user ID of the creator"
+          },
+          "context": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context",
+            "description": "Optional context to inject into the session"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name",
+            "description": "Human-readable name for the schedule"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description",
+            "description": "Description of what this schedule does"
+          },
+          "created_by_agent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By Agent",
+            "description": "Agent name if created by an agent"
+          }
+        },
+        "type": "object",
+        "required": [
+          "agent_name",
+          "message",
+          "execute_at",
+          "user_id"
+        ],
+        "title": "ScheduleCreateRequest",
+        "description": "POST /schedules/create \u2014 create a one-time agent schedule."
+      },
+      "ScheduleCreateResponse": {
+        "properties": {
+          "agent_schedule_id": {
+            "type": "string",
+            "title": "Agent Schedule Id"
+          },
+          "agent_name": {
+            "type": "string",
+            "title": "Agent Name"
+          },
+          "schedule_type": {
+            "type": "string",
+            "title": "Schedule Type"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "agent_schedule_id",
+          "agent_name",
+          "schedule_type",
+          "status"
+        ],
+        "title": "ScheduleCreateResponse",
+        "description": "Response for schedule creation."
+      },
+      "ScheduleDeleteResponse": {
+        "properties": {
+          "agent_schedule_id": {
+            "type": "string",
+            "title": "Agent Schedule Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "CANCELLED"
+          }
+        },
+        "type": "object",
+        "required": [
+          "agent_schedule_id"
+        ],
+        "title": "ScheduleDeleteResponse",
+        "description": "Response for schedule cancellation."
+      },
+      "ScheduleDetailResponse": {
+        "properties": {
+          "schedule": {
+            "$ref": "#/components/schemas/ScheduleInfo"
+          }
+        },
+        "type": "object",
+        "required": [
+          "schedule"
+        ],
+        "title": "ScheduleDetailResponse",
+        "description": "Response for GET /schedule/{id}."
+      },
+      "ScheduleEditRequest": {
+        "properties": {
+          "agent_schedule_id": {
+            "type": "string",
+            "title": "Agent Schedule Id",
+            "description": "UUID of the schedule to edit"
+          },
+          "user_id": {
+            "type": "string",
+            "title": "User Id",
+            "description": "Yupp user ID of the requester (must be the creator)"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message",
+            "description": "New prompt message"
+          },
+          "cron_expression": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cron Expression",
+            "description": "New cron expression (recurring only)"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone",
+            "description": "New IANA timezone"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name",
+            "description": "New name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description",
+            "description": "New description"
+          },
+          "context": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context",
+            "description": "New context"
+          },
+          "max_runs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Runs",
+            "description": "New max runs (recurring only)"
+          },
+          "execute_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Execute At",
+            "description": "New execution time as ISO 8601 string (one-time only)"
+          },
+          "agent_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Name",
+            "description": "Change which agent runs on this schedule"
+          }
+        },
+        "type": "object",
+        "required": [
+          "agent_schedule_id",
+          "user_id"
+        ],
+        "title": "ScheduleEditRequest",
+        "description": "POST /schedule/edit \u2014 edit an existing schedule."
+      },
+      "ScheduleEditResponse": {
+        "properties": {
+          "agent_schedule_id": {
+            "type": "string",
+            "title": "Agent Schedule Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "updated"
+          }
+        },
+        "type": "object",
+        "required": [
+          "agent_schedule_id"
+        ],
+        "title": "ScheduleEditResponse",
+        "description": "Response for schedule edit."
+      },
+      "ScheduleInfo": {
+        "properties": {
+          "agent_schedule_id": {
+            "type": "string",
+            "title": "Agent Schedule Id"
+          },
+          "agent_name": {
+            "type": "string",
+            "title": "Agent Name"
+          },
+          "schedule_type": {
+            "type": "string",
+            "title": "Schedule Type"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "execute_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Execute At"
+          },
+          "cron_expression": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cron Expression"
+          },
+          "cron_timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cron Timezone"
+          },
+          "next_run_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Run At"
+          },
+          "last_run_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Run At"
+          },
+          "run_count": {
+            "type": "integer",
+            "title": "Run Count",
+            "default": 0
+          },
+          "max_runs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Runs"
+          },
+          "context": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context"
+          },
+          "created_by_user": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By User"
+          },
+          "created_by_agent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By Agent"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "agent_schedule_id",
+          "agent_name",
+          "schedule_type",
+          "status",
+          "message"
+        ],
+        "title": "ScheduleInfo",
+        "description": "Summary of a single agent schedule."
+      },
+      "ScheduleListResponse": {
+        "properties": {
+          "schedules": {
+            "items": {
+              "$ref": "#/components/schemas/ScheduleInfo"
+            },
+            "type": "array",
+            "title": "Schedules"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "schedules",
+          "count"
+        ],
+        "title": "ScheduleListResponse",
+        "description": "Response for GET /schedules."
+      },
+      "ScheduleTriggerRequest": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "title": "User Id",
+            "description": "Yupp user ID of the requester (must be the creator)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id"
+        ],
+        "title": "ScheduleTriggerRequest",
+        "description": "POST /schedule/{id}/trigger \u2014 trigger a recurring schedule immediately."
+      },
+      "ScheduleTriggerResponse": {
+        "properties": {
+          "agent_schedule_id": {
+            "type": "string",
+            "title": "Agent Schedule Id"
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "run_number": {
+            "type": "integer",
+            "title": "Run Number"
+          }
+        },
+        "type": "object",
+        "required": [
+          "agent_schedule_id",
+          "session_id",
+          "run_number"
+        ],
+        "title": "ScheduleTriggerResponse",
+        "description": "Response for schedule trigger."
+      },
+      "SessionAttachSlackRequest": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id",
+            "description": "AHS session UUID to attach to"
+          },
+          "slack_session_id": {
+            "type": "string",
+            "title": "Slack Session Id",
+            "description": "SAG composite session ID ({channel}:{thread_ts}:{app_id})"
+          },
+          "context": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context",
+            "description": "Slack context to merge into the session (channel_id, thread_ts, etc.)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "slack_session_id"
+        ],
+        "title": "SessionAttachSlackRequest",
+        "description": "POST /session/attach-slack \u2014 attach Slack thread context to an existing headless session."
+      },
+      "SessionAttachSlackResponse": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "'attached' on success"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "status"
+        ],
+        "title": "SessionAttachSlackResponse",
+        "description": "Response from attaching Slack context to a session."
+      },
+      "SessionCreateRequest": {
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "title": "Agent Id",
+            "description": "Agent name (e.g., 'sre', 'code-reviewer')"
+          },
+          "trigger": {
+            "type": "string",
+            "title": "Trigger",
+            "description": "How the session was triggered: slack, webhook, cron, api"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message",
+            "description": "Optional first message to process immediately"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id",
+            "description": "Yupp user ID of the session creator"
+          },
+          "context": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context",
+            "description": "Session context: repo, pr_url, slack metadata, etc."
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id",
+            "description": "External session ID (e.g., Slack composite ID). If provided and exists, resume it."
+          },
+          "attachments": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/AttachmentInfo"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachments",
+            "description": "File attachments stored in GCS to download into the workspace."
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "Request source: slack_gateway, cli, tui, websocket, scheduler, orchestration, api",
+            "default": "api"
+          }
+        },
+        "type": "object",
+        "required": [
+          "agent_id",
+          "trigger"
+        ],
+        "title": "SessionCreateRequest",
+        "description": "POST /session/create \u2014 create or resume a session."
+      },
+      "SessionCreateResponse": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id",
+            "description": "Session UUID"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "Session status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "status"
+        ],
+        "title": "SessionCreateResponse",
+        "description": "Response for session creation."
+      },
+      "SessionDetailResponse": {
+        "properties": {
+          "session": {
+            "$ref": "#/components/schemas/SessionInfo"
+          },
+          "subsessions": {
+            "items": {
+              "$ref": "#/components/schemas/SessionInfo"
+            },
+            "type": "array",
+            "title": "Subsessions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session",
+          "subsessions"
+        ],
+        "title": "SessionDetailResponse",
+        "description": "Response for GET /session/{id} \u2014 single session with all descendant subsessions (flat)."
+      },
+      "SessionFeedbackRequest": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id",
+            "description": "Session ID (UUID or slack_session_id)"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id",
+            "description": "User ID of who left the feedback. Defaults to 'SYSTEM'."
+          },
+          "message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message Id",
+            "description": "Optional message UUID for message-level feedback"
+          },
+          "rating": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rating",
+            "description": "Rating: 'POSITIVE' or 'NEGATIVE'"
+          },
+          "structured": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Structured",
+            "description": "Structured eval payload (e.g., categories, tags, scores)"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment",
+            "description": "Free-text feedback"
+          },
+          "slack_ts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slack Ts",
+            "description": "Slack message timestamp that triggered this feedback"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id"
+        ],
+        "title": "SessionFeedbackRequest",
+        "description": "POST /session/feedback \u2014 record feedback on a session or message."
+      },
+      "SessionHistoryResponse": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "agent_id": {
+            "type": "string",
+            "title": "Agent Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/MessageHistoryItem"
+            },
+            "type": "array",
+            "title": "Messages"
+          },
+          "total_messages": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Messages"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit"
+          },
+          "offset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Offset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "agent_id",
+          "status",
+          "messages"
+        ],
+        "title": "SessionHistoryResponse",
+        "description": "Response for GET /session/{id}/history."
+      },
+      "SessionInfo": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "agent_name": {
+            "type": "string",
+            "title": "Agent Name"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "trigger": {
+            "type": "string",
+            "title": "Trigger"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "slack_channel_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slack Channel Name"
+          },
+          "slack_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slack User Id"
+          },
+          "tool_permissions": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Permissions"
+          },
+          "has_full_tool_access": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Has Full Tool Access"
+          },
+          "parent_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Session Id"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "message_count": {
+            "type": "integer",
+            "title": "Message Count",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "agent_name",
+          "status",
+          "trigger"
+        ],
+        "title": "SessionInfo",
+        "description": "Summary of an agent session."
+      },
+      "SessionListResponse": {
+        "properties": {
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/SessionInfo"
+            },
+            "type": "array",
+            "title": "Sessions"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sessions",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "SessionListResponse",
+        "description": "Response for GET /sessions."
+      },
+      "SessionMessageRequest": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id",
+            "description": "Session ID (UUID or slack_session_id)"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "description": "Message text"
+          },
+          "slack_ts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slack Ts",
+            "description": "Slack message timestamp for linking"
+          },
+          "slack_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slack User Id",
+            "description": "Slack user ID of message sender"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id",
+            "description": "Yupp user ID of message sender"
+          },
+          "attachments": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/AttachmentInfo"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachments",
+            "description": "File attachments stored in GCS to download into the workspace."
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "Request source: slack_gateway, cli, tui, websocket, scheduler, orchestration, api",
+            "default": "api"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "message"
+        ],
+        "title": "SessionMessageRequest",
+        "description": "POST /session/message \u2014 send a message to an existing session."
+      },
+      "SessionMessageResponse": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "turn_number": {
+            "type": "integer",
+            "title": "Turn Number"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "processing"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "turn_number"
+        ],
+        "title": "SessionMessageResponse",
+        "description": "Response from sending a message (returns immediately, agent runs in background).\n\nStatus values:\n- ``\"processing\"`` \u2014 message accepted, agent turn started.\n- ``\"queued\"`` \u2014 a prior turn is still running; message is queued in-memory\n  and will be combined with any other queued messages into a single turn\n  once the current turn finishes. ``turn_number`` is ``-1`` until drained."
+      },
+      "SessionStopRequest": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id",
+            "description": "Session ID (UUID or slack_session_id)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id"
+        ],
+        "title": "SessionStopRequest",
+        "description": "POST /session/stop \u2014 stop a running agent task."
+      },
+      "SessionStopResponse": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "'stopped' or 'no_inflight_turn'"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "status"
+        ],
+        "title": "SessionStopResponse",
+        "description": "Response from stopping a session."
+      },
+      "TaskDependenciesRequest": {
+        "properties": {
+          "depends_on": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Depends On",
+            "description": "Task UUIDs to depend on, empty list to clear"
+          }
+        },
+        "type": "object",
+        "required": [
+          "depends_on"
+        ],
+        "title": "TaskDependenciesRequest",
+        "description": "PUT /ahs/projects/{project_id}/tasks/{task_id}/dependencies."
+      },
+      "TaskListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TaskResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "task_summary": {
+            "$ref": "#/components/schemas/TaskSummary"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "offset",
+          "limit"
+        ],
+        "title": "TaskListResponse",
+        "description": "Paginated list of tasks with summary."
+      },
+      "TaskResponse": {
+        "properties": {
+          "agent_task_id": {
+            "type": "string",
+            "title": "Agent Task Id"
+          },
+          "agent_project_id": {
+            "type": "string",
+            "title": "Agent Project Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "priority": {
+            "type": "string",
+            "title": "Priority"
+          },
+          "parent_task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Task Id"
+          },
+          "depends_on": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Depends On"
+          },
+          "agent_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Name"
+          },
+          "agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "assigned_session_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assigned Session Ids"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "task_data": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Data"
+          },
+          "estimated_effort": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimated Effort"
+          },
+          "actual_spending_usd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual Spending Usd"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "creator_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Creator User Id"
+          },
+          "creator_user_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Creator User Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "agent_task_id",
+          "agent_project_id",
+          "title",
+          "status",
+          "priority"
+        ],
+        "title": "TaskResponse",
+        "description": "A task with agent and creator info."
+      },
+      "TaskResumeResponse": {
+        "properties": {
+          "agent_task_id": {
+            "type": "string",
+            "title": "Agent Task Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "session_to_resume": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session To Resume"
+          }
+        },
+        "type": "object",
+        "required": [
+          "agent_task_id",
+          "status"
+        ],
+        "title": "TaskResumeResponse",
+        "description": "Response from resuming a failed task."
+      },
+      "TaskStatusRequest": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "PENDING | BLOCKED | READY | IN_PROGRESS | IN_REVIEW | COMPLETED | FAILED | CANCELLED"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "TaskStatusRequest",
+        "description": "POST /ahs/projects/{project_id}/tasks/{task_id}/status \u2014 change task status."
+      },
+      "TaskStatusResponse": {
+        "properties": {
+          "agent_task_id": {
+            "type": "string",
+            "title": "Agent Task Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "newly_ready_tasks": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Newly Ready Tasks"
+          }
+        },
+        "type": "object",
+        "required": [
+          "agent_task_id",
+          "status"
+        ],
+        "title": "TaskStatusResponse",
+        "description": "Response from changing task status."
+      },
+      "TaskSummary": {
+        "properties": {
+          "PENDING": {
+            "type": "integer",
+            "title": "Pending",
+            "default": 0
+          },
+          "BLOCKED": {
+            "type": "integer",
+            "title": "Blocked",
+            "default": 0
+          },
+          "READY": {
+            "type": "integer",
+            "title": "Ready",
+            "default": 0
+          },
+          "IN_PROGRESS": {
+            "type": "integer",
+            "title": "In Progress",
+            "default": 0
+          },
+          "IN_REVIEW": {
+            "type": "integer",
+            "title": "In Review",
+            "default": 0
+          },
+          "COMPLETED": {
+            "type": "integer",
+            "title": "Completed",
+            "default": 0
+          },
+          "FAILED": {
+            "type": "integer",
+            "title": "Failed",
+            "default": 0
+          },
+          "CANCELLED": {
+            "type": "integer",
+            "title": "Cancelled",
+            "default": 0
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "TaskSummary",
+        "description": "Counts of tasks by status for a project."
+      },
+      "TaskUpdateRequest": {
+        "properties": {
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "priority": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Priority",
+            "description": "URGENT | HIGH | NORMAL | LOW"
+          },
+          "agent_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Name",
+            "description": "Agent name, empty string to unassign"
+          },
+          "task_data": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Data"
+          },
+          "estimated_effort": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimated Effort"
+          }
+        },
+        "type": "object",
+        "title": "TaskUpdateRequest",
+        "description": "PATCH /ahs/projects/{project_id}/tasks/{task_id} \u2014 partial update."
+      },
+      "ToolUseItem": {
+        "properties": {
+          "tool_use_id": {
+            "type": "string",
+            "title": "Tool Use Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "input": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input"
+          },
+          "output": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output"
+          },
+          "is_error": {
+            "type": "boolean",
+            "title": "Is Error",
+            "default": false
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "step": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tool_use_id",
+          "name"
+        ],
+        "title": "ToolUseItem",
+        "description": "A tool invocation within an agent message."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

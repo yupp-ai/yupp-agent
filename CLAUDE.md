@@ -66,6 +66,9 @@ ypl/
 ├── streamlit_server/        # Operational dashboards (Cloud Run)
 ├── backend/                 # Shared backend (DB config, utils)
 └── db/                      # SQLModel models + Alembic migrations
+
+apps/
+└── war-room/                # Next.js 16 admin UI for AHS (Bun, port 3009, standalone — see apps/war-room/AGENTS.md)
 ```
 
 ### AHS Layering (Critical Constraint)

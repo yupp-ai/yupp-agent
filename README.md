@@ -85,6 +85,20 @@ A [Model Context Protocol](https://modelcontextprotocol.io/) server that exposes
 
 **Runs on:** Cloud Run (two instances: DevToken and OAuth)
 
+### War Room
+
+`apps/war-room/` — Next.js 16 admin UI for AHS. A purpose-built command center to browse sessions with live streaming, manage agents and schedules, drive project boards, and monitor Slack gateway health. Talks REST to AHS and SAG.
+
+- **Sessions** — paginated list, single-session live feed, side-by-side comparison
+- **Agents** — list, edit prompts, edit configs
+- **Projects** — Kanban task boards with status transitions
+- **Schedules** — create, trigger, cancel recurring agent runs
+- **Feedback** — per-message rating and comments
+
+Run locally: `cd apps/war-room && bun install && bun run dev` (port 3009). See `apps/war-room/README.md`.
+
+**Runs on:** Cloud Run (deploy pipeline TODO — lifted from yupp-head on `tw/port-wr`)
+
 ### Streamlit Server
 
 Operational dashboards for monitoring and managing the agent platform. Six pages focused on agent health, performance, and debugging.
@@ -191,6 +205,8 @@ yupp-agent/
 │   ├── streamlit_server/        # Operational dashboards
 │   ├── backend/                 # Shared backend (DB, config, utils)
 │   └── db/                      # SQLModel database models + migrations
+├── apps/
+│   └── war-room/                # Next.js 16 admin UI for AHS (Bun)
 ├── data/                        # Feature flags, env var configs
 ├── scripts/                     # Deploy scripts, secret management
 └── .github/workflows/           # CI/CD

@@ -1,0 +1,1969 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Slack Agent Gateway",
+    "description": "Gateway service for multiple AI agents on Slack",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/v1/slack/events": {
+      "post": {
+        "tags": [
+          "slack-agent-gateway"
+        ],
+        "summary": "Slack Events",
+        "description": "Handle Slack bot webhook requests.\n\nThis endpoint receives events from all configured Slack agent apps.\nIt verifies signatures, deduplicates events, and processes them.\n\nArgs:\n    request: The incoming FastAPI request containing the Slack payload\n\nReturns:\n    JSONResponse with processing result",
+        "operationId": "slack_events_api_v1_slack_events_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/info": {
+      "post": {
+        "tags": [
+          "slack-agent-gateway"
+        ],
+        "summary": "Session Info",
+        "description": "Get session info for Agent Service.\n\nRequires X-API-Key header for authentication.\n\nArgs:\n    request_body: Request containing session_id\n\nReturns:\n    SlackSessionInfoResponse with session details\n\nRaises:\n    HTTPException: If session not found",
+        "operationId": "session_info_api_v1_sessions_info_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GetSessionInfoRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlackSessionInfoResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/reply": {
+      "post": {
+        "tags": [
+          "slack-agent-gateway"
+        ],
+        "summary": "Post Reply",
+        "description": "Add a new reply message to Slack.\n\nPosts immediately to Slack as a new message in the thread.\nRequires X-API-Key header for authentication.\n\nArgs:\n    request_body: Request containing session_id and text\n\nReturns:\n    AddReplyResponse with success status and message_ts",
+        "operationId": "post_reply_api_v1_sessions_reply_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddReplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddReplyResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/reply/append": {
+      "post": {
+        "tags": [
+          "slack-agent-gateway"
+        ],
+        "summary": "Post Reply Append",
+        "description": "Append text to the last reply (buffered).\n\nText is buffered and flushed to Slack at rate-limited intervals (~1.2s).\nRequires X-API-Key header for authentication.\n\nArgs:\n    request_body: Request containing session_id and text to append\n\nReturns:\n    AppendToReplyResponse with success status",
+        "operationId": "post_reply_append_api_v1_sessions_reply_append_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppendToReplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppendToReplyResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/reply/update": {
+      "post": {
+        "tags": [
+          "slack-agent-gateway"
+        ],
+        "summary": "Post Reply Update",
+        "description": "Replace the content of the last reply.\n\nDiscards any pending buffer and replaces the message content.\nRequires X-API-Key header for authentication.\n\nArgs:\n    request_body: Request containing session_id and new text\n\nReturns:\n    UpdateReplyResponse with success status",
+        "operationId": "post_reply_update_api_v1_sessions_reply_update_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateReplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateReplyResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/slack/interactions": {
+      "post": {
+        "tags": [
+          "slack-agent-gateway"
+        ],
+        "summary": "Slack Interactions",
+        "description": "Handle Slack interactivity payloads (button clicks, form submissions).\n\nSlack sends these as application/x-www-form-urlencoded with a 'payload' field.\nSignature is verified against all configured signing secrets.\n\nArgs:\n    request: The incoming FastAPI request containing the Slack interaction payload\n\nReturns:\n    JSONResponse acknowledging the interaction",
+        "operationId": "slack_interactions_api_v1_slack_interactions_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/slack/commands": {
+      "post": {
+        "tags": [
+          "slack-agent-gateway"
+        ],
+        "summary": "Slack Commands",
+        "description": "Handle Slack slash commands (e.g., /create-agent).\n\nSlack sends commands as application/x-www-form-urlencoded.\nSignature is verified using Bot Father's signing secret.\n\nArgs:\n    request: The incoming FastAPI request containing the slash command payload\n\nReturns:\n    JSONResponse acknowledging the command (must respond within 3 seconds)",
+        "operationId": "slack_commands_api_v1_slack_commands_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/request-feedback": {
+      "post": {
+        "tags": [
+          "slack-agent-gateway"
+        ],
+        "summary": "Post Request Feedback",
+        "description": "Request a feedback survey be posted to the Slack thread.\n\nRequires X-API-Key header for authentication.\n\nArgs:\n    request_body: Request containing session_id and optional prompt\n\nReturns:\n    RequestFeedbackResponse with success status and message_ts",
+        "operationId": "post_request_feedback_api_v1_sessions_request_feedback_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequestFeedbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestFeedbackResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/messages/send": {
+      "post": {
+        "tags": [
+          "slack-agent-gateway"
+        ],
+        "summary": "Post Send Message",
+        "description": "Send a message to a Slack channel proactively.\n\nAllows an agent to initiate a conversation by sending a message to any channel.\nDoes not require an existing session.\nRequires X-API-Key header for authentication.\n\nArgs:\n    request_body: Request containing agent_name, channel_id, text, and optional thread_ts\n\nReturns:\n    SendMessageResponse with success status and message_ts",
+        "operationId": "post_send_message_api_v1_messages_send_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SendMessageResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/bot-father/request": {
+      "post": {
+        "tags": [
+          "slack-agent-gateway"
+        ],
+        "summary": "Post Bot Father Request",
+        "description": "Request creation of a new Slack bot for an agent.\n\nCreates a pending bot creation request that must be approved via Slack.\nRequires X-API-Key header for authentication.\n\nArgs:\n    request_body: Request containing agent_name, slack_name, display_name, and requester info\n\nReturns:\n    BotCreationResponse with request_id and PENDING status\n\nRaises:\n    HTTPException: If agent already has a bot or a pending request exists",
+        "operationId": "post_bot_father_request_api_v1_bot_father_request_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BotCreationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotCreationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/bot-father/status/{agent_name}": {
+      "get": {
+        "tags": [
+          "slack-agent-gateway"
+        ],
+        "summary": "Get Bot Father Status",
+        "description": "Get the status of Slack bot setup for an agent.\n\nReturns whether the agent has a live bot and any pending creation requests.\nRequires X-API-Key header for authentication.\n\nArgs:\n    agent_name: AHS agent name to check\n\nReturns:\n    BotStatusResponse with bot status and pending request info",
+        "operationId": "get_bot_father_status_api_v1_bot_father_status__agent_name__get",
+        "parameters": [
+          {
+            "name": "agent_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agent Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotStatusResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/slack/oauth/callback": {
+      "get": {
+        "tags": [
+          "slack-agent-gateway"
+        ],
+        "summary": "Oauth Callback",
+        "description": "Handle OAuth callback from Slack after app installation.\n\nThis endpoint is called by Slack when an admin completes the OAuth flow.\nSlack redirects the admin's browser here with an authorization code.\n\nNo API key auth because this is a browser redirect from Slack.\n\nArgs:\n    code: Authorization code from Slack (exchanged for bot token).\n    state: State parameter (request_id) for CSRF protection.\n    error: Error code if the user denied authorization.\n\nReturns:\n    HTML page showing success or error message.",
+        "operationId": "oauth_callback_api_v1_slack_oauth_callback_get",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Code"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          },
+          {
+            "name": "error",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Error"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/slack-agent-gateway/slack/events": {
+      "post": {
+        "tags": [
+          "slack-agent-gateway"
+        ],
+        "summary": "Slack Events",
+        "description": "Handle Slack bot webhook requests.\n\nThis endpoint receives events from all configured Slack agent apps.\nIt verifies signatures, deduplicates events, and processes them.\n\nArgs:\n    request: The incoming FastAPI request containing the Slack payload\n\nReturns:\n    JSONResponse with processing result",
+        "operationId": "slack_events_slack_agent_gateway_slack_events_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/slack-agent-gateway/sessions/info": {
+      "post": {
+        "tags": [
+          "slack-agent-gateway"
+        ],
+        "summary": "Session Info",
+        "description": "Get session info for Agent Service.\n\nRequires X-API-Key header for authentication.\n\nArgs:\n    request_body: Request containing session_id\n\nReturns:\n    SlackSessionInfoResponse with session details\n\nRaises:\n    HTTPException: If session not found",
+        "operationId": "session_info_slack_agent_gateway_sessions_info_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GetSessionInfoRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlackSessionInfoResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/slack-agent-gateway/sessions/reply": {
+      "post": {
+        "tags": [
+          "slack-agent-gateway"
+        ],
+        "summary": "Post Reply",
+        "description": "Add a new reply message to Slack.\n\nPosts immediately to Slack as a new message in the thread.\nRequires X-API-Key header for authentication.\n\nArgs:\n    request_body: Request containing session_id and text\n\nReturns:\n    AddReplyResponse with success status and message_ts",
+        "operationId": "post_reply_slack_agent_gateway_sessions_reply_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddReplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddReplyResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/slack-agent-gateway/sessions/reply/append": {
+      "post": {
+        "tags": [
+          "slack-agent-gateway"
+        ],
+        "summary": "Post Reply Append",
+        "description": "Append text to the last reply (buffered).\n\nText is buffered and flushed to Slack at rate-limited intervals (~1.2s).\nRequires X-API-Key header for authentication.\n\nArgs:\n    request_body: Request containing session_id and text to append\n\nReturns:\n    AppendToReplyResponse with success status",
+        "operationId": "post_reply_append_slack_agent_gateway_sessions_reply_append_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppendToReplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppendToReplyResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/slack-agent-gateway/sessions/reply/update": {
+      "post": {
+        "tags": [
+          "slack-agent-gateway"
+        ],
+        "summary": "Post Reply Update",
+        "description": "Replace the content of the last reply.\n\nDiscards any pending buffer and replaces the message content.\nRequires X-API-Key header for authentication.\n\nArgs:\n    request_body: Request containing session_id and new text\n\nReturns:\n    UpdateReplyResponse with success status",
+        "operationId": "post_reply_update_slack_agent_gateway_sessions_reply_update_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateReplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateReplyResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/slack-agent-gateway/slack/interactions": {
+      "post": {
+        "tags": [
+          "slack-agent-gateway"
+        ],
+        "summary": "Slack Interactions",
+        "description": "Handle Slack interactivity payloads (button clicks, form submissions).\n\nSlack sends these as application/x-www-form-urlencoded with a 'payload' field.\nSignature is verified against all configured signing secrets.\n\nArgs:\n    request: The incoming FastAPI request containing the Slack interaction payload\n\nReturns:\n    JSONResponse acknowledging the interaction",
+        "operationId": "slack_interactions_slack_agent_gateway_slack_interactions_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/slack-agent-gateway/slack/commands": {
+      "post": {
+        "tags": [
+          "slack-agent-gateway"
+        ],
+        "summary": "Slack Commands",
+        "description": "Handle Slack slash commands (e.g., /create-agent).\n\nSlack sends commands as application/x-www-form-urlencoded.\nSignature is verified using Bot Father's signing secret.\n\nArgs:\n    request: The incoming FastAPI request containing the slash command payload\n\nReturns:\n    JSONResponse acknowledging the command (must respond within 3 seconds)",
+        "operationId": "slack_commands_slack_agent_gateway_slack_commands_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/slack-agent-gateway/sessions/request-feedback": {
+      "post": {
+        "tags": [
+          "slack-agent-gateway"
+        ],
+        "summary": "Post Request Feedback",
+        "description": "Request a feedback survey be posted to the Slack thread.\n\nRequires X-API-Key header for authentication.\n\nArgs:\n    request_body: Request containing session_id and optional prompt\n\nReturns:\n    RequestFeedbackResponse with success status and message_ts",
+        "operationId": "post_request_feedback_slack_agent_gateway_sessions_request_feedback_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequestFeedbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestFeedbackResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/slack-agent-gateway/messages/send": {
+      "post": {
+        "tags": [
+          "slack-agent-gateway"
+        ],
+        "summary": "Post Send Message",
+        "description": "Send a message to a Slack channel proactively.\n\nAllows an agent to initiate a conversation by sending a message to any channel.\nDoes not require an existing session.\nRequires X-API-Key header for authentication.\n\nArgs:\n    request_body: Request containing agent_name, channel_id, text, and optional thread_ts\n\nReturns:\n    SendMessageResponse with success status and message_ts",
+        "operationId": "post_send_message_slack_agent_gateway_messages_send_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SendMessageResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/slack-agent-gateway/bot-father/request": {
+      "post": {
+        "tags": [
+          "slack-agent-gateway"
+        ],
+        "summary": "Post Bot Father Request",
+        "description": "Request creation of a new Slack bot for an agent.\n\nCreates a pending bot creation request that must be approved via Slack.\nRequires X-API-Key header for authentication.\n\nArgs:\n    request_body: Request containing agent_name, slack_name, display_name, and requester info\n\nReturns:\n    BotCreationResponse with request_id and PENDING status\n\nRaises:\n    HTTPException: If agent already has a bot or a pending request exists",
+        "operationId": "post_bot_father_request_slack_agent_gateway_bot_father_request_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BotCreationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotCreationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/slack-agent-gateway/bot-father/status/{agent_name}": {
+      "get": {
+        "tags": [
+          "slack-agent-gateway"
+        ],
+        "summary": "Get Bot Father Status",
+        "description": "Get the status of Slack bot setup for an agent.\n\nReturns whether the agent has a live bot and any pending creation requests.\nRequires X-API-Key header for authentication.\n\nArgs:\n    agent_name: AHS agent name to check\n\nReturns:\n    BotStatusResponse with bot status and pending request info",
+        "operationId": "get_bot_father_status_slack_agent_gateway_bot_father_status__agent_name__get",
+        "parameters": [
+          {
+            "name": "agent_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agent Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotStatusResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/slack-agent-gateway/slack/oauth/callback": {
+      "get": {
+        "tags": [
+          "slack-agent-gateway"
+        ],
+        "summary": "Oauth Callback",
+        "description": "Handle OAuth callback from Slack after app installation.\n\nThis endpoint is called by Slack when an admin completes the OAuth flow.\nSlack redirects the admin's browser here with an authorization code.\n\nNo API key auth because this is a browser redirect from Slack.\n\nArgs:\n    code: Authorization code from Slack (exchanged for bot token).\n    state: State parameter (request_id) for CSRF protection.\n    error: Error code if the user denied authorization.\n\nReturns:\n    HTML page showing success or error message.",
+        "operationId": "oauth_callback_slack_agent_gateway_slack_oauth_callback_get",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Code"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          },
+          {
+            "name": "error",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Error"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/healthz": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Healthz",
+        "operationId": "healthz_api_v1_healthz_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Healthz Api V1 Healthz Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/readyz": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Readyz",
+        "operationId": "readyz_api_v1_readyz_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Readyz Api V1 Readyz Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AddReplyRequest": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id",
+            "description": "Session identifier"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "Reply message content"
+          },
+          "reply_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reply Type",
+            "description": "Content type hint (e.g. 'thinking', 'tool_use'). None means regular text. Gateway decides how to render each type."
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username",
+            "description": "Override bot display name for this message (requires chat:write.customize scope)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "text"
+        ],
+        "title": "AddReplyRequest",
+        "description": "Request body for POST /sessions/reply."
+      },
+      "AddReplyResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "description": "Whether the reply was posted"
+          },
+          "message_ts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message Ts",
+            "description": "Slack message timestamp of the new reply"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error",
+            "description": "Error message if failed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success"
+        ],
+        "title": "AddReplyResponse",
+        "description": "Response for POST /sessions/reply."
+      },
+      "AppendToReplyRequest": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id",
+            "description": "Session identifier"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "Text to append to the last reply"
+          },
+          "reply_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reply Type",
+            "description": "Content type hint (e.g. 'thinking', 'tool_use'). Must match the type of the message being appended to. If it differs, the buffer is flushed and a new message is started."
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username",
+            "description": "Override bot display name for this message (requires chat:write.customize scope)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "text"
+        ],
+        "title": "AppendToReplyRequest",
+        "description": "Request body for POST /sessions/reply/append."
+      },
+      "AppendToReplyResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "description": "Whether the append was buffered"
+          },
+          "buffered": {
+            "type": "boolean",
+            "title": "Buffered",
+            "description": "Whether text was buffered (vs immediately flushed)",
+            "default": true
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error",
+            "description": "Error message if failed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success"
+        ],
+        "title": "AppendToReplyResponse",
+        "description": "Response for POST /sessions/reply/append."
+      },
+      "BotApprovalStatus": {
+        "type": "string",
+        "enum": [
+          "PENDING",
+          "APPROVED",
+          "AWAITING_INSTALLATION",
+          "DENIED",
+          "FAILED",
+          "COMPLETED"
+        ],
+        "title": "BotApprovalStatus",
+        "description": "Status of a bot creation request."
+      },
+      "BotCreationRecord": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "title": "Request Id",
+            "description": "Unique request ID (UUID)"
+          },
+          "agent_name": {
+            "type": "string",
+            "title": "Agent Name",
+            "description": "AHS agent name"
+          },
+          "slack_name": {
+            "type": "string",
+            "title": "Slack Name",
+            "description": "Desired Slack bot username"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name",
+            "description": "Human-readable display name"
+          },
+          "requested_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By",
+            "description": "Slack user ID (e.g., 'U123ABC') or Yupp user ID (UUID)"
+          },
+          "requested_by_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By Email",
+            "description": "Email of the requester"
+          },
+          "requested_by_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By User Id",
+            "description": "Resolved Yupp user ID of the requester"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description",
+            "description": "Description of what the agent does"
+          },
+          "system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "System Prompt",
+            "description": "Additional system prompt or persona for the agent"
+          },
+          "status": {
+            "$ref": "#/components/schemas/BotApprovalStatus",
+            "description": "Current status",
+            "default": "PENDING"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At",
+            "description": "When the request was created"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At",
+            "description": "When the record was last updated"
+          },
+          "approver_slack_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approver Slack User Id",
+            "description": "Slack user ID of the approver/denier"
+          },
+          "approved_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved At",
+            "description": "When the request was approved"
+          },
+          "slack_app_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slack App Id",
+            "description": "Created Slack app ID (e.g., 'A123BOTFATHER')"
+          },
+          "oauth_client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oauth Client Id",
+            "description": "OAuth client ID for the app"
+          },
+          "oauth_client_secret": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oauth Client Secret",
+            "description": "OAuth client secret (encrypted or redacted in logs)"
+          },
+          "oauth_install_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oauth Install Url",
+            "description": "URL for admin to click to complete OAuth install"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At",
+            "description": "When the bot was fully created"
+          },
+          "approval_message_ts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Message Ts",
+            "description": "Slack message timestamp of the approval request"
+          },
+          "approval_message_channel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Message Channel",
+            "description": "Slack channel the approval message was posted to"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error",
+            "description": "Error message if status is FAILED"
+          }
+        },
+        "type": "object",
+        "required": [
+          "request_id",
+          "agent_name",
+          "slack_name",
+          "display_name"
+        ],
+        "title": "BotCreationRecord",
+        "description": "Full state of a bot creation request, stored in Redis."
+      },
+      "BotCreationRequest": {
+        "properties": {
+          "agent_name": {
+            "type": "string",
+            "title": "Agent Name",
+            "description": "AHS agent name (e.g., 'sre', 'data-scientist')"
+          },
+          "slack_name": {
+            "type": "string",
+            "title": "Slack Name",
+            "description": "Desired Slack bot username (e.g., 'giladovski'). Must be lowercase, alphanumeric + hyphens."
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name",
+            "description": "Human-readable display name (e.g., 'Giladovski')"
+          },
+          "requested_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By",
+            "description": "Slack user ID (e.g., 'U123ABC') or Yupp user ID (UUID). Optional if requested_by_email is provided."
+          },
+          "requested_by_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By Email",
+            "description": "Email of the requester"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description",
+            "description": "Description of what the agent does"
+          },
+          "system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "System Prompt",
+            "description": "Additional system prompt or persona for the agent"
+          }
+        },
+        "type": "object",
+        "required": [
+          "agent_name",
+          "slack_name",
+          "display_name"
+        ],
+        "title": "BotCreationRequest",
+        "description": "Incoming request to create a Slack bot for an agent."
+      },
+      "BotCreationResponse": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "title": "Request Id",
+            "description": "Created request ID"
+          },
+          "status": {
+            "$ref": "#/components/schemas/BotApprovalStatus",
+            "description": "Initial status (always PENDING)"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "description": "Human-readable status message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "request_id",
+          "status",
+          "message"
+        ],
+        "title": "BotCreationResponse",
+        "description": "API response for POST /bot-father/request."
+      },
+      "BotStatusResponse": {
+        "properties": {
+          "agent_name": {
+            "type": "string",
+            "title": "Agent Name",
+            "description": "AHS agent name"
+          },
+          "has_slack_bot": {
+            "type": "boolean",
+            "title": "Has Slack Bot",
+            "description": "Whether the agent already has a live Slack bot"
+          },
+          "pending_request": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotCreationRecord"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Pending/recent creation request, if any"
+          },
+          "slack_app_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slack App Id",
+            "description": "Slack app ID if bot exists"
+          },
+          "slack_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slack Name",
+            "description": "Slack bot username if bot exists"
+          }
+        },
+        "type": "object",
+        "required": [
+          "agent_name",
+          "has_slack_bot"
+        ],
+        "title": "BotStatusResponse",
+        "description": "API response for GET /bot-father/status/{agent_name}."
+      },
+      "GetSessionInfoRequest": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id",
+            "description": "Session identifier"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id"
+        ],
+        "title": "GetSessionInfoRequest",
+        "description": "Request body for POST /sessions/info."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "RequestFeedbackRequest": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id",
+            "description": "Session identifier"
+          },
+          "prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt",
+            "description": "Optional custom survey prompt text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id"
+        ],
+        "title": "RequestFeedbackRequest",
+        "description": "Request body for POST /sessions/request-feedback (called by AHS)."
+      },
+      "RequestFeedbackResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "message_ts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message Ts"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success"
+        ],
+        "title": "RequestFeedbackResponse",
+        "description": "Response for POST /sessions/request-feedback."
+      },
+      "SendMessageRequest": {
+        "properties": {
+          "agent_name": {
+            "type": "string",
+            "title": "Agent Name",
+            "description": "Internal agent name (e.g., 'sre', 'data-scientist')"
+          },
+          "channel": {
+            "type": "string",
+            "title": "Channel",
+            "description": "Slack channel name or ID (e.g., 'alert-backend', '#general', or 'C123ABC')"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "Message content"
+          },
+          "thread_ts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thread Ts",
+            "description": "Optional thread timestamp to reply in a thread"
+          },
+          "ahs_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ahs Session Id",
+            "description": "Optional AHS session UUID. When provided for a top-level message, SAG registers the new thread so that human replies route to this existing session."
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username",
+            "description": "Override bot display name for this message (requires chat:write.customize scope)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "agent_name",
+          "channel",
+          "text"
+        ],
+        "title": "SendMessageRequest",
+        "description": "Request body for POST /messages/send.\n\nAllows an agent to proactively send a message to a Slack channel.\nDoes not require an existing session."
+      },
+      "SendMessageResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "description": "Whether the message was sent"
+          },
+          "message_ts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message Ts",
+            "description": "Slack message timestamp of the sent message"
+          },
+          "channel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channel",
+            "description": "Channel the message was sent to"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error",
+            "description": "Error message if failed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success"
+        ],
+        "title": "SendMessageResponse",
+        "description": "Response for POST /messages/send."
+      },
+      "SessionStatus": {
+        "type": "string",
+        "enum": [
+          "active",
+          "expired"
+        ],
+        "title": "SessionStatus",
+        "description": "Status of an agent session."
+      },
+      "SlackSessionInfoResponse": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id",
+            "description": "Session identifier"
+          },
+          "channel_id": {
+            "type": "string",
+            "title": "Channel Id",
+            "description": "Slack channel ID"
+          },
+          "channel_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channel Name",
+            "description": "Human-readable channel name"
+          },
+          "thread_ts": {
+            "type": "string",
+            "title": "Thread Ts",
+            "description": "Thread timestamp"
+          },
+          "creator_slack_user_id": {
+            "type": "string",
+            "title": "Creator Slack User Id",
+            "description": "Who created the session"
+          },
+          "creator_slack_username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Creator Slack Username",
+            "description": "Creator's username"
+          },
+          "agent_name": {
+            "type": "string",
+            "title": "Agent Name",
+            "description": "Internal agent name"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SessionStatus",
+            "description": "Session status"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At",
+            "description": "When session was created"
+          },
+          "last_activity_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Activity At",
+            "description": "Last activity timestamp"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "channel_id",
+          "thread_ts",
+          "creator_slack_user_id",
+          "agent_name",
+          "status",
+          "created_at",
+          "last_activity_at"
+        ],
+        "title": "SlackSessionInfoResponse",
+        "description": "Response for POST /sessions/info."
+      },
+      "UpdateReplyRequest": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id",
+            "description": "Session identifier"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "New content to replace the last reply"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "text"
+        ],
+        "title": "UpdateReplyRequest",
+        "description": "Request body for POST /sessions/reply/update."
+      },
+      "UpdateReplyResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "description": "Whether the reply was updated"
+          },
+          "message_ts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message Ts",
+            "description": "Slack message timestamp of the updated reply"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error",
+            "description": "Error message if failed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success"
+        ],
+        "title": "UpdateReplyResponse",
+        "description": "Response for POST /sessions/reply/update."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

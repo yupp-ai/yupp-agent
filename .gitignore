@@ -124,3 +124,9 @@ DerivedData/
 
 # Weight and Biases
 wandb/
+
+# Node / Next.js (apps/war-room)
+apps/**/node_modules/
+apps/**/.next/
+apps/**/.turbo/
+apps/**/*.tsbuildinfo
