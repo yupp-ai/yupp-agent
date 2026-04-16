@@ -90,7 +90,10 @@ packages = [{include = "ypl"}]
 
 [tool.poetry.dependencies]
 # Core
-python = ">=3.12.12,<3.13"
+# Accept any 3.12.x — Ubuntu 24.04 ships 3.12.3, Ubuntu 22.04 via deadsnakes
+# typically has whatever the latest 3.12 patch is. Tight micro-version pins
+# just break fresh-VM installs without protecting against anything concrete.
+python = ">=3.12,<3.13"
 pydantic = {version = "2.11.10", extras = ["email"]}
 pydantic-settings = "2.10.1"
 python-dotenv = "^1.2.1"
