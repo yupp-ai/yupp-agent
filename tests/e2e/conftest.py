@@ -128,11 +128,11 @@ def user_id(api_key: str) -> str:
             timeout=10.0,
         )
         if resp.status_code == 200:
-            return resp.json()["user_id"]
+            uid: str = resp.json()["user_id"]
+            return uid
     except Exception:
         pass
     pytest.skip(f"Could not resolve user_id for {E2E_USER_EMAIL} — set E2E_USER_ID env var")
-    return ""  # unreachable, keeps mypy happy
 
 
 @pytest.fixture
@@ -237,7 +237,7 @@ async def wait_for_assistant_reply(
             headers=headers,
         )
         if resp.status_code == 200:
-            messages = resp.json().get("messages", [])
+            messages: list[dict[str, Any]] = resp.json().get("messages", [])
             if any(m.get("role") in ("assistant", "AGENT") for m in messages):
                 return messages
         await asyncio.sleep(poll_interval)
@@ -262,4 +262,5 @@ async def call_mcp_tool(
         },
     )
     assert resp.status_code == 200, f"MCP call to {tool_name} failed: {resp.status_code} {resp.text}"
-    return resp.json()
+    result: dict[str, Any] = resp.json()
+    return result

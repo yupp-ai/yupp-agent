@@ -6,7 +6,6 @@ CRUD, status transitions, and dependency cascade are tested via REST API.
 """
 
 from __future__ import annotations
-
 import json
 from typing import Any
 
@@ -32,7 +31,8 @@ async def _create_project(
     text = content[0].get("text", "")
     data = json.loads(text)
     assert data.get("success"), f"add_project failed: {data}"
-    return data["agent_project_id"]
+    pid: str = data["agent_project_id"]
+    return pid
 
 
 async def _create_tasks(
@@ -54,7 +54,8 @@ async def _create_tasks(
     text = content[0].get("text", "")
     data = json.loads(text)
     assert data.get("success"), f"add_tasks failed: {data}"
-    return data.get("tasks", [])
+    task_list: list[dict[str, Any]] = data.get("tasks", [])
+    return task_list
 
 
 class TestProjectLifecycle:
@@ -140,10 +141,15 @@ class TestTaskLifecycle:
     ) -> None:
         """Create tasks via MCP and list them via REST."""
         project_id = await _create_project(client, mcp_headers, f"{E2E_PREFIX}tasks-{tag}")
-        await _create_tasks(client, mcp_headers, project_id, [
-            {"name": f"task-a-{tag}", "title": f"{E2E_PREFIX}task-a-{tag}"},
-            {"name": f"task-b-{tag}", "title": f"{E2E_PREFIX}task-b-{tag}"},
-        ])
+        await _create_tasks(
+            client,
+            mcp_headers,
+            project_id,
+            [
+                {"name": f"task-a-{tag}", "title": f"{E2E_PREFIX}task-a-{tag}"},
+                {"name": f"task-b-{tag}", "title": f"{E2E_PREFIX}task-b-{tag}"},
+            ],
+        )
 
         resp = await client.get(f"/ahs/projects/{project_id}/tasks", headers=auth_headers)
         assert resp.status_code == 200
@@ -158,9 +164,14 @@ class TestTaskLifecycle:
     ) -> None:
         """Update a task's title and priority."""
         project_id = await _create_project(client, mcp_headers, f"{E2E_PREFIX}tupd-{tag}")
-        tasks = await _create_tasks(client, mcp_headers, project_id, [
-            {"name": f"update-me-{tag}", "title": f"{E2E_PREFIX}update-me-{tag}"},
-        ])
+        tasks = await _create_tasks(
+            client,
+            mcp_headers,
+            project_id,
+            [
+                {"name": f"update-me-{tag}", "title": f"{E2E_PREFIX}update-me-{tag}"},
+            ],
+        )
         task_id = tasks[0]["agent_task_id"]
 
         resp = await client.patch(
@@ -179,9 +190,14 @@ class TestTaskLifecycle:
     ) -> None:
         """Transition a task: READY → IN_PROGRESS → COMPLETED."""
         project_id = await _create_project(client, mcp_headers, f"{E2E_PREFIX}status-{tag}")
-        tasks = await _create_tasks(client, mcp_headers, project_id, [
-            {"name": f"complete-{tag}", "title": f"{E2E_PREFIX}complete-me-{tag}"},
-        ])
+        tasks = await _create_tasks(
+            client,
+            mcp_headers,
+            project_id,
+            [
+                {"name": f"complete-{tag}", "title": f"{E2E_PREFIX}complete-me-{tag}"},
+            ],
+        )
         task_id = tasks[0]["agent_task_id"]
 
         # READY → IN_PROGRESS
@@ -209,9 +225,14 @@ class TestTaskLifecycle:
     ) -> None:
         """Invalid status transition should return 400."""
         project_id = await _create_project(client, mcp_headers, f"{E2E_PREFIX}invalid-{tag}")
-        tasks = await _create_tasks(client, mcp_headers, project_id, [
-            {"name": f"invalid-{tag}", "title": f"{E2E_PREFIX}invalid-{tag}"},
-        ])
+        tasks = await _create_tasks(
+            client,
+            mcp_headers,
+            project_id,
+            [
+                {"name": f"invalid-{tag}", "title": f"{E2E_PREFIX}invalid-{tag}"},
+            ],
+        )
         task_id = tasks[0]["agent_task_id"]
 
         # READY → COMPLETED directly (should fail — must go through IN_PROGRESS)
@@ -235,10 +256,15 @@ class TestTaskDependencies:
     ) -> None:
         """Complete task A → dependent task B auto-promotes to READY."""
         project_id = await _create_project(client, mcp_headers, f"{E2E_PREFIX}deps-{tag}")
-        tasks = await _create_tasks(client, mcp_headers, project_id, [
-            {"name": f"dep-a-{tag}", "title": f"{E2E_PREFIX}dep-a-{tag}"},
-            {"name": f"dep-b-{tag}", "title": f"{E2E_PREFIX}dep-b-{tag}", "depends_on": [f"dep-a-{tag}"]},
-        ])
+        tasks = await _create_tasks(
+            client,
+            mcp_headers,
+            project_id,
+            [
+                {"name": f"dep-a-{tag}", "title": f"{E2E_PREFIX}dep-a-{tag}"},
+                {"name": f"dep-b-{tag}", "title": f"{E2E_PREFIX}dep-b-{tag}", "depends_on": [f"dep-a-{tag}"]},
+            ],
+        )
 
         task_a = next(t for t in tasks if f"dep-a-{tag}" in t["title"])
         task_b = next(t for t in tasks if f"dep-b-{tag}" in t["title"])
@@ -279,11 +305,16 @@ class TestTaskDependencies:
     ) -> None:
         """Task C depends on both A and B — only becomes READY when both complete."""
         project_id = await _create_project(client, mcp_headers, f"{E2E_PREFIX}multidep-{tag}")
-        tasks = await _create_tasks(client, mcp_headers, project_id, [
-            {"name": f"ma-{tag}", "title": f"{E2E_PREFIX}multi-a-{tag}"},
-            {"name": f"mb-{tag}", "title": f"{E2E_PREFIX}multi-b-{tag}"},
-            {"name": f"mc-{tag}", "title": f"{E2E_PREFIX}multi-c-{tag}", "depends_on": [f"ma-{tag}", f"mb-{tag}"]},
-        ])
+        tasks = await _create_tasks(
+            client,
+            mcp_headers,
+            project_id,
+            [
+                {"name": f"ma-{tag}", "title": f"{E2E_PREFIX}multi-a-{tag}"},
+                {"name": f"mb-{tag}", "title": f"{E2E_PREFIX}multi-b-{tag}"},
+                {"name": f"mc-{tag}", "title": f"{E2E_PREFIX}multi-c-{tag}", "depends_on": [f"ma-{tag}", f"mb-{tag}"]},
+            ],
+        )
 
         task_a = next(t for t in tasks if f"multi-a-{tag}" in t["title"])
         task_b = next(t for t in tasks if f"multi-b-{tag}" in t["title"])
@@ -294,8 +325,14 @@ class TestTaskDependencies:
 
         # Complete A only
         a_id = task_a["agent_task_id"]
-        await client.post(f"/ahs/projects/{project_id}/tasks/{a_id}/status", json={"status": "IN_PROGRESS"}, headers=auth_headers)
-        await client.post(f"/ahs/projects/{project_id}/tasks/{a_id}/status", json={"status": "COMPLETED", "result": {"summary": "Done"}}, headers=auth_headers)
+        await client.post(
+            f"/ahs/projects/{project_id}/tasks/{a_id}/status", json={"status": "IN_PROGRESS"}, headers=auth_headers
+        )
+        await client.post(
+            f"/ahs/projects/{project_id}/tasks/{a_id}/status",
+            json={"status": "COMPLETED", "result": {"summary": "Done"}},
+            headers=auth_headers,
+        )
 
         # C should STILL be BLOCKED (B not complete yet)
         c_resp = await client.get(f"/ahs/projects/{project_id}/tasks/{task_c['agent_task_id']}", headers=auth_headers)
@@ -303,8 +340,14 @@ class TestTaskDependencies:
 
         # Complete B
         b_id = task_b["agent_task_id"]
-        await client.post(f"/ahs/projects/{project_id}/tasks/{b_id}/status", json={"status": "IN_PROGRESS"}, headers=auth_headers)
-        await client.post(f"/ahs/projects/{project_id}/tasks/{b_id}/status", json={"status": "COMPLETED", "result": {"summary": "Done"}}, headers=auth_headers)
+        await client.post(
+            f"/ahs/projects/{project_id}/tasks/{b_id}/status", json={"status": "IN_PROGRESS"}, headers=auth_headers
+        )
+        await client.post(
+            f"/ahs/projects/{project_id}/tasks/{b_id}/status",
+            json={"status": "COMPLETED", "result": {"summary": "Done"}},
+            headers=auth_headers,
+        )
 
         # Now C should be READY
         c_resp2 = await client.get(f"/ahs/projects/{project_id}/tasks/{task_c['agent_task_id']}", headers=auth_headers)
@@ -319,10 +362,15 @@ class TestTaskDependencies:
     ) -> None:
         """Setting circular dependencies should return 400."""
         project_id = await _create_project(client, mcp_headers, f"{E2E_PREFIX}cycle-{tag}")
-        tasks = await _create_tasks(client, mcp_headers, project_id, [
-            {"name": f"cycle-a-{tag}", "title": f"{E2E_PREFIX}cycle-a-{tag}"},
-            {"name": f"cycle-b-{tag}", "title": f"{E2E_PREFIX}cycle-b-{tag}"},
-        ])
+        tasks = await _create_tasks(
+            client,
+            mcp_headers,
+            project_id,
+            [
+                {"name": f"cycle-a-{tag}", "title": f"{E2E_PREFIX}cycle-a-{tag}"},
+                {"name": f"cycle-b-{tag}", "title": f"{E2E_PREFIX}cycle-b-{tag}"},
+            ],
+        )
 
         task_a = tasks[0]["agent_task_id"]
         task_b = tasks[1]["agent_task_id"]
@@ -356,10 +404,15 @@ class TestTaskPickup:
     ) -> None:
         """get_ready_tasks returns READY tasks in priority order."""
         project_id = await _create_project(client, mcp_headers, f"{E2E_PREFIX}ready-{tag}")
-        await _create_tasks(client, mcp_headers, project_id, [
-            {"name": f"low-{tag}", "title": f"{E2E_PREFIX}low-{tag}", "priority": "LOW"},
-            {"name": f"high-{tag}", "title": f"{E2E_PREFIX}high-{tag}", "priority": "HIGH"},
-        ])
+        await _create_tasks(
+            client,
+            mcp_headers,
+            project_id,
+            [
+                {"name": f"low-{tag}", "title": f"{E2E_PREFIX}low-{tag}", "priority": "LOW"},
+                {"name": f"high-{tag}", "title": f"{E2E_PREFIX}high-{tag}", "priority": "HIGH"},
+            ],
+        )
 
         result = await call_mcp_tool(client, mcp_headers, "get_ready_tasks", {"project_id": project_id})
         inner = result.get("result", result)
@@ -381,9 +434,14 @@ class TestTaskPickup:
     ) -> None:
         """claim_task atomically transitions a READY task to IN_PROGRESS."""
         project_id = await _create_project(client, mcp_headers, f"{E2E_PREFIX}claim-{tag}")
-        await _create_tasks(client, mcp_headers, project_id, [
-            {"name": f"claimme-{tag}", "title": f"{E2E_PREFIX}claimme-{tag}"},
-        ])
+        await _create_tasks(
+            client,
+            mcp_headers,
+            project_id,
+            [
+                {"name": f"claimme-{tag}", "title": f"{E2E_PREFIX}claimme-{tag}"},
+            ],
+        )
 
         result = await call_mcp_tool(client, mcp_headers, "claim_task", {"project_id": project_id})
         inner = result.get("result", result)

@@ -4,7 +4,6 @@ Uses aiohttp for WebSocket client connections.
 """
 
 from __future__ import annotations
-
 import asyncio
 import json
 
@@ -32,7 +31,8 @@ async def _create_session_for_ws(
         body["message"] = message
     resp = await client.post("/ahs/session/create", json=body, headers=auth_headers)
     assert resp.status_code == 200
-    return resp.json()["session_id"]
+    sid: str = resp.json()["session_id"]
+    return sid
 
 
 class TestWebSocketConnect:
@@ -52,14 +52,13 @@ class TestWebSocketConnect:
         session_cleanup.append(session_id)
 
         ws_url = f"{WS_BASE}/ahs/session/{session_id}/ws?api_key={api_key}"
-        async with aiohttp.ClientSession() as session:
-            async with session.ws_connect(ws_url) as ws:
-                msg = await asyncio.wait_for(ws.receive(), timeout=5.0)
-                assert msg.type == aiohttp.WSMsgType.TEXT
-                data = json.loads(msg.data)
-                assert data["type"] == "thread/started"
-                assert data["thread_id"] == session_id
-                await ws.close()
+        async with aiohttp.ClientSession() as session, session.ws_connect(ws_url) as ws:
+            msg = await asyncio.wait_for(ws.receive(), timeout=5.0)
+            assert msg.type == aiohttp.WSMsgType.TEXT
+            data = json.loads(msg.data)
+            assert data["type"] == "thread/started"
+            assert data["thread_id"] == session_id
+            await ws.close()
 
     async def test_ws_ping_pong(
         self,
@@ -74,18 +73,17 @@ class TestWebSocketConnect:
         session_cleanup.append(session_id)
 
         ws_url = f"{WS_BASE}/ahs/session/{session_id}/ws?api_key={api_key}"
-        async with aiohttp.ClientSession() as session:
-            async with session.ws_connect(ws_url) as ws:
-                # Consume thread/started
-                await asyncio.wait_for(ws.receive(), timeout=5.0)
+        async with aiohttp.ClientSession() as session, session.ws_connect(ws_url) as ws:
+            # Consume thread/started
+            await asyncio.wait_for(ws.receive(), timeout=5.0)
 
-                # Send ping
-                await ws.send_json({"type": "ping"})
-                msg = await asyncio.wait_for(ws.receive(), timeout=5.0)
-                assert msg.type == aiohttp.WSMsgType.TEXT
-                data = json.loads(msg.data)
-                assert data["type"] == "pong"
-                await ws.close()
+            # Send ping
+            await ws.send_json({"type": "ping"})
+            msg = await asyncio.wait_for(ws.receive(), timeout=5.0)
+            assert msg.type == aiohttp.WSMsgType.TEXT
+            data = json.loads(msg.data)
+            assert data["type"] == "pong"
+            await ws.close()
 
 
 class TestWebSocketStreaming:
@@ -105,37 +103,38 @@ class TestWebSocketStreaming:
         session_cleanup.append(session_id)
 
         ws_url = f"{WS_BASE}/ahs/session/{session_id}/ws?api_key={api_key}"
-        async with aiohttp.ClientSession() as session:
-            async with session.ws_connect(ws_url) as ws:
-                # Consume thread/started
-                await asyncio.wait_for(ws.receive(), timeout=5.0)
+        async with aiohttp.ClientSession() as session, session.ws_connect(ws_url) as ws:
+            # Consume thread/started
+            await asyncio.wait_for(ws.receive(), timeout=5.0)
 
-                # Send message
-                await ws.send_json({
+            # Send message
+            await ws.send_json(
+                {
                     "type": "user_message",
                     "content": f"{E2E_PREFIX}ws-test {tag}",
                     "user_id": user_id,
-                })
+                }
+            )
 
-                # Collect events until we see turn/completed or timeout
-                events = []
-                try:
-                    while True:
-                        msg = await asyncio.wait_for(ws.receive(), timeout=15.0)
-                        if msg.type == aiohttp.WSMsgType.TEXT:
-                            data = json.loads(msg.data)
-                            events.append(data)
-                            if data.get("type") in ("turn/completed", "error"):
-                                break
-                        elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+            # Collect events until we see turn/completed or timeout
+            events = []
+            try:
+                while True:
+                    msg = await asyncio.wait_for(ws.receive(), timeout=15.0)
+                    if msg.type == aiohttp.WSMsgType.TEXT:
+                        data = json.loads(msg.data)
+                        events.append(data)
+                        if data.get("type") in ("turn/completed", "error"):
                             break
-                except TimeoutError:
-                    pass
+                    elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                        break
+            except TimeoutError:
+                pass
 
-                await ws.close()
+            await ws.close()
 
         event_types = [e["type"] for e in events]
-        assert len(events) >= 1, f"Expected streaming events, got none"
+        assert len(events) >= 1, "Expected streaming events, got none"
         # Should have at least some agent response events
         assert any("item" in t or "turn" in t for t in event_types), f"No item/turn events: {event_types}"
 
