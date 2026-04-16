@@ -172,7 +172,7 @@ The script installs Python 3.12, PostgreSQL 16, Redis 7, Poetry, the app, and th
 
 ```bash
 # Run the interactive setup wizard
-sudo -u yupp bash -c 'cd /opt/yupp-agent && python -m ypl.mono_server.setup'
+sudo -u ahs bash -c 'cd /opt/yupp-agent && python -m ypl.mono_server.setup'
 
 # Start services
 sudo systemctl start yupp-agent yupp-streamlit
@@ -213,7 +213,7 @@ The units expect:
 
 | Path | Description |
 |------|-------------|
-| `/opt/yupp-agent/` | Application root (owned by `yupp` user) |
+| `/opt/yupp-agent/` | Application root (owned by `ahs` user) |
 | `/opt/yupp-agent/.env` | Secrets file — `chmod 600` |
 | `/opt/yupp-agent/.venv/` | Python virtual environment symlink |
 
@@ -444,9 +444,9 @@ docker compose -f docker-compose.one-box.yml exec app python -m alembic upgrade 
 
 ```bash
 cd /opt/yupp-agent
-sudo -u yupp git pull
-sudo -u yupp poetry install --no-root --without dev --compile
-sudo -u yupp python -m alembic upgrade head
+sudo -u ahs git pull
+sudo -u ahs poetry install --no-root --without dev --compile
+sudo -u ahs python -m alembic upgrade head
 sudo systemctl restart yupp-agent yupp-streamlit
 ```
 

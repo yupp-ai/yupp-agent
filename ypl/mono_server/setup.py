@@ -56,9 +56,9 @@ __all__ = [
 
 console = Console()
 
-# Path to the .env template bundled next to this file
+# Path to the .env example bundled next to this file (used as a template).
 _HERE = Path(__file__).parent
-ENV_TEMPLATE_PATH = _HERE / ".env.template"
+ENV_TEMPLATE_PATH = _HERE / ".env.example"
 
 
 # ---------------------------------------------------------------------------

@@ -8,8 +8,8 @@ PartOf=yupp-agent.service
 
 [Service]
 Type=simple
-User=yupp
-Group=yupp
+User=ahs
+Group=ahs
 WorkingDirectory=/opt/yupp-agent
 
 EnvironmentFile=/opt/yupp-agent/.env

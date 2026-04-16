@@ -267,6 +267,34 @@ python -m ypl.db.tools.dump_staging_to_local --data-only
 
 Uses the **read replica** by default. Pass `--use-primary` to hit the primary instead. If GCP credentials aren't available, the script prompts for host/port/database/user/password interactively.
 
+### Dump production → restore to a monolith VM (cross-account safe)
+
+For cases where you need to move a full copy of prod `yadb` into a new Postgres instance (e.g. standing up a self-hosted monolith box in a different GCP account), use the env-driven pair:
+
+- `ypl/db/tools/dump_prod_yadb.py` — pure `pg_dump` wrapper, no Secret Manager lookups
+- `ypl/db/tools/restore_dump.py` — `pg_restore` wrapper that clears and reloads the target
+
+Both read connection URLs from env vars only, so they work from anywhere with network access to the DB.
+
+```bash
+# On any machine that can reach prod yadb (e.g. a bouncer-adjacent VM).
+# Prefer connecting direct to Cloud SQL's private IP — pg_dump needs a stable
+# single session, which breaks in PgBouncer transaction-pool mode.
+export PG_SOURCE_URL='postgresql://USER:PASS@CLOUDSQL_PRIVATE_IP:5432/yadb?sslmode=require'
+python -m ypl.db.tools.dump_prod_yadb
+# Writes yadb_prod_<timestamp>.dump to ~/tmp/yadb-dumps/ (custom format, compressed)
+
+# Copy the dump to the destination VM:
+scp ~/tmp/yadb-dumps/yadb_prod_*.dump monolith-vm:/tmp/
+
+# On the destination VM (can be in a different GCP project / account):
+export PG_DEST_URL='postgresql://postgres:postgres@127.0.0.1:5432/yadb'
+python -m ypl.db.tools.restore_dump --file /tmp/yadb_prod_<timestamp>.dump --stamp-alembic
+# Drops + recreates public schema (asks first), pg_restore -j 4, then alembic stamp head
+```
+
+Both scripts have `--help` with the full flag list (`--tables`, `--schema-only`, `--data-only` on dump; `--jobs`, `--no-confirm`, `--stamp-alembic` on restore).
+
 ## Deployment
 
 ### Overview

@@ -8,8 +8,8 @@ Before=yupp-streamlit.service
 
 [Service]
 Type=simple
-User=yupp
-Group=yupp
+User=ahs
+Group=ahs
 WorkingDirectory=/opt/yupp-agent
 
 # .env file holds all secrets — chmod 600, owned by yupp user
