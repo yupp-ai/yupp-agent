@@ -486,29 +486,31 @@ else
 fi
 
 # Create / update roles (idempotent).
+#
+# psql :'varname' substitution doesn't reach inside DO $$…$$ blocks (the
+# dollar-quoting is opaque to psql's variable expansion), so we interpolate
+# the passwords at the bash level and rely on server-side `format(%L)` for
+# safe SQL literal quoting. Passwords are hex from `openssl rand -hex 16`
+# — no special SQL chars, but %L is still the right tool for the job.
 info "Configuring Postgres roles schema_manager + be_app_user…"
-sudo -u postgres psql -v ON_ERROR_STOP=1 \
-    -v sm_pw="$SCHEMA_MANAGER_PASSWORD" \
-    -v app_pw="$BE_APP_USER_PASSWORD" \
-    -v db_name="$DB_NAME" >/dev/null <<'SQL'
-DO $$
+sudo -u postgres psql -v ON_ERROR_STOP=1 >/dev/null <<SQL
+DO \$\$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'schema_manager') THEN
-        EXECUTE format('CREATE ROLE schema_manager LOGIN PASSWORD %L CREATEDB', :'sm_pw');
+        EXECUTE format('CREATE ROLE schema_manager LOGIN PASSWORD %L CREATEDB', '${SCHEMA_MANAGER_PASSWORD}');
     ELSE
-        EXECUTE format('ALTER ROLE schema_manager WITH LOGIN PASSWORD %L CREATEDB', :'sm_pw');
+        EXECUTE format('ALTER ROLE schema_manager WITH LOGIN PASSWORD %L CREATEDB', '${SCHEMA_MANAGER_PASSWORD}');
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'be_app_user') THEN
-        EXECUTE format('CREATE ROLE be_app_user LOGIN PASSWORD %L', :'app_pw');
+        EXECUTE format('CREATE ROLE be_app_user LOGIN PASSWORD %L', '${BE_APP_USER_PASSWORD}');
     ELSE
-        EXECUTE format('ALTER ROLE be_app_user WITH LOGIN PASSWORD %L', :'app_pw');
+        EXECUTE format('ALTER ROLE be_app_user WITH LOGIN PASSWORD %L', '${BE_APP_USER_PASSWORD}');
     END IF;
 END
-$$;
+\$\$;
 
 -- schema_manager owns the database (so it has free reign on DDL).
--- quote_ident handles arbitrary database names safely.
-SELECT format('ALTER DATABASE %I OWNER TO schema_manager', :'db_name') \gexec
+ALTER DATABASE "${DB_NAME}" OWNER TO schema_manager;
 SQL
 
 # Per-database grants: must be run inside yadb itself.
