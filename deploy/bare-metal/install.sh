@@ -33,6 +33,11 @@ REPO_URL="${REPO_URL:-https://github.com/yupp-ai/yupp-agent.git}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/yupp-agent}"
 APP_USER="${APP_USER:-ahs}"
 PYTHON_VERSION="${PYTHON_VERSION:-3.12}"
+# Pin Poetry to match local dev machines. Poetry 1.x and 2.x compute lock-file
+# content-hashes differently, so mixing versions makes `poetry install` complain
+# about "pyproject.toml changed significantly since poetry.lock was last generated"
+# even when the lock is correct.
+POETRY_VERSION="${POETRY_VERSION:-1.8.5}"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; BOLD='\033[1m'; NC='\033[0m'
@@ -181,9 +186,14 @@ fi
 systemctl enable --now redis-server
 info "Redis: $(redis-server --version | head -1)"
 
-if ! command -v poetry &>/dev/null; then
-    info "Installing Poetry…"
-    curl -sSL https://install.python-poetry.org | POETRY_HOME=/usr/local python3 -
+INSTALLED_POETRY_VERSION="$(poetry --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)"
+if [[ -z "$INSTALLED_POETRY_VERSION" ]]; then
+    info "Installing Poetry ${POETRY_VERSION}…"
+    curl -sSL https://install.python-poetry.org | POETRY_HOME=/usr/local POETRY_VERSION="$POETRY_VERSION" python3 -
+elif [[ "$INSTALLED_POETRY_VERSION" != "$POETRY_VERSION" ]]; then
+    warn "Existing Poetry is ${INSTALLED_POETRY_VERSION}, expected ${POETRY_VERSION}."
+    warn "Reinstalling Poetry ${POETRY_VERSION} to avoid lock-file hash mismatches."
+    curl -sSL https://install.python-poetry.org | POETRY_HOME=/usr/local POETRY_VERSION="$POETRY_VERSION" python3 - --force
 fi
 info "Poetry: $(poetry --version)"
 
