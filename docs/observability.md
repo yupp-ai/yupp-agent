@@ -80,7 +80,7 @@ Description=Yupp Agent Platform (monolith)
 After=network.target
 
 [Service]
-User=yupp
+User=ahs
 WorkingDirectory=/opt/yupp-agent
 EnvironmentFile=/opt/yupp-agent/.env
 Environment="SERVICE_NAME=mono_server"
