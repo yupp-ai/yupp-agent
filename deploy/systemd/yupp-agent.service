@@ -20,6 +20,9 @@ Environment=USE_GOOGLE_CLOUD_LOGGING=false
 Environment=DISABLE_WRITE_GOOGLE_CLOUD_METRICS=true
 Environment=PYTHONPATH=/opt/yupp-agent
 Environment=PYTHONUNBUFFERED=1
+# Include /opt/yupp-agent/.local/bin so AHS can spawn `claude` (the Claude Code
+# installer places it there). /usr/local/bin is where `codex` and `poetry` live.
+Environment=PATH=/opt/yupp-agent/.local/bin:/usr/local/bin:/usr/bin:/bin
 
 ExecStart=/opt/yupp-agent/.venv/bin/uvicorn \
     ypl.mono_server.server:app \
