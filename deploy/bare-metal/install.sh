@@ -221,9 +221,41 @@ if ! sudo -u "$APP_USER" grep -q "github.com" "${INSTALL_DIR}/.ssh/known_hosts" 
 fi
 
 clone_attempt() {
-    # Probe the remote without side effects — `git ls-remote HEAD` exits non-zero
-    # on auth failure / missing repo but doesn't leave a half-cloned dir behind.
-    sudo -u "$APP_USER" git ls-remote "$REPO_URL" HEAD &>/dev/null
+    # Probe the remote without side effects. `git ls-remote HEAD` exits non-zero
+    # on auth failure / missing repo. GIT_TERMINAL_PROMPT=0 + GIT_ASKPASS=/bin/true
+    # prevents git from interactively prompting for HTTPS creds (we want the
+    # probe to silently fail, not hang asking for a username/password).
+    # BatchMode=yes does the same for SSH URLs — fail instead of prompt.
+    sudo -u "$APP_USER" env \
+        GIT_TERMINAL_PROMPT=0 \
+        GIT_ASKPASS=/bin/true \
+        GIT_SSH_COMMAND="ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5" \
+        git ls-remote "$REPO_URL" HEAD &>/dev/null
+}
+
+clone_into_nonempty_dir() {
+    # `git clone` refuses non-empty targets, but by the time we get here the
+    # install dir may already contain .ssh/ from the deploy-key walkthrough
+    # (or an aborted earlier run). Clone into a tmp dir and move contents in,
+    # skipping anything that would collide.
+    local tmpclone
+    tmpclone=$(sudo -u "$APP_USER" mktemp -d)
+    sudo -u "$APP_USER" git clone "$REPO_URL" "$tmpclone"
+    info "Moving clone contents into ${INSTALL_DIR}…"
+    sudo -u "$APP_USER" env TMPCLONE="$tmpclone" DEST="$INSTALL_DIR" bash <<'EOSH'
+set -e
+shopt -s dotglob nullglob
+for f in "$TMPCLONE"/*; do
+    base=$(basename "$f")
+    target="$DEST/$base"
+    if [[ -e "$target" ]]; then
+        echo "  skipping (already exists): $base"
+    else
+        mv "$f" "$DEST/"
+    fi
+done
+EOSH
+    rmdir "$tmpclone" 2>/dev/null || rm -rf "$tmpclone"
 }
 
 guide_deploy_key_setup() {
@@ -297,12 +329,12 @@ if [[ -d "${INSTALL_DIR}/.git" ]]; then
     sudo -u "$APP_USER" git -C "$INSTALL_DIR" pull --ff-only \
         || error "git pull failed. Fix the issue (e.g. deploy key missing) and re-run."
 else
-    info "Testing access to ${REPO_URL}…"
+    info "Testing access to ${REPO_URL}… (silent probe — no credential prompts)"
     if ! clone_attempt; then
         guide_deploy_key_setup
     fi
     info "Cloning ${REPO_URL} → ${INSTALL_DIR}…"
-    sudo -u "$APP_USER" git clone "$REPO_URL" "$INSTALL_DIR"
+    clone_into_nonempty_dir
 fi
 
 # ---------------------------------------------------------------------------
