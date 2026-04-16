@@ -55,8 +55,8 @@ if not API_KEY:
 # MCP auth — use a dedicated e2e dev token (separate from production YUPPSTER_MCP_TOKEN)
 MCP_TOKEN = os.environ.get("YUPPSTER_MCP_TOKEN_E2E", "")
 
-# User email for resolving user_id
-E2E_USER_EMAIL = os.environ.get("E2E_USER_EMAIL", "lguan@yupp.ai")
+# User email for resolving user_id (no default — must be set explicitly)
+E2E_USER_EMAIL = os.environ.get("E2E_USER_EMAIL", "")
 E2E_USER_ID = os.environ.get("E2E_USER_ID", "")
 
 # Slack credentials
@@ -120,6 +120,8 @@ def user_id(api_key: str) -> str:
     """Resolve a test user_id via /ahs/resolve_user or E2E_USER_ID env var."""
     if E2E_USER_ID:
         return E2E_USER_ID
+    if not E2E_USER_EMAIL:
+        pytest.skip("E2E_USER_EMAIL or E2E_USER_ID must be set in .env.e2e")
     try:
         resp = httpx.post(
             f"{BASE_URL}/ahs/resolve_user",
@@ -132,7 +134,7 @@ def user_id(api_key: str) -> str:
             return uid
     except Exception:
         pass
-    pytest.skip(f"Could not resolve user_id for {E2E_USER_EMAIL} — set E2E_USER_ID env var")
+    pytest.skip(f"Could not resolve user_id for {E2E_USER_EMAIL} — check E2E_USER_EMAIL or set E2E_USER_ID")
 
 
 @pytest.fixture
