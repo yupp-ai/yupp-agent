@@ -1,7 +1,6 @@
 """E2E tests for AHS schedule CRUD (one-time, recurring, edit, trigger, cancel)."""
 
 from __future__ import annotations
-
 from datetime import UTC, datetime, timedelta
 
 import httpx
