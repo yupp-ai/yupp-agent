@@ -1,5 +1,7 @@
 # yupp-agent
 
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
+
 A multi-agent cloud platform for building, deploying, and operating autonomous AI agents at scale.
 
 The platform lets teams scale AI usage from a handful of ad-hoc prompts to a fleet of specialized agents working in parallel. Each agent gets a persistent identity, long-term shared memory, sandboxed code execution, cron-based scheduling, and the ability to spawn sub-agents — running as a first-class service with full observability, not a script bolted onto an LLM. New agents are added through configuration, not code, so the system grows organically as teams discover new workflows worth automating.
@@ -363,3 +365,9 @@ alembic -c alembic.ini upgrade head
 Cloud SQL instances:
 - **Staging:** `yupp-llms:us-east4:yupp-agent-dev`
 - **Production:** `yupp-llms:us-east4:yupp-agent-prod`
+
+## License
+
+Licensed under the [Apache License, Version 2.0](./LICENSE). See the `LICENSE` file for the full text.
+
+Copyright © Yupp AI. Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.

@@ -1,6 +1,6 @@
 [project]
 name = "ypl-agent"
-description = "Agent infrastructure service for Yupp"
+description = "Yupp Agent Platform"
 version = "0.0.1"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -80,10 +80,14 @@ no-lines-before = ["future", "standard-library"]
 [tool.poetry]
 name = "ypl-agent"
 version = "0.0.1"
-description = "Agent infrastructure service for Yupp"
-license = "Proprietary"
+description = "Yupp Agent Platform"
+license = "Apache-2.0"
 authors = [
-    "Yupp Eng <eng@yupp.ai>",
+    "Tian Wang",
+    "Lingfeng Guan",
+    "Axel Delafosse",
+    "Gilad Mishne",
+    "Ansuman Behera",
 ]
 readme = "README.md"
 packages = [{include = "ypl"}]
