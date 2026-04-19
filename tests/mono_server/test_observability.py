@@ -75,14 +75,14 @@ class TestServiceFieldProcessor:
             result = _service_field_processor(None, "info", {"event": "hello"})
         assert result["service"] == "ahs"
 
-    def test_service_field_defaults_to_yupp_agent(self) -> None:
+    def test_service_field_defaults_to_ahs_mono(self) -> None:
         # Build an environment that definitely has no SERVICE_NAME key.
         env_without = {k: v for k, v in os.environ.items() if k != "SERVICE_NAME"}
         with patch.dict(os.environ, env_without, clear=True):
             from ypl.structured_logger import _service_field_processor
 
             result = _service_field_processor(None, "info", {"event": "hello"})
-        assert result["service"] == "yupp-agent"
+        assert result["service"] == "ahs-mono"
 
     def test_explicit_service_field_not_overwritten(self) -> None:
         """setdefault semantics: a pre-bound ``service`` value is preserved."""

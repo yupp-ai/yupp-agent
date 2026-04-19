@@ -31,7 +31,7 @@ load_dotenv(os.environ["DOTENV_PATH"]) if "DOTENV_PATH" in os.environ else load_
 def _service_field_processor(logger: Any, name: str, event_dict: dict[str, Any]) -> dict[str, Any]:
     """Inject a ``service`` field from the SERVICE_NAME env var into every log record.
 
-    Defaults to ``"yupp-agent"`` when SERVICE_NAME is not set.  Deployments
+    Defaults to ``"ahs-mono"`` when SERVICE_NAME is not set.  Deployments
     should set ``SERVICE_NAME`` to an identifier matching the running component
     (e.g. ``"ahs"``, ``"sag"``, ``"mcp"``, ``"mono_server"``) so that logs
     from different services can be correlated and filtered independently in any
