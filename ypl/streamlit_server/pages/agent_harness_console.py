@@ -3,6 +3,7 @@
 from __future__ import annotations
 import html
 import json
+import os
 import uuid
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -93,14 +94,26 @@ for _name, _sid in LINEAR_TO_SLACK_ID.items():
         _SLACK_ID_TO_NAME[_sid] = _name
 
 
+def _first_available_agent_bot_token() -> str | None:
+    """Return the first configured SAG agent bot token, or None.
+
+    Used only for nice-to-have Slack lookups (e.g., display-name resolution).
+    """
+    for key, value in os.environ.items():
+        if key.startswith("SLACK_AGENT_GATEWAY_") and key.endswith("_BOT_TOKEN") and value:
+            return value
+    return None
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def _fetch_slack_display_name(user_id: str) -> str | None:
     """Fetch display name from Slack API for user IDs not in the hardcoded map."""
+    bot_token = _first_available_agent_bot_token()
+    if not bot_token:
+        return None
     try:
         from slack_sdk.web import WebClient
-        from ypl.backend.utils.slack_utils import YuppSlackApps, get_slack_token_and_secret
 
-        bot_token, _ = get_slack_token_and_secret(YuppSlackApps.SOUL_SLACKBOT)
         client = WebClient(token=bot_token, timeout=3)
         response = client.users_info(user=user_id)
         profile = response["user"]["profile"]
@@ -751,7 +764,7 @@ def _render_events_cost_tokens(events: list[dict[str, Any]]) -> None:
             # Legacy format: cache_creation as a dict of per-block counts
             cache_creation_data = usage.get("cache_creation", {})
             if isinstance(cache_creation_data, dict) and cache_creation_data:
-                cache_create = sum(int(v) for v in cache_creation_data.values() if isinstance(v, (int, float)))
+                cache_create = sum(int(v) for v in cache_creation_data.values() if isinstance(v, int | float))
             reasoning = usage.get("reasoning_tokens", 0)
             service_tier = usage.get("service_tier", "")
 
@@ -808,7 +821,7 @@ def _render_events_cost_tokens(events: list[dict[str, Any]]) -> None:
                     cache_creation_data = usage_inner.get("cache_creation", {})
                     cache_create = 0
                     if isinstance(cache_creation_data, dict):
-                        cache_create = sum(int(v) for v in cache_creation_data.values() if isinstance(v, (int, float)))
+                        cache_create = sum(int(v) for v in cache_creation_data.values() if isinstance(v, int | float))
 
                     label = "↳ result"
                     if cmd:

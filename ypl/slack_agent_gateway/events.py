@@ -976,7 +976,7 @@ async def handle_reaction_added(
 
     # Resolve Slack user ID to internal Yupp user_id (None if not a known @yupp.ai employee)
     try:
-        yupp_user_id = await resolve_slack_user_to_yupp_user_id(user_id)
+        yupp_user_id = await resolve_slack_user_to_yupp_user_id(user_id, bot_token=app_config.bot_token)
     except Exception:
         logger.exception(
             "DB error resolving Slack user to Yupp user_id, falling back to SYSTEM",
