@@ -46,7 +46,7 @@ _TIMESTAMP_COMPARISON_PATTERNS: dict[_TimestampComparison, tuple[re.Pattern[str]
 
 
 def _is_gcp_logging_rate_limited_error(error: Exception) -> bool:
-    if isinstance(error, (ResourceExhausted, TooManyRequests)):
+    if isinstance(error, ResourceExhausted | TooManyRequests):
         return True
 
     return False

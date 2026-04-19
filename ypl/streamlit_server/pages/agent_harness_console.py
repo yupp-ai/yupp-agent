@@ -764,7 +764,7 @@ def _render_events_cost_tokens(events: list[dict[str, Any]]) -> None:
             # Legacy format: cache_creation as a dict of per-block counts
             cache_creation_data = usage.get("cache_creation", {})
             if isinstance(cache_creation_data, dict) and cache_creation_data:
-                cache_create = sum(int(v) for v in cache_creation_data.values() if isinstance(v, (int, float)))
+                cache_create = sum(int(v) for v in cache_creation_data.values() if isinstance(v, int | float))
             reasoning = usage.get("reasoning_tokens", 0)
             service_tier = usage.get("service_tier", "")
 
@@ -821,7 +821,7 @@ def _render_events_cost_tokens(events: list[dict[str, Any]]) -> None:
                     cache_creation_data = usage_inner.get("cache_creation", {})
                     cache_create = 0
                     if isinstance(cache_creation_data, dict):
-                        cache_create = sum(int(v) for v in cache_creation_data.values() if isinstance(v, (int, float)))
+                        cache_create = sum(int(v) for v in cache_creation_data.values() if isinstance(v, int | float))
 
                     label = "↳ result"
                     if cmd:
