@@ -37,8 +37,9 @@ info "git pull (as ${APP_USER})…"
 sudo -u "$APP_USER" git -C "$INSTALL_DIR" pull --ff-only \
     || die "git pull failed (deploy key missing or non-fast-forward). Fix and retry."
 
-BEFORE_SHA=$(sudo -u "$APP_USER" git -C "$INSTALL_DIR" rev-parse HEAD)
-info "Now at $(git log -1 --oneline)"
+# Must run git as ${APP_USER} — root-running-git on an ahs-owned checkout
+# trips git's "dubious ownership" guard.
+info "Now at $(sudo -u "$APP_USER" git -C "$INSTALL_DIR" log -1 --oneline)"
 
 # --- 2. Sync Python deps ----------------------------------------------------
 info "poetry install (cheap if nothing changed)…"
@@ -69,12 +70,18 @@ if [[ $UNITS_CHANGED -eq 1 ]]; then
 fi
 
 # --- 4. Database migrations ------------------------------------------------
+# Run alembic in a transient systemd unit that reuses the service's
+# EnvironmentFile. Bash `source .env` can't parse the JSON connection
+# strings (commas inside {...} get interpreted as shell separators); systemd
+# parses EnvironmentFile= correctly since it's the same format the service uses.
 info "alembic upgrade head (no-op if already at head)…"
-sudo -u "$APP_USER" env INSTALL_DIR="$INSTALL_DIR" bash -c '
-    cd "$INSTALL_DIR"
-    set -a; . ./.env; set +a
-    .venv/bin/python -m alembic -c alembic.ini upgrade head
-' || die "alembic upgrade head failed. Fix the schema issue before retrying."
+systemd-run --wait --quiet --pipe \
+    --property=User="${APP_USER}" \
+    --property=Group="${APP_USER}" \
+    --property=EnvironmentFile="${INSTALL_DIR}/.env" \
+    --property=WorkingDirectory="${INSTALL_DIR}" \
+    "${INSTALL_DIR}/.venv/bin/python" -m alembic -c alembic.ini upgrade head \
+    || die "alembic upgrade head failed. Fix the schema issue before retrying."
 
 # --- 5. Restart services ---------------------------------------------------
 info "Restarting: ${SERVICES[*]}"
