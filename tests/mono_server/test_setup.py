@@ -156,9 +156,9 @@ class TestGenerateEnvContent:
         content = generate_env_content(self._PARAMS)
         assert "DEFAULT_DB=agentdb" in content
 
-    def test_environment_local(self) -> None:
+    def test_environment_selfhosted(self) -> None:
         content = generate_env_content(self._PARAMS)
-        assert "ENVIRONMENT=local" in content
+        assert "ENVIRONMENT=selfhosted" in content
 
     def test_returns_string(self) -> None:
         content = generate_env_content(self._PARAMS)

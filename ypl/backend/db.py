@@ -36,7 +36,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from ypl.backend.config import DbName, settings
+from ypl.backend.config import DbName, is_gcp_free_environment, settings
 from ypl.backend.utils.context_utils import async_instrumenting_context_manager
 from ypl.backend.utils.monitoring import metric_record
 from ypl.structured_logger import get_logger
@@ -180,7 +180,7 @@ def on_engine_error(ctx: ExceptionContext) -> None:
 
 def get_engine_for(db: DbName = "yuppdb", *, replica: bool = False) -> Engine:
     """Get or create a sync engine for the given database."""
-    if replica and settings.ENVIRONMENT == "local":
+    if replica and is_gcp_free_environment(settings.ENVIRONMENT):
         replica = False
     key = (db, replica)
     if key not in _engines:
@@ -223,7 +223,7 @@ SessionDep = Annotated[Session, Depends(get_db)]
 
 def get_async_engine_for(db: DbName = "yuppdb", *, replica: bool = False) -> AsyncEngine:
     """Get or create an async engine for the given database."""
-    if replica and settings.ENVIRONMENT == "local":
+    if replica and is_gcp_free_environment(settings.ENVIRONMENT):
         replica = False
     key = (db, replica)
     if key not in _async_engines:

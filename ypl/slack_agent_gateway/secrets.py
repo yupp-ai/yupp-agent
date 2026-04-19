@@ -11,7 +11,7 @@ from google.api_core import exceptions as core_exceptions
 from google.api_core import retry_async
 from google.cloud import secretmanager_v1 as secretmanager
 
-from ypl.backend.config import settings
+from ypl.backend.config import is_gcp_free_environment, settings
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -134,7 +134,7 @@ async def create_agent_secret(
     Uses the same naming convention as fetch_agent_secret:
       ym-slack-agent-gateway-{agent_name}-{secret_type}-{environment}
 
-    This is a no-op in local/test environments.
+    This is a no-op in GCP-free environments (local/test/selfhosted).
 
     Args:
         agent_name: Agent name (e.g., "giladovski")
@@ -145,9 +145,10 @@ async def create_agent_secret(
     Raises:
         RuntimeError: If the GCP call fails.
     """
-    if settings.ENVIRONMENT in ("local", "test"):
+    if is_gcp_free_environment(settings.ENVIRONMENT):
         logger.debug(
-            "Skipping GCP secret creation in local/test environment",
+            "Skipping GCP secret creation in GCP-free environment",
+            environment=settings.ENVIRONMENT,
             agent_name=agent_name,
             secret_type=secret_type,
         )
@@ -202,7 +203,7 @@ async def update_bot_father_refresh_token(new_refresh_token: str) -> None:
     Called automatically when Slack issues a new refresh token during token rotation.
     The old refresh token is invalidated, so this must be persisted to GCP.
 
-    This is a no-op in local/test environments.
+    This is a no-op in GCP-free environments (local/test/selfhosted).
 
     Args:
         new_refresh_token: The new refresh token from Slack (xoxe-1-...).
@@ -210,8 +211,8 @@ async def update_bot_father_refresh_token(new_refresh_token: str) -> None:
     Raises:
         RuntimeError: If the GCP call fails.
     """
-    if settings.ENVIRONMENT in ("local", "test"):
-        logger.debug("Skipping GCP secret update in local/test environment")
+    if is_gcp_free_environment(settings.ENVIRONMENT):
+        logger.debug("Skipping GCP secret update in GCP-free environment", environment=settings.ENVIRONMENT)
         return
 
     if not settings.GCP_PROJECT_ID:
@@ -249,7 +250,7 @@ async def fetch_agent_secret(agent_name: str, secret_type: str) -> str | None:
     """Fetch an agent secret.
 
     Order of precedence:
-    - Local/test: Environment variable only
+    - GCP-free (local/test/selfhosted): Environment variable only
     - Staging/production: Environment variable (cached), then GCP Secret Manager
 
     Successfully fetched GCP secrets are cached in environment variables to avoid
@@ -267,8 +268,8 @@ async def fetch_agent_secret(agent_name: str, secret_type: str) -> str | None:
     if env_value:
         return env_value
 
-    # For local/test, don't try GCP
-    if settings.ENVIRONMENT in ("local", "test"):
+    # In GCP-free environments (local/test/selfhosted), env vars are the only source.
+    if is_gcp_free_environment(settings.ENVIRONMENT):
         return None
 
     # Fetch from GCP Secret Manager
