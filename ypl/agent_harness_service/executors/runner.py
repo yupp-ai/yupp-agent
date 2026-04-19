@@ -317,7 +317,7 @@ _TOP_HARNESS_TOOLS_PREDECLARED: list[str] = [
     "mcp__harness__list_available_repos",
 ]
 _TOP_YUPPSTER_TOOLS_PREDECLARED: list[str] = [
-    "mcp__yuppster-mcp-server__query_yuppdb",
+    "mcp__yuppster-mcp-server__query_agentdb",
     "mcp__yuppster-mcp-server__search_gcp_logs",
     "mcp__yuppster-mcp-server__create_yuppaste",
     "mcp__yuppster-mcp-server__read_yuppaste",

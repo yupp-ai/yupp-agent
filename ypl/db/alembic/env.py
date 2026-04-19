@@ -11,13 +11,13 @@ from ypl.db.all_models import all_models  # noqa: F401 for populating metadata.
 config = context.config
 settings = Settings()
 
-# This repo manages agentdb migrations (not yuppdb). Prefer the admin
-# connection (schema_manager role) if configured — plain agentdb is typically
-# the runtime app user (be_app_user) which doesn't have DDL privileges.
-# The admin property falls back to agentdb when POSTGRES_CONNECTION_AGENTDB_ADMIN
-# is empty, so single-role deployments keep working.
-ALEMBIC_DB_URL = settings.agentdb_admin_url(async_mode=False)
-ALEMBIC_DB_HOST = settings.agentdb_admin.host
+# Prefer the admin connection (schema_manager role) if configured — the
+# runtime Postgres role is typically be_app_user, which doesn't have DDL
+# privileges. The admin property falls back to the runtime connection when
+# POSTGRES_CONNECTION_AGENTDB_ADMIN is empty, so single-role deployments
+# keep working.
+ALEMBIC_DB_URL = settings.postgres_admin_url(async_mode=False)
+ALEMBIC_DB_HOST = settings.postgres_admin.host
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name, disable_existing_loggers=False)

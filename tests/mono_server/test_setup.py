@@ -152,10 +152,6 @@ class TestGenerateEnvContent:
         content = generate_env_content(self._PARAMS)
         assert "SLACK_AGENT_GW_ENCRYPTION_KEY=my_slack_key" in content
 
-    def test_default_db_agentdb(self) -> None:
-        content = generate_env_content(self._PARAMS)
-        assert "DEFAULT_DB=agentdb" in content
-
     def test_environment_selfhosted(self) -> None:
         content = generate_env_content(self._PARAMS)
         assert "ENVIRONMENT=selfhosted" in content

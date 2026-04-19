@@ -36,7 +36,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from ypl.backend.config import DbName, is_gcp_free_environment, settings
+from ypl.backend.config import is_gcp_free_environment, settings
 from ypl.backend.utils.context_utils import async_instrumenting_context_manager
 from ypl.backend.utils.monitoring import metric_record
 from ypl.structured_logger import get_logger
@@ -70,11 +70,11 @@ _PGBOUNCER_CONNECT_ARGS: dict[str, Any] = {
     "prepared_statement_cache_size": 0,
 }
 
-# Engine registry keyed by (db_name, replica)
-_engines: dict[tuple[DbName, bool], Engine] = {}
-_async_engines: dict[tuple[DbName, bool], AsyncEngine] = {}
+# Engine registry keyed by replica flag (single-DB deployment).
+_engines: dict[bool, Engine] = {}
+_async_engines: dict[bool, AsyncEngine] = {}
 
-# Legacy module-level aliases (yuppdb primary/replica) — set lazily
+# Module-level aliases (primary / replica) — set lazily
 engine: Engine | None = None
 engine_read_replica: Engine | None = None
 async_engine: AsyncEngine | None = None
@@ -178,34 +178,33 @@ def on_engine_error(ctx: ExceptionContext) -> None:
         )
 
 
-def get_engine_for(db: DbName = "yuppdb", *, replica: bool = False) -> Engine:
-    """Get or create a sync engine for the given database."""
+def get_engine_for(*, replica: bool = False) -> Engine:
+    """Get or create a sync engine (optionally targeting the read replica)."""
     if replica and is_gcp_free_environment(settings.ENVIRONMENT):
         replica = False
-    key = (db, replica)
-    if key not in _engines:
-        url = settings.db_url_for(db, replica=replica, async_mode=False)
+    if replica not in _engines:
+        url = settings.db_url(replica=replica, async_mode=False)
         eng = create_engine(
             str(url),
             **_POOL_CONFIG,
             connect_args={"sslmode": settings.db_ssl_mode},
         )
         _attach_engine_listeners(eng)
-        _engines[key] = eng
-    return _engines[key]
+        _engines[replica] = eng
+    return _engines[replica]
 
 
 def get_engine() -> Engine:
     global engine
     if engine is None:
-        engine = get_engine_for("yuppdb")
+        engine = get_engine_for()
     return engine
 
 
 def get_engine_read_replica() -> Engine:
     global engine_read_replica
     if engine_read_replica is None:
-        engine_read_replica = get_engine_for("yuppdb", replica=True)
+        engine_read_replica = get_engine_for(replica=True)
     return engine_read_replica
 
 
@@ -221,13 +220,12 @@ def get_raw_sql(query: ClauseElement) -> Compiled:
 SessionDep = Annotated[Session, Depends(get_db)]
 
 
-def get_async_engine_for(db: DbName = "yuppdb", *, replica: bool = False) -> AsyncEngine:
-    """Get or create an async engine for the given database."""
+def get_async_engine_for(*, replica: bool = False) -> AsyncEngine:
+    """Get or create an async engine (optionally targeting the read replica)."""
     if replica and is_gcp_free_environment(settings.ENVIRONMENT):
         replica = False
-    key = (db, replica)
-    if key not in _async_engines:
-        conn = settings.get_pg_connection(db, replica=replica)
+    if replica not in _async_engines:
+        conn = settings.get_pg_connection(replica=replica)
         extra_kwargs: dict[str, Any] = {}
         if replica:
             extra_kwargs["isolation_level"] = "READ COMMITTED"
@@ -235,7 +233,7 @@ def get_async_engine_for(db: DbName = "yuppdb", *, replica: bool = False) -> Asy
             eng = create_async_engine(
                 "postgresql+asyncpg://",
                 creator=_make_cloud_sql_creator(
-                    settings.cloud_sql_instance_for(db, replica=replica),
+                    settings.cloud_sql_instance(replica=replica),
                     conn.user,
                     conn.password,
                     conn.database,
@@ -245,27 +243,27 @@ def get_async_engine_for(db: DbName = "yuppdb", *, replica: bool = False) -> Asy
             )
         else:
             eng = create_async_engine(
-                str(settings.db_url_for(db, replica=replica, async_mode=True)),
+                str(settings.db_url(replica=replica, async_mode=True)),
                 **_POOL_CONFIG,
                 connect_args={"ssl": settings.db_ssl_mode, **_PGBOUNCER_CONNECT_ARGS},
                 **extra_kwargs,
             )
         _attach_engine_listeners(eng)
-        _async_engines[key] = eng
-    return _async_engines[key]
+        _async_engines[replica] = eng
+    return _async_engines[replica]
 
 
 def get_async_engine() -> AsyncEngine:
     global async_engine
     if async_engine is None:
-        async_engine = get_async_engine_for("yuppdb")
+        async_engine = get_async_engine_for()
     return async_engine
 
 
 def get_async_engine_read_replica() -> AsyncEngine:
     global async_engine_read_replica
     if async_engine_read_replica is None:
-        async_engine_read_replica = get_async_engine_for("yuppdb", replica=True)
+        async_engine_read_replica = get_async_engine_for(replica=True)
     return async_engine_read_replica
 
 
@@ -355,9 +353,9 @@ def _invalidate_connection(conn: Any) -> None:
 
 
 @asynccontextmanager
-async def get_async_session_for(db: DbName = "yuppdb", *, replica: bool = False) -> AsyncGenerator[AsyncSession, None]:
-    """Generic session factory — explicitly choose a database."""
-    eng = get_async_engine_for(db, replica=replica)
+async def get_async_session_for(*, replica: bool = False) -> AsyncGenerator[AsyncSession, None]:
+    """Async session factory — optionally targeting the read replica."""
+    eng = get_async_engine_for(replica=replica)
     maker = async_sessionmaker(eng, class_=AsyncSession, expire_on_commit=False, close_resets_only=False)
     session = None
     try:
@@ -371,16 +369,17 @@ async def get_async_session_for(db: DbName = "yuppdb", *, replica: bool = False)
 @async_instrumenting_context_manager(metric_prefix="db/session/primary")
 @asynccontextmanager
 async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
-    """Async session using settings.DEFAULT_DB (agentdb for AHS/SAG, yuppdb otherwise)."""
-    async with get_async_session_for(settings.DEFAULT_DB) as session:
+    """Async session against the primary Postgres connection."""
+    async with get_async_session_for() as session:
         yield session
 
 
 @async_instrumenting_context_manager(metric_prefix="db/session/read_replica")
 @asynccontextmanager
 async def get_async_session_read_replica() -> AsyncGenerator[AsyncSession, None]:
-    """Read-replica session using settings.DEFAULT_DB."""
-    async with get_async_session_for(settings.DEFAULT_DB, replica=True) as session:
+    """Async session against the read replica (falls back to primary in
+    GCP-free environments)."""
+    async with get_async_session_for(replica=True) as session:
         yield session
 
 

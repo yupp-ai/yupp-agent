@@ -37,9 +37,6 @@ def is_gcp_free_environment(env: str) -> bool:
     return env in GCP_FREE_ENVIRONMENTS
 
 
-DbName = Literal["yuppdb", "agentdb"]
-
-
 class PostgresConnection(pydantic.BaseModel):
     """A single Postgres connection target parsed from a JSON env var."""
 
@@ -95,16 +92,14 @@ class Settings(BaseSettings):
 
     DOMAIN: str = "localhost"
     ENVIRONMENT: EnvironmentType = "local"
-    # Which database get_async_session() uses by default. Set to "agentdb" for AHS/SAG services.
-    DEFAULT_DB: DbName = "yuppdb"
     PROJECT_NAME: str = ""
     PRIMARY_CLOUD_PROVIDER: str = "google_cloud_run"
 
-    # Database connections are configured via JSON env vars. Each contains:
+    # Postgres connection, configured via JSON env var. Contains:
     # {"user", "password", "host", "host_non_pooling", "database", "cloud_sql_proxy_socket"(optional)}
-    # yuppdb = the shared Yupp database (from yupp-mind), agentdb = the agent-specific database.
-    POSTGRES_CONNECTION_YUPPDB: str = ""
-    POSTGRES_CONNECTION_YUPPDB_REPLICA: str = ""
+    # The _AGENTDB env-var suffix is retained for backward compatibility with
+    # existing deployments — yupp-agent is now single-DB, but we didn't churn
+    # every operator's .env just to drop the suffix.
     POSTGRES_CONNECTION_AGENTDB: str = ""
     POSTGRES_CONNECTION_AGENTDB_REPLICA: str = ""
     # DDL / Alembic connection. Higher-privilege role (e.g. schema_manager)
@@ -618,44 +613,37 @@ class Settings(BaseSettings):
 
     @computed_field  # type: ignore[prop-decorator]
     @cached_property
-    def yuppdb(self) -> PostgresConnection:
-        return self._parse_pg_connection(self.POSTGRES_CONNECTION_YUPPDB)
-
-    @computed_field  # type: ignore[prop-decorator]
-    @cached_property
-    def yuppdb_replica(self) -> PostgresConnection:
-        return self._parse_pg_connection(self.POSTGRES_CONNECTION_YUPPDB_REPLICA)
-
-    @computed_field  # type: ignore[prop-decorator]
-    @cached_property
-    def agentdb(self) -> PostgresConnection:
+    def postgres(self) -> PostgresConnection:
+        """Primary Postgres connection (runtime app role)."""
         return self._parse_pg_connection(self.POSTGRES_CONNECTION_AGENTDB)
 
     @computed_field  # type: ignore[prop-decorator]
     @cached_property
-    def agentdb_replica(self) -> PostgresConnection:
+    def postgres_replica(self) -> PostgresConnection:
+        """Read-replica Postgres connection. Falls back to the primary in
+        GCP-free environments (local / test / selfhosted) — see
+        ``get_engine_for`` in ``ypl.backend.db``."""
         return self._parse_pg_connection(self.POSTGRES_CONNECTION_AGENTDB_REPLICA)
 
     @computed_field  # type: ignore[prop-decorator]
     @cached_property
-    def agentdb_admin(self) -> PostgresConnection:
-        """Admin / DDL connection (e.g. schema_manager). Falls back to agentdb
-        if POSTGRES_CONNECTION_AGENTDB_ADMIN is not set, so existing deployments
-        that only have one role keep working."""
+    def postgres_admin(self) -> PostgresConnection:
+        """Admin / DDL connection (e.g. schema_manager). Falls back to the
+        regular runtime connection if POSTGRES_CONNECTION_AGENTDB_ADMIN is
+        not set, so existing deployments that only have one role keep working.
+        """
         raw = self.POSTGRES_CONNECTION_AGENTDB_ADMIN or self.POSTGRES_CONNECTION_AGENTDB
         return self._parse_pg_connection(raw)
 
-    def agentdb_admin_url(self, *, async_mode: bool = False) -> str:
-        """Build a SQLAlchemy URL for the agentdb admin connection — used by
-        Alembic to run DDL. If no admin creds are configured, returns the same
-        URL as the regular agentdb connection."""
-        return self._build_db_url(self.agentdb_admin, async_mode=async_mode)
+    def postgres_admin_url(self, *, async_mode: bool = False) -> str:
+        """Build a SQLAlchemy URL for the admin connection — used by Alembic
+        to run DDL. If no admin creds are configured, returns the same URL
+        as the regular runtime connection."""
+        return self._build_db_url(self.postgres_admin, async_mode=async_mode)
 
-    def get_pg_connection(self, db: DbName = "yuppdb", *, replica: bool = False) -> PostgresConnection:
-        """Return the PostgresConnection for the given database and replica flag."""
-        if db == "yuppdb":
-            return self.yuppdb_replica if replica else self.yuppdb
-        return self.agentdb_replica if replica else self.agentdb
+    def get_pg_connection(self, *, replica: bool = False) -> PostgresConnection:
+        """Return the PostgresConnection for the given replica flag."""
+        return self.postgres_replica if replica else self.postgres
 
     def _use_proxy_socket(self, conn: PostgresConnection, async_mode: bool) -> bool:
         """Whether to connect via the Cloud SQL Auth Proxy unix socket."""
@@ -689,14 +677,13 @@ class Settings(BaseSettings):
             database=conn.database,
         ).render_as_string(hide_password=False)
 
-    def db_url_for(self, db: DbName = "yuppdb", *, replica: bool = False, async_mode: bool = False) -> str:
-        """Build a SQLAlchemy database URL for the given database."""
-        return self._build_db_url(self.get_pg_connection(db, replica=replica), async_mode=async_mode)
+    def db_url(self, *, replica: bool = False, async_mode: bool = False) -> str:
+        """Build a SQLAlchemy database URL."""
+        return self._build_db_url(self.get_pg_connection(replica=replica), async_mode=async_mode)
 
-    def cloud_sql_instance_for(self, db: DbName = "yuppdb", *, replica: bool = False) -> str:
+    def cloud_sql_instance(self, *, replica: bool = False) -> str:
         """Instance connection name (e.g. 'yupp-llms:us-east4:sarai-chat-prod')."""
-        conn = self.get_pg_connection(db, replica=replica)
-        return conn.cloud_sql_proxy_socket.removeprefix("/cloudsql/")
+        return self.get_pg_connection(replica=replica).cloud_sql_proxy_socket.removeprefix("/cloudsql/")
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -704,27 +691,6 @@ class Settings(BaseSettings):
         if is_gcp_free_environment(self.ENVIRONMENT) or self.ENABLE_CLOUDSQL_PROXY:
             return "disable"
         return "require"
-
-    # ---- Convenience aliases (yuppdb, the default) for backward compat ----
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def db_url(self) -> str:
-        return self.db_url_for("yuppdb", async_mode=False)
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def db_url_async(self) -> str:
-        return self.db_url_for("yuppdb", async_mode=True)
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def db_url_read_replica(self) -> str:
-        return self.db_url_for("yuppdb", replica=True, async_mode=False)
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def db_url_async_read_replica(self) -> str:
-        return self.db_url_for("yuppdb", replica=True, async_mode=True)
 
     def _check_default_secret(self, var_name: str, value: str | None) -> None:
         if value == DEFAULT_UNSAFE_PASSWORD:
@@ -766,9 +732,10 @@ class Settings(BaseSettings):
             if os.getenv("PYTEST_CURRENT_TEST") is None and not (
                 os.getenv("IN_AHS_E2E_TEST") and self.ENABLE_CLOUDSQL_PROXY
             ):
-                # Skip validation when yuppdb is not configured (e.g. SAG only uses agentdb)
-                if self.POSTGRES_CONNECTION_YUPPDB:
-                    conn = self.yuppdb
+                # Skip validation when the primary connection is not configured
+                # (e.g. a service that doesn't talk to Postgres at all).
+                if self.POSTGRES_CONNECTION_AGENTDB:
+                    conn = self.postgres
                     test_values = ["test", "postgres", "localhost:5432"]
                     if (
                         conn.user in test_values

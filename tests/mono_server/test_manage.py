@@ -297,11 +297,11 @@ def test_get_async_engine_returns_engine_instance() -> None:
     from sqlalchemy.ext.asyncio import AsyncEngine
     from ypl.mono_server.manage import _get_async_engine
 
-    # Patch settings.db_url_for to return a valid-looking (but fake) URL so
+    # Patch settings.db_url to return a valid-looking (but fake) URL so
     # we don't need a real Postgres instance.
     fake_url = "postgresql+asyncpg://user:pass@localhost:5432/testdb"
     mock_settings = MagicMock()
-    mock_settings.db_url_for.return_value = fake_url
+    mock_settings.db_url.return_value = fake_url
 
     with patch("ypl.mono_server.manage.create_async_engine") as mock_create:
         mock_create.return_value = MagicMock(spec=AsyncEngine)

@@ -50,7 +50,7 @@ def _get_async_engine() -> AsyncEngine:
     try:
         from ypl.backend.config import settings
 
-        url = settings.db_url_for("agentdb", async_mode=True)
+        url = settings.db_url(async_mode=True)
         return create_async_engine(url, pool_pre_ping=True)
     except Exception as exc:
         console.print(

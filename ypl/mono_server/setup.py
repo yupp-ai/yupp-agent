@@ -154,7 +154,6 @@ def generate_env_content(params: dict[str, str]) -> str:
 # =========================================================================
 
 ENVIRONMENT=selfhosted
-DEFAULT_DB=agentdb
 
 # ---------------------------------------------------------------------------
 # Database
