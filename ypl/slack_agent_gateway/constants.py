@@ -9,7 +9,7 @@ import os
 
 from sqlmodel import select
 
-from ypl.backend.config import settings
+from ypl.backend.config import is_gcp_free_environment, settings
 from ypl.backend.db import get_async_session_read_replica, retry_db
 from ypl.db import all_models as _  # noqa: F401  # Ensure all models are loaded for mapper config
 from ypl.db.slack_agent import SlackAgent, SlackAgentStatus
@@ -264,11 +264,15 @@ async def get_agent_configs() -> dict[str, AgentAppConfig]:
     Returns:
         Dict mapping app_id to AgentAppConfig
     """
-    # For local/test, use env vars only
-    if settings.ENVIRONMENT in ("local", "test"):
+    # In GCP-free environments (local/test/selfhosted), env vars are the only source —
+    # no DB-backed agent directory, no GCP Secret Manager fetches.
+    if is_gcp_free_environment(settings.ENVIRONMENT):
         configs = _load_agent_configs_from_env()
         if not configs:
-            logger.info("No agents configured for Slack Agent Gateway (local/test)")
+            logger.info(
+                "No agents configured for Slack Agent Gateway",
+                environment=settings.ENVIRONMENT,
+            )
         return configs
 
     # For staging/production, use database + GCP secrets
