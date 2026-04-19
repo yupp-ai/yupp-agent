@@ -162,30 +162,8 @@ class TeamMember(NamedTuple):
 
 
 TEAM_DIRECTORY: tuple[TeamMember, ...] = (
-    TeamMember("alexzandi@yupp.ai", "U08GVKCJ4Q0", "alexzandi", "zandialex"),
-    TeamMember("ansuman@yupp.ai", "U07CLADGQF2", "ansuman", "retired-Hurt"),
-    TeamMember("arawind@yupp.ai", "U07GV037C1X", "arawind", "arawind"),
-    TeamMember("ax@yupp.ai", "U07U348J9PD", "ax", "axeldelafosse"),
-    TeamMember("bhanu@yupp.ai", "U07LGE8BB0S", "bhanu", "BhanuTejaCH"),
-    TeamMember("bkumar@yupp.ai", "U08HSHNB6MU", "bkumar", "bkumar-yupp"),
-    TeamMember("ethan@yupp.ai", "U093T7VK07L", "ethan", None),
-    TeamMember("gcmouli@yupp.ai", "U07U9NG5ANR", "gcmouli", "moulisan"),
-    TeamMember("gilad@yupp.ai", "U07C01BEPL4", "gilad", "giladmishne"),
-    TeamMember("jamesgu@yupp.ai", "U09L33D1NEA", "jamesgu", "jamesgu-yupp"),
-    TeamMember("jimmy@yupp.ai", "U07DWRSM3DX", "jimmy", None),
-    TeamMember("lguan@yupp.ai", "U08PM4JMQHW", "lguan", "AmaxGuan"),
-    TeamMember("lore@yupp.ai", "U093W4CRXTP", "lore", None),
-    TeamMember("marmstrong@yupp.ai", "U08J3FE7JTE", "matt", None),
-    TeamMember("minqi@yupp.ai", "U07BX3T7YBV", "minqi", "BenMQ"),
-    TeamMember("pankaj@yupp.ai", "U07BXGN9PFC", "pankaj", "pankajgupta"),
-    TeamMember("pj@yupp.ai", "U08H4DVE1AA", "pj", "pjakhar-bsl"),
-    TeamMember("pratik@yupp.ai", "U08MFHXDDAN", "pratik", "pratikkumar2008"),
-    TeamMember("riley@yupp.ai", "U09HMH29MLM", "riley", "riley-yupp"),
-    TeamMember("ronak@yupp.ai", "U087W4B2FK4", "ronak", "ronakice"),
-    TeamMember("shyam@yupp.ai", "U0A6HDCQB4K", "shyam", "theultimateshyam"),
-    TeamMember("soumya@yupp.ai", "U097Y5SHKGF", None, None),
-    TeamMember("tian@yupp.ai", "U086VNKP095", "tian", "wangtian24"),
-    TeamMember("will@yupp.ai", "U07CLADAFB2", "will", "twillhorn"),
+    TeamMember("6004247+AmaxGuan@users.noreply.github.com", "U0ASXC300G2", "lguan", "AmaxGuan"),
+    TeamMember("182693487+wangtian24@users.noreply.github.com", "U0ATRKR7FR6", "tian", "wangtian24"),
 )
 
 _LINEAR_NAME_ALIASES: dict[str, str] = {
