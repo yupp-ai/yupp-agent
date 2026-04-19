@@ -111,7 +111,10 @@ def _load_agent_configs_from_env() -> dict[str, AgentAppConfig]:
     configs: dict[str, AgentAppConfig] = {}
 
     for agent_name in agent_names:
-        prefix = f"SLACK_AGENT_GATEWAY_{agent_name.upper()}"
+        # Agent names can contain dashes (e.g. "eng-raccoon"); env var names
+        # cannot. Normalise to the env-var form used when the operator sets
+        # values in .env.
+        prefix = f"SLACK_AGENT_GATEWAY_{agent_name.upper().replace('-', '_')}"
         # Check os.environ first, then settings (same pattern as fetch_agent_secret)
         app_id = os.environ.get(f"{prefix}_APP_ID") or getattr(settings, f"{prefix}_APP_ID", "") or ""
         bot_token = os.environ.get(f"{prefix}_BOT_TOKEN") or getattr(settings, f"{prefix}_BOT_TOKEN", "") or ""

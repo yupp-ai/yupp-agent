@@ -48,7 +48,11 @@ def _build_env_var_name(agent_name: str, secret_type: str) -> str:
         Env var name (e.g., "SLACK_AGENT_GATEWAY_GILADOVSKI_APP_ID")
     """
     env_var_suffix = secret_type.upper().replace("-", "_")
-    return f"SLACK_AGENT_GATEWAY_{agent_name.upper()}_{env_var_suffix}"
+    # Agent names can contain dashes (e.g. "eng-raccoon" or bot_name "eng-raccoon");
+    # env var names cannot — normalise to underscores to match what operators
+    # put in .env.
+    agent_suffix = agent_name.upper().replace("-", "_")
+    return f"SLACK_AGENT_GATEWAY_{agent_suffix}_{env_var_suffix}"
 
 
 def _get_env_var_secret(agent_name: str, secret_type: str) -> str | None:
