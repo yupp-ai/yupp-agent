@@ -19,8 +19,11 @@ Environment=USE_GOOGLE_CLOUD_LOGGING=false
 Environment=DISABLE_WRITE_GOOGLE_CLOUD_METRICS=true
 Environment=PYTHONPATH=/opt/yupp-agent
 Environment=PYTHONUNBUFFERED=1
-# Mirror ahs-mono's PATH so Streamlit subprocesses see the same tools.
-Environment=PATH=/opt/yupp-agent/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Mirror ahs-mono's HOME / AHS_DATA_DIR / PATH so Streamlit reads the same
+# per-session state directories that AHS writes.
+Environment=HOME=/data/ahs
+Environment=AHS_DATA_DIR=/data/ahs
+Environment=PATH=/data/ahs/.local/bin:/usr/local/bin:/usr/bin:/bin
 
 ExecStart=/opt/yupp-agent/.venv/bin/streamlit run \
     ypl/streamlit_server/app.py \
@@ -42,7 +45,7 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectHome=yes
 ProtectSystem=strict
-ReadWritePaths=/opt/yupp-agent/data /opt/yupp-agent/.cache /tmp /var/log/ahs-mono
+ReadWritePaths=/data/ahs /tmp /var/log/ahs-mono
 
 StandardOutput=journal
 StandardError=journal

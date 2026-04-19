@@ -32,6 +32,10 @@ set -euo pipefail
 REPO_URL="${REPO_URL:-https://github.com/yupp-ai/yupp-agent.git}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/yupp-agent}"
 APP_USER="${APP_USER:-ahs}"
+# HOME for the app user + base for AHS_DATA_DIR (sessions, repos, memories,
+# .claude/.codex tokens, etc.). Mirrors the layout used on the old production
+# VMs and referenced in deploy/shared/WORKSPACE.md.
+DATA_DIR="${DATA_DIR:-/data/ahs}"
 PYTHON_VERSION="${PYTHON_VERSION:-3.12}"
 # Pin Poetry to match local dev machines. Poetry 1.x and 2.x compute lock-file
 # content-hashes differently, so mixing versions makes `poetry install` complain
@@ -206,18 +210,36 @@ info "Poetry: $(poetry --version)"
 step 2 "$TOTAL_STEPS" "App user + install directory"
 
 if ! id "$APP_USER" &>/dev/null; then
-    info "Creating system user '${APP_USER}' with home=${INSTALL_DIR}…"
+    info "Creating system user '${APP_USER}' with home=${DATA_DIR}…"
+    # Pre-create DATA_DIR so useradd --home-dir points at a real dir.
+    mkdir -p "$DATA_DIR"
     useradd --system --no-create-home --shell /bin/bash \
-            --home-dir "$INSTALL_DIR" "$APP_USER"
+            --home-dir "$DATA_DIR" "$APP_USER"
 else
     info "System user '${APP_USER}' already exists."
+    # If the user exists with a stale home (e.g. from an older install.sh that
+    # used $INSTALL_DIR as home), retarget it now.
+    current_home=$(getent passwd "$APP_USER" | cut -d: -f6)
+    if [[ "$current_home" != "$DATA_DIR" ]]; then
+        warn "Retargeting ${APP_USER} home: ${current_home} → ${DATA_DIR}"
+        mkdir -p "$DATA_DIR"
+        usermod --home "$DATA_DIR" "$APP_USER"
+    fi
 fi
 
+# Code lives at /opt/yupp-agent (INSTALL_DIR), owned by ahs so git pull works.
 if [[ ! -d "$INSTALL_DIR" ]]; then
     info "Creating ${INSTALL_DIR}…"
     mkdir -p "$INSTALL_DIR"
 fi
 chown -R "${APP_USER}:${APP_USER}" "$INSTALL_DIR"
+
+# Runtime state lives at /data/ahs (DATA_DIR), also owned by ahs.
+if [[ ! -d "$DATA_DIR" ]]; then
+    info "Creating ${DATA_DIR}…"
+    mkdir -p "$DATA_DIR"
+fi
+chown "${APP_USER}:${APP_USER}" "$DATA_DIR"
 
 # ---------------------------------------------------------------------------
 # Step 3. Clone / update repo (with guided deploy-key setup if needed)
@@ -225,12 +247,14 @@ chown -R "${APP_USER}:${APP_USER}" "$INSTALL_DIR"
 step 3 "$TOTAL_STEPS" "Clone or update the repo"
 
 # Pre-seed ~/.ssh and github.com in known_hosts so future SSH pulls don't prompt.
-sudo -u "$APP_USER" mkdir -p "${INSTALL_DIR}/.ssh"
-sudo -u "$APP_USER" chmod 700 "${INSTALL_DIR}/.ssh"
-if ! sudo -u "$APP_USER" grep -q "github.com" "${INSTALL_DIR}/.ssh/known_hosts" 2>/dev/null; then
+# Lives under DATA_DIR (the ahs user's HOME) so it matches what tools like
+# git / ssh naturally look for at $HOME/.ssh.
+sudo -u "$APP_USER" mkdir -p "${DATA_DIR}/.ssh"
+sudo -u "$APP_USER" chmod 700 "${DATA_DIR}/.ssh"
+if ! sudo -u "$APP_USER" grep -q "github.com" "${DATA_DIR}/.ssh/known_hosts" 2>/dev/null; then
     info "Pinning github.com's SSH host key (ssh-keyscan)…"
-    sudo -u "$APP_USER" bash -c "ssh-keyscan -H github.com >> '${INSTALL_DIR}/.ssh/known_hosts' 2>/dev/null"
-    sudo -u "$APP_USER" chmod 644 "${INSTALL_DIR}/.ssh/known_hosts"
+    sudo -u "$APP_USER" bash -c "ssh-keyscan -H github.com >> '${DATA_DIR}/.ssh/known_hosts' 2>/dev/null"
+    sudo -u "$APP_USER" chmod 644 "${DATA_DIR}/.ssh/known_hosts"
 fi
 
 clone_attempt() {
@@ -247,10 +271,10 @@ clone_attempt() {
 }
 
 clone_into_nonempty_dir() {
-    # `git clone` refuses non-empty targets, but by the time we get here the
-    # install dir may already contain .ssh/ from the deploy-key walkthrough
-    # (or an aborted earlier run). Clone into a tmp dir and move contents in,
-    # skipping anything that would collide.
+    # `git clone` refuses non-empty targets. Normally INSTALL_DIR is empty at
+    # this point (deploy-key material lives in DATA_DIR/.ssh, not here), but a
+    # partial previous run may have left stray files behind. Clone into a tmp
+    # dir and move contents in, skipping anything that would collide.
     local tmpclone
     tmpclone=$(sudo -u "$APP_USER" mktemp -d)
     sudo -u "$APP_USER" git clone "$REPO_URL" "$tmpclone"
@@ -272,7 +296,7 @@ EOSH
 }
 
 guide_deploy_key_setup() {
-    local key_path="${INSTALL_DIR}/.ssh/id_ed25519"
+    local key_path="${DATA_DIR}/.ssh/id_ed25519"
     local slug; slug=$(repo_slug_from_url "$REPO_URL")
 
     echo
@@ -415,9 +439,13 @@ step 6 "$TOTAL_STEPS" "Runtime directories"
 
 mkdir -p /var/log/ahs-mono
 chown "${APP_USER}:${APP_USER}" /var/log/ahs-mono
-mkdir -p "${INSTALL_DIR}/data" "${INSTALL_DIR}/.cache"
-chown "${APP_USER}:${APP_USER}" "${INSTALL_DIR}/data" "${INSTALL_DIR}/.cache"
-info "Created /var/log/ahs-mono, ${INSTALL_DIR}/data, ${INSTALL_DIR}/.cache"
+
+# AHS state subdirs under DATA_DIR. AHS creates per-session workspaces
+# lazily under sessions/ but needs the parents to exist + be writable.
+mkdir -p "${DATA_DIR}/sessions" "${DATA_DIR}/repos" "${DATA_DIR}/memories" "${DATA_DIR}/.cache"
+chown -R "${APP_USER}:${APP_USER}" "${DATA_DIR}"
+
+info "Created /var/log/ahs-mono and ${DATA_DIR}/{sessions,repos,memories,.cache}"
 
 # ---------------------------------------------------------------------------
 # Step 7. Agent executor CLIs (optional)
@@ -443,13 +471,31 @@ if [[ "$CLAUDE_CHOICE" == "yes" ]]; then
     sudo -u "$APP_USER" bash -c 'curl -fsSL https://claude.ai/install.sh | bash' \
         || warn "Claude Code install failed — continuing. Retry manually later."
     # The Claude installer drops the binary into $HOME/.local/bin but doesn't
-    # add it to PATH. Append an idempotent PATH export to ~/.bashrc so
-    # `sudo -iu $APP_USER claude …` just works.
-    BASHRC="${INSTALL_DIR}/.bashrc"
-    if ! sudo -u "$APP_USER" test -f "$BASHRC" || \
-       ! sudo -u "$APP_USER" grep -qF '.local/bin' "$BASHRC" 2>/dev/null; then
-        info "Adding ${APP_USER}'s .local/bin to its shell PATH (${BASHRC})…"
-        sudo -u "$APP_USER" bash -c "echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> '$BASHRC'"
+    # add it to PATH. Put an idempotent PATH export into BOTH .bashrc (non-login
+    # shells) AND .profile (login shells, including `sudo -iu ${APP_USER}`).
+    # `useradd --no-create-home` means neither file exists by default — create
+    # them if missing. .profile also needs to source .bashrc so interactive
+    # login shells see everything.
+    PATH_LINE='export PATH="$HOME/.local/bin:$PATH"'
+    for rc in "${DATA_DIR}/.bashrc" "${DATA_DIR}/.profile"; do
+        sudo -u "$APP_USER" touch "$rc"
+        if ! sudo -u "$APP_USER" grep -qF '.local/bin' "$rc" 2>/dev/null; then
+            info "Adding ${APP_USER}'s .local/bin to ${rc}…"
+            sudo -u "$APP_USER" bash -c "echo '$PATH_LINE' >> '$rc'"
+        fi
+    done
+    # Have .profile source .bashrc so login shells pick up everything .bashrc
+    # adds (matching Ubuntu's default skel .profile behavior).
+    PROFILE="${DATA_DIR}/.profile"
+    if ! sudo -u "$APP_USER" grep -qF 'source ~/.bashrc' "$PROFILE" 2>/dev/null; then
+        info "Wiring ${PROFILE} to source .bashrc for login shells…"
+        sudo -u "$APP_USER" bash -c "cat >> '$PROFILE' <<'PROFEOF'
+# Source .bashrc for login shells (e.g. sudo -iu, ssh)
+if [ -n \"\$BASH_VERSION\" ] && [ -f \"\$HOME/.bashrc\" ]; then
+    . \"\$HOME/.bashrc\"
+fi
+PROFEOF
+"
     fi
 else
     info "Skipping Claude Code CLI."

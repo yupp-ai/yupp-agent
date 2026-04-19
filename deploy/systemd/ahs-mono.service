@@ -20,9 +20,14 @@ Environment=USE_GOOGLE_CLOUD_LOGGING=false
 Environment=DISABLE_WRITE_GOOGLE_CLOUD_METRICS=true
 Environment=PYTHONPATH=/opt/yupp-agent
 Environment=PYTHONUNBUFFERED=1
-# Include /opt/yupp-agent/.local/bin so AHS can spawn `claude` (the Claude Code
-# installer places it there). /usr/local/bin is where `codex` and `poetry` live.
-Environment=PATH=/opt/yupp-agent/.local/bin:/usr/local/bin:/usr/bin:/bin
+# HOME must match the ahs user's useradd --home-dir so tools like claude /
+# codex / git / ssh find their state where they expect it. AHS_DATA_DIR is
+# explicit (rather than letting common/constants.py auto-default to /data)
+# so the monolith layout is documented in the unit file itself.
+Environment=HOME=/data/ahs
+Environment=AHS_DATA_DIR=/data/ahs
+# PATH: /data/ahs/.local/bin for `claude`; /usr/local/bin for `codex` + `poetry`.
+Environment=PATH=/data/ahs/.local/bin:/usr/local/bin:/usr/bin:/bin
 
 ExecStart=/opt/yupp-agent/.venv/bin/uvicorn \
     ypl.mono_server.server:app \
@@ -49,7 +54,10 @@ ProtectSystem=strict
 # Only grant write access to subdirs actually written by the app at runtime.
 # Keeping /opt/yupp-agent itself read-only prevents a compromised process from
 # modifying source files that get loaded on the next restart.
-ReadWritePaths=/opt/yupp-agent/data /opt/yupp-agent/.cache /tmp /var/log/ahs-mono
+# All runtime-writable state lives under /data/ahs:
+#   sessions/ repos/ memories/ tool-results/ .cache/ .claude/ .codex/ etc.
+# Plus /tmp (scratch) and /var/log/ahs-mono (journal spillover if any).
+ReadWritePaths=/data/ahs /tmp /var/log/ahs-mono
 
 # Logging — journald captures stdout/stderr automatically
 StandardOutput=journal
