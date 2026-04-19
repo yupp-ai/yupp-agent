@@ -361,6 +361,29 @@ sudo systemctl enable --now cloudflared
 
 After the tunnel is up, `https://agent.yourdomain.com` proxies to `http://localhost:8090`.
 
+### Exposing individual services on their own subdomain
+
+The mono-server runs AHS, MCP, and gateway plugins in a single process on
+port 8090. To expose only a specific service on its own subdomain (e.g.
+`mcp.yourdomain.com` for a remote Claude Code client), do two things:
+
+1. **Cloudflare Tunnel:** the template `deploy/cloudflared/config.yml`
+   already includes an `mcp.yourdomain.com` ingress rule pointing at
+   `http://localhost:8090`. Add the DNS record:
+   ```bash
+   cloudflared tunnel route dns yupp-agent mcp.yourdomain.com
+   ```
+2. **App-level guard:** set `HOST_PATH_GUARD` in the mono-server `.env`:
+   ```bash
+   HOST_PATH_GUARD={"mcp.yourdomain.com":["/mcp","/health"]}
+   ```
+   Requests arriving on `mcp.yourdomain.com` are now restricted to `/mcp/*`
+   and `/health`; everything else returns 404 even though the route exists
+   in the app.
+
+Subdomains not listed in `HOST_PATH_GUARD` are unaffected. Direct LAN and
+localhost access keeps reaching every route.
+
 ### MCP client config
 
 Add to your MCP client (e.g. Claude Desktop):
