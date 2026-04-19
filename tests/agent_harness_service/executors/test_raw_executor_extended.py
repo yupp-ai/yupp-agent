@@ -329,8 +329,14 @@ class TestFilterToolsByPermissions:
 
 
 def _make_anthropic_client(response: Any) -> Any:
-    """Build a mock AsyncAnthropic client with messages.create returning response."""
-    client = MagicMock(spec=anthropic.AsyncAnthropic)
+    """Build a mock AsyncAnthropic client with messages.create returning response.
+
+    Note: no ``spec=anthropic.AsyncAnthropic`` because ``messages`` is a
+    lazy/cached property on the instance, not a class attribute, so speccing
+    blocks attribute access. The :func:`test_returns_*` tests below type-assert
+    the argument shape instead.
+    """
+    client = MagicMock()
     client.messages.create = AsyncMock(return_value=response)
     return client
 

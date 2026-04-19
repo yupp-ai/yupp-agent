@@ -4,7 +4,7 @@ import io
 import json
 import os
 import time
-from enum import Enum, auto
+from enum import Enum
 from typing import Any
 
 import httpx
@@ -26,19 +26,6 @@ from ypl.structured_logger import get_logger
 from ypl.utils import async_timed_cache
 
 logger = get_logger()
-
-
-class YuppSlackApps(Enum):
-    """Enum for Yupp Slack applications."""
-
-    ABUSE_ALERT = auto()
-    LIT_ACTIONS = auto()
-    MODEL_MANAGEMENT = auto()
-    REWARD_MANAGEMENT = auto()
-    APP_FEEDBACK = auto()
-    GUEST_MANAGEMENT = auto()
-    SOUL_SLACKBOT = auto()
-    INTERESTING_TURNS = auto()
 
 
 class SlackPayloadType(str, Enum):
@@ -75,25 +62,6 @@ class SlackCommandType(str, Enum):
     SOUL_TICKETS = "soul-tickets"
 
 
-"""mapping from slack app enum to a tuple of (bot token env var, signing secret env var)"""
-SLACK_APP_TOKEN_ENV_VARS = {
-    YuppSlackApps.MODEL_MANAGEMENT: ("SLACK_MODEL_MANAGEMENT_APP_BOT_TOKEN", "SLACK_MODEL_MANAGEMENT_SIGNING_SECRET"),
-    YuppSlackApps.ABUSE_ALERT: ("SLACK_ABUSE_ALERT_APP_BOT_TOKEN", "SLACK_ABUSE_ALERT_SIGNING_SECRET"),
-    YuppSlackApps.REWARD_MANAGEMENT: (
-        "SLACK_REWARD_MANAGEMENT_APP_BOT_TOKEN",
-        "SLACK_REWARD_MANAGEMENT_SIGNING_SECRET",
-    ),
-    YuppSlackApps.APP_FEEDBACK: ("SLACK_APP_FEEDBACK_APP_BOT_TOKEN", "SLACK_APP_FEEDBACK_SIGNING_SECRET"),
-    YuppSlackApps.GUEST_MANAGEMENT: ("SLACK_GUEST_MANAGEMENT_APP_BOT_TOKEN", "SLACK_GUEST_MANAGEMENT_SIGNING_SECRET"),
-    YuppSlackApps.SOUL_SLACKBOT: ("SLACK_SOUL_SLACKBOT_APP_BOT_TOKEN", "SLACK_SOUL_SLACKBOT_SIGNING_SECRET"),
-    YuppSlackApps.INTERESTING_TURNS: (
-        "SLACK_INTERESTING_TURNS_APP_BOT_TOKEN",
-        "SLACK_INTERESTING_TURNS_SIGNING_SECRET",
-    ),
-    YuppSlackApps.LIT_ACTIONS: ("SLACK_ABUSE_ALERT_APP_BOT_TOKEN", "SLACK_ABUSE_ALERT_SIGNING_SECRET"),
-}
-
-
 def get_abuse_alert_channel_id() -> str:
     match os.environ.get("ENVIRONMENT"):
         case "production":
@@ -112,19 +80,6 @@ def get_backend_alert_channels() -> str:
             return "alert-backend-staging"
         case _:
             return "alert-test-only"
-
-
-def get_slack_token_and_secret(app: YuppSlackApps) -> tuple[str, str]:
-    bot_token_env_var, signing_secret_env_var = SLACK_APP_TOKEN_ENV_VARS[app]
-    bot_token = os.environ.get(bot_token_env_var)
-    if bot_token is None:
-        raise ValueError(f"No Slack token found for app {app.name} in environment variable {bot_token_env_var}")
-    signing_secret = os.environ.get(signing_secret_env_var)
-    if signing_secret is None:
-        raise ValueError(
-            f"No Slack signing secret found for app {app.name} in environment variable {signing_secret_env_var}"
-        )
-    return bot_token, signing_secret
 
 
 def verify_slack_signature(request: Request, body: bytes, signing_secret: str) -> None:
@@ -190,10 +145,8 @@ def verify_slack_signature(request: Request, body: bytes, signing_secret: str) -
         raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Invalid Slack signature")
 
 
-async def post_to_slack_channel(
-    message: str, channel: str | tuple[str, ...], app: YuppSlackApps = YuppSlackApps.MODEL_MANAGEMENT
-) -> str | None:
-    return await post_to_slack_channel_sync(message, channel, app, thread_ts=None)
+async def post_to_slack_channel(message: str, channel: str | tuple[str, ...], bot_token: str) -> str | None:
+    return await post_to_slack_channel_sync(message, channel, bot_token, thread_ts=None)
 
 
 def is_retryable_http_error(exc: BaseException) -> bool:
@@ -213,21 +166,20 @@ def is_retryable_http_error(exc: BaseException) -> bool:
 async def post_to_slack_channel_sync(
     message: str,
     channel: str | tuple[str, ...],
-    app: YuppSlackApps = YuppSlackApps.MODEL_MANAGEMENT,
+    bot_token: str,
     *,
     thread_ts: str | None = None,
 ) -> str | None:
-    """
-    Post a message to a Slack channel using a specific app
+    """Post a message to a Slack channel using a specific bot token.
 
     Args:
-        message: The message text to post
-        channel: The channel ID or channel name to post to
-        app: The Slack app to use for posting
-        thread_ts: Optional thread timestamp to post as a reply to a thread
+        message: The message text to post.
+        channel: The channel ID or channel name to post to.
+        bot_token: Slack bot token (``xoxb-…``) with ``chat:write`` scope.
+        thread_ts: Optional thread timestamp to post as a reply to a thread.
 
     Returns:
-        str | None: The timestamp of the posted message, or None if posting failed
+        The timestamp of the posted message, or None if posting failed.
     """
     if len(message.strip()) == 0:
         logger.warning(f"Skipping empty message to Slack channel {channel}")
@@ -242,7 +194,6 @@ async def post_to_slack_channel_sync(
     client = get_slack_httpx_client()
 
     for channel in channels:
-        bot_token, _ = get_slack_token_and_secret(app)
         message_dict = {
             "channel": channel,
             "text": message,
@@ -267,7 +218,6 @@ async def post_to_slack_channel_sync(
                     "message": f"Slack API error: {response_data.get('error', 'Unknown error')}",
                     "response_data": response_data,
                     "channel": channel,
-                    "app": app,
                     "slack_message": message,
                 }
             )
@@ -296,18 +246,18 @@ def is_local_environment() -> bool:
     return os.environ.get("ENVIRONMENT") == "local"
 
 
-async def get_slack_user_by_email(email: str, app: YuppSlackApps = YuppSlackApps.MODEL_MANAGEMENT) -> str | None:
-    """
-    Get Slack user ID by email address.
+async def get_slack_user_by_email(email: str, bot_token: str) -> str | None:
+    """Get Slack user ID by email address.
 
     Args:
-        email: Email address to look up
-        app: The Slack app to use for the API call
+        email: Email address to look up.
+        bot_token: Slack bot token (must have ``users:read.email`` scope).
+            Typically the agent's own bot token — pass
+            ``(await get_agent_config_by_app_id(app_id)).bot_token``.
 
     Returns:
-        str | None: Slack user ID if found, None otherwise
+        Slack user ID if found, None otherwise.
     """
-    bot_token, _ = get_slack_token_and_secret(app)
     client = AsyncWebClient(token=bot_token)
     try:
         response = await client.users_lookupByEmail(email=email)
@@ -327,7 +277,7 @@ async def get_slack_user_by_email(email: str, app: YuppSlackApps = YuppSlackApps
         return None
 
 
-async def resolve_slack_recipient(recipient: str, app: YuppSlackApps = YuppSlackApps.MODEL_MANAGEMENT) -> str:
+async def resolve_slack_recipient(recipient: str, bot_token: str) -> str:
     """Resolve a Slack recipient from email or channel/user ID.
 
     If the recipient contains '@', it's treated as an email address and
@@ -335,60 +285,72 @@ async def resolve_slack_recipient(recipient: str, app: YuppSlackApps = YuppSlack
     (assumed to be a channel name or user ID).
 
     Args:
-        recipient: Email address, Slack channel name, or Slack user ID
-        app: The Slack app to use for the API call
+        recipient: Email address, Slack channel name, or Slack user ID.
+        bot_token: Slack bot token with ``users:read.email`` scope (only
+            used if recipient is an email).
 
     Returns:
-        Resolved Slack user ID (if email), or the original recipient
+        Resolved Slack user ID (if email), or the original recipient.
     """
     if "@" in recipient:
-        resolved = await get_slack_user_by_email(recipient, app)
+        resolved = await get_slack_user_by_email(recipient, bot_token)
         # Fallback to original recipient if email lookup fails
         return resolved if resolved is not None else recipient
     return recipient
 
 
-async def get_user_email_from_slack(user_id: str, app: YuppSlackApps = YuppSlackApps.MODEL_MANAGEMENT) -> str | None:
-    """Get user email from Slack user ID.
+async def get_user_email_from_slack(user_id: str, bot_token: str | None = None) -> str | None:
+    """Get user email from a Slack user ID.
+
+    Tries the Slack API first (if a bot token is provided), then falls back
+    to the hardcoded ``SLACK_ID_TO_EMAIL`` mapping for known team members.
 
     Args:
-        user_id: Slack user ID
-        app: Slack app to use for the API call. Defaults to MODEL_MANAGEMENT.
+        user_id: Slack user ID.
+        bot_token: Optional Slack bot token (needs ``users:read`` +
+            ``users:read.email`` scopes). Typically the agent's own bot token —
+            pass ``(await get_agent_config_by_app_id(app_id)).bot_token``.
+            If omitted, only the hardcoded mapping is consulted.
+
+    Returns:
+        Email string, or None if neither source resolves the user.
     """
-    try:
-        bot_token, _ = get_slack_token_and_secret(app)
-        client = AsyncWebClient(token=bot_token)
-        response = await client.users_info(user=user_id)
-        if response.get("ok") and response.get("user"):
-            user = response["user"]
-            if isinstance(user, dict):
-                profile = user.get("profile", {})
-                if isinstance(profile, dict):
-                    email = profile.get("email")
-                    return email if isinstance(email, str) else None
-        return None
-    except Exception as e:
-        logger.warning(
-            json.dumps(
-                {
-                    "message": f"Failed to get user email from Slack for user_id {user_id}",
-                    "error": str(e),
-                }
+    if bot_token:
+        try:
+            client = AsyncWebClient(token=bot_token)
+            response = await client.users_info(user=user_id)
+            if response.get("ok") and response.get("user"):
+                user = response["user"]
+                if isinstance(user, dict):
+                    profile = user.get("profile", {})
+                    if isinstance(profile, dict):
+                        email = profile.get("email")
+                        if isinstance(email, str) and email:
+                            return email
+        except Exception as e:
+            logger.warning(
+                json.dumps(
+                    {
+                        "message": f"Failed to get user email from Slack for user_id {user_id}",
+                        "error": str(e),
+                    }
+                )
             )
-        )
-        return None
+    # Static fallback — hardcoded team directory in ypl.backend.llm.constants
+    return SLACK_ID_TO_EMAIL.get(user_id)
 
 
 @async_timed_cache(seconds=3600 * 12)
-async def resolve_slack_user_to_yupp_user_id(slack_user_id: str) -> str | None:
+async def resolve_slack_user_to_yupp_user_id(
+    slack_user_id: str,
+    bot_token: str | None = None,
+) -> str | None:
     """Resolve a Slack member ID to an internal Yupp user_id.
 
-    Resolution strategy (first match wins):
-    1. Slack API via model management bot token (has users:read.email scope) → email → DB lookup
-    2. Hardcoded SLACK_ID_TO_EMAIL mapping (fallback for @yupp.ai employees) → DB lookup
-
-    Uses the model management bot token (not agent tokens) because not all
-    agent apps have the users:read.email scope.
+    Delegates to :func:`get_user_email_from_slack` which tries the Slack API
+    (if ``bot_token`` provided) then falls back to the hardcoded
+    ``SLACK_ID_TO_EMAIL`` mapping. The resulting email is looked up in the
+    ``users`` table.
 
     Uses a raw SQL query to avoid triggering SQLAlchemy mapper configuration, which
     can fail in services that don't import all ORM models (e.g., MemoryEmbedding).
@@ -397,16 +359,14 @@ async def resolve_slack_user_to_yupp_user_id(slack_user_id: str) -> str | None:
     failure as a negative result. The caller is responsible for handling exceptions.
 
     Args:
-        slack_user_id: Slack member ID (e.g., "U086VNKP095")
+        slack_user_id: Slack member ID (e.g., "U086VNKP095").
+        bot_token: Optional Slack bot token (agent's own). When omitted,
+            only the hardcoded team-directory fallback is consulted.
 
     Returns:
-        Internal Yupp user_id if found, None otherwise
+        Internal Yupp user_id if found, None otherwise.
     """
-    # Try Slack API first (model management token has users:read.email scope)
-    email = await get_user_email_from_slack(slack_user_id, app=YuppSlackApps.MODEL_MANAGEMENT)
-    # Fallback to hardcoded mapping (only covers known @yupp.ai employees)
-    if not email:
-        email = SLACK_ID_TO_EMAIL.get(slack_user_id)
+    email = await get_user_email_from_slack(slack_user_id, bot_token=bot_token)
     if not email:
         return None
 
@@ -416,46 +376,49 @@ async def resolve_slack_user_to_yupp_user_id(slack_user_id: str) -> str | None:
         return str(row[0]) if row else None
 
 
-async def post_thread_message(channel: str, thread_ts: str, text: str, app: YuppSlackApps) -> None:
-    bot_token, _ = get_slack_token_and_secret(app)
+async def post_thread_message(channel: str, thread_ts: str, text: str, bot_token: str) -> None:
+    """Post a single message as a reply in a Slack thread.
+
+    Args:
+        channel: Slack channel ID.
+        thread_ts: Timestamp of the parent message to thread under.
+        text: Message text.
+        bot_token: Slack bot token (``xoxb-…``) with ``chat:write`` scope.
+    """
     client = AsyncWebClient(token=bot_token)
     await client.chat_postMessage(channel=channel, text=text, thread_ts=thread_ts)
 
 
-async def post_threaded_slack_messages(
-    channel: str, messages: list[str], app: YuppSlackApps = YuppSlackApps.MODEL_MANAGEMENT
-) -> None:
-    """
-    Post multiple messages to Slack, with all subsequent messages threaded to the first.
-    If the first message fails, all remaining messages will be posted as regular messages.
+async def post_threaded_slack_messages(channel: str, messages: list[str], bot_token: str) -> None:
+    """Post multiple messages to Slack, threading subsequent ones under the first.
+
+    If the first message fails, remaining messages are posted as regular
+    (non-threaded) messages.
 
     Args:
-        channel: The Slack channel to post to
-        messages: List of messages to post (first message starts the thread, rest are threaded)
-        app: The Slack app to use for posting
+        channel: Slack channel to post to.
+        messages: List of messages (first starts the thread, rest are replies).
+        bot_token: Slack bot token (``xoxb-…``) with ``chat:write`` scope.
     """
     if not messages:
         return
 
     if len(messages) == 1:
-        # Single message, just post it normally
-        await post_to_slack_channel(messages[0], channel, app)
+        await post_to_slack_channel(messages[0], channel, bot_token)
         return
 
     # Post first message and get timestamp for threading
-    thread_ts = await post_to_slack_channel(messages[0], channel, app)
+    thread_ts = await post_to_slack_channel(messages[0], channel, bot_token)
 
     if thread_ts:
-        # Post remaining messages as thread replies
         for message in messages[1:]:
-            await post_thread_message(channel, thread_ts, message, app)
+            await post_thread_message(channel, thread_ts, message, bot_token)
     else:
-        # Fallback: if first message failed, try to post all remaining messages as regular messages
         logger.warning(
             "Failed to get timestamp from first Slack message, posting remaining messages as regular messages"
         )
         for message in messages[1:]:
-            await post_to_slack_channel(message, channel, app)
+            await post_to_slack_channel(message, channel, bot_token)
 
 
 async def upload_csv_to_slack(
@@ -488,7 +451,6 @@ def get_guest_management_channel_id() -> str:
             return "C0826FU9JMB"
 
 
-# Mapping from YuppSlackApps to their corresponding environment variable names
 def post_to_slack_bg(
     message: str | dict[str, Any] | None = None, webhook_url: str | None = None, blocks: list | None = None
 ) -> None:

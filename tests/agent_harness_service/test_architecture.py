@@ -73,7 +73,7 @@ def _extract_top_level_ahs_imports(filepath: Path) -> list[tuple[int, str]]:
             results.extend(
                 (node.lineno, alias.name) for alias in node.names if alias.name.startswith(AHS_IMPORT_PREFIX + ".")
             )
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             # Stop recursion — anything inside a function is a lazy import
             return
         elif isinstance(node, ast.ClassDef):

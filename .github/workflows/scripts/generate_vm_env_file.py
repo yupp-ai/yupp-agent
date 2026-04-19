@@ -40,9 +40,10 @@ def main() -> None:
     service_name = sys.argv[2]
     output_file = sys.argv[3]
 
-    assert environment in ["staging", "production"], (
-        f"<environment> {environment} must be one of 'staging', 'production'"
-    )
+    assert environment in [
+        "staging",
+        "production",
+    ], f"<environment> {environment} must be one of 'staging', 'production'"
     assert service_name in get_args(Service), f"<service_name> {service_name} must be one of {get_args(Service)}"
 
     env = cast(Environment, environment)

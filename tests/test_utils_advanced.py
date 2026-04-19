@@ -385,7 +385,7 @@ class TestDelegator:
         results = await d.delegate("do_work")
         assert results["fast"] == "fast-result"
         # slow should be cancelled (EarlyTerminatedException)
-        assert isinstance(results["slow"], (EarlyTerminatedException, asyncio.CancelledError))
+        assert isinstance(results["slow"], EarlyTerminatedException | asyncio.CancelledError)
 
     async def test_early_terminate_on_requires_success(self) -> None:
         """If the early-terminate delegate fails, we wait for others."""

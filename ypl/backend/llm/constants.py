@@ -166,14 +166,9 @@ TEAM_DIRECTORY: tuple[TeamMember, ...] = (
     TeamMember("182693487+wangtian24@users.noreply.github.com", "U0ATRKR7FR6", "tian", "wangtian24"),
 )
 
-_LINEAR_NAME_ALIASES: dict[str, str] = {
-    "pg": "pankaj",
-}
-
 # --- Derived lookup dicts (all generated from TEAM_DIRECTORY) ---------------
 
 LINEAR_TO_SLACK_ID: dict[str, str] = {m.linear_name: m.slack_id for m in TEAM_DIRECTORY if m.linear_name}
-LINEAR_TO_SLACK_ID.update({alias: LINEAR_TO_SLACK_ID[canon] for alias, canon in _LINEAR_NAME_ALIASES.items()})
 
 GITHUB_TO_LINEAR_NAME: dict[str, str] = {
     m.github_login: m.linear_name for m in TEAM_DIRECTORY if m.github_login and m.linear_name

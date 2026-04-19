@@ -490,9 +490,7 @@ async def setup_interactive() -> int:
         # so Alembic and CI (GitHub Actions) can do DDL via schema_manager
         # without touching runtime credentials.
         if pg_admin_user and pg_admin_password:
-            _admin_conn_json = build_postgres_connection_json(
-                pg_admin_user, pg_admin_password, pg_host, pg_database
-            )
+            _admin_conn_json = build_postgres_connection_json(pg_admin_user, pg_admin_password, pg_host, pg_database)
             _admin_conn_line = f"\nPOSTGRES_CONNECTION_AGENTDB_ADMIN={_admin_conn_json}"
         else:
             _admin_conn_line = ""
