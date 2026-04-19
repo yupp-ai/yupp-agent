@@ -23,7 +23,20 @@ os.environ.setdefault("TRANSFORMERS_NO_FRAMEWORK_WARNING", "1")
 
 DEFAULT_UNSAFE_PASSWORD = "changethis"
 
-EnvironmentType = Literal["production", "staging", "test", "local"]
+EnvironmentType = Literal["production", "staging", "test", "local", "selfhosted"]
+
+# Environments that run without GCP (no Secret Manager, no Cloud SQL proxy,
+# no yupp-llms DB topology). "local" = dev laptops + CI; "test" = pytest;
+# "selfhosted" = the AHS monolith running on a single VM with .env secrets
+# and local Postgres. Extend when adding another GCP-free deployment mode.
+GCP_FREE_ENVIRONMENTS: frozenset[EnvironmentType] = frozenset(("local", "test", "selfhosted"))
+
+
+def is_gcp_free_environment(env: str) -> bool:
+    """True when ``env`` runs without GCP (no Secret Manager / Cloud SQL proxy)."""
+    return env in GCP_FREE_ENVIRONMENTS
+
+
 DbName = Literal["yuppdb", "agentdb"]
 
 
@@ -646,7 +659,7 @@ class Settings(BaseSettings):
 
     def _use_proxy_socket(self, conn: PostgresConnection, async_mode: bool) -> bool:
         """Whether to connect via the Cloud SQL Auth Proxy unix socket."""
-        if self.ENVIRONMENT == "local" or not self.ENABLE_CLOUDSQL_PROXY:
+        if is_gcp_free_environment(self.ENVIRONMENT) or not self.ENABLE_CLOUDSQL_PROXY:
             return False
         if not conn.cloud_sql_proxy_socket:
             return False
@@ -688,7 +701,7 @@ class Settings(BaseSettings):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def db_ssl_mode(self) -> str:
-        if self.ENVIRONMENT == "local" or self.ENABLE_CLOUDSQL_PROXY:
+        if is_gcp_free_environment(self.ENVIRONMENT) or self.ENABLE_CLOUDSQL_PROXY:
             return "disable"
         return "require"
 
