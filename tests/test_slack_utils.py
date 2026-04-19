@@ -15,11 +15,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 from ypl.backend.utils.slack_utils import (
-    SLACK_APP_TOKEN_ENV_VARS,
     SlackCommandType,
     SlackEventType,
     SlackPayloadType,
-    YuppSlackApps,
     create_slack_link,
     extract_plain_text_from_slack_blocks,
     get_abuse_alert_channel_id,
@@ -28,7 +26,6 @@ from ypl.backend.utils.slack_utils import (
     get_slack_client,
     get_slack_httpx_client,
     get_slack_sync_client,
-    get_slack_token_and_secret,
     get_slack_user_by_email,
     get_user_email_from_slack,
     is_local_environment,
@@ -113,40 +110,6 @@ class TestChannelIdHelpers:
         with patch.dict(os.environ, {"ENVIRONMENT": "staging"}):
             channel = get_guest_management_channel_id()
         assert channel == "C0826FU9JMB"
-
-
-# ---------------------------------------------------------------------------
-# Tests: get_slack_token_and_secret
-# ---------------------------------------------------------------------------
-
-
-class TestGetSlackTokenAndSecret:
-    def test_raises_when_token_not_set(self) -> None:
-        env_vars = SLACK_APP_TOKEN_ENV_VARS[YuppSlackApps.MODEL_MANAGEMENT]
-        token_var, secret_var = env_vars
-        with patch.dict(os.environ, {token_var: "", secret_var: "secret"}, clear=False):
-            # Remove token var
-            env = dict(os.environ)
-            env.pop(token_var, None)
-            with patch.dict(os.environ, env, clear=True), pytest.raises(ValueError, match="No Slack token"):
-                get_slack_token_and_secret(YuppSlackApps.MODEL_MANAGEMENT)
-
-    def test_raises_when_secret_not_set(self) -> None:
-        env_vars = SLACK_APP_TOKEN_ENV_VARS[YuppSlackApps.MODEL_MANAGEMENT]
-        token_var, secret_var = env_vars
-        # Remove secret var
-        clean_env = {k: v for k, v in os.environ.items() if k != secret_var}
-        clean_env[token_var] = "bot-token-value"
-        with patch.dict(os.environ, clean_env, clear=True), pytest.raises(ValueError, match="No Slack signing secret"):
-            get_slack_token_and_secret(YuppSlackApps.MODEL_MANAGEMENT)
-
-    def test_returns_token_and_secret(self) -> None:
-        env_vars = SLACK_APP_TOKEN_ENV_VARS[YuppSlackApps.MODEL_MANAGEMENT]
-        token_var, secret_var = env_vars
-        with patch.dict(os.environ, {token_var: "my-token", secret_var: "my-secret"}):
-            token, secret = get_slack_token_and_secret(YuppSlackApps.MODEL_MANAGEMENT)
-        assert token == "my-token"
-        assert secret == "my-secret"
 
 
 # ---------------------------------------------------------------------------
@@ -397,41 +360,23 @@ class TestCreateSlackLink:
 
 class TestResolveSlackRecipient:
     async def test_returns_original_when_not_email(self) -> None:
-        result = await resolve_slack_recipient("C123ABC", YuppSlackApps.MODEL_MANAGEMENT)
+        result = await resolve_slack_recipient("C123ABC", bot_token="xoxb-test")
         assert result == "C123ABC"
 
     async def test_resolves_email_to_user_id(self) -> None:
-        with (
-            patch.dict(
-                os.environ,
-                {
-                    "SLACK_MODEL_MANAGEMENT_APP_BOT_TOKEN": "token",
-                    "SLACK_MODEL_MANAGEMENT_SIGNING_SECRET": "secret",
-                },
-            ),
-            patch(
-                "ypl.backend.utils.slack_utils.get_slack_user_by_email",
-                AsyncMock(return_value="U12345"),
-            ),
+        with patch(
+            "ypl.backend.utils.slack_utils.get_slack_user_by_email",
+            AsyncMock(return_value="U12345"),
         ):
-            result = await resolve_slack_recipient("user@example.com")
+            result = await resolve_slack_recipient("user@example.com", bot_token="xoxb-test")
         assert result == "U12345"
 
     async def test_falls_back_to_original_when_email_not_found(self) -> None:
-        with (
-            patch.dict(
-                os.environ,
-                {
-                    "SLACK_MODEL_MANAGEMENT_APP_BOT_TOKEN": "token",
-                    "SLACK_MODEL_MANAGEMENT_SIGNING_SECRET": "secret",
-                },
-            ),
-            patch(
-                "ypl.backend.utils.slack_utils.get_slack_user_by_email",
-                AsyncMock(return_value=None),
-            ),
+        with patch(
+            "ypl.backend.utils.slack_utils.get_slack_user_by_email",
+            AsyncMock(return_value=None),
         ):
-            result = await resolve_slack_recipient("nobody@example.com")
+            result = await resolve_slack_recipient("nobody@example.com", bot_token="xoxb-test")
         assert result == "nobody@example.com"
 
 
@@ -450,20 +395,11 @@ class TestGetUserEmailFromSlack:
             }
         )
 
-        with (
-            patch.dict(
-                os.environ,
-                {
-                    "SLACK_MODEL_MANAGEMENT_APP_BOT_TOKEN": "token",
-                    "SLACK_MODEL_MANAGEMENT_SIGNING_SECRET": "secret",
-                },
-            ),
-            patch(
-                "ypl.backend.utils.slack_utils.AsyncWebClient",
-                return_value=mock_client,
-            ),
+        with patch(
+            "ypl.backend.utils.slack_utils.AsyncWebClient",
+            return_value=mock_client,
         ):
-            result = await get_user_email_from_slack("U123456")
+            result = await get_user_email_from_slack("U123456", bot_token="xoxb-test")
 
         assert result == "user@example.com"
 
@@ -472,19 +408,13 @@ class TestGetUserEmailFromSlack:
         mock_client.users_info = AsyncMock(return_value={"ok": False})
 
         with (
-            patch.dict(
-                os.environ,
-                {
-                    "SLACK_MODEL_MANAGEMENT_APP_BOT_TOKEN": "token",
-                    "SLACK_MODEL_MANAGEMENT_SIGNING_SECRET": "secret",
-                },
-            ),
             patch(
                 "ypl.backend.utils.slack_utils.AsyncWebClient",
                 return_value=mock_client,
             ),
+            patch("ypl.backend.utils.slack_utils.SLACK_ID_TO_EMAIL", {}),
         ):
-            result = await get_user_email_from_slack("U123456")
+            result = await get_user_email_from_slack("U123456", bot_token="xoxb-test")
 
         assert result is None
 
@@ -493,21 +423,24 @@ class TestGetUserEmailFromSlack:
         mock_client.users_info = AsyncMock(side_effect=Exception("API error"))
 
         with (
-            patch.dict(
-                os.environ,
-                {
-                    "SLACK_MODEL_MANAGEMENT_APP_BOT_TOKEN": "token",
-                    "SLACK_MODEL_MANAGEMENT_SIGNING_SECRET": "secret",
-                },
-            ),
             patch(
                 "ypl.backend.utils.slack_utils.AsyncWebClient",
                 return_value=mock_client,
             ),
+            patch("ypl.backend.utils.slack_utils.SLACK_ID_TO_EMAIL", {}),
         ):
-            result = await get_user_email_from_slack("U123456")
+            result = await get_user_email_from_slack("U123456", bot_token="xoxb-test")
 
         assert result is None
+
+    async def test_falls_back_to_static_mapping_without_token(self) -> None:
+        with patch(
+            "ypl.backend.utils.slack_utils.SLACK_ID_TO_EMAIL",
+            {"UMAPPED": "mapped@yupp.ai"},
+        ):
+            result = await get_user_email_from_slack("UMAPPED")
+
+        assert result == "mapped@yupp.ai"
 
 
 # ---------------------------------------------------------------------------
@@ -520,20 +453,11 @@ class TestGetSlackUserByEmail:
         mock_client = AsyncMock()
         mock_client.users_lookupByEmail = AsyncMock(return_value={"ok": True, "user": {"id": "U98765"}})
 
-        with (
-            patch.dict(
-                os.environ,
-                {
-                    "SLACK_MODEL_MANAGEMENT_APP_BOT_TOKEN": "token",
-                    "SLACK_MODEL_MANAGEMENT_SIGNING_SECRET": "secret",
-                },
-            ),
-            patch(
-                "ypl.backend.utils.slack_utils.AsyncWebClient",
-                return_value=mock_client,
-            ),
+        with patch(
+            "ypl.backend.utils.slack_utils.AsyncWebClient",
+            return_value=mock_client,
         ):
-            result = await get_slack_user_by_email("user@example.com")
+            result = await get_slack_user_by_email("user@example.com", bot_token="xoxb-test")
 
         assert result == "U98765"
 
@@ -541,20 +465,11 @@ class TestGetSlackUserByEmail:
         mock_client = AsyncMock()
         mock_client.users_lookupByEmail = AsyncMock(return_value={"ok": False, "error": "users_not_found"})
 
-        with (
-            patch.dict(
-                os.environ,
-                {
-                    "SLACK_MODEL_MANAGEMENT_APP_BOT_TOKEN": "token",
-                    "SLACK_MODEL_MANAGEMENT_SIGNING_SECRET": "secret",
-                },
-            ),
-            patch(
-                "ypl.backend.utils.slack_utils.AsyncWebClient",
-                return_value=mock_client,
-            ),
+        with patch(
+            "ypl.backend.utils.slack_utils.AsyncWebClient",
+            return_value=mock_client,
         ):
-            result = await get_slack_user_by_email("nobody@example.com")
+            result = await get_slack_user_by_email("nobody@example.com", bot_token="xoxb-test")
 
         assert result is None
 
@@ -562,20 +477,11 @@ class TestGetSlackUserByEmail:
         mock_client = AsyncMock()
         mock_client.users_lookupByEmail = AsyncMock(side_effect=Exception("API error"))
 
-        with (
-            patch.dict(
-                os.environ,
-                {
-                    "SLACK_MODEL_MANAGEMENT_APP_BOT_TOKEN": "token",
-                    "SLACK_MODEL_MANAGEMENT_SIGNING_SECRET": "secret",
-                },
-            ),
-            patch(
-                "ypl.backend.utils.slack_utils.AsyncWebClient",
-                return_value=mock_client,
-            ),
+        with patch(
+            "ypl.backend.utils.slack_utils.AsyncWebClient",
+            return_value=mock_client,
         ):
-            result = await get_slack_user_by_email("user@example.com")
+            result = await get_slack_user_by_email("user@example.com", bot_token="xoxb-test")
 
         assert result is None
 
@@ -591,27 +497,15 @@ class TestResolveSlackUserToYuppUserId:
         from contextlib import asynccontextmanager
 
         mock_db = AsyncMock()
-        row = MagicMock()
-        row.__getitem__ = MagicMock(side_effect=lambda i: "yupp-user-123" if i == 0 else None)
         db_result = MagicMock()
-        db_result.first.return_value = (row,) if False else row
+        db_result.first.return_value = MagicMock(__getitem__=lambda self, i: "yupp-user-123")
+        mock_db.execute = AsyncMock(return_value=db_result)
 
         @asynccontextmanager
         async def _ctx() -> AsyncGenerator[Any, None]:
             yield mock_db
 
-        # Row as a single item that returns user_id
-        db_result.first.return_value = MagicMock(__getitem__=lambda self, i: "yupp-user-123")
-        mock_db.execute = AsyncMock(return_value=db_result)
-
         with (
-            patch.dict(
-                os.environ,
-                {
-                    "SLACK_MODEL_MANAGEMENT_APP_BOT_TOKEN": "token",
-                    "SLACK_MODEL_MANAGEMENT_SIGNING_SECRET": "secret",
-                },
-            ),
             patch(
                 "ypl.backend.utils.slack_utils.get_user_email_from_slack",
                 AsyncMock(return_value="user@example.com"),
@@ -621,57 +515,12 @@ class TestResolveSlackUserToYuppUserId:
                 _ctx,
             ),
         ):
-            result = await resolve_slack_user_to_yupp_user_id.__wrapped__("U123456")
+            result = await resolve_slack_user_to_yupp_user_id.__wrapped__("U123456", bot_token="xoxb-test")
 
         assert result == "yupp-user-123"
 
-    async def test_falls_back_to_hardcoded_mapping(self) -> None:
-        from collections.abc import AsyncGenerator
-        from contextlib import asynccontextmanager
-
-        mock_db = AsyncMock()
-        db_result = MagicMock()
-        db_result.first.return_value = MagicMock(__getitem__=lambda self, i: "mapped-user-id")
-        mock_db.execute = AsyncMock(return_value=db_result)
-
-        @asynccontextmanager
-        async def _ctx() -> AsyncGenerator[Any, None]:
-            yield mock_db
-
-        with (
-            patch.dict(
-                os.environ,
-                {
-                    "SLACK_MODEL_MANAGEMENT_APP_BOT_TOKEN": "token",
-                    "SLACK_MODEL_MANAGEMENT_SIGNING_SECRET": "secret",
-                },
-            ),
-            patch(
-                "ypl.backend.utils.slack_utils.get_user_email_from_slack",
-                AsyncMock(return_value=None),
-            ),
-            patch(
-                "ypl.backend.utils.slack_utils.SLACK_ID_TO_EMAIL",
-                {"UMAPPED": "mapped@yupp.ai"},
-            ),
-            patch(
-                "ypl.backend.utils.slack_utils.get_async_session_read_replica",
-                _ctx,
-            ),
-        ):
-            result = await resolve_slack_user_to_yupp_user_id.__wrapped__("UMAPPED")
-
-        assert result == "mapped-user-id"
-
     async def test_returns_none_when_no_email_found(self) -> None:
         with (
-            patch.dict(
-                os.environ,
-                {
-                    "SLACK_MODEL_MANAGEMENT_APP_BOT_TOKEN": "token",
-                    "SLACK_MODEL_MANAGEMENT_SIGNING_SECRET": "secret",
-                },
-            ),
             patch(
                 "ypl.backend.utils.slack_utils.get_user_email_from_slack",
                 AsyncMock(return_value=None),
@@ -830,14 +679,14 @@ class TestGetSlackClients:
 class TestPostThreadedSlackMessages:
     async def test_returns_immediately_with_no_messages(self) -> None:
         # Should not raise
-        await post_threaded_slack_messages("C123", [])
+        await post_threaded_slack_messages("C123", [], bot_token="xoxb-test")
 
     async def test_posts_single_message_normally(self) -> None:
         with patch(
             "ypl.backend.utils.slack_utils.post_to_slack_channel",
             AsyncMock(return_value="12345.0"),
         ) as mock_post:
-            await post_threaded_slack_messages("C123", ["single message"])
+            await post_threaded_slack_messages("C123", ["single message"], bot_token="xoxb-test")
 
         mock_post.assert_called_once()
 
@@ -852,7 +701,7 @@ class TestPostThreadedSlackMessages:
                 AsyncMock(),
             ) as mock_thread,
         ):
-            await post_threaded_slack_messages("C123", ["first", "second", "third"])
+            await post_threaded_slack_messages("C123", ["first", "second", "third"], bot_token="xoxb-test")
 
         assert mock_thread.call_count == 2  # second and third threaded
 
@@ -867,7 +716,7 @@ class TestPostThreadedSlackMessages:
                 AsyncMock(),
             ),
         ):
-            await post_threaded_slack_messages("C123", ["first", "second"])
+            await post_threaded_slack_messages("C123", ["first", "second"], bot_token="xoxb-test")
 
         # First message + fallback second
         assert mock_post.call_count == 2
@@ -924,8 +773,3 @@ class TestEnums:
     def test_slack_command_types(self) -> None:
         assert SlackCommandType.SOUL_SEARCH.value == "soul-search"
         assert SlackCommandType.SOUL_CASHOUT.value == "soul-cashout"
-
-    def test_yupp_slack_apps_membership(self) -> None:
-        assert YuppSlackApps.ABUSE_ALERT in SLACK_APP_TOKEN_ENV_VARS
-        assert YuppSlackApps.MODEL_MANAGEMENT in SLACK_APP_TOKEN_ENV_VARS
-        assert YuppSlackApps.LIT_ACTIONS in SLACK_APP_TOKEN_ENV_VARS
