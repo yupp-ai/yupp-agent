@@ -82,6 +82,16 @@ def main() -> None:
         help="AHS host (default: ahs.yupp.ai). Examples: localhost:8090, https://ahs.yupp.ai",
     )
     parser.add_argument("--logout", action="store_true", help="Clear cached Google credentials and exit")
+    parser.add_argument(
+        "-u",
+        "--user-id",
+        default=None,
+        help=(
+            "Skip Google OAuth + /resolve_user lookup and use this user_id directly. "
+            "Useful for local monolith testing when you already know a user_id from the users table "
+            "or want to bypass OAuth entirely."
+        ),
+    )
     args = parser.parse_args()
 
     # Handle --logout before anything else
@@ -91,16 +101,23 @@ def main() -> None:
         logout()
         return
 
-    # Google OAuth login (opens browser if needed, uses cached token otherwise)
-    from ypl.agent_harness_service.tui.auth import login
-
-    email = login()
-    print(f"Logged in as {email}")
-
     _init_connection(args.host)
 
-    # Resolve email → user_id via AHS API
-    user_id = _resolve_user_id(email)
+    if args.user_id:
+        # Explicit override path: skip OAuth + skip /resolve_user entirely.
+        # We don't know the email in this mode, which is fine — nothing downstream
+        # in the TUI needs it once user_id is known.
+        print(f"Using user_id override: {args.user_id} (skipping OAuth + /resolve_user)")
+        user_id = args.user_id
+    else:
+        # Google OAuth login (opens browser if needed, uses cached token otherwise)
+        from ypl.agent_harness_service.tui.auth import login
+
+        email = login()
+        print(f"Logged in as {email}")
+
+        # Resolve email → user_id via AHS API
+        user_id = _resolve_user_id(email)
 
     app = AHSTui(
         agent=args.agent,
