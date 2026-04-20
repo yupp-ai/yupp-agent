@@ -45,5 +45,16 @@ ingress:
     originRequest:
       connectTimeout: 10s
 
+  # MCP — publicly-reachable MCP endpoint for remote Claude Code clients.
+  # The mono-server's HostPathGuardMiddleware restricts this subdomain to
+  # /mcp and /health; everything else (AHS, gateway) returns 404 even though
+  # the route exists. Enable by ALSO setting HOST_PATH_GUARD in the app's .env:
+  #   HOST_PATH_GUARD={"mcp.yourdomain.com":["/mcp","/health"]}
+  # DNS: cloudflared tunnel route dns yupp-agent mcp.yourdomain.com
+  - hostname: mcp.yourdomain.com
+    service: http://localhost:8090
+    originRequest:
+      connectTimeout: 10s
+
   # Catch-all — must be last
   - service: http_status:404
