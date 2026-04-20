@@ -5,7 +5,7 @@ from pathlib import Path
 import streamlit as st
 
 from ypl.db.all_models import *  # noqa
-from ypl.streamlit_server.auth import is_allowed_email, is_auth_configured
+from ypl.streamlit_server.auth import auth_required, is_allowed_email, is_auth_configured
 
 st.set_page_config(
     page_title="Yupp Agent Hub",
@@ -31,11 +31,36 @@ def access_denied_screen() -> None:
     st.title("🤖 Yupp Agent Hub")
     st.error("Access Denied")
     email = st.user.email if st.user is not None else "Unknown"
-    st.warning(f"Your account ({email}) does not have access. Only yupp.ai emails are authorized.")
+    st.warning(
+        f"Your account ({email}) is not a registered user. Ask an admin to create a user record for this email address."
+    )
     st.button("Log out", on_click=st.logout)
 
 
+def auth_misconfigured_screen() -> None:
+    css_file = Path(__file__).parent / "styles" / "login.css"
+    if css_file.exists():
+        with open(css_file) as f:
+            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+    st.title("🔒 Authentication Required")
+    st.error("This deployment requires Google OAuth, but it is not configured.")
+    st.markdown(
+        "Set the following in `/opt/yupp-agent/.env` and restart `ahs-streamlit`:\n\n"
+        "- `GOOGLE_AUTH_CLIENT_ID`\n"
+        "- `GOOGLE_AUTH_CLIENT_SECRET`\n"
+        "- `GOOGLE_AUTH_REDIRECT_URI` (e.g. `https://lit.agcouch.com/oauth2callback`)\n"
+        "- `GOOGLE_AUTH_COOKIE_SECRET`\n\n"
+        "Only emails that already exist in the `users` table can log in — "
+        "create a user record for yourself before signing in."
+    )
+
+
 AUTH_ENABLED = is_auth_configured()
+AUTH_REQUIRED = auth_required()
+
+if AUTH_REQUIRED and not AUTH_ENABLED:
+    auth_misconfigured_screen()
+    st.stop()
 
 if AUTH_ENABLED:
     if st.user is None or not st.user.is_logged_in:

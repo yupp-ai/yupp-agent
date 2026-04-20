@@ -1,21 +1,57 @@
 """Shared authentication utilities for Streamlit server."""
 
+import os
 from typing import Any
 
+import sqlalchemy as sa
 import streamlit as st
+from sqlmodel import select
 from streamlit.errors import StreamlitAPIException
 
+from ypl.backend.db import get_async_session_read_replica
+from ypl.backend.utils.streamlit_utils import run_coroutine_in_lit_worker
+from ypl.db.users import User, UserStatus
 from ypl.structured_logger import get_logger
 
 LOGGER = get_logger()
 
 
+def is_selfhosted() -> bool:
+    """True when running in the selfhosted (one-box) deployment mode."""
+    return os.environ.get("ENVIRONMENT", "").lower() == "selfhosted"
+
+
+async def _email_exists_in_users(email: str) -> bool:
+    """Return True if an ACTIVE user row exists whose email matches (case-insensitive)."""
+    normalized = email.strip().lower()
+    async with get_async_session_read_replica() as session:
+        stmt = select(User.user_id).where(
+            sa.func.lower(User.email) == normalized,
+            User.status == UserStatus.ACTIVE,
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none() is not None
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _email_is_allowed_cached(email: str) -> bool:
+    """Cached DB lookup — refreshes at most once per minute per email."""
+    try:
+        return run_coroutine_in_lit_worker(_email_exists_in_users(email), timeout=10)
+    except Exception as exc:
+        # DB blip shouldn't 500 the page; fail closed by denying access.
+        LOGGER.warning("is_allowed_email_db_error", email=email, error=str(exc))
+        return False
+
+
 def is_allowed_email(email: Any) -> bool:
+    """Allow access only if the email corresponds to an ACTIVE user in the ``users`` table.
+
+    Comparison is case-insensitive and matches the ``idx_users_lower_email`` unique index.
     """
-    Just simple access control for now, anyone with a yupp.ai email can access.
-    TODO(Tian): add access control maybe reusing the soul permission system.
-    """
-    return email is not None and isinstance(email, str) and email.endswith("@yupp.ai")
+    if email is None or not isinstance(email, str) or not email.strip():
+        return False
+    return _email_is_allowed_cached(email.strip().lower())
 
 
 def is_auth_configured() -> bool:
@@ -24,6 +60,16 @@ def is_auth_configured() -> bool:
         return "auth" in st.secrets and "client_id" in st.secrets.auth
     except Exception:
         return False
+
+
+def auth_required() -> bool:
+    """True when the server must refuse access unless the user is logged in.
+
+    Selfhosted deployments MUST always require auth — there is no unauthenticated
+    fallback mode. Other deployments fall back to "dev mode" when auth secrets
+    aren't configured.
+    """
+    return is_selfhosted() or is_auth_configured()
 
 
 def require_auth_standalone() -> None:
@@ -35,6 +81,15 @@ def require_auth_standalone() -> None:
     AUTH_ENABLED = is_auth_configured()
 
     if not AUTH_ENABLED:
+        if is_selfhosted():
+            st.error("🔒 **Authentication Required**")
+            st.warning(
+                "Selfhosted mode requires Google OAuth to be configured. "
+                "Set `GOOGLE_AUTH_CLIENT_ID`, `GOOGLE_AUTH_CLIENT_SECRET`, "
+                "`GOOGLE_AUTH_REDIRECT_URI`, and `GOOGLE_AUTH_COOKIE_SECRET` "
+                "in your `.env`, then restart the service."
+            )
+            st.stop()
         st.warning(
             "⚠️ **Authentication Not Configured** - Running in development mode. "
             "See [AUTHENTICATION.md](./AUTHENTICATION.md) for setup instructions."
@@ -55,8 +110,7 @@ def require_auth_standalone() -> None:
     if not is_allowed_email(st.user.email):
         st.error("🚫 **Access Denied**")
         st.warning(
-            f"Your account ({st.user.email}) does not have access to this application. "
-            "Only yupp.ai emails are authorized."
+            f"Your account ({st.user.email}) is not a registered user. Ask an admin to create a user for this email."
         )
         st.stop()
 
@@ -100,6 +154,10 @@ def require_auth() -> None:
     if not AUTH_ENABLED:
         # Hide sidebar immediately to prevent flash
         st.markdown(HIDE_SIDEBAR_STYLE, unsafe_allow_html=True)
+        if is_selfhosted():
+            # Selfhosted must never expose pages without auth.
+            _redirect_to_home()
+            return
         st.info(
             "Authentication secrets are not configured; continuing in standalone mode. "
             "Run `streamlit run ypl/streamlit_server/app.py` to enable authentication."

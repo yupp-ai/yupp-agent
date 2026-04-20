@@ -147,6 +147,11 @@ def generate_env_content(params: dict[str, str]) -> str:
     )
     base_url = params.get("base_url", "http://localhost:8090")
     ahs_token_emails = params.get("ahs_token_emails", "")
+    lit_base_url = params.get("lit_base_url", "")
+    google_auth_client_id = params.get("google_auth_client_id", "")
+    google_auth_client_secret = params.get("google_auth_client_secret", "")
+    google_auth_redirect_uri = params.get("google_auth_redirect_uri", "")
+    google_auth_cookie_secret = params.get("google_auth_cookie_secret", "")
     return f"""\
 # =========================================================================
 # Yupp Agent Platform — One-Box Deployment Configuration
@@ -181,7 +186,20 @@ GATEWAY_BASE_URL={base_url}
 MCP_SERVER_BASE_URL={base_url}
 # Lit (Streamlit console) public base URL — leave empty to omit Lit links
 # from Slack / CLI output.  Example: https://lit.yourdomain.com
-AHS_LIT_BASE_URL=
+AHS_LIT_BASE_URL={lit_base_url}
+
+# ---------------------------------------------------------------------------
+# Streamlit (Lit) — Google OAuth
+# ---------------------------------------------------------------------------
+# Selfhosted Streamlit REQUIRES Google OAuth. Create an OAuth client at
+# https://console.cloud.google.com/apis/credentials (type: Web application),
+# set the redirect URI to "<AHS_LIT_BASE_URL>/oauth2callback", and paste the
+# client id / secret below. Access is restricted to emails that exist in the
+# `users` table — create a user row for each operator before they sign in.
+GOOGLE_AUTH_CLIENT_ID={google_auth_client_id}
+GOOGLE_AUTH_CLIENT_SECRET={google_auth_client_secret}
+GOOGLE_AUTH_REDIRECT_URI={google_auth_redirect_uri}
+GOOGLE_AUTH_COOKIE_SECRET={google_auth_cookie_secret}
 
 # ---------------------------------------------------------------------------
 # MCP Authentication
@@ -486,6 +504,37 @@ async def setup_interactive() -> int:
         )
 
         # ------------------------------------------------------------------
+        # Step 3b — Streamlit Google OAuth (required for selfhosted Lit)
+        # ------------------------------------------------------------------
+        console.print("\n[bold]Streamlit (Lit) Google OAuth[/bold]")
+        console.print(
+            "  [dim]Create a Google OAuth client at "
+            "https://console.cloud.google.com/apis/credentials[/dim]\n"
+            "  [dim]Type: 'Web application'. Authorized redirect URI must match "
+            "<lit-url>/oauth2callback exactly.[/dim]"
+        )
+        lit_base_url = Prompt.ask(
+            "  Public Lit base URL (e.g. https://lit.agcouch.com) — leave empty to skip Lit OAuth setup",
+            default="",
+        )
+        google_auth_client_id = ""
+        google_auth_client_secret = ""
+        google_auth_redirect_uri = ""
+        google_auth_cookie_secret = ""
+        if lit_base_url:
+            google_auth_client_id = Prompt.ask("  Google OAuth client ID", default="")
+            google_auth_client_secret = Prompt.ask("  Google OAuth client secret", default="", password=True)
+            google_auth_redirect_uri = Prompt.ask(
+                "  Google OAuth redirect URI",
+                default=f"{lit_base_url.rstrip('/')}/oauth2callback",
+            )
+            google_auth_cookie_secret = generate_secret()
+            console.print(
+                "  [dim]Access will be restricted to emails in the `users` table — "
+                "the admin user created in Step 7 will be able to log in.[/dim]"
+            )
+
+        # ------------------------------------------------------------------
         # Step 4 — Auto-generate secrets, write .env
         # ------------------------------------------------------------------
         console.print("\n[bold]Step 4 / 7 — Generating secrets & writing .env[/bold]")
@@ -512,6 +561,11 @@ async def setup_interactive() -> int:
             "mcp_jwt_key": generate_fernet_key(),
             "mcp_enc_key": generate_fernet_key(),
             "slack_enc_key": generate_fernet_key(),
+            "lit_base_url": lit_base_url,
+            "google_auth_client_id": google_auth_client_id,
+            "google_auth_client_secret": google_auth_client_secret,
+            "google_auth_redirect_uri": google_auth_redirect_uri,
+            "google_auth_cookie_secret": google_auth_cookie_secret,
             "_admin_conn_line": _admin_conn_line,
         }
 

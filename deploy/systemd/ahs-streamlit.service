@@ -25,12 +25,7 @@ Environment=HOME=/data/ahs
 Environment=AHS_DATA_DIR=/data/ahs
 Environment=PATH=/data/ahs/.local/bin:/usr/local/bin:/usr/bin:/bin
 
-ExecStart=/opt/yupp-agent/.venv/bin/streamlit run \
-    ypl/streamlit_server/app.py \
-    --server.port ${PORT} \
-    --server.address 0.0.0.0 \
-    --server.headless true \
-    --browser.gatherUsageStats false
+ExecStart=/opt/yupp-agent/ypl/streamlit_server/selfhosted_entrypoint.sh
 
 TimeoutStopSec=15
 KillMode=mixed
