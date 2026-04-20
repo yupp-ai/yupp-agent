@@ -738,13 +738,13 @@ class TestMcpServerUrlInjection:
             "-c",
             'mcp_servers.harness.url="http://127.0.0.1:8090/mcp/harness/"',
             "-c",
-            'mcp_servers.yuppster.url="https://mcp.yupp.ai/"',
+            'mcp_servers.yuppster.url="https://mcp.example.com/"',
         ]
         with _patch_mcp_args(mcp_args):
             args = runner._build_server_args(9090, ctx)
 
         assert 'mcp_servers.harness.url="http://127.0.0.1:8090/mcp/harness/"' in args
-        assert 'mcp_servers.yuppster.url="https://mcp.yupp.ai/"' in args
+        assert 'mcp_servers.yuppster.url="https://mcp.example.com/"' in args
 
     @pytest.mark.asyncio
     async def test_spawn_passes_mcp_env_to_subprocess(self) -> None:

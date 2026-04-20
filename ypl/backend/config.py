@@ -231,7 +231,10 @@ class Settings(BaseSettings):
     SLACK_BOT_FATHER_BOT_TOKEN: str = ""
     SLACK_BOT_FATHER_SIGNING_SECRET: str = ""
     SLACK_BOT_FATHER_APP_CONFIG_REFRESH_TOKEN: str = ""  # Access tokens obtained on-demand via refresh
-    SLACK_BOT_FATHER_APPROVAL_CHANNEL: str = "C0ALTCHNZ99"  # #cybertron
+    # TODO(oss): currently unused at runtime. When BotFather approval gating is
+    # re-enabled, move this default out of source — deployers should set the
+    # Slack channel ID in their own .env.
+    SLACK_BOT_FATHER_APPROVAL_CHANNEL: str = "C0ALTCHNZ99"
 
     # Slack Agent Gateway encryption key (base64-encoded 32-byte key for Fernet)
     SLACK_AGENT_GW_ENCRYPTION_KEY: str = ""
@@ -262,16 +265,6 @@ class Settings(BaseSettings):
 
     # TODO(gilad): split to staging and production.
     INTERNAL_EMBEDDING_ENDPOINT: str = os.getenv("INTERNAL_EMBEDDING_ENDPOINT", "")
-
-    # The base URL of the yupp-head app, set to staging by default.
-    # Example use case: when updating models on yupp-mind, we need to revalidate the model caches on yupp-head too.
-    YUPP_HEAD_APP_BASE_URL: str = "https://chaos.yupp.ai"
-
-    # The base URL of the yupp-mind app, set to staging by default.
-    YUPP_MIND_APP_BASE_URL: str = "https://mind-staging.yupp.ai"
-
-    # The base URL of the leaderboard app, set to staging by default.
-    YUPP_LEADERBOARD_APP_BASE_URL: str = "https://lebo-staging.yupp.ai"
 
     # Leaderboard tier: "" or "latest" - used for Redis cache key separation.
     # When running dual leaderboard backends, this ensures each tier has its own cache namespace.
@@ -476,6 +469,13 @@ class Settings(BaseSettings):
     # Only these service tokens can override attribution — prevents regular DevToken
     # holders from impersonating other users.
     AHS_SERVICE_TOKEN_EMAILS: str = ""
+
+    # AHS CORS configuration. The baseline loopback origins for local dev are
+    # always added by server.py; these two settings let deployers add their
+    # production frontends. Format: JSON list for explicit origins, a regex
+    # string for wildcard matching (e.g. ``https://.*\\.example\\.com``).
+    AHS_CORS_ALLOW_ORIGINS: list[str] = []
+    AHS_CORS_ALLOW_ORIGIN_REGEX: str = ""
 
     # Agent Harness Service (AHS) GitHub token encryption key
     # Fernet encryption key for storing user GitHub tokens in Redis

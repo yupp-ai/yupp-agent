@@ -288,32 +288,3 @@ async def validate_permissions(
             }
             logger.warning(json_dumps(log_dict))
             raise PermissionDeniedError(f"Permission denied. Required permission: {permission.value}")
-
-
-def get_soul_url(query: str) -> str:
-    """
-    Generate the Soul URL for a given query.
-    """
-    if settings.ENVIRONMENT == "production":
-        return f"https://yupp-soul.vercel.app/users?query={query}"
-    return f"https://chaos-soul.vercel.app/users?query={query}"
-
-
-def get_litter_url(query: str) -> str:
-    """
-    Generate the Litter URL for a given query.
-    """
-    if settings.ENVIRONMENT == "production":
-        return f"https://lit.yupp.ai/litter?whatever_id={query}"
-    if settings.ENVIRONMENT == "staging":
-        return f"https://lit-staging.yupp.ai/litter?whatever_id={query}"
-
-    return f"http://localhost:8501/litter?whatever_id={query}"
-
-
-def get_support_ticket_soul_link(ticket_id: str) -> str:
-    if settings.ENVIRONMENT == "production":
-        return f"https://yupp-soul.vercel.app/support-tickets/{ticket_id}"
-    if settings.ENVIRONMENT == "staging":
-        return f"https://chaos-soul.vercel.app/support-tickets/{ticket_id}"
-    return f"https://localhost:3001/support-tickets/{ticket_id}"

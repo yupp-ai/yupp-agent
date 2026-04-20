@@ -79,7 +79,7 @@ def main() -> None:
     parser.add_argument(
         "--host",
         default=None,
-        help="AHS host (default: ahs.yupp.ai). Examples: localhost:8090, https://ahs.yupp.ai",
+        help="AHS host (or set AHS_HOST env var). Examples: localhost:8090, https://ahs.example.com",
     )
     parser.add_argument("--logout", action="store_true", help="Clear cached Google credentials and exit")
     parser.add_argument(

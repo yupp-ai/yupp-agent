@@ -9,7 +9,6 @@ Covers:
 - has_permission / has_permission_cached (DB lookup)
 - has_permission_by_user_id / has_permission_by_user_id_cached
 - validate_permissions (header, env check, permission check)
-- get_soul_url, get_litter_url, get_support_ticket_soul_link (pure URL builders)
 """
 
 from __future__ import annotations
@@ -24,9 +23,6 @@ from ypl.backend.utils.soul_utils import (
     RoleDeniedError,
     SoulAuthError,
     UserNotFoundError,
-    get_litter_url,
-    get_soul_url,
-    get_support_ticket_soul_link,
     has_permission,
     has_permission_by_user_id,
     has_role,
@@ -86,85 +82,6 @@ class TestRoleDeniedError:
     def test_default_detail(self) -> None:
         err = RoleDeniedError()
         assert "denied" in err.detail.lower()
-
-
-# ---------------------------------------------------------------------------
-# get_soul_url / get_litter_url / get_support_ticket_soul_link — pure
-# ---------------------------------------------------------------------------
-
-
-class TestGetSoulUrl:
-    def test_production_url(self) -> None:
-        mock_settings = MagicMock()
-        mock_settings.ENVIRONMENT = "production"
-        with patch(f"{MODULE}.settings", mock_settings):
-            url = get_soul_url("test@example.com")
-        assert "yupp-soul.vercel.app" in url
-        assert "test@example.com" in url
-
-    def test_non_production_url(self) -> None:
-        mock_settings = MagicMock()
-        mock_settings.ENVIRONMENT = "staging"
-        with patch(f"{MODULE}.settings", mock_settings):
-            url = get_soul_url("test@example.com")
-        assert "chaos-soul.vercel.app" in url
-
-    def test_includes_query_param(self) -> None:
-        mock_settings = MagicMock()
-        mock_settings.ENVIRONMENT = "local"
-        with patch(f"{MODULE}.settings", mock_settings):
-            url = get_soul_url("my-query")
-        assert "my-query" in url
-
-
-class TestGetLitterUrl:
-    def test_production_url(self) -> None:
-        mock_settings = MagicMock()
-        mock_settings.ENVIRONMENT = "production"
-        with patch(f"{MODULE}.settings", mock_settings):
-            url = get_litter_url("turn-123")
-        assert "lit.yupp.ai" in url
-        assert "turn-123" in url
-
-    def test_staging_url(self) -> None:
-        mock_settings = MagicMock()
-        mock_settings.ENVIRONMENT = "staging"
-        with patch(f"{MODULE}.settings", mock_settings):
-            url = get_litter_url("turn-456")
-        assert "lit-staging.yupp.ai" in url
-
-    def test_local_url(self) -> None:
-        mock_settings = MagicMock()
-        mock_settings.ENVIRONMENT = "local"
-        with patch(f"{MODULE}.settings", mock_settings):
-            url = get_litter_url("turn-789")
-        assert "localhost" in url
-
-
-class TestGetSupportTicketSoulLink:
-    def test_production_url(self) -> None:
-        mock_settings = MagicMock()
-        mock_settings.ENVIRONMENT = "production"
-        with patch(f"{MODULE}.settings", mock_settings):
-            url = get_support_ticket_soul_link("ticket-abc")
-        assert "yupp-soul.vercel.app" in url
-        assert "ticket-abc" in url
-
-    def test_staging_url(self) -> None:
-        mock_settings = MagicMock()
-        mock_settings.ENVIRONMENT = "staging"
-        with patch(f"{MODULE}.settings", mock_settings):
-            url = get_support_ticket_soul_link("ticket-def")
-        assert "chaos-soul.vercel.app" in url
-        assert "ticket-def" in url
-
-    def test_local_url(self) -> None:
-        mock_settings = MagicMock()
-        mock_settings.ENVIRONMENT = "local"
-        with patch(f"{MODULE}.settings", mock_settings):
-            url = get_support_ticket_soul_link("ticket-ghi")
-        assert "localhost" in url
-        assert "ticket-ghi" in url
 
 
 # ---------------------------------------------------------------------------

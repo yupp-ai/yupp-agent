@@ -6,6 +6,7 @@ This module is intentionally NOT wired into server.py — that happens in a late
 from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from ypl.backend.config import settings
 from ypl.backend.db import get_async_session
 from ypl.db.users import User, UserStatus, UserType
 from ypl.structured_logger import get_logger
@@ -60,7 +61,7 @@ async def sweep_agent_user_identities() -> None:
                         .values(
                             user_id=str(agent_id),
                             name=f"agent:{name}",
-                            email=f"agent-{agent_id}@agents.yupp.ai",
+                            email=f"agent-{agent_id}@{settings.AGENT_USER_EMAIL_DOMAIN}",
                             user_type=UserType.AGENT,
                             status=UserStatus.ACTIVE,
                         )
