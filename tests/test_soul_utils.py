@@ -20,7 +20,6 @@ import pytest
 from fastapi import HTTPException
 from starlette import status
 from ypl.backend.utils.soul_utils import (
-    TLM_EMAILS,
     PermissionDeniedError,
     RoleDeniedError,
     SoulAuthError,
@@ -87,24 +86,6 @@ class TestRoleDeniedError:
     def test_default_detail(self) -> None:
         err = RoleDeniedError()
         assert "denied" in err.detail.lower()
-
-
-# ---------------------------------------------------------------------------
-# TLM_EMAILS set
-# ---------------------------------------------------------------------------
-
-
-class TestTlmEmails:
-    def test_is_a_set(self) -> None:
-        assert isinstance(TLM_EMAILS, set)
-
-    def test_contains_known_emails(self) -> None:
-        # These are defined in the source
-        assert "gilad@yupp.ai" in TLM_EMAILS
-
-    def test_all_are_yupp_ai_emails(self) -> None:
-        for email in TLM_EMAILS:
-            assert "@yupp.ai" in email
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +178,7 @@ class TestValidateAdmin:
             patch(f"{MODULE}.validate_role", new_callable=AsyncMock, side_effect=UserNotFoundError("not found")),
             pytest.raises(HTTPException) as exc_info,
         ):
-            await validate_admin("missing@yupp.ai")
+            await validate_admin("missing@example.com")
 
         assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
 
@@ -206,7 +187,7 @@ class TestValidateAdmin:
             patch(f"{MODULE}.validate_role", new_callable=AsyncMock, side_effect=RoleDeniedError("denied")),
             pytest.raises(HTTPException) as exc_info,
         ):
-            await validate_admin("noadmin@yupp.ai")
+            await validate_admin("noadmin@example.com")
 
         assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
 
@@ -215,13 +196,13 @@ class TestValidateAdmin:
             patch(f"{MODULE}.validate_role", new_callable=AsyncMock, side_effect=Exception("DB error")),
             pytest.raises(HTTPException) as exc_info,
         ):
-            await validate_admin("user@yupp.ai")
+            await validate_admin("user@example.com")
 
         assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
     async def test_passes_for_admin_user(self) -> None:
         with patch(f"{MODULE}.validate_role", new_callable=AsyncMock):
-            await validate_admin("admin@yupp.ai")  # Should not raise
+            await validate_admin("admin@example.com")  # Should not raise
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +231,7 @@ class TestValidateRole:
         ):
             from ypl.db.rbac import RoleName
 
-            await validate_role([RoleName.ADMIN], "nobody@yupp.ai")
+            await validate_role([RoleName.ADMIN], "nobody@example.com")
 
     async def test_raises_role_denied_when_user_lacks_role(self) -> None:
         mock_user = MagicMock()
@@ -264,7 +245,7 @@ class TestValidateRole:
         ):
             from ypl.db.rbac import RoleName
 
-            await validate_role([RoleName.ADMIN], "user@yupp.ai")
+            await validate_role([RoleName.ADMIN], "user@example.com")
 
     async def test_returns_when_user_has_role(self) -> None:
         mock_user = MagicMock()
@@ -277,7 +258,7 @@ class TestValidateRole:
         ):
             from ypl.db.rbac import RoleName
 
-            await validate_role([RoleName.ADMIN], "admin@yupp.ai")  # No raise
+            await validate_role([RoleName.ADMIN], "admin@example.com")  # No raise
 
 
 # ---------------------------------------------------------------------------
@@ -349,7 +330,7 @@ class TestHasPermission:
         with patch(f"{MODULE}.get_async_session", return_value=ctx):
             from ypl.db.rbac import Permission
 
-            result = await has_permission("nobody@yupp.ai", Permission.READ_YUPPASTE)
+            result = await has_permission("nobody@example.com", Permission.READ_YUPPASTE)
 
         assert result is False
 
@@ -361,7 +342,7 @@ class TestHasPermission:
         with patch(f"{MODULE}.get_async_session", return_value=ctx):
             from ypl.db.rbac import Permission
 
-            result = await has_permission("user@yupp.ai", Permission.WRITE_YUPPASTE)
+            result = await has_permission("user@example.com", Permission.WRITE_YUPPASTE)
 
         assert result is False
 
@@ -383,7 +364,7 @@ class TestHasPermission:
         ):
             from ypl.db.rbac import Permission
 
-            result = await has_permission("user@yupp.ai", Permission.READ_YUPPASTE)
+            result = await has_permission("user@example.com", Permission.READ_YUPPASTE)
 
         assert result is True
 
@@ -460,7 +441,7 @@ class TestValidatePermissions:
 
     async def test_passes_when_no_permissions_required(self) -> None:
         # Empty permissions list → always passes
-        await validate_permissions([], x_creator_email="user@yupp.ai")  # No raise
+        await validate_permissions([], x_creator_email="user@example.com")  # No raise
 
     async def test_passes_in_non_production_env(self) -> None:
         from ypl.db.rbac import Permission
@@ -470,7 +451,7 @@ class TestValidatePermissions:
 
         with patch(f"{MODULE}.settings", mock_settings):
             # Even with permissions required, non-production env skips check
-            await validate_permissions([Permission.READ_YUPPASTE], x_creator_email="user@yupp.ai")
+            await validate_permissions([Permission.READ_YUPPASTE], x_creator_email="user@example.com")
 
     async def test_raises_permission_denied_in_production(self) -> None:
         from ypl.db.rbac import Permission
@@ -483,7 +464,7 @@ class TestValidatePermissions:
             patch(f"{MODULE}.has_permission", new_callable=AsyncMock, return_value=False),
             pytest.raises(PermissionDeniedError),
         ):
-            await validate_permissions([Permission.READ_YUPPASTE], x_creator_email="user@yupp.ai")
+            await validate_permissions([Permission.READ_YUPPASTE], x_creator_email="user@example.com")
 
     async def test_passes_in_production_when_has_permission(self) -> None:
         from ypl.db.rbac import Permission
@@ -495,7 +476,7 @@ class TestValidatePermissions:
             patch(f"{MODULE}.settings", mock_settings),
             patch(f"{MODULE}.has_permission", new_callable=AsyncMock, return_value=True),
         ):
-            await validate_permissions([Permission.READ_YUPPASTE], x_creator_email="admin@yupp.ai")
+            await validate_permissions([Permission.READ_YUPPASTE], x_creator_email="admin@example.com")
 
 
 # ---------------------------------------------------------------------------
@@ -508,7 +489,7 @@ class TestValidateYuppaste:
         from ypl.backend.utils.soul_utils import validate_read_yuppaste
 
         with patch(f"{MODULE}.validate_permissions", new_callable=AsyncMock) as mock_vp:
-            await validate_read_yuppaste(x_creator_email="user@yupp.ai")
+            await validate_read_yuppaste(x_creator_email="user@example.com")
 
         mock_vp.assert_awaited_once()
         call_args = mock_vp.call_args
@@ -520,7 +501,7 @@ class TestValidateYuppaste:
         from ypl.backend.utils.soul_utils import validate_write_yuppaste
 
         with patch(f"{MODULE}.validate_permissions", new_callable=AsyncMock) as mock_vp:
-            await validate_write_yuppaste(x_creator_email="user@yupp.ai")
+            await validate_write_yuppaste(x_creator_email="user@example.com")
 
         mock_vp.assert_awaited_once()
         call_args = mock_vp.call_args

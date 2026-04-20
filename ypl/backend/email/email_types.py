@@ -1,19 +1,7 @@
-from dataclasses import dataclass
-from typing import Any, Literal
+from dataclasses import dataclass, field
+from typing import Any
 
-FromEmailAddressType = Literal[
-    "Yupp Team <team@updates.yupp.ai>",
-    "Support <support@updates.yupp.ai>",
-    "Notice <notice@updates.yupp.ai>",
-    "Onboarding <onboarding@updates.yupp.ai>",
-    "Payments <payments@updates.yupp.ai>",
-]
-
-TEAM_FROM_EMAIL_ADDRESS: FromEmailAddressType = "Yupp Team <team@updates.yupp.ai>"
-SUPPORT_FROM_EMAIL_ADDRESS: FromEmailAddressType = "Support <support@updates.yupp.ai>"
-NOTICE_FROM_EMAIL_ADDRESS: FromEmailAddressType = "Notice <notice@updates.yupp.ai>"
-ONBOARDING_FROM_EMAIL_ADDRESS: FromEmailAddressType = "Onboarding <onboarding@updates.yupp.ai>"
-PAYMENTS_FROM_EMAIL_ADDRESS: FromEmailAddressType = "Payments <payments@updates.yupp.ai>"
+from ypl.backend.config import settings
 
 
 @dataclass
@@ -21,7 +9,10 @@ class EmailConfig:
     campaign: str
     to_address: str
     template_params: dict[str, Any]
-    from_address: FromEmailAddressType = TEAM_FROM_EMAIL_ADDRESS
+    # Resolved lazily at instantiation so tests/self-hosted deployments can
+    # override ``settings.TEAM_FROM_EMAIL_ADDRESS`` without importing a frozen
+    # module-level constant.
+    from_address: str = field(default_factory=lambda: settings.TEAM_FROM_EMAIL_ADDRESS)
 
 
 @dataclass

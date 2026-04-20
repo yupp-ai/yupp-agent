@@ -10,6 +10,7 @@ from ypl.agent_harness_service.common.types import (
     AgentEditResponse,
 )
 from ypl.agent_harness_service.service.resolvers import _resolve_agent
+from ypl.backend.config import settings
 from ypl.backend.db import get_async_session
 from ypl.db.agent_harness import Agent, AgentExecutorType
 from ypl.db.users import User, UserStatus, UserType
@@ -69,14 +70,15 @@ async def create_agent(request: AgentCreateRequest) -> AgentCreateResponse:
 
         # Create a corresponding User identity row for this agent in the same transaction.
         # If either insert fails, neither is committed.
+        # Use agent_id (not name) for uniqueness: names can collide or be
+        # reused; agent_id is stable and UUID-unique. Use AGENT_USER_EMAIL_DOMAIN
+        # (distinct from ALLOWED_EMAIL_DOMAINS) to keep agent identities out of
+        # human employee flows (e.g. _resolve_personal_agent_for_user gates on
+        # the allowed human domain suffix).
         user = User(
             user_id=str(agent.agent_id),
             name=f"agent:{agent.name}",
-            # Use agent_id (not name) for uniqueness: names can collide or be
-            # reused; agent_id is stable and UUID-unique. Use @agents.yupp.ai
-            # (not @yupp.ai) to keep agent identities out of human employee flows
-            # (e.g. _resolve_personal_agent_for_user gates on @yupp.ai suffix).
-            email=f"agent-{agent.agent_id}@agents.yupp.ai",
+            email=f"agent-{agent.agent_id}@{settings.AGENT_USER_EMAIL_DOMAIN}",
             user_type=UserType.AGENT,
             status=UserStatus.ACTIVE,
         )

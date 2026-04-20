@@ -94,7 +94,7 @@ class TestSanitizeMetadataValue:
         assert _sanitize_metadata_value("hello123") == "hello123"
 
     def test_allowed_special_chars_kept(self) -> None:
-        val = "sre-agent_1.0 user@yupp.ai/path"
+        val = "sre-agent_1.0 user@example.com/path"
         result = _sanitize_metadata_value(val)
         # All chars in the original are allowed
         assert result == val

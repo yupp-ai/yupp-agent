@@ -94,6 +94,7 @@ from ypl.agent_harness_service.service import (
 )
 from ypl.backend.config import settings
 from ypl.backend.llm.db_helpers import get_user_id_by_email
+from ypl.backend.utils.email_domains import is_allowed_email_domain
 from ypl.structured_logger import get_logger
 
 _logger = get_logger()
@@ -332,10 +333,10 @@ async def get_session_detail_route(session_id: str) -> SessionDetailResponse:
     dependencies=[Depends(verify_api_key)],
 )
 async def resolve_user_route(request: ResolveUserRequest) -> ResolveUserResponse:
-    """Resolve a @yupp.ai email address to a Yupp user ID."""
+    """Resolve an email address (domain restricted by ``ALLOWED_EMAIL_DOMAINS``) to a user ID."""
     email = request.email.strip().lower()
-    if not email.endswith("@yupp.ai"):
-        raise HTTPException(status_code=400, detail="Only @yupp.ai emails are allowed")
+    if not is_allowed_email_domain(email):
+        raise HTTPException(status_code=400, detail="Email domain is not in the allowed list")
 
     user_id = await get_user_id_by_email(email)
     if not user_id:

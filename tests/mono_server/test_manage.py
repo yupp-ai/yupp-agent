@@ -234,6 +234,7 @@ class TestCmdReset:
         from ypl.mono_server.manage import cmd_reset
 
         with (
+            patch("ypl.mono_server.manage.settings.SYSTEM_USER_EMAIL", "system@example.com"),
             patch("ypl.mono_server.manage._get_async_engine", return_value=_mock_engine()),
             patch("ypl.mono_server.manage.seed_roles", new_callable=AsyncMock),
             patch("ypl.mono_server.manage.create_user_with_role", new_callable=AsyncMock),
@@ -246,9 +247,18 @@ class TestCmdReset:
         from ypl.mono_server.manage import cmd_reset
 
         with (
+            patch("ypl.mono_server.manage.settings.SYSTEM_USER_EMAIL", "system@example.com"),
             patch("ypl.mono_server.manage._get_async_engine", return_value=_mock_engine()),
             patch("ypl.mono_server.manage.seed_roles", new_callable=AsyncMock, side_effect=RuntimeError("oops")),
         ):
+            result = await cmd_reset(yes=True)
+
+        assert result == 1
+
+    async def test_returns_one_when_system_email_unset(self) -> None:
+        from ypl.mono_server.manage import cmd_reset
+
+        with patch("ypl.mono_server.manage.settings.SYSTEM_USER_EMAIL", ""):
             result = await cmd_reset(yes=True)
 
         assert result == 1

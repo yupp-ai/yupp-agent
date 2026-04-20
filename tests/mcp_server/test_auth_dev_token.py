@@ -43,7 +43,7 @@ from ypl.mcp_server.auth_dev_token import (
 
 def _make_db_token(
     *,
-    email: str = "dev@yupp.ai",
+    email: str = "dev@example.com",
     status_val: str = "ACTIVE",
     expires_at: datetime | None = None,
 ) -> MagicMock:
@@ -177,34 +177,34 @@ class TestHashAndVerify:
 
 class TestIsServiceToken:
     def test_listed_email_is_service(self) -> None:
-        token = _make_db_token(email="svc@yupp.ai")
+        token = _make_db_token(email="svc@example.com")
         with patch("ypl.mcp_server.auth_dev_token.settings") as mock_settings:
-            mock_settings.AHS_SERVICE_TOKEN_EMAILS = "svc@yupp.ai,other@yupp.ai"
+            mock_settings.AHS_SERVICE_TOKEN_EMAILS = "svc@example.com,other@example.com"
             assert _is_service_token(token) is True
 
     def test_unlisted_email_is_not_service(self) -> None:
-        token = _make_db_token(email="engineer@yupp.ai")
+        token = _make_db_token(email="engineer@example.com")
         with patch("ypl.mcp_server.auth_dev_token.settings") as mock_settings:
-            mock_settings.AHS_SERVICE_TOKEN_EMAILS = "svc@yupp.ai"
+            mock_settings.AHS_SERVICE_TOKEN_EMAILS = "svc@example.com"
             assert _is_service_token(token) is False
 
     def test_case_insensitive(self) -> None:
-        token = _make_db_token(email="SVC@Yupp.AI")
+        token = _make_db_token(email="SVC@Example.COM")
         with patch("ypl.mcp_server.auth_dev_token.settings") as mock_settings:
-            mock_settings.AHS_SERVICE_TOKEN_EMAILS = "svc@yupp.ai"
+            mock_settings.AHS_SERVICE_TOKEN_EMAILS = "svc@example.com"
             assert _is_service_token(token) is True
 
     def test_empty_allowlist_trusts_all(self) -> None:
         """When AHS_SERVICE_TOKEN_EMAILS is empty, every token is trusted (local dev mode)."""
-        token = _make_db_token(email="anyone@yupp.ai")
+        token = _make_db_token(email="anyone@example.com")
         with patch("ypl.mcp_server.auth_dev_token.settings") as mock_settings:
             mock_settings.AHS_SERVICE_TOKEN_EMAILS = ""
             assert _is_service_token(token) is True
 
     def test_whitespace_stripped(self) -> None:
-        token = _make_db_token(email="svc@yupp.ai")
+        token = _make_db_token(email="svc@example.com")
         with patch("ypl.mcp_server.auth_dev_token.settings") as mock_settings:
-            mock_settings.AHS_SERVICE_TOKEN_EMAILS = "  svc@yupp.ai  ,  other@yupp.ai  "
+            mock_settings.AHS_SERVICE_TOKEN_EMAILS = "  svc@example.com  ,  other@example.com  "
             assert _is_service_token(token) is True
 
 
@@ -239,27 +239,27 @@ class TestCreateRequestContext:
         assert ctx["user_agent"] == "test-agent/1.0"
 
     def test_service_token_trusts_x_user_id(self) -> None:
-        db_token = _make_db_token(email="svc@yupp.ai")
+        db_token = _make_db_token(email="svc@example.com")
         request = self._make_request(headers={"x-user-id": "user-abc-123"})
 
         with patch("ypl.mcp_server.auth_dev_token.settings") as mock_settings:
-            mock_settings.AHS_SERVICE_TOKEN_EMAILS = "svc@yupp.ai"
+            mock_settings.AHS_SERVICE_TOKEN_EMAILS = "svc@example.com"
             ctx = create_request_context(db_token, request)
 
         assert ctx["requesting_user_id"] == "user-abc-123"
 
     def test_non_service_token_ignores_x_user_id(self) -> None:
-        db_token = _make_db_token(email="engineer@yupp.ai")
+        db_token = _make_db_token(email="engineer@example.com")
         request = self._make_request(headers={"x-user-id": "user-abc-123"})
 
         with patch("ypl.mcp_server.auth_dev_token.settings") as mock_settings:
-            mock_settings.AHS_SERVICE_TOKEN_EMAILS = "svc@yupp.ai"
+            mock_settings.AHS_SERVICE_TOKEN_EMAILS = "svc@example.com"
             ctx = create_request_context(db_token, request)
 
         assert ctx["requesting_user_id"] is None
 
     def test_service_token_reads_ahs_headers(self) -> None:
-        db_token = _make_db_token(email="svc@yupp.ai")
+        db_token = _make_db_token(email="svc@example.com")
         request = self._make_request(
             headers={
                 "x-ahs-agent-name": "test-raccoon",
@@ -268,14 +268,14 @@ class TestCreateRequestContext:
         )
 
         with patch("ypl.mcp_server.auth_dev_token.settings") as mock_settings:
-            mock_settings.AHS_SERVICE_TOKEN_EMAILS = "svc@yupp.ai"
+            mock_settings.AHS_SERVICE_TOKEN_EMAILS = "svc@example.com"
             ctx = create_request_context(db_token, request)
 
         assert ctx["ahs_agent_name"] == "test-raccoon"
         assert ctx["ahs_session_id"] == "session-uuid-1234"
 
     def test_non_service_token_ignores_ahs_headers(self) -> None:
-        db_token = _make_db_token(email="engineer@yupp.ai")
+        db_token = _make_db_token(email="engineer@example.com")
         request = self._make_request(
             headers={
                 "x-ahs-agent-name": "malicious-agent",
@@ -284,7 +284,7 @@ class TestCreateRequestContext:
         )
 
         with patch("ypl.mcp_server.auth_dev_token.settings") as mock_settings:
-            mock_settings.AHS_SERVICE_TOKEN_EMAILS = "svc@yupp.ai"
+            mock_settings.AHS_SERVICE_TOKEN_EMAILS = "svc@example.com"
             ctx = create_request_context(db_token, request)
 
         assert ctx["ahs_agent_name"] is None
@@ -550,7 +550,7 @@ class TestCreateToken:
         from ypl.mcp_server.auth_dev_token import create_token
 
         with patch("ypl.mcp_server.auth_dev_token.settings") as mock_settings:
-            mock_settings.ALLOWED_MCP_EMAIL_DOMAINS = ["yupp.ai"]
+            mock_settings.ALLOWED_MCP_EMAIL_DOMAINS = ["example.com"]
             with pytest.raises(ValueError, match="not in allowed domains"):
                 await create_token("user@external.com", "test", None)
 
@@ -564,9 +564,9 @@ class TestCreateToken:
                 new=AsyncMock(return_value=False),
             ),
         ):
-            mock_settings.ALLOWED_MCP_EMAIL_DOMAINS = ["yupp.ai"]
+            mock_settings.ALLOWED_MCP_EMAIL_DOMAINS = ["example.com"]
             with pytest.raises(PermissionError, match="USE_MCP"):
-                await create_token("dev@yupp.ai", "test", None)
+                await create_token("dev@example.com", "test", None)
 
     async def test_creates_token_record(self) -> None:
         from ypl.db.mcp import MCPDevToken
@@ -590,10 +590,10 @@ class TestCreateToken:
             ),
             patch("ypl.mcp_server.auth_dev_token.get_async_session", return_value=ctx),
         ):
-            mock_settings.ALLOWED_MCP_EMAIL_DOMAINS = ["yupp.ai"]
-            plaintext, db_record = await create_token("dev@yupp.ai", "my token", None)
+            mock_settings.ALLOWED_MCP_EMAIL_DOMAINS = ["example.com"]
+            plaintext, db_record = await create_token("dev@example.com", "my token", None)
 
         assert plaintext.startswith("yupp_dev_")
         token_records = [o for o in added if isinstance(o, MCPDevToken)]
         assert len(token_records) == 1
-        assert token_records[0].email == "dev@yupp.ai"
+        assert token_records[0].email == "dev@example.com"

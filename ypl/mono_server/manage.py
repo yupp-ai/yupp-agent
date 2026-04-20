@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlmodel import select
 
 import ypl.db.all_models  # noqa: F401 — register all SQLModel mappers
+from ypl.backend.config import settings
 from ypl.db.rbac import Role, RoleName, UserRoleAssociation
 from ypl.db.users import User, UserType
 from ypl.mono_server.db import (
@@ -223,13 +224,19 @@ async def cmd_reset(yes: bool = False) -> int:
     """Re-seed roles and recreate the system user.
 
     This does NOT drop tables or delete existing human users.  It only ensures
-    the standard roles exist and that system@yupp.ai is present.  Idempotent.
+    the standard roles exist and that the system user (address configured via
+    ``SYSTEM_USER_EMAIL``) is present.  Idempotent.
     """
+    if not settings.SYSTEM_USER_EMAIL:
+        console.print("[red]✗ SYSTEM_USER_EMAIL is not set — configure it in .env before running reset.[/red]")
+        return 1
+
+    system_email = settings.SYSTEM_USER_EMAIL
     if not yes:
         from rich.prompt import Confirm
 
         if not Confirm.ask(
-            "[yellow]This will re-seed roles and recreate system@yupp.ai.  Continue?[/yellow]",
+            f"[yellow]This will re-seed roles and recreate {system_email}.  Continue?[/yellow]",
             default=False,
         ):
             console.print("Aborted.")
@@ -242,7 +249,7 @@ async def cmd_reset(yes: bool = False) -> int:
         console.print("Recreating system user…")
         await create_user_with_role(
             engine,
-            email="system@yupp.ai",
+            email=system_email,
             name="System",
             user_type=UserType.SYSTEM,
             role_name=None,

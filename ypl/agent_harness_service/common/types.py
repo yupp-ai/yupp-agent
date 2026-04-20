@@ -650,7 +650,7 @@ class ScheduleRunsResponse(BaseModel):
 class ResolveUserRequest(BaseModel):
     """POST /resolve_user — resolve a user email to a user ID."""
 
-    email: str = Field(..., description="User email address (must be @yupp.ai)")
+    email: str = Field(..., description="User email address (domain must match ALLOWED_EMAIL_DOMAINS)")
 
 
 class ResolveUserResponse(BaseModel):
