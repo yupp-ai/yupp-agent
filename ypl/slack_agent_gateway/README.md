@@ -226,12 +226,11 @@ cp /path/to/yupp-mind/.env .
 poetry run uvicorn ypl.slack_agent_gateway.server:app --reload --port 8080
 ```
 
-For local testing, set the agent env vars directly in your `.env`:
+For local testing, insert the agent into the `slack_agents` table (via BotFather's OAuth flow, or a direct SQL insert for self-hosted setups) and set the matching secret env vars in your `.env`:
 ```
-SLACK_AGENT_GATEWAY_AGENTS=giladovski,tianfucius
-SLACK_AGENT_GATEWAY_GILADOVSKI_APP_ID=A123...
-SLACK_AGENT_GATEWAY_GILADOVSKI_BOT_TOKEN=xoxb-...
-SLACK_AGENT_GATEWAY_GILADOVSKI_SIGNING_SECRET=...
+SLACK_AGENT_GATEWAY_EXAMPLEBOT_BOT_TOKEN=xoxb-...
+SLACK_AGENT_GATEWAY_EXAMPLEBOT_SIGNING_SECRET=...
 ```
+The env-var key is built from the row's `bot_name` uppercased with dashes replaced by underscores.
 
 For local testing with Slack, use a tunnel service (ngrok, cloudflared) to expose your local server.
