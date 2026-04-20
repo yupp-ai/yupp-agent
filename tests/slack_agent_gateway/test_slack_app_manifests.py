@@ -15,6 +15,7 @@ Covers:
 """
 
 from __future__ import annotations
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -70,54 +71,58 @@ def _future_expires_at() -> datetime:
 
 
 class TestBuildManifest:
+    @pytest.fixture(autouse=True)
+    def _stub_gateway_url(self) -> Iterator[None]:
+        with patch(f"{MODULE}.settings.GATEWAY_BASE_URL", "https://sag.example.com"):
+            yield
+
     def test_returns_dict_with_required_keys(self) -> None:
-        result = build_manifest("mybot", "My Bot", "staging")
+        result = build_manifest("mybot", "My Bot")
         assert "display_information" in result
         assert "features" in result
         assert "oauth_config" in result
         assert "settings" in result
 
     def test_display_name_is_set(self) -> None:
-        result = build_manifest("mybot", "My Bot Display", "staging")
+        result = build_manifest("mybot", "My Bot Display")
         assert result["display_information"]["name"] == "My Bot Display"
         assert result["features"]["bot_user"]["display_name"] == "My Bot Display"
 
     def test_bot_always_online(self) -> None:
-        result = build_manifest("mybot", "My Bot", "staging")
+        result = build_manifest("mybot", "My Bot")
         assert result["features"]["bot_user"]["always_online"] is True
 
-    def test_urls_include_environment_and_slack_name(self) -> None:
-        result = build_manifest("giladovski", "Giladovski", "production")
-        base = "https://slack-agent-gateway-production.yupp.ai/api/v1/slack"
+    def test_urls_use_configured_gateway_base(self) -> None:
+        result = build_manifest("giladovski", "Giladovski")
+        base = "https://sag.example.com/api/v1/slack"
         assert result["settings"]["event_subscriptions"]["request_url"] == f"{base}/events"
         assert result["settings"]["interactivity"]["request_url"] == f"{base}/interactions"
         assert result["oauth_config"]["redirect_urls"][0] == f"{base}/oauth/callback"
 
-    def test_staging_urls_use_staging_environment(self) -> None:
-        result = build_manifest("bot", "Bot", "staging")
-        base = "https://slack-agent-gateway-staging.yupp.ai/api/v1/slack"
-        assert base in result["settings"]["event_subscriptions"]["request_url"]
+    def test_raises_when_gateway_url_unset(self) -> None:
+        with patch(f"{MODULE}.settings.GATEWAY_BASE_URL", ""), pytest.raises(RuntimeError):
+            build_manifest("bot", "Bot")
 
     def test_bot_scopes_are_included(self) -> None:
-        result = build_manifest("bot", "Bot", "staging")
+        result = build_manifest("bot", "Bot")
         scopes = result["oauth_config"]["scopes"]["bot"]
         for scope in _BOT_SCOPES:
             assert scope in scopes
 
     def test_event_subscriptions_include_app_mention(self) -> None:
-        result = build_manifest("bot", "Bot", "staging")
+        result = build_manifest("bot", "Bot")
         assert "app_mention" in result["settings"]["event_subscriptions"]["bot_events"]
 
     def test_socket_mode_disabled(self) -> None:
-        result = build_manifest("bot", "Bot", "staging")
+        result = build_manifest("bot", "Bot")
         assert result["settings"]["socket_mode_enabled"] is False
 
     def test_interactivity_enabled(self) -> None:
-        result = build_manifest("bot", "Bot", "staging")
+        result = build_manifest("bot", "Bot")
         assert result["settings"]["interactivity"]["is_enabled"] is True
 
     def test_token_rotation_disabled(self) -> None:
-        result = build_manifest("bot", "Bot", "staging")
+        result = build_manifest("bot", "Bot")
         assert result["settings"]["token_rotation_enabled"] is False
 
 
@@ -127,36 +132,41 @@ class TestBuildManifest:
 
 
 class TestBuildOauthInstallUrl:
+    @pytest.fixture(autouse=True)
+    def _stub_gateway_url(self) -> Iterator[None]:
+        with patch(f"{MODULE}.settings.GATEWAY_BASE_URL", "https://sag.example.com"):
+            yield
+
     def test_returns_slack_oauth_url(self) -> None:
-        url = build_oauth_install_url("client-123", "staging")
+        url = build_oauth_install_url("client-123")
         assert url.startswith("https://slack.com/oauth/v2/authorize?")
 
     def test_includes_client_id(self) -> None:
-        url = build_oauth_install_url("my-client-id", "staging")
+        url = build_oauth_install_url("my-client-id")
         assert "client_id=my-client-id" in url
 
     def test_includes_redirect_uri(self) -> None:
-        url = build_oauth_install_url("cid", "staging")
+        url = build_oauth_install_url("cid")
         assert "redirect_uri=" in url
-        assert "staging" in url
+        assert "sag.example.com" in url
 
     def test_includes_scopes(self) -> None:
-        url = build_oauth_install_url("cid", "staging")
+        url = build_oauth_install_url("cid")
         assert "scope=" in url
         for scope in _BOT_SCOPES[:3]:
             assert scope.replace(":", "%3A") in url or scope in url
 
     def test_no_state_by_default(self) -> None:
-        url = build_oauth_install_url("cid", "staging")
+        url = build_oauth_install_url("cid")
         assert "state=" not in url
 
     def test_state_included_when_provided(self) -> None:
-        url = build_oauth_install_url("cid", "staging", state="my-csrf-token")
+        url = build_oauth_install_url("cid", state="my-csrf-token")
         assert "state=my-csrf-token" in url
 
-    def test_production_redirect_uri(self) -> None:
-        url = build_oauth_install_url("cid", "production")
-        assert "production" in url
+    def test_raises_when_gateway_url_unset(self) -> None:
+        with patch(f"{MODULE}.settings.GATEWAY_BASE_URL", ""), pytest.raises(RuntimeError):
+            build_oauth_install_url("cid")
 
 
 # ---------------------------------------------------------------------------
@@ -473,8 +483,13 @@ class TestClearTokenCache:
 
 
 class TestCreateSlackApp:
+    @pytest.fixture(autouse=True)
+    def _stub_gateway_url(self) -> Iterator[None]:
+        with patch(f"{MODULE}.settings.GATEWAY_BASE_URL", "https://sag.example.com"):
+            yield
+
     async def test_returns_app_id_and_credentials_on_success(self) -> None:
-        manifest = build_manifest("bot", "Bot", "staging")
+        manifest = build_manifest("bot", "Bot")
         response_data = {
             "ok": True,
             "app_id": "A999",
@@ -614,6 +629,11 @@ class TestDeleteSlackApp:
 
 
 class TestExchangeOauthCode:
+    @pytest.fixture(autouse=True)
+    def _stub_gateway_url(self) -> Iterator[None]:
+        with patch(f"{MODULE}.settings.GATEWAY_BASE_URL", "https://sag.example.com"):
+            yield
+
     async def test_returns_access_token_on_success(self) -> None:
         response_data = {
             "ok": True,
@@ -631,7 +651,7 @@ class TestExchangeOauthCode:
         mock_client.post.return_value = mock_response
 
         with patch(f"{MODULE}.httpx.AsyncClient", return_value=mock_client):
-            result = await exchange_oauth_code("code-123", "cid", "csecret", "staging")
+            result = await exchange_oauth_code("code-123", "cid", "csecret")
 
         assert result["access_token"] == "xoxb-bot-token"
         assert result["app_id"] == "A123"
@@ -650,7 +670,7 @@ class TestExchangeOauthCode:
             patch(f"{MODULE}.httpx.AsyncClient", return_value=mock_client),
             pytest.raises(RuntimeError, match="OAuth code exchange failed"),
         ):
-            await exchange_oauth_code("bad-code", "cid", "csec", "staging")
+            await exchange_oauth_code("bad-code", "cid", "csec")
 
     async def test_raises_when_access_token_missing(self) -> None:
         response_data = {"ok": True}  # No access_token
@@ -665,9 +685,9 @@ class TestExchangeOauthCode:
             patch(f"{MODULE}.httpx.AsyncClient", return_value=mock_client),
             pytest.raises(RuntimeError, match="OAuth response missing access_token"),
         ):
-            await exchange_oauth_code("code", "cid", "csec", "staging")
+            await exchange_oauth_code("code", "cid", "csec")
 
-    async def test_uses_correct_redirect_uri_for_environment(self) -> None:
+    async def test_redirect_uri_uses_configured_gateway_url(self) -> None:
         response_data = {"ok": True, "access_token": "xoxb-tok"}
         mock_response = _make_httpx_response(json_data=response_data)
 
@@ -677,11 +697,11 @@ class TestExchangeOauthCode:
         mock_client.post.return_value = mock_response
 
         with patch(f"{MODULE}.httpx.AsyncClient", return_value=mock_client):
-            await exchange_oauth_code("code", "cid", "csec", "production")
+            await exchange_oauth_code("code", "cid", "csec")
 
         call_kwargs = mock_client.post.call_args[1]
         redirect_uri = call_kwargs["data"]["redirect_uri"]
-        assert "production" in redirect_uri
+        assert redirect_uri == "https://sag.example.com/api/v1/slack/oauth/callback"
 
 
 # ---------------------------------------------------------------------------

@@ -124,6 +124,11 @@ AHS_GCS_SESSION_PREFIX = os.environ.get("AHS_GCS_SESSION_PREFIX", f"sessions/{_A
 # When empty, the Lit link is omitted from generated messages.
 AHS_LIT_BASE_URL = os.environ.get("AHS_LIT_BASE_URL", "").rstrip("/")
 
+# War Room (Next.js admin UI) base URL — used in Slack session-notice links.
+# Set to your deployment's War Room public URL (e.g. ``https://war-room.agcouch.com``).
+# When empty, the War Room link is omitted from generated messages.
+AHS_WAR_ROOM_BASE_URL = os.environ.get("AHS_WAR_ROOM_BASE_URL", "").rstrip("/")
+
 # MCP server base URL (used to generate per-workspace .mcp.json configs)
 AHS_MCP_BASE_URL = os.environ.get("AHS_MCP_BASE_URL", "http://127.0.0.1:8090")
 

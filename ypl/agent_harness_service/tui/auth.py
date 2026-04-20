@@ -32,7 +32,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 # Scopes: we only need the user's email
 _SCOPES = ["openid", "https://www.googleapis.com/auth/userinfo.email"]
 
-# Empty string = no domain restriction. Previously hard-coded to "yupp.ai".
+# Empty string = no domain restriction.
 _ALLOWED_DOMAIN = os.environ.get("AHS_TUI_ALLOWED_DOMAIN", "")
 
 # Persist tokens under ~/.config/ahstui/
