@@ -2,7 +2,7 @@
 
 Covers:
 - render_reply_blocks (pure, callbacks_rendering)
-- _escape_mrkdwn, _render_tool_cluster, _render_tool_summary (pure, callbacks)
+- _escape_mrkdwn, _render_tool_cluster (pure, callbacks)
 - _build_survey_blocks, _build_questionnaire_blocks (pure, callbacks)
 - add_reply, update_reply, send_message, request_feedback,
   send_questionnaire, handle_tool_event (async, mocked Slack + Redis)
@@ -19,7 +19,6 @@ from ypl.slack_agent_gateway.callbacks import (
     _build_survey_blocks,
     _escape_mrkdwn,
     _render_tool_cluster,
-    _render_tool_summary,
     add_reply,
     handle_tool_event,
     request_feedback,
@@ -337,45 +336,6 @@ class TestRenderToolCluster:
         ]
         result = _render_tool_cluster(entries)
         assert "&lt;@U123&gt;" in result
-
-
-class TestRenderToolSummary:
-    def _make_entry(self, name: str) -> ToolUseEntry:
-        return ToolUseEntry(
-            tool_use_id=f"tu-{name}",
-            name=name,
-            command="",
-            result_status=ToolResultStatus.DONE,
-        )
-
-    def test_single_tool(self) -> None:
-        entries = [self._make_entry("Bash")]
-        result = _render_tool_summary(entries)
-        assert "Bash*1" in result
-        assert "(1 tool used)" in result
-
-    def test_plural_tools(self) -> None:
-        entries = [self._make_entry("Bash") for _ in range(3)]
-        result = _render_tool_summary(entries)
-        assert "Bash*3" in result
-        assert "(3 tools used)" in result
-
-    def test_multiple_tool_types_sorted_by_count(self) -> None:
-        entries = [self._make_entry("Bash")] * 5 + [self._make_entry("Grep")] * 2 + [self._make_entry("Read")] * 1
-        result = _render_tool_summary(entries)
-        assert "Bash*5" in result
-        assert "Grep*2" in result
-        assert "Read*1" in result
-
-    def test_more_than_five_types_shows_ellipsis(self) -> None:
-        entries = [self._make_entry(f"Tool{i}") for i in range(7)]
-        result = _render_tool_summary(entries)
-        assert "..." in result
-
-    def test_exactly_five_types_no_ellipsis(self) -> None:
-        entries = [self._make_entry(f"Tool{i}") for i in range(5)]
-        result = _render_tool_summary(entries)
-        assert "..." not in result
 
 
 # ---------------------------------------------------------------------------

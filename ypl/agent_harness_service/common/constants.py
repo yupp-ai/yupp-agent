@@ -118,8 +118,11 @@ AHS_GCS_SESSION_BUCKET = os.environ.get("AHS_GCS_SESSION_BUCKET", "yupp-agents")
 _AHS_ENVIRONMENT = os.environ.get("ENVIRONMENT", "local")
 AHS_GCS_SESSION_PREFIX = os.environ.get("AHS_GCS_SESSION_PREFIX", f"sessions/{_AHS_ENVIRONMENT}")
 
-# Lit console base URL (used for session/project links in PR descriptions and Slack messages)
-AHS_LIT_BASE_URL = os.environ.get("AHS_LIT_BASE_URL", "https://lit.yupp.ai")
+# Lit (Streamlit console) base URL — used for session/project links in PR
+# descriptions, Slack messages, and CLI/TUI output. Set this in the deployment's
+# .env to the Streamlit console's public URL (e.g. ``https://lit.agcouch.com``).
+# When empty, the Lit link is omitted from generated messages.
+AHS_LIT_BASE_URL = os.environ.get("AHS_LIT_BASE_URL", "").rstrip("/")
 
 # MCP server base URL (used to generate per-workspace .mcp.json configs)
 AHS_MCP_BASE_URL = os.environ.get("AHS_MCP_BASE_URL", "http://127.0.0.1:8090")

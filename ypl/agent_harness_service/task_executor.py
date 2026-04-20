@@ -25,7 +25,6 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from ypl.agent_harness_service.common.types import SessionCreateRequest
 from ypl.agent_harness_service.projects.task_utils import are_dependencies_completed, complete_task
 from ypl.agent_harness_service.service import create_session, has_execution_capacity
-from ypl.backend.config import settings
 from ypl.backend.db import get_async_session
 from ypl.backend.utils.async_utils import create_background_task
 from ypl.backend.utils.redis_utils import RedisTokenBucketRateLimiter
@@ -39,13 +38,15 @@ from ypl.db.agent_harness import (
 from ypl.structured_logger import get_logger
 
 
-# Lit console base URL for session links in Slack notifications
+# Lit console base URL for session links in Slack notifications.
+# Reads from AHS_LIT_BASE_URL env var; returns empty when not configured so
+# callers can omit the link rather than emitting a broken URL.
 def _get_lit_session_url(session_id: str) -> str:
-    if settings.ENVIRONMENT == "production":
-        base = "https://agent-streamlit-server-production-451082535721.us-east4.run.app"
-    else:
-        base = "https://agent-streamlit-server-staging-451082535721.us-east4.run.app"
-    return f"{base}/agent_harness_console?session_id={session_id}"
+    from ypl.agent_harness_service.common.constants import AHS_LIT_BASE_URL
+
+    if not AHS_LIT_BASE_URL:
+        return ""
+    return f"{AHS_LIT_BASE_URL}/agent_harness_console?session_id={session_id}"
 
 
 logger = get_logger()
@@ -644,11 +645,12 @@ async def execute_task(task_id: uuid.UUID) -> None:
         session_id_str = session_response.session_id
         short_id = session_id_str[:8]
         lit_url = _get_lit_session_url(session_id_str)
+        session_link = f"\n📎 Session: <{lit_url}|{short_id}>" if lit_url else f"\n📎 Session: {short_id}"
         creator_mention = _get_creator_mention(shared_state)
         await _post_project_slack_update(
             task.agent_project_id,
             agent.name,
-            f"🔄 *{task.title}* started{creator_mention}\n📎 Session: <{lit_url}|{short_id}>",
+            f"🔄 *{task.title}* started{creator_mention}{session_link}",
             updates_thread_ts=updates_thread_ts,
         )
 
@@ -778,7 +780,11 @@ async def update_task_completion(
         if _notify_agent:
             creator_mention = _get_creator_mention(_notify_project.shared_state if _notify_project else None)
             short_sid = session_id[:8] if session_id else ""
-            session_suffix = f"\n📎 Session: <{_get_lit_session_url(session_id)}|{short_sid}>" if session_id else ""
+            if session_id:
+                _su = _get_lit_session_url(session_id)
+                session_suffix = f"\n📎 Session: <{_su}|{short_sid}>" if _su else f"\n📎 Session: {short_sid}"
+            else:
+                session_suffix = ""
             if success:
                 summary_line = f"\n{_slack_summary}" if _slack_summary else ""
                 notice = f"✅ *{_slack_title}*{creator_mention}{summary_line}{session_suffix}"

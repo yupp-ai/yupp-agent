@@ -704,7 +704,7 @@ class TestConfigAndDispatch:
         from ypl.agent_harness_service.common.config import clear_config_cache
 
         clear_config_cache()
-        load_agent_config.cache_clear()
+        clear_config_cache()
         config = load_agent_config("codex-test")
         assert config is not None
         assert config.executor_config.model == "codex-cli"

@@ -24,6 +24,7 @@ from slack_sdk.errors import SlackApiError
 from slack_sdk.web.async_client import AsyncWebClient
 from starlette.status import HTTP_401_UNAUTHORIZED
 
+from ypl.agent_harness_service.common.constants import AHS_LIT_BASE_URL
 from ypl.backend.config import settings
 from ypl.backend.utils.async_utils import create_background_task
 from ypl.backend.utils.dynamic_app_settings import get_slack_agent_gateway_settings
@@ -145,17 +146,13 @@ async def handle_url_verification(payload: dict[str, Any]) -> JSONResponse:
     return JSONResponse(status_code=200, content={"challenge": challenge})
 
 
+# Vanilla Slack emojis that exist in every workspace.
 _ACK_REACTIONS = [
-    "ack",
-    "ack-2",
-    "thinking_face",
-    "blob_thinking",
     "eyes",
-    "no_mouth",
-    "couch_and_lamp",
-    "smirk",
-    "yawning_face",
-    "brain",
+    "thinking_face",
+    "face_with_rolling_eyes",
+    "ok_hand",
+    "rainbow",
 ]
 
 
@@ -177,6 +174,7 @@ async def _add_ack_reaction(app_config: AgentAppConfig, channel_id: str, ts: str
                 agent_name=app_config.agent_name,
                 channel_id=channel_id,
                 ts=ts,
+                emoji=emoji,
                 error=str(e),
             )
     except Exception as e:
@@ -191,26 +189,24 @@ async def _add_ack_reaction(app_config: AgentAppConfig, channel_id: str, ts: str
 
 
 _PLACEHOLDER_MESSAGES = [
-    # normal
     "_Thinking..._",
     "_Looking into it..._",
     "_On it..._",
     "_Let me cook..._",
-    # absurd
     "_Bribing the GPU..._",
-    "_Grabbing boba real quick..._",
-    "_Fetching coffee for Pankaj..._",
     "_Warming up the tensor cores..._",
-    "_I can't choose between my models..._",
-    "_Choosing boba toppings..._",
-    "_Fish is delicious..._",
-    "_I can use a Eureka burger right now..._",
-    "_Pankaj said to wait..._",
-    "_Slurping the last milk tea..._",
-    "_Getting my noodles from Ox 9..._",
     "_GPU go brrr..._",
     "_Downloading more VRAM..._",
-    "_I can't even..._",
+    "_Asking the weights nicely..._",
+    "_Reticulating splines..._",
+    "_Spinning rust off the neurons..._",
+    "_Convincing logits to behave..._",
+    "_One sec — attention heads aligning..._",
+    "_Teaching sand to do math..._",
+    "_Consulting the training data oracle..._",
+    "_Shuffling tensors with intent..._",
+    "_Almost there — entropy decreasing..._",
+    "_Routing through the thought vector..._",
 ]
 
 
@@ -608,7 +604,11 @@ async def _handle_attach_command(
 
     # Build confirmation message
     short_id = session_id_arg[:8]
-    lit_url = f"http://lit.yupp.ai/agent_harness_console?session_id={session_id_arg}"
+    session_link = (
+        f"<{AHS_LIT_BASE_URL}/agent_harness_console?session_id={session_id_arg}|{short_id}>"
+        if AHS_LIT_BASE_URL
+        else f"`{short_id}`"
+    )
     time_str = ""
     if created_at:
         try:
@@ -618,7 +618,7 @@ async def _handle_attach_command(
             time_str = f" since {created_at}"
 
     confirm_text = (
-        f":link: Attached to session <{lit_url}|{short_id}> "
+        f":link: Attached to session {session_link} "
         f"(agent: *{agent_name}*, status: {session_status})\n"
         f"_{message_count} message{'s' if message_count != 1 else ''}{time_str}_"
     )

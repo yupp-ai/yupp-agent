@@ -18,6 +18,7 @@ try:
 except ImportError:
     from textual.widgets._option_list import Option
 
+from ypl.agent_harness_service.common.constants import AHS_LIT_BASE_URL
 from ypl.agent_harness_service.tui.config import _http_request
 from ypl.agent_harness_service.tui.rendering import _escape_markup
 
@@ -598,7 +599,7 @@ class ProjectsScreen(Screen[str | None]):
             links.append(f"[link={pr_url}]{pr_label}[/link]")
         if sessions:
             for sid in sessions:
-                console_url = f"http://lit.yupp.ai/agent_harness_console?session_id={sid}"
+                console_url = f"{AHS_LIT_BASE_URL}/agent_harness_console?session_id={sid}"
                 links.append(f"[link={console_url}]Lit {sid[:8]} \u2192[/link]")
             links.append("[dim]Enter=Chat[/dim]")
         slack_thread = result.get("slack_thread_url") if isinstance(result, dict) else None

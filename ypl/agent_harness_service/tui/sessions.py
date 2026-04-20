@@ -18,6 +18,7 @@ try:
 except ImportError:
     from textual.widgets._option_list import Option
 
+from ypl.agent_harness_service.common.constants import AHS_LIT_BASE_URL
 from ypl.agent_harness_service.tui.config import _http_request
 from ypl.agent_harness_service.tui.rendering import _escape_markup
 
@@ -329,7 +330,7 @@ class SessionsScreen(Screen[str | None]):
         detail.write(f"[{color}]{sym} {status}[/{color}]   Trigger: {trigger}   Agent: {_escape_markup(agent)}")
 
         # Links
-        console_url = f"http://lit.yupp.ai/agent_harness_console?session_id={sid}"
+        console_url = f"{AHS_LIT_BASE_URL}/agent_harness_console?session_id={sid}"
         detail.write(f"Session: [link={console_url}]{sid[:12]}...[/link]")
 
         # Metadata
