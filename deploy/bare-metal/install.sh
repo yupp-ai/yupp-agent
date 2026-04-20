@@ -156,7 +156,31 @@ apt-get install -y --no-install-recommends \
     curl git ca-certificates gnupg lsb-release \
     build-essential cmake g++ make \
     libpq-dev libssl-dev libffi-dev \
-    software-properties-common apt-transport-https
+    software-properties-common apt-transport-https \
+    bubblewrap
+
+# Enable unprivileged user namespaces for bubblewrap sandboxing. Without these,
+# bwrap fails with "setting up uid map: Permission denied" and the harness falls
+# back to running agent subprocesses without OS-level isolation.
+#   - kernel.unprivileged_userns_clone            (older distros)
+#   - kernel.apparmor_restrict_unprivileged_userns (Ubuntu 24.04+ AppArmor)
+info "Configuring kernel for bubblewrap…"
+SYSCTL_FILE="/etc/sysctl.d/99-bwrap.conf"
+if [[ -f /proc/sys/kernel/unprivileged_userns_clone ]]; then
+    if [[ "$(cat /proc/sys/kernel/unprivileged_userns_clone)" != "1" ]]; then
+        sysctl -w kernel.unprivileged_userns_clone=1 >/dev/null
+        echo "kernel.unprivileged_userns_clone=1" >> "$SYSCTL_FILE"
+    fi
+fi
+if [[ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+    if [[ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" != "0" ]]; then
+        sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 >/dev/null
+        echo "kernel.apparmor_restrict_unprivileged_userns=0" >> "$SYSCTL_FILE"
+    fi
+fi
+if command -v bwrap &>/dev/null; then
+    info "bwrap: $(bwrap --version 2>&1 | head -1)"
+fi
 
 if ! command -v "python${PYTHON_VERSION}" &>/dev/null; then
     info "Installing Python ${PYTHON_VERSION} via deadsnakes PPA…"
@@ -446,6 +470,42 @@ mkdir -p "${DATA_DIR}/sessions" "${DATA_DIR}/repos" "${DATA_DIR}/memories" "${DA
 chown -R "${APP_USER}:${APP_USER}" "${DATA_DIR}"
 
 info "Created /var/log/ahs-mono and ${DATA_DIR}/{sessions,repos,memories,.cache}"
+
+# Clone the default agent repos into ${DATA_DIR}/repos. Every agent config has
+# default_repo="yupp-agent", so without this clone agents fall back to the
+# service's WorkingDirectory (/opt/yupp-agent) which leaks runtime state (venv,
+# secrets files) into the agent's workspace. Additional repos can be cloned
+# later by an operator — DEFAULT_AGENT_REPOS can be overridden via env.
+#
+# We clone a fresh copy (not a symlink to ${INSTALL_DIR}) so agents never see
+# service-side state (.env, .venv, logs, .pg-creds) regardless of sandboxing.
+DEFAULT_AGENT_REPOS="${DEFAULT_AGENT_REPOS:-yupp-ai/yupp-agent}"
+for repo_spec in $DEFAULT_AGENT_REPOS; do
+    repo_name="${repo_spec##*/}"
+    repo_name="${repo_name%.git}"
+    target="${DATA_DIR}/repos/${repo_name}"
+    if [[ -d "${target}/.git" ]]; then
+        info "Agent repo already cloned: ${target}"
+        continue
+    fi
+    # Resolve the URL: if the spec is already a full URL, use it; otherwise
+    # assume github.com and match the scheme (SSH vs HTTPS) that ${REPO_URL} uses
+    # so the deploy key / HTTPS PAT configured earlier applies here too.
+    if [[ "$repo_spec" == *"://"* || "$repo_spec" == *"@"* ]]; then
+        clone_url="$repo_spec"
+    elif [[ "$REPO_URL" == git@* ]]; then
+        clone_url="git@github.com:${repo_spec}.git"
+    else
+        clone_url="https://github.com/${repo_spec}.git"
+    fi
+    info "Cloning default agent repo ${repo_spec} → ${target}…"
+    if sudo -u "$APP_USER" git clone --depth 50 "$clone_url" "$target"; then
+        info "  ✓ ${repo_name}"
+    else
+        warn "  ✗ Failed to clone ${repo_spec}. You can clone it manually later:"
+        warn "      sudo -u ${APP_USER} git clone ${clone_url} ${target}"
+    fi
+done
 
 # ---------------------------------------------------------------------------
 # Step 7. Agent executor CLIs (optional)
