@@ -224,7 +224,9 @@ GATEWAY_GITHUB_ENABLED=false
 # ---------------------------------------------------------------------------
 # Slack Agent Gateway
 # ---------------------------------------------------------------------------
-SLACK_AGENT_GATEWAY_AGENTS=
+# Agent registry lives in the slack_agents DB table (populated via BotFather
+# in production or direct SQL insert for self-hosted). Provide matching
+# BOT_TOKEN / SIGNING_SECRET env vars below — one pair per bot_name row.
 SLACK_AGENT_GW_ENCRYPTION_KEY={params.get("slack_enc_key", "")}
 
 # ---------------------------------------------------------------------------

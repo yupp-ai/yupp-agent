@@ -189,8 +189,11 @@ class Settings(BaseSettings):
     SLACK_INTERESTING_PROMPTS_PRIVATE_TURNS_CHANNEL_ID: str = SLACK_INTERESTING_PROMPTS_FEED_CHANNEL_ID
 
     # Slack Agent Gateway settings
-    # Comma-separated list of agent names (e.g., "giladovski,another_agent")
-    SLACK_AGENT_GATEWAY_AGENTS: str = ""
+    # Registry of agents lives in the ``slack_agents`` DB table. Per-agent
+    # secrets are sourced via ``fetch_agent_secret``: env vars named
+    # ``SLACK_AGENT_GATEWAY_<NAME>_BOT_TOKEN`` / ``_SIGNING_SECRET`` in
+    # GCP-free environments, GCP Secret Manager elsewhere.
+
     # Agent Harness Service (AHS) base URL (SAG calls AHS here)
     AGENT_HARNESS_SERVICE_BASE_URL: str = ""
     # API key shared between SAG and AHS for mutual authentication

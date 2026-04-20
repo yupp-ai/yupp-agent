@@ -219,19 +219,16 @@ Edit `data/dynamic_app_settings_base.yml` and add the new agent to `slack_agent_
 
 ## Step 9: (Optional) Add to Local .env
 
-For local testing, add to `.env`:
+For local testing, the agent row already lives in the `slack_agents` DB
+table (BotFather's OAuth flow added it). Just add the matching secret env
+vars to `.env`:
 
 ```
-SLACK_AGENT_GATEWAY_{SLACK_NAME_UPPER}_APP_ID={app_id}
 SLACK_AGENT_GATEWAY_{SLACK_NAME_UPPER}_BOT_TOKEN={bot_token}
 SLACK_AGENT_GATEWAY_{SLACK_NAME_UPPER}_SIGNING_SECRET={signing_secret}
-SLACK_AGENT_GATEWAY_{SLACK_NAME_UPPER}_DISPLAY_NAME={display_name}
 ```
 
-Also update `SLACK_AGENT_GATEWAY_AGENTS` to include the new agent:
-```
-SLACK_AGENT_GATEWAY_AGENTS={slack_name},...existing_agents...
-```
+No separate registry env var is needed — the DB drives the agent list.
 
 ---
 
