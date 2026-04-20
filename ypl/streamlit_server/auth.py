@@ -10,6 +10,7 @@ from streamlit.errors import StreamlitAPIException
 
 from ypl.backend.db import get_async_session_read_replica
 from ypl.backend.utils.streamlit_utils import run_coroutine_in_lit_worker
+from ypl.db.rbac import Role, RoleName, UserRoleAssociation
 from ypl.db.users import User, UserStatus
 from ypl.structured_logger import get_logger
 
@@ -60,6 +61,57 @@ def is_auth_configured() -> bool:
         return "auth" in st.secrets and "client_id" in st.secrets.auth
     except Exception:
         return False
+
+
+async def _user_has_admin_role(email: str) -> bool:
+    """Return True if the email maps to an ACTIVE user with the ADMIN role."""
+    normalized = email.strip().lower()
+    async with get_async_session_read_replica() as session:
+        stmt = (
+            select(User.user_id)
+            .join(UserRoleAssociation, User.user_id == UserRoleAssociation.user_id)  # type: ignore[arg-type]
+            .join(Role, UserRoleAssociation.role_id == Role.role_id)  # type: ignore[arg-type]
+            .where(
+                sa.func.lower(User.email) == normalized,
+                User.status == UserStatus.ACTIVE,
+                Role.name == RoleName.ADMIN,
+            )
+            .limit(1)
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none() is not None
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _is_admin_cached(email: str) -> bool:
+    try:
+        return run_coroutine_in_lit_worker(_user_has_admin_role(email), timeout=10)
+    except Exception as exc:
+        LOGGER.warning("is_admin_db_error", email=email, error=str(exc))
+        return False
+
+
+def is_admin(email: Any = None) -> bool:
+    """True if ``email`` (or the current logged-in user) has the ADMIN role."""
+    if email is None:
+        try:
+            email = st.user.email if st.user is not None and st.user.is_logged_in else None
+        except Exception:
+            email = None
+    if email is None or not isinstance(email, str) or not email.strip():
+        return False
+    return _is_admin_cached(email.strip().lower())
+
+
+def require_admin_role() -> None:
+    """Stop the page render unless the logged-in user has the ADMIN role.
+
+    Call this AFTER ``require_auth()`` on any admin-only page.
+    """
+    if not is_admin():
+        st.error("🚫 Admin access required.")
+        st.warning("This page is only available to users with the ADMIN role.")
+        st.stop()
 
 
 def auth_required() -> bool:

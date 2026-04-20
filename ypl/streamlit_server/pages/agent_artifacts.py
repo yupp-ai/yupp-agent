@@ -11,15 +11,10 @@ from sqlmodel import col, select
 from ypl.backend.db import get_async_session_read_replica, retry_db
 from ypl.backend.utils.streamlit_utils import run_coroutine_in_lit_worker
 from ypl.db.agent_harness import AgentArtifact, AgentArtifactType
-from ypl.streamlit_server.auth import is_auth_configured, require_auth
-from ypl.streamlit_server.permissions import Permission, has_permission
+from ypl.streamlit_server.auth import require_auth
 
 st.set_page_config(page_title="Agent Artifacts", page_icon="📦", layout="wide")
 require_auth()
-
-if is_auth_configured() and not has_permission(Permission.AGENT_HARNESS_ADMIN):
-    st.error("You do not have permission to view Agent Artifacts.")
-    st.stop()
 
 # ── Timezone helpers ──────────────────────────────────────────────────────────
 

@@ -143,6 +143,35 @@ pages = {
             ),
         },
     ],
+    "Admin": [
+        {
+            "name": "Slack Agents",
+            "link": "admin_slack_agents",
+            "emoji": "💬",
+            "description": (
+                "Manage registered Slack bots: view, add, edit, and disable entries in the "
+                "slack_agents table. Admin-only."
+            ),
+        },
+        {
+            "name": "User Permissions",
+            "link": "admin_user_permissions",
+            "emoji": "🔐",
+            "description": (
+                "Manage roles, role permissions, and user-role assignments. "
+                "Browse by role or by user, and assign/remove roles and permissions. Admin-only."
+            ),
+        },
+        {
+            "name": "MCP Tokens",
+            "link": "admin_mcp_tokens",
+            "emoji": "🔑",
+            "description": (
+                "Issue, view, and revoke MCP developer tokens. "
+                "Generate new yupp_dev_* tokens for authorized users. Admin-only."
+            ),
+        },
+    ],
 }
 
 # Sort pages within each group
