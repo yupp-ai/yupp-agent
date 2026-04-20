@@ -14,6 +14,7 @@ import streamlit as st
 from sqlalchemy import func
 from sqlalchemy.orm import selectinload
 from sqlmodel import col, select
+from ypl.agent_harness_service.common.constants import AHS_WAR_ROOM_BASE_URL
 from ypl.backend.db import get_async_session_read_replica, retry_db
 from ypl.backend.llm.constants import LINEAR_TO_SLACK_ID
 from ypl.backend.utils.streamlit_utils import run_coroutine_in_lit_worker
@@ -1093,14 +1094,15 @@ def _render_chat_thread(agent_session: AgentSession) -> None:
         f" with <strong>{html.escape(agent_name)}</strong> (<code>{html.escape(agent_slug)}</code>)",
         unsafe_allow_html=True,
     )
-    war_room_url = f"https://war-room.yuppster.ai/session/{agent_session.agent_session_id}"
     meta_parts = [
         f"**Status** `{agent_session.status.value}`",
         f"**Trigger** `{agent_session.trigger.value}`",
         f"**Created** `{created_str}`",
         f"**Workspace** `{agent_session.workspace or '—'}`",
-        f"**War Room** [Open]({war_room_url})",
     ]
+    if AHS_WAR_ROOM_BASE_URL:
+        war_room_url = f"{AHS_WAR_ROOM_BASE_URL}/session/{agent_session.agent_session_id}"
+        meta_parts.append(f"**War Room** [Open]({war_room_url})")
     st.markdown(" | ".join(meta_parts))
     if agent_session.slack_session_id:
         st.markdown(f"**Slack session** `{agent_session.slack_session_id}`")

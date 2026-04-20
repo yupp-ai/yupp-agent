@@ -22,6 +22,7 @@ from ypl.agent_harness_service.common.constants import (
     AHS_MEMORIES_DIR,
     AHS_REPOS_DIR,
     AHS_SESSIONS_DIR,
+    AHS_WAR_ROOM_BASE_URL,
     EXECUTOR_TYPE_RAW,
     HARNESS_CLAUDE_SDK,
     HARNESS_CODEX_APP_SERVER,
@@ -1274,8 +1275,8 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
     # Best-effort: notify all channels that a new session was created.
     _sid = agent_session.agent_session_id
     _link_parts: list[str] = []
-    if os.environ.get("ENVIRONMENT") == "production":
-        _link_parts.append(f"<https://war-room.yuppster.ai/session/{_sid}|WR>")
+    if AHS_WAR_ROOM_BASE_URL:
+        _link_parts.append(f"<{AHS_WAR_ROOM_BASE_URL}/session/{_sid}|WR>")
     if AHS_LIT_BASE_URL:
         _link_parts.append(f"<{AHS_LIT_BASE_URL}/agent_harness_console?session_id={_sid}|Lit>")
     _links = f" ({' | '.join(_link_parts)})" if _link_parts else ""

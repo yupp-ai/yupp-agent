@@ -19,6 +19,7 @@ from ypl.agent_harness_service.middleware import AHSRequestLoggingMiddleware, Mc
 from ypl.agent_harness_service.projects.project_routes import project_router
 from ypl.agent_harness_service.routes import router
 from ypl.agent_harness_service.tools.local_mcp_server import mcp as harness_mcp
+from ypl.backend.config import settings
 from ypl.backend.routes.v1.yuppaste import router as yuppaste_router
 
 # Create the MCP sub-app once so we can wire its lifespan into the main app.
@@ -63,17 +64,19 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    # CORS: always allow the loopback ports used by local dev; additional
+    # origins come from ``AHS_CORS_ALLOW_ORIGINS`` (JSON list) and an optional
+    # regex via ``AHS_CORS_ALLOW_ORIGIN_REGEX``. Deployers set these in .env.
+    cors_origins = [
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://localhost:8080",
+        *settings.AHS_CORS_ALLOW_ORIGINS,
+    ]
     application.add_middleware(
         CORSMiddleware,
-        # Any *.yupp.ai subdomain + Vercel frontends + localhost for dev
-        allow_origins=[
-            "https://yupp-soul.vercel.app",
-            "https://chaos-soul.vercel.app",
-            "http://localhost:3000",
-            "http://localhost:3001",
-            "http://localhost:8080",
-        ],
-        allow_origin_regex=r"https://.*\.yupp\.ai",
+        allow_origins=cors_origins,
+        allow_origin_regex=settings.AHS_CORS_ALLOW_ORIGIN_REGEX or None,
         allow_methods=["*"],
         allow_headers=["*"],
     )

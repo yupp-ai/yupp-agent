@@ -25,7 +25,7 @@ def _init_connection(host: str | None) -> None:
     """Parse --host and set module-level connection URLs.
 
     Accepts:
-      ahs.yupp.ai          → https://ahs.yupp.ai/ahs  (wss)
+      ahs.example.com       → https://ahs.example.com/ahs  (wss)
       localhost:8090        → http://localhost:8090/ahs  (ws)
       http://localhost:8090 → http://localhost:8090/ahs  (ws)
     """
@@ -36,14 +36,20 @@ def _init_connection(host: str | None) -> None:
         print("ERROR: AGENT_HARNESS_SERVICE_API_KEY not set", file=sys.stderr)
         sys.exit(1)
 
-    raw = host or os.environ.get("AHS_HOST", "ahs.yupp.ai")
+    raw = host or os.environ.get("AHS_HOST", "")
+    if not raw:
+        print("ERROR: AHS host is not set. Pass --host or set AHS_HOST in the environment.", file=sys.stderr)
+        sys.exit(1)
 
     # Add scheme if missing so urlparse works
     if "://" not in raw:
         raw = f"https://{raw}"
 
     parsed = urlparse(raw)
-    hostname = parsed.hostname or "ahs.yupp.ai"
+    hostname = parsed.hostname
+    if not hostname:
+        print(f"ERROR: could not parse hostname from AHS host '{raw}'.", file=sys.stderr)
+        sys.exit(1)
     port = parsed.port
     scheme = parsed.scheme or "https"
 

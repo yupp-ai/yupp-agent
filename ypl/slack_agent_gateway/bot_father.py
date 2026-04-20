@@ -386,7 +386,7 @@ async def create_slack_bot(record: BotCreationRecord) -> None:
 
     try:
         # Step 1: Create Slack app via Manifests API
-        manifest = build_manifest(record.slack_name, record.display_name, environment)
+        manifest = build_manifest(record.slack_name, record.display_name)
         creation_result = await create_slack_app(manifest, refresh_token)
         app_id = creation_result["app_id"]
         credentials: dict[str, str] = creation_result["credentials"]
@@ -435,7 +435,7 @@ async def create_slack_bot(record: BotCreationRecord) -> None:
         logger.info("Stored signing secret in GCP", slack_name=record.slack_name)
 
         # Step 4: Generate OAuth install URL with request_id as state for CSRF
-        oauth_install_url = build_oauth_install_url(oauth_client_id, environment, state=record.request_id)
+        oauth_install_url = build_oauth_install_url(oauth_client_id, state=record.request_id)
 
         # Step 5: Update record with OAuth credentials
         now = datetime.now(UTC)
@@ -553,7 +553,6 @@ async def complete_oauth_installation(code: str, state: str) -> BotCreationRecor
             code=code,
             client_id=record.oauth_client_id,
             client_secret=record.oauth_client_secret,
-            environment=environment,
         )
         bot_token = oauth_result["access_token"]
 

@@ -24,6 +24,7 @@ from urllib.parse import urlencode
 
 import httpx
 
+from ypl.backend.config import settings
 from ypl.db.redis import get_redis_client
 from ypl.slack_agent_gateway.crypto import decrypt_token_data, encrypt_token_data
 from ypl.slack_agent_gateway.token_storage import invalidate_refresh_token, save_bot_father_refresh_token
@@ -242,17 +243,30 @@ async def clear_token_cache() -> None:
         logger.warning("Failed to clear cached token from Redis", error=str(e))
 
 
+def _sag_slack_base_url() -> str:
+    """Return the public SAG base URL used inside Slack app manifests / OAuth.
+
+    Sourced from ``settings.GATEWAY_BASE_URL``; the ``/api/v1/slack`` suffix is
+    appended because that's what SAG's FastAPI router mounts.
+    """
+    gateway_url = settings.GATEWAY_BASE_URL.rstrip("/")
+    if not gateway_url:
+        raise RuntimeError(
+            "GATEWAY_BASE_URL is not configured — cannot build Slack app manifest URLs. "
+            "Set GATEWAY_BASE_URL in the environment to the public SAG URL."
+        )
+    return f"{gateway_url}/api/v1/slack"
+
+
 def build_manifest(
     slack_name: str,
     display_name: str,
-    environment: str,
 ) -> dict[str, Any]:
     """Build a Slack app manifest for a new SAG-managed bot.
 
     Args:
         slack_name: The Slack bot username (e.g., 'giladovski'). Lowercase, alphanumeric + hyphens.
         display_name: Human-readable display name (e.g., 'Giladovski').
-        environment: Deployment environment (e.g., 'staging', 'production').
 
     Returns:
         Slack app manifest dict suitable for apps.manifest.create.
@@ -262,7 +276,7 @@ def build_manifest(
         App icons must be set via the Slack app settings UI after creation.
         See: https://docs.slack.dev/reference/app-manifest/
     """
-    base_url = f"https://slack-agent-gateway-{environment}.yupp.ai/api/v1/slack"
+    base_url = _sag_slack_base_url()
     events_url = f"{base_url}/events"
     interactions_url = f"{base_url}/interactions"
     oauth_redirect_url = f"{base_url}/oauth/callback"
@@ -375,7 +389,6 @@ async def create_slack_app(
 
 def build_oauth_install_url(
     client_id: str,
-    environment: str,
     state: str | None = None,
 ) -> str:
     """Build the OAuth install URL for a newly created Slack app.
@@ -385,14 +398,12 @@ def build_oauth_install_url(
 
     Args:
         client_id: OAuth client ID from apps.manifest.create credentials.
-        environment: Deployment environment (e.g., 'staging', 'production').
         state: Optional state parameter for CSRF protection (e.g., request_id).
 
     Returns:
         OAuth authorize URL that the admin should click.
     """
-    base_url = f"https://slack-agent-gateway-{environment}.yupp.ai/api/v1/slack"
-    redirect_uri = f"{base_url}/oauth/callback"
+    redirect_uri = f"{_sag_slack_base_url()}/oauth/callback"
     scopes = ",".join(_BOT_SCOPES)
 
     params: dict[str, str] = {
@@ -409,7 +420,6 @@ async def exchange_oauth_code(
     code: str,
     client_id: str,
     client_secret: str,
-    environment: str,
 ) -> dict[str, Any]:
     """Exchange an OAuth authorization code for access tokens.
 
@@ -419,7 +429,6 @@ async def exchange_oauth_code(
         code: Authorization code from Slack OAuth redirect.
         client_id: OAuth client ID.
         client_secret: OAuth client secret.
-        environment: Deployment environment for redirect_uri.
 
     Returns:
         Dict with: access_token (bot token), team, authed_user, etc.
@@ -427,8 +436,7 @@ async def exchange_oauth_code(
     Raises:
         RuntimeError: If the OAuth exchange fails.
     """
-    base_url = f"https://slack-agent-gateway-{environment}.yupp.ai/api/v1/slack"
-    redirect_uri = f"{base_url}/oauth/callback"
+    redirect_uri = f"{_sag_slack_base_url()}/oauth/callback"
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(
