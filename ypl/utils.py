@@ -12,12 +12,10 @@ from enum import Enum
 from functools import _CacheInfo, cache, lru_cache, wraps
 from pathlib import Path
 from threading import Lock
-from typing import Any, Literal, Self, TypeVar, Union, cast, no_type_check
+from typing import Any, Self, TypeVar, Union, no_type_check
 
 import numpy as np
-import tiktoken
 from cachetools.func import ttl_cache
-from langchain_core.messages import BaseMessage, HumanMessage
 from tenacity import RetryCallState, stop_after_attempt
 
 from ypl.backend.utils.async_utils import create_background_task
@@ -421,43 +419,6 @@ class Delegator:
 @lru_cache(maxsize=1000)
 def compiled_regex(pattern: str, flags: int = 0) -> re.Pattern:
     return re.compile(pattern, flags)
-
-
-def tiktoken_trim(
-    text: str, max_length: int, *, model: str = "gpt-4o", direction: Literal["left", "right"] = "left"
-) -> str:
-    enc = tiktoken.encoding_for_model(model)
-    encoded = enc.encode(text, disallowed_special=())
-    match direction:
-        case "left":
-            return enc.decode(encoded[:max_length])
-        case "right":
-            return enc.decode(encoded[-max_length:])
-        case _:
-            raise ValueError(f"Invalid direction: {direction}")
-
-
-def get_text_part(message: BaseMessage) -> str:
-    if isinstance(message.content, str):
-        return message.content
-    text_parts = [part["text"] for part in message.content if isinstance(part, dict) and part.get("type") == "text"]
-    return "\n".join(text_parts)
-
-
-def replace_text_part(message: BaseMessage, new_text: str) -> HumanMessage:
-    if isinstance(message.content, str):
-        return HumanMessage(content=new_text)
-    new_content: list[str | dict[str, Any]] = []
-    for part in message.content:
-        if isinstance(part, str):
-            new_content.append(part)
-            continue
-        part = cast(dict[str, Any], part)
-        if part["type"] != "text":
-            new_content.append(part)
-            continue
-        new_content.append({"type": "text", "text": part["text"] + "\n" + new_text})
-    return HumanMessage(content=new_content)
 
 
 def ifnull[T](value: Any, default_value: T) -> T:

@@ -2,7 +2,7 @@
 
 Covers: maybe_truncate, maybe_truncate_list, concatenate_after_maybe_truncate,
 extract_json_dict_from_text, deep_merge_dicts, validate_all_enums_are_defined_in_dict,
-tiktoken_trim, is_short_prompt, coalesce, not_empty, parse_float, parse_int, ifnull.
+is_short_prompt, coalesce, not_empty, parse_float, parse_int, ifnull.
 """
 
 import enum
@@ -20,7 +20,6 @@ from ypl.utils import (
     not_empty,
     parse_float,
     parse_int,
-    tiktoken_trim,
     validate_all_enums_are_defined_in_dict,
 )
 
@@ -224,35 +223,6 @@ class TestValidateAllEnumsAreDefinedInDict:
     def test_empty_mapping_raises(self) -> None:
         with pytest.raises(ValueError):
             validate_all_enums_are_defined_in_dict(Color, {}, "color_map")
-
-
-# ---------------------------------------------------------------------------
-# tiktoken_trim
-# ---------------------------------------------------------------------------
-
-
-class TestTiktokenTrim:
-    def test_left_trim(self) -> None:
-        text = "The quick brown fox jumps over the lazy dog"
-        result = tiktoken_trim(text, 5, direction="left")
-        # Should only contain the first 5 tokens
-        assert len(result) < len(text)
-        assert text.startswith(result)
-
-    def test_right_trim(self) -> None:
-        text = "The quick brown fox jumps over the lazy dog"
-        result = tiktoken_trim(text, 5, direction="right")
-        assert len(result) < len(text)
-        assert text.endswith(result)
-
-    def test_no_trim_needed(self) -> None:
-        text = "hello"
-        result = tiktoken_trim(text, 1000, direction="left")
-        assert result == text
-
-    def test_invalid_direction_raises(self) -> None:
-        with pytest.raises(ValueError, match="Invalid direction"):
-            tiktoken_trim("test", 5, direction="center")  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
