@@ -10,6 +10,7 @@ import os
 import re
 from functools import lru_cache
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -126,7 +127,15 @@ def read_file_if_exists(path: str) -> str | None:
         return None
 
 
-@lru_cache(maxsize=32)
+# Positive-only cache: only successful loads are memoised. A miss (missing
+# file, invalid JSON, …) is NOT cached, so dropping a new agent directory in
+# at runtime is picked up on the next call — no process restart needed.
+# Successful loads are cached for process lifetime; an in-place config.json
+# edit still requires ``clear_config_cache()`` (unchanged from before).
+_agent_config_cache: dict[str, AgentConfig] = {}
+_agent_config_cache_lock = Lock()
+
+
 def load_agent_config(name: str) -> AgentConfig | None:
     """Load agent configuration from its directory.
 
@@ -136,6 +145,10 @@ def load_agent_config(name: str) -> AgentConfig | None:
     Returns:
         AgentConfig if the directory and config.json exist, None otherwise.
     """
+    cached = _agent_config_cache.get(name)
+    if cached is not None:
+        return cached
+
     validate_agent_name(name)
     config_dir = os.path.join(AHS_AGENTS_DIR, name)
     config_path = os.path.join(config_dir, "config.json")
@@ -210,6 +223,8 @@ def load_agent_config(name: str) -> AgentConfig | None:
     )
 
     logger.info("Loaded agent config", name=name, model=config.model, max_turns=config.max_turns)
+    with _agent_config_cache_lock:
+        _agent_config_cache[name] = config
     return config
 
 
@@ -292,4 +307,5 @@ def discover_agents() -> dict[str, AgentConfig]:
 def clear_config_cache() -> None:
     """Clear the configuration cache. Useful for testing."""
     discover_agents.cache_clear()
-    load_agent_config.cache_clear()
+    with _agent_config_cache_lock:
+        _agent_config_cache.clear()
