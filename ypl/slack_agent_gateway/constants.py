@@ -1,15 +1,17 @@
 """Configuration management for Slack Agent Gateway.
 
-Agent list is stored in the database (slack_agents table).
-Agent secrets are fetched from GCP Secret Manager at runtime.
+Agent registry (app_id, names, display_name) lives in the ``slack_agents``
+table. Per-agent secrets (bot token, signing secret) are fetched via
+``fetch_agent_secret`` — GCP Secret Manager in deployed environments,
+environment variables (``SLACK_AGENT_GATEWAY_<NAME>_BOT_TOKEN`` etc.) for
+GCP-free environments (local/test/selfhosted).
 """
 
 import asyncio
-import os
 
 from sqlmodel import select
 
-from ypl.backend.config import is_gcp_free_environment, settings
+from ypl.backend.config import settings
 from ypl.backend.db import get_async_session_read_replica, retry_db
 from ypl.db import all_models as _  # noqa: F401  # Ensure all models are loaded for mapper config
 from ypl.db.slack_agent import SlackAgent, SlackAgentStatus
@@ -84,74 +86,6 @@ STATUS_PENDING_TTL_SECONDS = 60
 
 # Redis TTL for tool entries list (24 hours, matching session TTL)
 TOOL_ENTRIES_TTL_SECONDS = 24 * 60 * 60
-
-
-def _load_agent_configs_from_env() -> dict[str, AgentAppConfig]:
-    """Load agent configurations from environment variables (legacy fallback).
-
-    This is used when dynamic_app_settings is not available (e.g., local dev).
-
-    Expected settings format:
-    SLACK_AGENT_GATEWAY_AGENTS = "giladovski,another_agent"
-
-    For each agent (e.g., giladovski):
-    SLACK_AGENT_GATEWAY_GILADOVSKI_APP_ID = "A123..."
-    SLACK_AGENT_GATEWAY_GILADOVSKI_BOT_TOKEN = "xoxb-..."
-    SLACK_AGENT_GATEWAY_GILADOVSKI_SIGNING_SECRET = "..."
-    SLACK_AGENT_GATEWAY_GILADOVSKI_DISPLAY_NAME = "Giladovski"
-
-    Returns:
-        Dict mapping app_id to AgentAppConfig
-    """
-    agents_str = settings.SLACK_AGENT_GATEWAY_AGENTS
-    if not agents_str:
-        return {}
-
-    agent_names = [name.strip() for name in agents_str.split(",") if name.strip()]
-    configs: dict[str, AgentAppConfig] = {}
-
-    for agent_name in agent_names:
-        # Agent names can contain dashes (e.g. "eng-raccoon"); env var names
-        # cannot. Normalise to the env-var form used when the operator sets
-        # values in .env.
-        prefix = f"SLACK_AGENT_GATEWAY_{agent_name.upper().replace('-', '_')}"
-        # Check os.environ first, then settings (same pattern as fetch_agent_secret)
-        app_id = os.environ.get(f"{prefix}_APP_ID") or getattr(settings, f"{prefix}_APP_ID", "") or ""
-        bot_token = os.environ.get(f"{prefix}_BOT_TOKEN") or getattr(settings, f"{prefix}_BOT_TOKEN", "") or ""
-        signing_secret = (
-            os.environ.get(f"{prefix}_SIGNING_SECRET") or getattr(settings, f"{prefix}_SIGNING_SECRET", "") or ""
-        )
-        display_name = (
-            os.environ.get(f"{prefix}_DISPLAY_NAME") or getattr(settings, f"{prefix}_DISPLAY_NAME", "") or ""
-        ) or agent_name.title()
-
-        if not app_id or not bot_token or not signing_secret:
-            logger.warning(
-                "Incomplete configuration for agent (env var), skipping",
-                agent_name=agent_name,
-                has_app_id=bool(app_id),
-                has_bot_token=bool(bot_token),
-                has_signing_secret=bool(signing_secret),
-            )
-            continue
-
-        config = AgentAppConfig(
-            app_id=app_id,
-            agent_name=agent_name.lower(),
-            slack_name=agent_name.lower(),
-            bot_token=bot_token,
-            signing_secret=signing_secret,
-            display_name=display_name,
-        )
-        configs[app_id] = config
-        logger.info(
-            "Loaded agent configuration from env",
-            agent_name=agent_name,
-            app_id=app_id,
-            display_name=display_name,
-        )
-
-    return configs
 
 
 async def _fetch_agent_secrets(slack_name: str) -> tuple[str | None, str | None]:
@@ -250,8 +184,10 @@ async def _load_agent_configs_from_database() -> dict[str, AgentAppConfig]:
 async def get_agent_configs() -> dict[str, AgentAppConfig]:
     """Get all agent configurations (cached 60s, stale-while-revalidate).
 
-    For local/test: Uses environment variables only.
-    For staging/production: Uses database + GCP secrets, with env var fallback.
+    The ``slack_agents`` table is the sole source of truth for the registry
+    across all environments. Per-agent secrets come from ``fetch_agent_secret``
+    — environment variables for GCP-free environments, GCP Secret Manager for
+    deployed environments.
 
     Note on caching behavior:
     - The 60s TTL applies to the agent list from the database.
@@ -264,28 +200,9 @@ async def get_agent_configs() -> dict[str, AgentAppConfig]:
     Returns:
         Dict mapping app_id to AgentAppConfig
     """
-    # In GCP-free environments (local/test/selfhosted), env vars are the only source —
-    # no DB-backed agent directory, no GCP Secret Manager fetches.
-    if is_gcp_free_environment(settings.ENVIRONMENT):
-        configs = _load_agent_configs_from_env()
-        if not configs:
-            logger.info(
-                "No agents configured for Slack Agent Gateway",
-                environment=settings.ENVIRONMENT,
-            )
-        return configs
-
-    # For staging/production, use database + GCP secrets
     configs = await _load_agent_configs_from_database()
-
-    # Fallback to env vars if database returned empty (e.g., DB/GCP failures)
-    if not configs:
-        logger.warning("Database returned no agents, falling back to env vars")
-        configs = _load_agent_configs_from_env()
-
     if not configs:
         logger.warning("No agents configured for Slack Agent Gateway")
-
     return configs
 
 

@@ -2,8 +2,8 @@
 
 Covers:
 - Module-level constants (values/types)
-- _load_agent_configs_from_env (env var parsing)
 - _fetch_agent_secrets (concurrent fetch)
+- get_agent_configs (DB-backed; empty + non-empty paths)
 - get_agent_config_by_app_id / get_agent_config_by_name
 - get_all_signing_secrets
 - get_bot_father_config
@@ -12,7 +12,6 @@ Covers:
 """
 
 from __future__ import annotations
-import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -37,7 +36,6 @@ from ypl.slack_agent_gateway.constants import (
     THREAD_SESSION_MAPPING_TTL_SECONDS,
     TOOL_ENTRIES_TTL_SECONDS,
     _fetch_agent_secrets,
-    _load_agent_configs_from_env,
     clear_config_cache,
     get_agent_config_by_app_id,
     get_agent_config_by_name,
@@ -112,154 +110,6 @@ class TestConstants:
 
 
 # ---------------------------------------------------------------------------
-# _load_agent_configs_from_env
-# ---------------------------------------------------------------------------
-
-
-class TestLoadAgentConfigsFromEnv:
-    def test_returns_empty_dict_when_no_agents_configured(self) -> None:
-        mock_settings = MagicMock()
-        mock_settings.SLACK_AGENT_GATEWAY_AGENTS = ""
-        with patch(f"{MODULE}.settings", mock_settings):
-            result = _load_agent_configs_from_env()
-        assert result == {}
-
-    def test_returns_empty_dict_when_agents_is_none(self) -> None:
-        mock_settings = MagicMock()
-        mock_settings.SLACK_AGENT_GATEWAY_AGENTS = None
-        with patch(f"{MODULE}.settings", mock_settings):
-            result = _load_agent_configs_from_env()
-        assert result == {}
-
-    def test_loads_single_agent_from_env_vars(self) -> None:
-        mock_settings = MagicMock()
-        mock_settings.SLACK_AGENT_GATEWAY_AGENTS = "giladovski"
-        # Simulate missing settings attrs (env var takes priority)
-        mock_settings.SLACK_AGENT_GATEWAY_GILADOVSKI_APP_ID = ""
-        mock_settings.SLACK_AGENT_GATEWAY_GILADOVSKI_BOT_TOKEN = ""
-        mock_settings.SLACK_AGENT_GATEWAY_GILADOVSKI_SIGNING_SECRET = ""
-        mock_settings.SLACK_AGENT_GATEWAY_GILADOVSKI_DISPLAY_NAME = ""
-
-        env_vars = {
-            "SLACK_AGENT_GATEWAY_GILADOVSKI_APP_ID": "A123",
-            "SLACK_AGENT_GATEWAY_GILADOVSKI_BOT_TOKEN": "xoxb-tok",
-            "SLACK_AGENT_GATEWAY_GILADOVSKI_SIGNING_SECRET": "signing-sec",
-            "SLACK_AGENT_GATEWAY_GILADOVSKI_DISPLAY_NAME": "Giladovski",
-        }
-
-        with (
-            patch(f"{MODULE}.settings", mock_settings),
-            patch.dict(os.environ, env_vars),
-        ):
-            result = _load_agent_configs_from_env()
-
-        assert "A123" in result
-        config = result["A123"]
-        assert config.bot_token == "xoxb-tok"
-        assert config.signing_secret == "signing-sec"
-        assert config.display_name == "Giladovski"
-
-    def test_skips_agent_with_incomplete_config(self) -> None:
-        mock_settings = MagicMock()
-        mock_settings.SLACK_AGENT_GATEWAY_AGENTS = "incomplete"
-        mock_settings.SLACK_AGENT_GATEWAY_INCOMPLETE_APP_ID = ""
-        mock_settings.SLACK_AGENT_GATEWAY_INCOMPLETE_BOT_TOKEN = ""
-        mock_settings.SLACK_AGENT_GATEWAY_INCOMPLETE_SIGNING_SECRET = ""
-        mock_settings.SLACK_AGENT_GATEWAY_INCOMPLETE_DISPLAY_NAME = ""
-
-        # Only APP_ID is set, missing bot_token and signing_secret
-        env_vars = {"SLACK_AGENT_GATEWAY_INCOMPLETE_APP_ID": "A999"}
-
-        with (
-            patch(f"{MODULE}.settings", mock_settings),
-            patch.dict(os.environ, env_vars, clear=False),
-        ):
-            # Remove the vars that would complete config
-            os.environ.pop("SLACK_AGENT_GATEWAY_INCOMPLETE_BOT_TOKEN", None)
-            os.environ.pop("SLACK_AGENT_GATEWAY_INCOMPLETE_SIGNING_SECRET", None)
-            result = _load_agent_configs_from_env()
-
-        assert result == {}
-
-    def test_uses_agent_name_title_case_as_default_display_name(self) -> None:
-        mock_settings = MagicMock()
-        mock_settings.SLACK_AGENT_GATEWAY_AGENTS = "mybot"
-        mock_settings.SLACK_AGENT_GATEWAY_MYBOT_APP_ID = ""
-        mock_settings.SLACK_AGENT_GATEWAY_MYBOT_BOT_TOKEN = ""
-        mock_settings.SLACK_AGENT_GATEWAY_MYBOT_SIGNING_SECRET = ""
-        mock_settings.SLACK_AGENT_GATEWAY_MYBOT_DISPLAY_NAME = ""
-
-        env_vars = {
-            "SLACK_AGENT_GATEWAY_MYBOT_APP_ID": "A001",
-            "SLACK_AGENT_GATEWAY_MYBOT_BOT_TOKEN": "xoxb-tok",
-            "SLACK_AGENT_GATEWAY_MYBOT_SIGNING_SECRET": "sec",
-        }
-        with (
-            patch(f"{MODULE}.settings", mock_settings),
-            patch.dict(os.environ, env_vars, clear=False),
-        ):
-            os.environ.pop("SLACK_AGENT_GATEWAY_MYBOT_DISPLAY_NAME", None)
-            result = _load_agent_configs_from_env()
-
-        assert "A001" in result
-        assert result["A001"].display_name == "Mybot"
-
-    def test_loads_multiple_agents(self) -> None:
-        mock_settings = MagicMock()
-        mock_settings.SLACK_AGENT_GATEWAY_AGENTS = "agent1,agent2"
-        for agent in ["AGENT1", "AGENT2"]:
-            setattr(mock_settings, f"SLACK_AGENT_GATEWAY_{agent}_APP_ID", "")
-            setattr(mock_settings, f"SLACK_AGENT_GATEWAY_{agent}_BOT_TOKEN", "")
-            setattr(mock_settings, f"SLACK_AGENT_GATEWAY_{agent}_SIGNING_SECRET", "")
-            setattr(mock_settings, f"SLACK_AGENT_GATEWAY_{agent}_DISPLAY_NAME", "")
-
-        env_vars = {
-            "SLACK_AGENT_GATEWAY_AGENT1_APP_ID": "A001",
-            "SLACK_AGENT_GATEWAY_AGENT1_BOT_TOKEN": "xoxb-1",
-            "SLACK_AGENT_GATEWAY_AGENT1_SIGNING_SECRET": "sec1",
-            "SLACK_AGENT_GATEWAY_AGENT2_APP_ID": "A002",
-            "SLACK_AGENT_GATEWAY_AGENT2_BOT_TOKEN": "xoxb-2",
-            "SLACK_AGENT_GATEWAY_AGENT2_SIGNING_SECRET": "sec2",
-        }
-
-        with (
-            patch(f"{MODULE}.settings", mock_settings),
-            patch.dict(os.environ, env_vars),
-        ):
-            result = _load_agent_configs_from_env()
-
-        assert "A001" in result
-        assert "A002" in result
-
-    def test_strips_whitespace_from_agent_names(self) -> None:
-        mock_settings = MagicMock()
-        mock_settings.SLACK_AGENT_GATEWAY_AGENTS = " myagent , otheragent "
-        # Only myagent has complete config
-        mock_settings.SLACK_AGENT_GATEWAY_MYAGENT_APP_ID = ""
-        mock_settings.SLACK_AGENT_GATEWAY_MYAGENT_BOT_TOKEN = ""
-        mock_settings.SLACK_AGENT_GATEWAY_MYAGENT_SIGNING_SECRET = ""
-        mock_settings.SLACK_AGENT_GATEWAY_MYAGENT_DISPLAY_NAME = ""
-        mock_settings.SLACK_AGENT_GATEWAY_OTHERAGENT_APP_ID = ""
-        mock_settings.SLACK_AGENT_GATEWAY_OTHERAGENT_BOT_TOKEN = ""
-        mock_settings.SLACK_AGENT_GATEWAY_OTHERAGENT_SIGNING_SECRET = ""
-        mock_settings.SLACK_AGENT_GATEWAY_OTHERAGENT_DISPLAY_NAME = ""
-
-        env_vars = {
-            "SLACK_AGENT_GATEWAY_MYAGENT_APP_ID": "AXX",
-            "SLACK_AGENT_GATEWAY_MYAGENT_BOT_TOKEN": "xoxb-yy",
-            "SLACK_AGENT_GATEWAY_MYAGENT_SIGNING_SECRET": "sec-yy",
-        }
-        with (
-            patch(f"{MODULE}.settings", mock_settings),
-            patch.dict(os.environ, env_vars, clear=False),
-        ):
-            os.environ.pop("SLACK_AGENT_GATEWAY_OTHERAGENT_APP_ID", None)
-            result = _load_agent_configs_from_env()
-
-        assert "AXX" in result
-
-
-# ---------------------------------------------------------------------------
 # _fetch_agent_secrets
 # ---------------------------------------------------------------------------
 
@@ -288,43 +138,33 @@ class TestFetchAgentSecrets:
 
 
 # ---------------------------------------------------------------------------
-# get_agent_configs — local env path
+# get_agent_configs — DB-backed single path
 # ---------------------------------------------------------------------------
 
 
 class TestGetAgentConfigs:
-    async def test_local_env_uses_env_vars(self) -> None:
-        mock_settings = MagicMock()
-        mock_settings.ENVIRONMENT = "local"
-        mock_settings.SLACK_AGENT_GATEWAY_AGENTS = "localbot"
-        mock_settings.SLACK_AGENT_GATEWAY_LOCALBOT_APP_ID = ""
-        mock_settings.SLACK_AGENT_GATEWAY_LOCALBOT_BOT_TOKEN = ""
-        mock_settings.SLACK_AGENT_GATEWAY_LOCALBOT_SIGNING_SECRET = ""
-        mock_settings.SLACK_AGENT_GATEWAY_LOCALBOT_DISPLAY_NAME = ""
+    async def test_returns_configs_from_database(self) -> None:
+        from ypl.slack_agent_gateway.types import AgentAppConfig
 
-        env_vars = {
-            "SLACK_AGENT_GATEWAY_LOCALBOT_APP_ID": "ALOC",
-            "SLACK_AGENT_GATEWAY_LOCALBOT_BOT_TOKEN": "xoxb-local",
-            "SLACK_AGENT_GATEWAY_LOCALBOT_SIGNING_SECRET": "local-sec",
+        fake = {
+            "A001": AgentAppConfig(
+                app_id="A001",
+                agent_name="examplebot",
+                slack_name="examplebot",
+                bot_token="xoxb-tok",
+                signing_secret="sec",
+                display_name="ExampleBot",
+            )
         }
-
-        with (
-            patch(f"{MODULE}.settings", mock_settings),
-            patch.dict(os.environ, env_vars),
-        ):
+        with patch(f"{MODULE}._load_agent_configs_from_database", new_callable=AsyncMock, return_value=fake):
             clear_config_cache()
             result = await get_agent_configs()
 
-        assert "ALOC" in result
-        # Reset cache after test
+        assert result == fake
         clear_config_cache()
 
-    async def test_test_env_uses_env_vars(self) -> None:
-        mock_settings = MagicMock()
-        mock_settings.ENVIRONMENT = "test"
-        mock_settings.SLACK_AGENT_GATEWAY_AGENTS = ""
-
-        with patch(f"{MODULE}.settings", mock_settings):
+    async def test_returns_empty_when_database_empty(self) -> None:
+        with patch(f"{MODULE}._load_agent_configs_from_database", new_callable=AsyncMock, return_value={}):
             clear_config_cache()
             result = await get_agent_configs()
 
