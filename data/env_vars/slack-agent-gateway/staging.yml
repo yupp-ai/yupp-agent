@@ -1,3 +1,0 @@
-# Environment variables specific to slack-agent-gateway in staging
-env_vars:
-  SLACK_AGENT_GATEWAY_USE_MOCK_AGENT: 'false'

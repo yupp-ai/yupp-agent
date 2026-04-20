@@ -31,15 +31,10 @@ The easiest way to add a new agent is to use the Claude Code skill:
 /add-slack-agent
 ```
 
-This skill will guide you through the entire process interactively:
-1. Collect agent information (slack name, display name, AHS agent)
-2. Walk you through creating the Slack app
-3. Collect credentials (App ID, Signing Secret, Bot Token)
-4. Create GCP secrets for staging and production
-5. Update `data/secret-env-var-map.yml` for deployment
-6. Update `data/dynamic_app_settings_base.yml`
-7. Configure Interactivity & Event Subscriptions
-8. Create and submit the PR
+This skill walks through the full bot provisioning process. The actual
+persistence layer — app_id + encrypted `bot_token` / `signing_secret` — lands
+in the `slack_agents` DB table. See [Manual Setup Reference](#manual-setup-reference)
+below for the step-by-step.
 
 See [`.agents/skills/add-slack-agent/SKILL.md`](../../.agents/skills/add-slack-agent/SKILL.md) for the full skill documentation.
 
@@ -73,40 +68,26 @@ Add these Bot Token Scopes:
 
 Then **Install to Workspace** and copy the **Bot User OAuth Token** (starts with `xoxb-`).
 
-#### 3. Create GCP Secrets
+#### 3. Insert the agent row
 
-Use `printf` (not `echo`) to avoid trailing newlines:
+Register the bot in the `slack_agents` table with the bot token + signing
+secret encrypted by `ypl.slack_agent_gateway.crypto.encrypt_secret`. When
+BotFather provisions a bot, it does this for you; manual SQL looks like:
 
-```bash
-# Staging
-printf '%s' "APP_ID" | gcloud secrets create ym-slack-agent-gateway-{name}-app-id-staging --data-file=- --project=$GCP_PROJECT_ID
-printf '%s' "xoxb-TOKEN" | gcloud secrets create ym-slack-agent-gateway-{name}-bot-token-staging --data-file=- --project=$GCP_PROJECT_ID
-printf '%s' "SIGNING_SECRET" | gcloud secrets create ym-slack-agent-gateway-{name}-signing-secret-staging --data-file=- --project=$GCP_PROJECT_ID
-
-# Production
-printf '%s' "APP_ID" | gcloud secrets create ym-slack-agent-gateway-{name}-app-id-production --data-file=- --project=$GCP_PROJECT_ID
-printf '%s' "xoxb-TOKEN" | gcloud secrets create ym-slack-agent-gateway-{name}-bot-token-production --data-file=- --project=$GCP_PROJECT_ID
-printf '%s' "SIGNING_SECRET" | gcloud secrets create ym-slack-agent-gateway-{name}-signing-secret-production --data-file=- --project=$GCP_PROJECT_ID
+```sql
+INSERT INTO slack_agents (
+    slack_agent_id, app_id, agent_name, bot_name, display_name,
+    bot_token_encrypted, signing_secret_encrypted, status
+) VALUES (
+    gen_random_uuid(), 'A123…', 'sre', 'examplebot', 'Example Bot',
+    $1, $2, 'ACTIVE'
+);
 ```
 
-#### 4. Update Secret-Env-Var Mapping
-
-Add entries to `data/secret-env-var-map.yml` to map the GCP secrets to environment variables for the `slack-agent-gateway` service.
-
-#### 5. Add to Dynamic App Settings
-
-Add the agent to `data/dynamic_app_settings_base.yml`:
-
-```yaml
-- name: slack_agent_gateway_settings
-  type: SlackAgentGatewaySettings
-  value:
-    agents:
-      # ... existing agents ...
-      - name: {name}
-        display_name: {DisplayName}
-        agent_name: {ahs_agent}
-```
+where `$1` / `$2` are the Fernet-encrypted values (key =
+`SLACK_AGENT_GW_ENCRYPTION_KEY`). If you'd rather skip DB-resident secrets,
+leave those two columns NULL and set the matching env vars instead — see
+[`docs/secrets.md`](../../docs/secrets.md).
 
 #### 6. Deploy and Configure Event Subscriptions
 

@@ -1,13 +1,16 @@
 """Configuration management for Slack Agent Gateway.
 
-Agent registry (app_id, names, display_name) lives in the ``slack_agents``
-table. Per-agent secrets (bot token, signing secret) are fetched via
-``fetch_agent_secret`` — GCP Secret Manager in deployed environments,
-environment variables (``SLACK_AGENT_GATEWAY_<NAME>_BOT_TOKEN`` etc.) for
-GCP-free environments (local/test/selfhosted).
-"""
+Agent registry and per-agent secrets both live in the ``slack_agents`` table:
+``app_id``, ``agent_name``, ``bot_name``, ``display_name`` are plain columns;
+``bot_token_encrypted`` and ``signing_secret_encrypted`` are Fernet-encrypted
+with ``settings.SLACK_AGENT_GW_ENCRYPTION_KEY`` via
+``ypl.slack_agent_gateway.crypto``.
 
-import asyncio
+For imported rows (no encrypted payload), the gateway falls back to env vars
+(``SLACK_AGENT_GATEWAY_<BOT_NAME_UPPER>_BOT_TOKEN`` / ``_SIGNING_SECRET``) so
+operators can mount secrets from Vault / SSM / k8s secrets / whatever without
+re-encrypting into the DB.
+"""
 
 from sqlmodel import select
 
@@ -15,7 +18,8 @@ from ypl.backend.config import settings
 from ypl.backend.db import get_async_session_read_replica, retry_db
 from ypl.db import all_models as _  # noqa: F401  # Ensure all models are loaded for mapper config
 from ypl.db.slack_agent import SlackAgent, SlackAgentStatus
-from ypl.slack_agent_gateway.secrets import fetch_agent_secret
+from ypl.slack_agent_gateway.crypto import decrypt_secret
+from ypl.slack_agent_gateway.secrets import get_env_var_secret
 from ypl.slack_agent_gateway.types import AgentAppConfig
 from ypl.structured_logger import get_logger
 from ypl.utils import async_timed_cache
@@ -88,33 +92,44 @@ STATUS_PENDING_TTL_SECONDS = 60
 TOOL_ENTRIES_TTL_SECONDS = 24 * 60 * 60
 
 
-async def _fetch_agent_secrets(slack_name: str) -> tuple[str | None, str | None]:
-    """Fetch bot_token and signing_secret for an agent concurrently.
+def _resolve_agent_secrets(agent: SlackAgent) -> tuple[str | None, str | None]:
+    """Return ``(bot_token, signing_secret)`` for an agent row.
 
-    Args:
-        slack_name: Slack bot name used for GCP secret lookup (e.g., "giladovski")
-
-    Returns:
-        Tuple of (bot_token, signing_secret), any may be None
+    Prefers the encrypted columns on the row; falls back to environment
+    variables keyed off ``bot_name`` when a column is null or decryption
+    fails. Any irrecoverable error is logged and returns ``None`` for that
+    specific secret (the caller treats null secrets as "skip this agent").
     """
-    bot_token, signing_secret = await asyncio.gather(
-        fetch_agent_secret(slack_name, "bot-token"),
-        fetch_agent_secret(slack_name, "signing-secret"),
+
+    def _decrypt(encrypted: str | None, which: str) -> str | None:
+        if not encrypted:
+            return None
+        try:
+            plaintext = decrypt_secret(encrypted)
+        except Exception as exc:  # pragma: no cover — defensive, log and fallback
+            logger.warning(
+                "Failed to decrypt slack_agents secret",
+                slack_name=agent.bot_name,
+                secret=which,
+                error=str(exc),
+            )
+            return None
+        return plaintext
+
+    bot_token = _decrypt(agent.bot_token_encrypted, "bot-token") or get_env_var_secret(agent.bot_name, "bot-token")
+    signing_secret = _decrypt(agent.signing_secret_encrypted, "signing-secret") or get_env_var_secret(
+        agent.bot_name, "signing-secret"
     )
     return bot_token, signing_secret
 
 
 @retry_db
 async def _load_agent_configs_from_database() -> dict[str, AgentAppConfig]:
-    """Load agent configurations from the database + GCP secrets.
+    """Load active agent configurations from the ``slack_agents`` table.
 
-    1. Gets active agents from the slack_agents table.
-    2. Fetches secrets for all agents concurrently from GCP Secret Manager (or env vars).
-
-    Returns:
-        Dict mapping app_id to AgentAppConfig
+    Secrets resolve from the encrypted columns first, then env-var fallback.
+    Rows missing both are skipped with a warning.
     """
-    # Query active agents from the database
     try:
         async with get_async_session_read_replica() as session:
             stmt = select(SlackAgent).where(
@@ -131,25 +146,10 @@ async def _load_agent_configs_from_database() -> dict[str, AgentAppConfig]:
         logger.info("No active agents found in database")
         return {}
 
-    # Fetch secrets for all agents concurrently
-    secrets_results = await asyncio.gather(
-        *[_fetch_agent_secrets(agent.bot_name) for agent in agents],
-        return_exceptions=True,
-    )
-
     configs: dict[str, AgentAppConfig] = {}
 
-    for agent, secrets_result in zip(agents, secrets_results, strict=True):
-        # Handle exceptions from gather
-        if isinstance(secrets_result, BaseException):
-            logger.error(
-                "Failed to fetch secrets for agent",
-                slack_name=agent.bot_name,
-                error=str(secrets_result),
-            )
-            continue
-
-        bot_token, signing_secret = secrets_result
+    for agent in agents:
+        bot_token, signing_secret = _resolve_agent_secrets(agent)
 
         if not bot_token or not signing_secret:
             logger.warning(

@@ -154,12 +154,12 @@ class TestGetBotFatherRefreshToken:
         assert result == "db-token"
         mock_cache.assert_awaited_once_with("db-token")
 
-    async def test_falls_through_to_secret_manager_on_db_miss(self, patch_redis: AsyncMock) -> None:
-        """Cache miss + DB miss: should migrate from Secret Manager."""
+    async def test_seeds_from_env_on_db_miss(self, patch_redis: AsyncMock) -> None:
+        """Cache miss + DB miss: seed from SLACK_BOT_FATHER_APP_CONFIG_REFRESH_TOKEN env var."""
         patch_redis.get.return_value = None  # cache miss
 
         mock_settings = MagicMock()
-        mock_settings.SLACK_BOT_FATHER_APP_CONFIG_REFRESH_TOKEN = "legacy-token"
+        mock_settings.SLACK_BOT_FATHER_APP_CONFIG_REFRESH_TOKEN = "seed-token"
 
         with (
             patch.object(
@@ -168,15 +168,15 @@ class TestGetBotFatherRefreshToken:
                 new_callable=AsyncMock,
                 return_value=(None, False),
             ),
-            patch.object(ts, "_save_refresh_token_to_db", new_callable=AsyncMock) as mock_save_db,
+            patch.object(ts, "save_bot_father_refresh_token", new_callable=AsyncMock) as mock_save,
             patch.object(ts, "_cache_refresh_token", new_callable=AsyncMock) as mock_cache,
             patch("ypl.slack_agent_gateway.token_storage.settings", mock_settings),
         ):
             result = await get_bot_father_refresh_token()
 
-        assert result == "legacy-token"
+        assert result == "seed-token"
         mock_cache.assert_awaited()
-        mock_save_db.assert_awaited_once_with("legacy-token")
+        mock_save.assert_awaited_once_with("seed-token")
 
     async def test_raises_when_no_token_anywhere(self, patch_redis: AsyncMock) -> None:
         """All sources empty: should raise ValueError."""
@@ -196,29 +196,6 @@ class TestGetBotFatherRefreshToken:
             pytest.raises(ValueError, match="No Bot Father refresh token"),
         ):
             await get_bot_father_refresh_token()
-
-    async def test_uses_secret_manager_fallback_on_db_decrypt_failure(self, patch_redis: AsyncMock) -> None:
-        """DB record exists but decryption failed → fall back to Secret Manager."""
-        patch_redis.get.return_value = None  # cache miss
-
-        mock_settings = MagicMock()
-        mock_settings.SLACK_BOT_FATHER_APP_CONFIG_REFRESH_TOKEN = "fallback-token"
-
-        with (
-            patch.object(
-                ts,
-                "_get_refresh_token_from_db",
-                new_callable=AsyncMock,
-                return_value=(None, True),  # record_exists=True, but decryption failed
-            ),
-            patch.object(ts, "save_bot_father_refresh_token", new_callable=AsyncMock) as mock_save,
-            patch.object(ts, "_cache_refresh_token", new_callable=AsyncMock),
-            patch("ypl.slack_agent_gateway.token_storage.settings", mock_settings),
-        ):
-            result = await get_bot_father_refresh_token()
-
-        assert result == "fallback-token"
-        mock_save.assert_awaited_once_with("fallback-token")
 
 
 # ---------------------------------------------------------------------------

@@ -1,11 +1,9 @@
-import asyncio
 import json
 import os
 import secrets
 import warnings
-from collections.abc import Callable
 from functools import cached_property
-from typing import Any, Literal, Self
+from typing import Literal, Self
 
 import pydantic
 import sqlalchemy
@@ -14,9 +12,6 @@ from pydantic import (
     model_validator,
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-from ypl.backend.utils.async_utils import background_task
-from ypl.backend.utils.json import json_dumps
 
 os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 os.environ.setdefault("TRANSFORMERS_NO_FRAMEWORK_WARNING", "1")
@@ -319,6 +314,9 @@ class Settings(BaseSettings):
     AMPLITUDE_API_SECRET: str = ""
     AMPLITUDE_EXPERIMENTS_DEPLOYMENT_API_KEY: str = ""
     EMBED_X_API_KEY: str = ""
+    # Bearer token for the X / Twitter v2 API (used by the ``search_twitter``
+    # MCP tool). Obtain from https://developer.x.com/. Empty disables the tool.
+    X_API_BEARER_TOKEN: str = ""
     GUEST_MANAGEMENT_SLACK_WEBHOOK_URL: str = ""
     IPINFO_API_KEY: str = ""
     IPQUALITYSCORE_SECRET: str = os.getenv("IPQUALITYSCORE_SECRET", "")
@@ -497,117 +495,6 @@ class Settings(BaseSettings):
     # The default below is a dev/test placeholder — override in real deployments.
     ARTIFACT_SIGNING_SECRET: str = "changethis-dev-placeholder-not-for-production"
 
-    def _get_gcp_secret(self, secret_name: str) -> str:
-        """Retrieve secret from Google Cloud Secret Manager."""
-
-        import logging
-
-        from google.api_core import exceptions as core_exceptions
-        from google.api_core import retry
-        from google.cloud import secretmanager
-
-        try:
-            log_dict = {
-                "message": "Retrieving secret from Google Cloud Secret Manager",
-                "secret_name": secret_name,
-            }
-            logging.info(json_dumps(log_dict))
-            if not self.GCP_PROJECT_ID:
-                return ""
-
-            client = secretmanager.SecretManagerServiceClient()
-            name = f"projects/{self.GCP_PROJECT_ID}/secrets/{secret_name}/versions/latest"
-
-            retry_config = retry.Retry(
-                initial=0.5,
-                maximum=10.0,
-                multiplier=2.0,
-                predicate=retry.if_exception_type(
-                    core_exceptions.ResourceExhausted,
-                    core_exceptions.DeadlineExceeded,
-                    core_exceptions.ServiceUnavailable,
-                ),
-                deadline=30.0,
-                reraise=True,
-            )
-
-            # Each retry will wait for 2x the previous wait time, up to a maximum of 10 seconds.
-            # Each retry has a timeout of 5 seconds, and the entire request has a timeout of 30 seconds.
-            response = client.access_secret_version(request={"name": name}, retry=retry_config, timeout=5.0)
-            data = response.payload.data.decode("UTF-8")
-            logging.info(
-                json_dumps(
-                    {
-                        "message": "Secret retrieved successfully",
-                        "secret_name": secret_name,
-                    }
-                )
-            )
-            return data
-        except Exception as e:
-            logging.error(
-                json_dumps(
-                    {
-                        "message": "Error retrieving secret from Google Cloud Secret Manager",
-                        "error": str(e),
-                        "secret_name": secret_name,
-                    }
-                )
-            )
-            # Raise the error instead of returning an empty string so that the property is not cached.
-            raise e
-
-    # DO NOT COPY THIS PATTERN unless you're adding a json/file like secret.
-    # Check the note above RESEND_API_KEY for more details.
-    @computed_field  # type: ignore[prop-decorator]
-    @cached_property
-    def AXIS_UPI_CONFIG(self) -> dict:
-        env_var = os.getenv("AXIS_UPI_CONFIG")
-        if env_var:
-            return json.loads(env_var)  # type: ignore[no-any-return]
-
-        # This should only happen in local development
-        secret = self._get_gcp_secret(f"axis-upi-config-{self.ENVIRONMENT}")
-        return json.loads(secret)  # type: ignore[no-any-return]
-
-    # DO NOT COPY THIS PATTERN unless you're adding a json/file like secret.
-    # Check the note above RESEND_API_KEY for more details.
-    @computed_field  # type: ignore[prop-decorator]
-    @cached_property
-    def PAYPAL_CONFIG(self) -> dict:
-        env_var = os.getenv("PAYPAL_CONFIG")
-        if env_var:
-            return json.loads(env_var)  # type: ignore[no-any-return]
-
-        # This should only happen in local development
-        secret = self._get_gcp_secret(f"paypal-config-{self.ENVIRONMENT}")
-        return json.loads(secret)  # type: ignore[no-any-return]
-
-    # DO NOT COPY THIS PATTERN unless you're adding a json/file like secret.
-    # Check the note above RESEND_API_KEY for more details.
-    @computed_field  # type: ignore[prop-decorator]
-    @cached_property
-    def DISCORD_CONFIG(self) -> dict:
-        env_var = os.getenv("DISCORD_CONFIG")
-        if env_var:
-            return json.loads(env_var)  # type: ignore[no-any-return]
-
-        # This should only happen in local development
-        secret = self._get_gcp_secret(f"discord-config-{self.ENVIRONMENT}")
-        return json.loads(secret)  # type: ignore[no-any-return]
-
-    # DO NOT COPY THIS PATTERN unless you're adding a json/file like secret.
-    @computed_field  # type: ignore[prop-decorator]
-    @cached_property
-    def MICROSOFT_CONTENT_SAFETY_CONFIG(self) -> dict:
-        env_var = os.getenv("MICROSOFT_CONTENT_SAFETY_CONFIG")
-        if env_var:
-            return json.loads(env_var)  # type: ignore[no-any-return]
-
-        # This should only happen in local development
-        secret = self._get_gcp_secret(f"microsoft-content-safety-config-{self.ENVIRONMENT}")
-        return json.loads(secret)  # type: ignore[no-any-return]
-
     def _parse_address_list(self, value: str) -> list[str]:
         """Parse a string containing addresses in JSON array or comma-separated format."""
         if not value:
@@ -624,12 +511,7 @@ class Settings(BaseSettings):
     @cached_property
     def TRUSTED_ETH_SMART_CONTRACT_ADDRESSES(self) -> list[str]:
         env_var = os.getenv("TRUSTED_ETH_SMART_CONTRACT_ADDRESSES", "")
-        if env_var:
-            return self._parse_address_list(env_var)
-
-        # This should only happen in local development
-        secret = self._get_gcp_secret(f"trusted-eth-smart-contract-addresses-{self.ENVIRONMENT}")
-        return self._parse_address_list(secret)
+        return self._parse_address_list(env_var)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -813,40 +695,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-
-
-@background_task()
-async def preload_gcp_secrets() -> None:
-    """Preload secrets to avoid slow fetch times during a request"""
-    import logging
-
-    logging.info("Preloading GCP secrets")
-
-    # Limit concurrent secret fetches to 5 at a time
-    semaphore = asyncio.Semaphore(5)
-
-    async def fetch_secret(fn: Callable[[], Any]) -> Any:
-        async with semaphore:
-            return await asyncio.to_thread(fn)
-
-    logging.info("Preloading GCP secrets")
-    results = await asyncio.gather(
-        fetch_secret(lambda: settings.AXIS_UPI_CONFIG),
-        fetch_secret(lambda: settings.PAYPAL_CONFIG),
-        fetch_secret(lambda: settings.DISCORD_CONFIG),
-        fetch_secret(lambda: settings.TRUSTED_ETH_SMART_CONTRACT_ADDRESSES),
-        fetch_secret(lambda: settings.MICROSOFT_CONTENT_SAFETY_CONFIG),  # MS content safety config
-        return_exceptions=True,
-    )
-
-    logging.info("GCP secrets preloaded")
-    for result in results:
-        if isinstance(result, Exception):
-            logging.error(
-                json_dumps(
-                    {
-                        "message": "Error preloading a GCP secret",
-                        "result": str(result),
-                    }
-                )
-            )

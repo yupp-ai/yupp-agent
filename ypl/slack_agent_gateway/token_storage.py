@@ -1,17 +1,15 @@
 """Encrypted token storage for Slack OAuth tokens.
 
 Provides durable storage for OAuth tokens with Redis caching for fast access.
-Tokens are encrypted at rest using Fernet encryption with a dedicated key.
+Tokens are encrypted at rest using Fernet encryption keyed off
+``SLACK_AGENT_GW_ENCRYPTION_KEY``.
 
 Architecture:
-- Encryption key: SLACK_AGENT_GW_ENCRYPTION_KEY (stored in Secret Manager)
-- Durable storage: PostgreSQL (slack_oauth_tokens table)
-- Fast cache: Redis with TTL matching token expiry
-
-On first access, performs lazy migration from Secret Manager if DB is empty.
+- Durable storage: PostgreSQL (``slack_oauth_tokens`` table)
+- Fast cache: Redis with a 24-hour TTL
+- Seed on first run: ``SLACK_BOT_FATHER_APP_CONFIG_REFRESH_TOKEN`` env var
 """
 
-import asyncio
 from datetime import UTC, datetime
 
 import sqlalchemy as sa
@@ -33,9 +31,6 @@ _REDIS_KEY_REFRESH_TOKEN = "slack_agent_gw:bot_father:refresh_token"
 # Redis TTL for refresh token cache (24 hours)
 _REFRESH_TOKEN_CACHE_TTL_SECONDS = 24 * 60 * 60
 
-# Lock for migration to prevent concurrent migration attempts
-_migration_lock = asyncio.Lock()
-
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -43,67 +38,38 @@ _migration_lock = asyncio.Lock()
 
 
 async def get_bot_father_refresh_token() -> str:
-    """Get the Bot Father refresh token, with lazy migration from Secret Manager.
+    """Get the Bot Father refresh token.
 
     Retrieval order:
     1. Redis cache (fastest)
-    2. Database (durable storage)
-    3. Secret Manager (fallback if DB token is invalid, or for initial migration)
-
-    Returns:
-        The refresh token string.
+    2. Database (durable, source of truth)
+    3. ``settings.SLACK_BOT_FATHER_APP_CONFIG_REFRESH_TOKEN`` env var — seed
+       value written to the DB on first access, then never read again.
 
     Raises:
-        ValueError: If no refresh token is found in any storage location.
+        ValueError: If no refresh token is found anywhere.
     """
-    # 1. Try Redis cache first
     cached = await _get_refresh_token_from_cache()
     if cached:
         return cached
 
-    # 2. Try database
-    db_token, record_exists = await _get_refresh_token_from_db()
+    db_token, _ = await _get_refresh_token_from_db()
     if db_token:
-        # Populate cache for next time
         await _cache_refresh_token(db_token)
         return db_token
 
-    # 3. If DB record exists but decryption failed, try Secret Manager as backup
-    if record_exists:
-        logger.warning(
-            "DB token exists but decryption failed - falling back to Secret Manager. "
-            "This may indicate a key mismatch or corrupted data."
+    seed_token = settings.SLACK_BOT_FATHER_APP_CONFIG_REFRESH_TOKEN
+    if not seed_token:
+        raise ValueError(
+            "No Bot Father refresh token found in DB or env. "
+            "Set SLACK_BOT_FATHER_APP_CONFIG_REFRESH_TOKEN in .env on first run — "
+            "after the first successful refresh it will be persisted to slack_oauth_tokens."
         )
-        legacy_token = settings.SLACK_BOT_FATHER_APP_CONFIG_REFRESH_TOKEN
-        if legacy_token:
-            logger.info("Using Secret Manager token as fallback, re-saving to DB")
-            await save_bot_father_refresh_token(legacy_token)
-            await _cache_refresh_token(legacy_token)
-            return legacy_token
-        # If Secret Manager also empty, raise error below
 
-    # 4. Lazy migration from Secret Manager (no DB record exists)
-    async with _migration_lock:
-        # Double-check after acquiring lock (another request may have migrated)
-        db_token, record_exists = await _get_refresh_token_from_db()
-        if db_token:
-            await _cache_refresh_token(db_token)
-            return db_token
-
-        # Migrate from Secret Manager
-        legacy_token = settings.SLACK_BOT_FATHER_APP_CONFIG_REFRESH_TOKEN
-        if not legacy_token:
-            raise ValueError(
-                "No Bot Father refresh token found in DB or Secret Manager. "
-                "Please configure SLACK_BOT_FATHER_APP_CONFIG_REFRESH_TOKEN."
-            )
-
-        logger.info("Migrating Bot Father refresh token from Secret Manager to DB")
-        await save_bot_father_refresh_token(legacy_token)
-        await _cache_refresh_token(legacy_token)
-
-        logger.info("Bot Father refresh token migration complete")
-        return legacy_token
+    logger.info("Seeding Bot Father refresh token from env → slack_oauth_tokens")
+    await save_bot_father_refresh_token(seed_token)
+    await _cache_refresh_token(seed_token)
+    return seed_token
 
 
 async def save_bot_father_refresh_token(refresh_token: str) -> None:
@@ -199,9 +165,10 @@ async def clear_refresh_token_cache() -> None:
 async def invalidate_refresh_token() -> None:
     """Invalidate the stored refresh token in both Redis and DB.
 
-    Call this when Slack returns 'invalid_refresh_token' error, indicating
-    the stored token is stale. This clears the cache and soft-deletes the
-    DB record, forcing the next request to reload from Secret Manager.
+    Call this when Slack returns ``invalid_refresh_token``. Clears the cache
+    and soft-deletes the DB row, forcing the next request to reseed from
+    ``SLACK_BOT_FATHER_APP_CONFIG_REFRESH_TOKEN`` (operator must update that
+    env var with a fresh token first).
     """
     # Clear Redis cache
     await clear_refresh_token_cache()
