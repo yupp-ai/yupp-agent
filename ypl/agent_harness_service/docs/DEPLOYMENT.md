@@ -4,7 +4,7 @@
 
 The Agent Harness Service (AHS) is a standalone FastAPI server that hosts AI agents.
 It runs on a dedicated VM, spawns Claude Code CLI subprocesses to execute agent tasks,
-and stores results in the shared Yupp PostgreSQL database.
+and stores results in the shared PostgreSQL database.
 
 ```
                ┌──────────────┐
@@ -46,7 +46,7 @@ All data lives under `/data/` (configurable via `AHS_DATA_DIR`).
 
 | Path | Purpose | Owner |
 |------|---------|-------|
-| `/opt/yupp-mind/` | Service code (git clone) | `ahs` |
+| `/opt/yupp-agent/` | Service code (git clone) | `ahs` |
 | `/data/ahs/.env` | Environment variables (secrets) | `ahs` (mode 600) |
 | `/data/agents/` | Agent config directories | `ahs` |
 | `/data/agents/{name}/config.json` | Agent settings (model, tools, limits) | `ahs` |
@@ -54,7 +54,7 @@ All data lives under `/data/` (configurable via `AHS_DATA_DIR`).
 | `/data/shared/SOUL.md` | Shared identity/values (all agents) | `ahs` |
 | `/data/shared/WORKSPACE.md` | Repository guide for agents | `ahs` |
 | `/data/repos/` | Shared read-only repo checkouts | `ahs` |
-| `/data/repos/yupp-mind/` | Main repo clone (auto-pulled every 5m) | `ahs` |
+| `/data/repos/<your-repo>/` | Example repo clone (auto-pulled every 5m by `pull_agent_repos.sh`) | `ahs` |
 | `/data/workspaces/` | Per-session git worktrees (write access) | `ahs` |
 | `/data/session_logs/` | Per-session debug logs | `ahs` |
 | `/data/session_logs/pull_repos.log` | Cron job output | `ahs` |
@@ -64,7 +64,7 @@ All data lives under `/data/` (configurable via `AHS_DATA_DIR`).
 ## Prerequisites
 
 - **VM**: Ubuntu 24.04 LTS (x86_64), 4 GB+ RAM. Python 3.12.12+ is required — the setup script builds from source if the system version is too old.
-- **Database**: Access to the Yupp PostgreSQL database (staging or production)
+- **Database**: Access to the shared PostgreSQL database (staging or production)
 - **Anthropic API key**: For Claude Code CLI
 - **GitHub access**: For repo cloning and PR creation
 
@@ -81,7 +81,7 @@ All data lives under `/data/` (configurable via `AHS_DATA_DIR`).
 > GitHub, then re-run the setup script to finish.
 
 ```bash
-sudo bash /path/to/yupp-mind/ypl/agent_harness_service/deploy/setup_vm.sh
+sudo bash /path/to/yupp-agent/ypl/agent_harness_service/deploy/setup_vm.sh
 ```
 
 This installs all system dependencies, creates the `ahs` user, sets up the directory
@@ -93,7 +93,7 @@ What it does:
 3. Creates `ahs` service user
 4. Installs Claude Code CLI as the `ahs` user (user-scoped)
 5. Creates `/data/` directory structure
-6. Clones yupp-mind to `/opt/yupp-mind/` (requires GitHub auth — see Step 3)
+6. Clones the repo to `/opt/yupp-agent/` (requires GitHub auth — see Step 3)
 7. Creates Python venv and installs dependencies via Poetry
 8. Copies env template, agent configs, and shared identity files
 9. Clones repos into `/data/repos/`
@@ -150,9 +150,9 @@ audit-friendly identity.
 
 **1. Create the GitHub App** (one-time, org admin):
 
-- Go to https://github.com/organizations/yupp-ai/settings/apps/new
+- Go to `https://github.com/organizations/<your-org>/settings/apps/new`
 - **App name**: `AHS Agent Service` (must be globally unique on GitHub)
-- **Homepage URL**: `https://github.com/yupp-ai/yupp-mind` (any valid URL)
+- **Homepage URL**: your org or repo URL (any valid URL)
 - **Webhook**: Uncheck "Active" (not needed — PR triggers use GitHub Actions, not webhooks)
 - **Callback URL**: Leave blank (no OAuth user login flow needed)
 - **Permissions** (Repository):
@@ -171,8 +171,8 @@ audit-friendly identity.
 
 **3. Install the App on repos:**
 
-- In the left sidebar → "Install App" → click "Install" next to `yupp-ai`
-- Select "Only select repositories" → pick `yupp-mind` (add others later as needed)
+- In the left sidebar → "Install App" → click "Install" next to your org
+- Select "Only select repositories" → pick the repos agents should have access to
 - Click "Install"
 - **Copy the Installation ID** from the URL: `.../installations/<INSTALLATION_ID>`
 
@@ -195,8 +195,8 @@ The repo includes a helper script at `deploy/gh_app_auth.sh` that generates a
 GitHub App installation token and authenticates `gh` CLI.
 
 ```bash
-# Copy from the repo (if already cloned to /opt/yupp-mind)
-sudo cp /opt/yupp-mind/ypl/agent_harness_service/deploy/gh_app_auth.sh /data/ahs/
+# Copy from the repo (if already cloned to /opt/yupp-agent)
+sudo cp /opt/yupp-agent/ypl/agent_harness_service/deploy/gh_app_auth.sh /data/ahs/
 # Or copy from your laptop if the repo isn't cloned yet
 scp ypl/agent_harness_service/deploy/gh_app_auth.sh YOUR_VM_IP:/tmp/
 sudo mv /tmp/gh_app_auth.sh /data/ahs/
@@ -238,7 +238,7 @@ You should see `Logged in to github.com account ...` on success.
 
 ```bash
 # Create a fine-grained PAT at https://github.com/settings/tokens?type=beta
-# Scope to yupp-ai org and the repos agents need
+# Scope to the GitHub org + repos agents need
 # Permissions: Contents (read/write), Pull requests (read/write)
 
 # Log in as the ahs user (interactive, paste the token)
@@ -341,31 +341,31 @@ All scripts live in `deploy/` and run as the `ahs` user (`sudo -u ahs bash <scri
 |--------|-------------|----------------|
 | `gh_app_auth.sh` | Refreshes GitHub App token (expires every 1 hour) | Every 50 min |
 | `pull_agent_repos.sh` | Pulls all repos in `/data/repos/` (agent read-only checkouts) | Every 5 min |
-| `sync_configs.sh` | Pulls `/opt/yupp-mind`, copies changed configs to `/data/` | Every 30 min |
+| `sync_configs.sh` | Pulls `/opt/yupp-agent`, copies changed configs to `/data/` | Every 30 min |
 
 **`sync_configs.sh`** — pulls the service repo and syncs config files:
 
 ```bash
 # Pull repo + sync all configs to /data/
-sudo -u ahs bash /opt/yupp-mind/ypl/agent_harness_service/deploy/sync_configs.sh
+sudo -u ahs bash /opt/yupp-agent/ypl/agent_harness_service/deploy/sync_configs.sh
 
 # Skip git pull (already pulled manually)
-sudo -u ahs bash /opt/yupp-mind/ypl/agent_harness_service/deploy/sync_configs.sh --no-pull
+sudo -u ahs bash /opt/yupp-agent/ypl/agent_harness_service/deploy/sync_configs.sh --no-pull
 
 # Sync only shared identity files
-sudo -u ahs bash /opt/yupp-mind/ypl/agent_harness_service/deploy/sync_configs.sh --no-pull --shared
+sudo -u ahs bash /opt/yupp-agent/ypl/agent_harness_service/deploy/sync_configs.sh --no-pull --shared
 
 # Sync only agent configs
-sudo -u ahs bash /opt/yupp-mind/ypl/agent_harness_service/deploy/sync_configs.sh --no-pull --agents
+sudo -u ahs bash /opt/yupp-agent/ypl/agent_harness_service/deploy/sync_configs.sh --no-pull --agents
 
 # Preview what would change
-sudo -u ahs bash /opt/yupp-mind/ypl/agent_harness_service/deploy/sync_configs.sh --dry-run
+sudo -u ahs bash /opt/yupp-agent/ypl/agent_harness_service/deploy/sync_configs.sh --dry-run
 ```
 
-**`pull_agent_repos.sh`** — pulls `/data/repos/*` (yupp-mind, yupp-soul, yupp-head):
+**`pull_agent_repos.sh`** — pulls every entry under `/data/repos/*` (add the repos you want mirrored):
 
 ```bash
-sudo -u ahs bash /opt/yupp-mind/ypl/agent_harness_service/deploy/pull_agent_repos.sh
+sudo -u ahs bash /opt/yupp-agent/ypl/agent_harness_service/deploy/pull_agent_repos.sh
 ```
 
 ### Setting Up Cron
@@ -386,12 +386,12 @@ Run `sudo crontab -e` and add:
 
 # Pull agent repos every 5 min (read-only checkouts in /data/repos/).
 # Agents read from these repos; keeping them fresh means agents see latest code.
-*/5 * * * * sudo -u ahs bash /opt/yupp-mind/ypl/agent_harness_service/deploy/pull_agent_repos.sh >> /data/session_logs/pull_agent_repos.log 2>&1
+*/5 * * * * sudo -u ahs bash /opt/yupp-agent/ypl/agent_harness_service/deploy/pull_agent_repos.sh >> /data/session_logs/pull_agent_repos.log 2>&1
 
 # Sync service code + configs every 30 min.
-# Pulls /opt/yupp-mind, then copies changed .md and config.json to /data/.
+# Pulls /opt/yupp-agent, then copies changed .md and config.json to /data/.
 # Agent/shared config changes take effect on the next session creation.
-*/30 * * * * sudo -u ahs bash /opt/yupp-mind/ypl/agent_harness_service/deploy/sync_configs.sh >> /data/session_logs/sync_configs.log 2>&1
+*/30 * * * * sudo -u ahs bash /opt/yupp-agent/ypl/agent_harness_service/deploy/sync_configs.sh >> /data/session_logs/sync_configs.log 2>&1
 ```
 
 **Verify:**
@@ -429,10 +429,10 @@ ls /data/workspaces/
 
 ```bash
 # Pull latest code + sync configs in one step
-sudo -u ahs bash /opt/yupp-mind/ypl/agent_harness_service/deploy/sync_configs.sh
+sudo -u ahs bash /opt/yupp-agent/ypl/agent_harness_service/deploy/sync_configs.sh
 
 # Update Python dependencies (if pyproject.toml changed)
-cd /opt/yupp-mind
+cd /opt/yupp-agent
 sudo -u ahs .venv/bin/poetry install --no-interaction
 
 # Restart service
@@ -473,8 +473,8 @@ cron job every 30 min. To copy manually:
 
 ```bash
 # Copy latest shared files from repo
-sudo -u ahs cp /opt/yupp-mind/ypl/agent_harness_service/deploy/shared/SOUL.md /data/shared/
-sudo -u ahs cp /opt/yupp-mind/ypl/agent_harness_service/deploy/shared/WORKSPACE.md /data/shared/
+sudo -u ahs cp /opt/yupp-agent/ypl/agent_harness_service/deploy/shared/SOUL.md /data/shared/
+sudo -u ahs cp /opt/yupp-agent/ypl/agent_harness_service/deploy/shared/WORKSPACE.md /data/shared/
 ```
 
 ---

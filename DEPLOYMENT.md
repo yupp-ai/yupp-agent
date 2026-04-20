@@ -1,6 +1,6 @@
-# Yupp Agent Platform — Deployment Guide
+# Deployment Guide
 
-One-box deployment: a single machine running the full agent platform at ~$25/mo (VM) or $0 (laptop).
+One-box deployment: a single machine running the full agent platform. Cost ranges from ~$25/mo (small VM) to $0 (your laptop).
 
 ```
 Machine (VM or MacBook)
@@ -11,7 +11,7 @@ Machine (VM or MacBook)
 └── cloudflared tunnel (optional, for external access)
 ```
 
-> **This is additive, not replacing.** The existing distributed deployment (Cloud Run, Cloud SQL, Memorystore) remains the production/scaling path. The monolith is a one-box convenience option for personal development, small-team deployments, or cost-sensitive environments.
+The monolith is the primary deployment shape for self-hosted setups: one process, one VM, `.env`-driven config. All four services (AHS, SAG, MCP, Streamlit) ship together and can be run standalone if you need to scale a component independently.
 
 ---
 

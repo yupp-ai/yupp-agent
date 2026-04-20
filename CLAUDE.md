@@ -59,11 +59,12 @@ streamlit run ypl/streamlit_server/app.py               # Dashboards (port 8501)
 ### Service Layout
 ```
 ypl/
-├── agent_harness_service/   # AHS — agent runtime (GCE VM, not containerized)
-├── slack_agent_gateway/     # SAG — Slack bot bridge (Cloud Run)
-├── mcp_server/              # MCP tool server for IDEs (Cloud Run, 2 instances)
+├── agent_harness_service/   # AHS — agent runtime (needs host filesystem: git repos + sandboxes)
+├── slack_agent_gateway/     # SAG — Slack bot bridge
+├── mcp_server/              # MCP tool server for IDEs (DevToken + OAuth modes)
 ├── mcp_common/              # Shared MCP utilities
-├── streamlit_server/        # Operational dashboards (Cloud Run)
+├── streamlit_server/        # Operational dashboards
+├── mono_server/             # Single-process entrypoint (AHS + SAG + MCP)
 ├── backend/                 # Shared backend (DB config, utils)
 └── db/                      # SQLModel models + Alembic migrations
 
@@ -107,10 +108,9 @@ The `lint_and_test.yml` workflow runs on PRs and pushes to main. All four jobs m
 
 ## Deployment
 
-- **Staging:** Auto-deploys on push to main. Builds `agent-backend:latest` image, deploys Cloud Run services, optionally AHS VM.
-- **Production:** Manual trigger via `deploy-servers-2-deploy.yml`. Uses `release-candidate` tagged image.
-- **Docker images:** Base `agent-base-py312` (rebuilt when deps change) + App `agent-backend`
-- **Secrets:** GCP Secret Manager, naming convention `ym-<name>-<environment>`. Mappings in `data/secret-env-var-map.yml`.
+- **Monolith VM:** the primary shape — `ypl.mono_server.server:app` runs AHS + SAG + MCP in one uvicorn process; Streamlit runs separately. See `DEPLOYMENT.md` for Docker Compose, bare-metal systemd, and MacBook options.
+- **First-time setup:** `python -m ypl.mono_server.setup` runs Alembic migrations, seeds roles, and creates the admin + system users from `.env`.
+- **Secrets:** `.env` on the VM. The platform does not require a hosted secret manager; plug one in via environment injection if you prefer.
 
 ## Key Files
 

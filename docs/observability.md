@@ -1,6 +1,6 @@
 # Observability — Logging & Metrics
 
-This document describes the logging architecture for the Yupp Agent Platform monolith
+This document describes the logging architecture for the yupp-agent monolith
 (`ypl/mono_server`) and provides deployment-specific instructions for systemd, MacBook
 local development, and the future Prometheus metrics path.
 
@@ -33,7 +33,7 @@ SERVICE_NAME=sag           # standalone Slack Agent Gateway
 SERVICE_NAME=mcp           # standalone MCP Server
 ```
 
-If `SERVICE_NAME` is not set, the field defaults to `"yupp-agent"`.
+If `SERVICE_NAME` is not set, the field defaults to `"yupp-agent"` (the package name).
 
 ---
 
@@ -76,7 +76,7 @@ present.
 ```ini
 # /etc/systemd/system/ahs-mono.service
 [Unit]
-Description=Yupp Agent Platform (monolith)
+Description=yupp-agent monolith
 After=network.target
 
 [Service]
@@ -130,12 +130,12 @@ LOG_FORMAT=json uvicorn ypl.mono_server.server:app --port 8090
 LOG_FORMAT=json uvicorn ypl.mono_server.server:app --port 8090 2>&1 | jq .
 ```
 
-### Google Cloud Run / GCP VM (production)
+### GCP VM (optional)
 
 ```bash
 USE_GOOGLE_CLOUD_LOGGING=true
 SERVICE_NAME=mono_server
-GCP_PROJECT_ID=yupp-llms
+GCP_PROJECT_ID=your-gcp-project
 ```
 
 Logs appear in Cloud Logging under the log name matching `GCP_PROJECT_ID`.
@@ -165,6 +165,8 @@ scrape_configs:
     static_configs:
       - targets: ["localhost:8090"]
 ```
+
+(`job_name` is arbitrary — pick whatever shows up cleanly in your Prometheus UI.)
 
 ### Roadmap — adding real metrics
 

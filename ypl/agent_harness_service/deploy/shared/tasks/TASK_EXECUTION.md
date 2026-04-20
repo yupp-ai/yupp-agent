@@ -89,7 +89,7 @@ Result format:
 ```json
 {
   "summary": "One-sentence description of what was accomplished",
-  "pr_url": "https://github.com/yupp-ai/yupp-mind/pull/123",
+  "pr_url": "https://github.com/example-org/example-repo/pull/123",
   "branch_name": "tw/fix-routing-latency",
   "yuppaste_url": "http://go/p/<uuid>",
   "<task-specific keys>": "..."
@@ -156,7 +156,7 @@ Review result format:
 ```json
 {
   "summary": "One-sentence description of the work completed",
-  "pr_url": "https://github.com/yupp-ai/yupp-mind/pull/123",
+  "pr_url": "https://github.com/example-org/example-repo/pull/123",
   "review_requested": "Brief description of what the human should review",
   "next_steps": "What happens after approval (e.g., 'Merge the PR and deploy')"
 }
@@ -172,7 +172,7 @@ After setting `IN_REVIEW`, send a **new top-level message** (not threaded) to th
 👀 *{PROJECT_NAME}* — {TASK_TITLE}
 <@{creator_slack_user_id}> Ready for review: {review_requested}
 🔗 <{pr_url}|PR #{number}>
-📎 Session: <http://lit.yupp.ai/agent_harness_console?session_id={session_id}|{short_session_id}>
+📎 Session: <http://lit.example.com/agent_harness_console?session_id={session_id}|{short_session_id}>
 ```
 
 Send it with `send_slack_message(channel=<slack_channel>, text=<message>, ahs_session_id=<your_session_id>)` — the `ahs_session_id` ensures that replies in this thread route back to your session.
@@ -208,7 +208,7 @@ Messages posted **inside the project updates thread** should NOT repeat the proj
 ```
 {emoji} *{TASK_TITLE}* · <@{creator_slack_user_id}>
 {body text with details, links, etc.}
-📎 Session: <http://lit.yupp.ai/agent_harness_console?session_id={your_session_id}|{short_session_id}>
+📎 Session: <http://lit.example.com/agent_harness_console?session_id={your_session_id}|{short_session_id}>
 ```
 
 Where:
@@ -225,7 +225,7 @@ Always include the session link so humans can inspect the session's full history
 ```
 {emoji} *{PROJECT_NAME}* — {TASK_TITLE}
 {body text}
-📎 Session: <http://lit.yupp.ai/agent_harness_console?session_id={your_session_id}|{short_session_id}>
+📎 Session: <http://lit.example.com/agent_harness_console?session_id={your_session_id}|{short_session_id}>
 ```
 
 ### General Updates Thread
@@ -250,21 +250,21 @@ The tool auto-resolves the correct channel and thread from the project — no ma
 On task start:
 ```
 🔄 *{TASK_TITLE}* started · <@{creator_slack_user_id}>
-📎 Session: <http://lit.yupp.ai/agent_harness_console?session_id={session_id}|{short_id}>
+📎 Session: <http://lit.example.com/agent_harness_console?session_id={session_id}|{short_id}>
 ```
 
 On task completion (COMPLETED):
 ```
 ✅ *{TASK_TITLE}* · <@{creator_slack_user_id}>
 {summary from task result}
-📎 Session: <http://lit.yupp.ai/agent_harness_console?session_id={session_id}|{short_session_id}>
+📎 Session: <http://lit.example.com/agent_harness_console?session_id={session_id}|{short_session_id}>
 ```
 
 On task failure (FAILED):
 ```
 ❌ *{TASK_TITLE}* · <@{creator_slack_user_id}>
 {error_message from task result}
-📎 Session: <http://lit.yupp.ai/agent_harness_console?session_id={session_id}|{short_session_id}>
+📎 Session: <http://lit.example.com/agent_harness_console?session_id={session_id}|{short_session_id}>
 ```
 
 ### Human Checkpoint Notifications
@@ -277,7 +277,7 @@ When your task description contains `**Human checkpoint:**`, you need explicit h
    - Follow the message formatting above with 🚧 emoji
    - Clearly state what needs review and why
    - Include any context the human needs to make a decision
-   - Example: `🚧 *Q3 Migration* — Deploy to production\n<@U086VNKP095> The migration script PR is merged. Please confirm it's safe to deploy.\n📎 Session: <http://lit.yupp.ai/agent_harness_console?session_id=abc123|abc123>` (includes project name because this is a top-level message)
+   - Example: `🚧 *Q3 Migration* — Deploy to production\n<@U086VNKP095> The migration script PR is merged. Please confirm it's safe to deploy.\n📎 Session: <http://lit.example.com/agent_harness_console?session_id=abc123|abc123>` (includes project name because this is a top-level message)
 3. Include `ahs_session_id=<your_session_id>` in the `send_slack_message` call so replies in this thread route back to your session
 4. Wait for the human to respond in that thread before proceeding with the task
 
