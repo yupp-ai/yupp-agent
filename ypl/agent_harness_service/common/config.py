@@ -228,6 +228,17 @@ def load_agent_config(name: str) -> AgentConfig | None:
     return config
 
 
+def _clear_agent_config_cache() -> None:
+    """Clear the positive-only cache backing :func:`load_agent_config`."""
+    with _agent_config_cache_lock:
+        _agent_config_cache.clear()
+
+
+# Keep the lru_cache-style ``.cache_clear()`` attr for backward compatibility
+# with existing tests / helpers that reach into the function object directly.
+load_agent_config.cache_clear = _clear_agent_config_cache  # type: ignore[attr-defined]
+
+
 def load_agent_config_from_db(agent: Any) -> AgentConfig:
     """Build an AgentConfig from a DB Agent record (for agents without on-disk config).
 
@@ -307,5 +318,4 @@ def discover_agents() -> dict[str, AgentConfig]:
 def clear_config_cache() -> None:
     """Clear the configuration cache. Useful for testing."""
     discover_agents.cache_clear()
-    with _agent_config_cache_lock:
-        _agent_config_cache.clear()
+    _clear_agent_config_cache()

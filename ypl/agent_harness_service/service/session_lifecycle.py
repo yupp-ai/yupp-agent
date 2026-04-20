@@ -18,6 +18,7 @@ from ypl.agent_harness_service.common.config import (
     load_agent_config_from_db,
 )
 from ypl.agent_harness_service.common.constants import (
+    AHS_LIT_BASE_URL,
     AHS_MEMORIES_DIR,
     AHS_REPOS_DIR,
     AHS_SESSIONS_DIR,
@@ -1272,20 +1273,13 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
 
     # Best-effort: notify all channels that a new session was created.
     _sid = agent_session.agent_session_id
-    _env = os.environ.get("ENVIRONMENT", "local")
-    _lit_hosts = {
-        "production": "https://agent-streamlit-server-production-451082535721.us-east4.run.app",
-        "staging": "https://agent-streamlit-server-staging-451082535721.us-east4.run.app",
-    }
-    _lit_base = _lit_hosts.get(_env, "http://localhost:8501")
-    _lit_url = f"{_lit_base}/agent_harness_console?session_id={_sid}"
-    if _env == "production":
-        _war_room_url = f"https://war-room.yuppster.ai/session/{_sid}"
-        _links = f"(<{_war_room_url}|WR> | <{_lit_url}|Lit>)"
-    else:
-        _links = f"(<{_lit_url}|Lit>)"
-    _env_suffix = f" — {_env}" if _env != "production" else ""
-    session_notice = f"_Session {_sid} {_links}{_env_suffix}_"
+    _link_parts: list[str] = []
+    if os.environ.get("ENVIRONMENT") == "production":
+        _link_parts.append(f"<https://war-room.yuppster.ai/session/{_sid}|WR>")
+    if AHS_LIT_BASE_URL:
+        _link_parts.append(f"<{AHS_LIT_BASE_URL}/agent_harness_console?session_id={_sid}|Lit>")
+    _links = f" ({' | '.join(_link_parts)})" if _link_parts else ""
+    session_notice = f"_Session {_sid}{_links}_"
 
     # WebSocket stream
     # TODO: this notice is effectively dropped for new sessions because WebSocket

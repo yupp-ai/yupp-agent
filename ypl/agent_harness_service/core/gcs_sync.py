@@ -23,6 +23,7 @@ import aiohttp
 from gcloud.aio.storage import Storage
 from tenacity import after_log, retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
+from ypl.backend.config import is_gcp_free_environment, settings
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -205,6 +206,19 @@ async def sync_dir_to_gcs(
         Number of files uploaded.
     """
     if not os.path.isdir(base_dir):
+        return 0
+
+    # Skip GCS sync entirely in GCP-free environments (selfhosted / local / test)
+    # or when the caller passed an empty bucket name. Avoids spamming 403
+    # "Provided scope(s) are not authorized" errors on VMs whose GCE service
+    # account lacks the devstorage scope.
+    if not bucket or is_gcp_free_environment(settings.ENVIRONMENT):
+        logger.debug(
+            "Skipping GCS sync",
+            environment=settings.ENVIRONMENT,
+            bucket=bucket,
+            log_label=log_label,
+        )
         return 0
 
     # Layer 1: in-process asyncio lock (prevents concurrent coroutines).

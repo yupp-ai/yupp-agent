@@ -18,6 +18,7 @@ try:
 except ImportError:
     from textual.widgets._option_list import Option  # type: ignore[no-redef,unused-ignore]
 
+from ypl.agent_harness_service.common.constants import AHS_LIT_BASE_URL
 from ypl.agent_harness_service.tui.config import _http_request
 from ypl.agent_harness_service.tui.rendering import _escape_markup
 
@@ -561,7 +562,7 @@ class SchedulesScreen(Screen[str | None]):
 
             # Session links
             if session_id:
-                console_url = f"http://lit.yupp.ai/agent_harness_console?session_id={session_id}"
+                console_url = f"{AHS_LIT_BASE_URL}/agent_harness_console?session_id={session_id}"
                 runs_pane.write(f"  [dim][link={console_url}]Lit \u2192[/link][/dim]")
 
             # Error message
@@ -654,7 +655,7 @@ class SchedulesScreen(Screen[str | None]):
             )
             run_num = resp.get("run_number", "?")
             session_id = resp.get("session_id", "")
-            console_url = f"http://lit.yupp.ai/agent_harness_console?session_id={session_id}"
+            console_url = f"{AHS_LIT_BASE_URL}/agent_harness_console?session_id={session_id}"
             detail.write(
                 f"[green]Triggered run #{run_num}  [link={console_url}]Lit \u2192[/link]  [dim]o=Chat[/dim][/green]"
             )

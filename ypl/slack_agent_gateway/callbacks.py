@@ -8,7 +8,6 @@ Handles:
 """
 
 import time
-from collections import Counter
 from typing import Any
 
 from slack_sdk.errors import SlackApiError
@@ -187,7 +186,8 @@ async def add_reply(request: AddReplyRequest) -> AddReplyResponse:
 
         # When a real (non-status) reply is posted:
         # 1. If a tool cluster is active, edit it to show a compact summary so
-        #    the live display is replaced by a clean "Bash*5, Grep*2 ..." line.
+        #    the live tool cluster is left in place (showing the last couple of
+        #    tool entries) — no compact-summary rewrite any more.
         # 2. Clear tool entries so the next cluster starts fresh.
         # 3. Reset status_message_ts so future tool events post a new message.
         # 4. Clear any pending status text and scheduled flush.
@@ -196,38 +196,11 @@ async def add_reply(request: AddReplyRequest) -> AddReplyResponse:
                 # Re-fetch a fresh session — record_reply already updated it
                 # and we must not overwrite those changes with our stale copy.
                 fresh_session = await get_session(request.session_id)
-                # 1. Snapshot tool entries before clearing so we can render the summary.
-                entries = await get_tool_entries(request.session_id)
-                # 2. Clear all pending state first to prevent a concurrent flush from
-                #    racing against our summary write below.
                 await remove_from_status_flush_schedule(request.session_id)
                 await get_and_clear_tool_cluster_pending(request.session_id)
                 await clear_tool_entries(request.session_id)
-                # 3. Write summary to the cluster message (best-effort).
                 if fresh_session and fresh_session.status_message_ts:
-                    if entries:
-                        summary = _render_tool_summary(entries)
-                        cluster_client = await _get_slack_client(fresh_session)
-                        if cluster_client:
-                            try:
-                                await cluster_client.chat_update(
-                                    channel=fresh_session.channel_id,
-                                    ts=fresh_session.status_message_ts,
-                                    text=summary,
-                                    blocks=[
-                                        {
-                                            "type": "context",
-                                            "elements": [{"type": "mrkdwn", "text": summary}],
-                                        }
-                                    ],
-                                )
-                            except SlackApiError as slack_err:
-                                logger.warning(
-                                    "Failed to post tool cluster summary",
-                                    session_id=request.session_id,
-                                    error=str(slack_err),
-                                )
-                    # 4. Nullify status_message_ts so the next tool cluster posts fresh.
+                    # Nullify status_message_ts so the next tool cluster posts fresh.
                     fresh_session.status_message_ts = None
                     await save_session(fresh_session)
             except Exception as e:
@@ -748,27 +721,6 @@ def _render_tool_cluster(entries: list[ToolUseEntry]) -> str:
     if total > _TOOL_CLUSTER_DISPLAY_COUNT:
         text += f"\n_{total} tools used_"
     return text
-
-
-def _render_tool_summary(entries: list[ToolUseEntry]) -> str:
-    """Render a compact summary of all tool calls after a cluster finishes.
-
-    Format: ``Bash*5, Grep*2, Read*1 (8 tools used)``
-    Shows at most 5 distinct tool types.
-
-    Args:
-        entries: All tool entries accumulated for this cluster.
-
-    Returns:
-        Single-line summary string (no code block wrapper).
-    """
-    total = len(entries)
-    counts = Counter(e.name for e in entries)
-    top = counts.most_common(5)
-    parts = [f"{name}*{n}" for name, n in top]
-    if len(counts) > 5:
-        parts.append("...")
-    return f"{', '.join(parts)} ({total} tool{'s' if total != 1 else ''} used)"
 
 
 # ---------------------------------------------------------------------------

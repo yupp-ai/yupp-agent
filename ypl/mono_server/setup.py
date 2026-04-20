@@ -179,6 +179,9 @@ AGENT_HARNESS_SERVICE_API_KEY={params.get("ahs_api_key", "")}
 AGENT_HARNESS_SERVICE_BASE_URL={base_url}
 GATEWAY_BASE_URL={base_url}
 MCP_SERVER_BASE_URL={base_url}
+# Lit (Streamlit console) public base URL — leave empty to omit Lit links
+# from Slack / CLI output.  Example: https://lit.yourdomain.com
+AHS_LIT_BASE_URL=
 
 # ---------------------------------------------------------------------------
 # MCP Authentication

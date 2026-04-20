@@ -7,7 +7,12 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-from ypl.agent_harness_service.common.config import AgentConfig, SandboxConfig, load_agent_config
+from ypl.agent_harness_service.common.config import (
+    AgentConfig,
+    SandboxConfig,
+    clear_config_cache,
+    load_agent_config,
+)
 from ypl.agent_harness_service.common.constants import EXECUTOR_TYPE_RAW, TOOLSETS
 from ypl.agent_harness_service.common.models import (
     ExecutorConfig,
@@ -285,7 +290,7 @@ class TestLoadAgentConfigExecutor:
                 },
             )
             with patch("ypl.agent_harness_service.common.config.AHS_AGENTS_DIR", tmpdir):
-                load_agent_config.cache_clear()
+                clear_config_cache()
                 cfg = load_agent_config(name)
             assert cfg is not None
             assert cfg.executor_config.type == EXECUTOR_TYPE_RAW
@@ -298,7 +303,7 @@ class TestLoadAgentConfigExecutor:
         with tempfile.TemporaryDirectory() as tmpdir:
             name = self._write_config(tmpdir, {})
             with patch("ypl.agent_harness_service.common.config.AHS_AGENTS_DIR", tmpdir):
-                load_agent_config.cache_clear()
+                clear_config_cache()
                 cfg = load_agent_config(name)
             assert cfg is not None
             assert cfg.executor_config.type == "harnessed"
@@ -312,7 +317,7 @@ class TestLoadAgentConfigExecutor:
                 {"executor_config": {"type": "harnessed", "model": "codex-cli"}},
             )
             with patch("ypl.agent_harness_service.common.config.AHS_AGENTS_DIR", tmpdir):
-                load_agent_config.cache_clear()
+                clear_config_cache()
                 cfg = load_agent_config(name)
             assert cfg is not None
             assert cfg.executor_config.model == "codex-cli"
