@@ -49,6 +49,7 @@ from fastapi.responses import ORJSONResponse, Response
 # yuppster FastMCP instance has an empty tool registry.
 import ypl.mcp_server.mcp_tools  # noqa: F401
 from ypl.agent_harness_service.common.auth import verify_api_key
+from ypl.agent_harness_service.host_path_guard import HostPathGuardMiddleware
 from ypl.agent_harness_service.lifespan import AHSState, ahs_shutdown, ahs_startup
 from ypl.agent_harness_service.middleware import AHSRequestLoggingMiddleware
 from ypl.agent_harness_service.projects.project_routes import project_router
@@ -255,6 +256,18 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Host-based path allowlist — restricts scoped subdomains (e.g.
+    # mcp.agcouch.com) to specific path prefixes. Reads from HOST_PATH_GUARD
+    # env var. Registered BEFORE AHSRequestLoggingMiddleware so requests
+    # rejected by the guard don't pollute AHS access logs.
+    # Starlette runs middleware in reverse registration order (LIFO), so this
+    # still fires *first* at request time.
+    if config.host_path_guard:
+        application.add_middleware(
+            HostPathGuardMiddleware,
+            host_allowlist=config.host_path_guard,
+        )
 
     application.add_middleware(AHSRequestLoggingMiddleware)
 
