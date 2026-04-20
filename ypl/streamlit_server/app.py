@@ -8,8 +8,8 @@ from ypl.db.all_models import *  # noqa
 from ypl.streamlit_server.auth import auth_required, is_allowed_email, is_auth_configured
 
 st.set_page_config(
-    page_title="Yupp Agent Hub",
-    page_icon="🤖",
+    page_title="Agentic Couch Hub",
+    page_icon="🛋️",
     layout="wide",
 )
 
@@ -28,7 +28,7 @@ def login_screen() -> None:
 
 
 def access_denied_screen() -> None:
-    st.title("🤖 Yupp Agent Hub")
+    st.title("🛋️ Agentic Couch Hub")
     st.error("Access Denied")
     email = st.user.email if st.user is not None else "Unknown"
     st.warning(
@@ -71,7 +71,7 @@ if AUTH_ENABLED:
         access_denied_screen()
         st.stop()
 
-    st.title("🤖 Yupp Agent Hub")
+    st.title("🛋️ Agentic Couch Hub")
     st.markdown(f"Welcome, {st.user.name}! 👋")
     st.markdown("<div style='margin-bottom: 2rem;'></div>", unsafe_allow_html=True)
 
@@ -79,12 +79,12 @@ if AUTH_ENABLED:
         st.markdown(f"**Logged in as:** {st.user.email}")
         st.button("Log out", on_click=st.logout)
 else:
-    st.title("🤖 Yupp Agent Hub")
+    st.title("🛋️ Agentic Couch Hub")
     st.warning(
         "⚠️ **Authentication Not Configured** - Running in development mode. "
         "See AUTHENTICATION.md for setup instructions."
     )
-    st.markdown("Welcome to the Yupp Agent Hub. Select a page below to get started.")
+    st.markdown("Welcome to the Agentic Couch Hub. Select a page below to get started.")
 
 pages = {
     "Agents": [
