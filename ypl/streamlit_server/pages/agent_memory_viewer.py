@@ -12,19 +12,13 @@ from sqlalchemy import text
 from ypl.backend.config import settings
 from ypl.backend.db import get_async_session_read_replica, retry_db
 from ypl.backend.utils.streamlit_utils import run_coroutine_in_lit_worker
-from ypl.streamlit_server.auth import is_auth_configured, require_auth
-from ypl.streamlit_server.permissions import Permission, has_permission
+from ypl.streamlit_server.auth import require_auth
 
 _BUCKET_NAME = settings.AGENT_MEMORY_BUCKET
 _MEMORY_PREFIX = "memory/"
 
 st.set_page_config(page_title="Agent Memory Viewer", layout="wide")
 require_auth()
-
-# Only check permission when auth is configured (skip in local dev mode)
-if is_auth_configured() and not has_permission(Permission.AGENT_HARNESS_ADMIN):
-    st.error("You do not have permission to view Agent Memory.")
-    st.stop()
 
 st.title("Agent Memory Viewer")
 

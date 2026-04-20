@@ -19,8 +19,7 @@ from ypl.backend.db import get_async_session_read_replica, retry_db
 from ypl.backend.llm.constants import LINEAR_TO_SLACK_ID
 from ypl.backend.utils.streamlit_utils import run_coroutine_in_lit_worker
 from ypl.db.agent_harness import Agent
-from ypl.streamlit_server.auth import is_auth_configured, require_auth
-from ypl.streamlit_server.permissions import Permission, has_permission
+from ypl.streamlit_server.auth import require_auth
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -48,10 +47,6 @@ def _resolve_slack_names(df: pd.DataFrame, column: str = "slack_user_id") -> pd.
 
 st.set_page_config(page_title="Agent Harness Dashboard", page_icon="📊", layout="wide")
 require_auth()
-
-if is_auth_configured() and not has_permission(Permission.AGENT_HARNESS_ADMIN):
-    st.error("You do not have permission to view the Agent Harness Dashboard.")
-    st.stop()
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

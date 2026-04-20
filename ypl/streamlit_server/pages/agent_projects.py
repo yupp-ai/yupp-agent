@@ -35,8 +35,8 @@ from ypl.db.agent_harness import (
     AgentTaskStatus,
 )
 from ypl.db.users import User
-from ypl.streamlit_server.auth import is_auth_configured, require_auth
-from ypl.streamlit_server.permissions import Permission, get_current_user_email, has_permission
+from ypl.streamlit_server.auth import require_auth
+from ypl.streamlit_server.permissions import get_current_user_email
 from ypl.structured_logger import get_logger
 
 # Linear workspace slug used to build project URLs
@@ -53,11 +53,6 @@ def _internal_link(text: str, url: str) -> str:
 
 st.set_page_config(page_title="Agent Projects", page_icon="📁", layout="wide")
 require_auth()
-
-# Only check permission when auth is configured (skip in local dev mode)
-if is_auth_configured() and not has_permission(Permission.AGENT_HARNESS_ADMIN):
-    st.error("You do not have permission to view Agent Projects.")
-    st.stop()
 
 _current_email = get_current_user_email()
 _current_username = _current_email.split("@")[0] if _current_email else None
