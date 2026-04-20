@@ -6,7 +6,7 @@ Internal development tooling that allows engineers' AI agents (Claude Code, Curs
 
 Here's how to set it up to work with Claude Code:
 - Type /create-mcp-token slack command in `#agentic-couch` slack channel, and dialog will show up.
-- Upon submission, a token will be created and email to the yupp.ai email you specified. (Create for other yuppsters are supported, but logged!)
+- Upon submission, a token will be created and email to the example.com email you specified. (Create for other yuppsters are supported, but logged!)
 - Copy your Access Token from the email you received, and add it to your bash environment.
   - e.g. `echo "export YUPPSTER_MCP_TOKEN=yupp_dev_{...}" >> ~/.zshrc` if you use zsh, or any other places where you keep environment variables. (Remember to `source ~/.zshrc` when you are done, so it's part of current terminal)
   - or `export YUPPSTER_MCP_TOKEN=yupp_dev_{...}` directly on your terminal if you don't want to it set for every terminal session.
@@ -24,9 +24,9 @@ To use Yuppster MCP server on Claude Cowork:
 - Go to Settings -> Connectors;
 - Click "Add Custom Connector" button
 - Enter "Yuppster MCP" as the name.
-- Enter `https://yuppster-mcp-oauth.yupp.ai/mcp` on the Remote MCP server URL field
+- Enter `https://yuppster-mcp-oauth.example.com/mcp` on the Remote MCP server URL field
 - After a little bit when the "Connect" button lights up, click the button and follow the steps to finish oauth setup
-- Optional: if you want to setup staging server instead, please use `https://yuppster-mcp-oauth-staging.yupp.ai/mcp`
+- Optional: if you want to setup staging server instead, please use `https://yuppster-mcp-oauth-staging.example.com/mcp`
 
 To set up the staging MCP server to debug staging issues, please refer to [Staging Server Setup](#staging-server-setup).
 
@@ -70,7 +70,7 @@ Search Google Cloud Logging for Yupp MIND production logs.
 
 **Example:**
 ```bash
-curl -X POST https://yuppster-mcp.yupp.ai/mcp/tools/search_gcp_logs \
+curl -X POST https://yuppster-mcp.example.com/mcp/tools/search_gcp_logs \
   -H "Authorization: Bearer yupp_dev_xxx" \
   -H "Content-Type: application/json" \
   -d '{
@@ -151,7 +151,7 @@ This mode is ideal for:
 Uses Google OAuth via FastMCP's GoogleProvider for browser-based authentication:
 
 - Users authenticate via Google OAuth flow
-- Email domain validation ensures only allowed domains (e.g., `yupp.ai`) can access
+- Email domain validation ensures only allowed domains (e.g., `example.com`) can access
 - Tokens are stored encrypted in Redis
 - No manual token management required
 
@@ -200,7 +200,7 @@ To request a new MCP token, trigger the GitHub Actions workflow with your detail
 
 **GitHub Actions Command:**
 python -m ypl.cli mcp-create-token \
-  --email engineer@yupp.ai \
+  --email engineer@example.com \
   --description "Token for debugging prod issues" \
   --expires-days 90
 
@@ -213,7 +213,7 @@ python -m ypl.cli mcp-create-token \
 python -m ypl.cli mcp-list-tokens
 
 # Filter by engineer
-python -m ypl.cli mcp-list-tokens --email engineer@yupp.ai
+python -m ypl.cli mcp-list-tokens --email engineer@example.com
 
 # Only active tokens
 python -m ypl.cli mcp-list-tokens --active-only
@@ -224,7 +224,7 @@ python -m ypl.cli mcp-list-tokens --active-only
 **GitHub Actions Command:**
 ```bash
 python -m ypl.cli mcp-revoke-token <token-id> \
-  --revoked-by <email@yupp.ai> \
+  --revoked-by <email@example.com> \
   --reason "Engineer left company"
 ```
 
@@ -236,7 +236,7 @@ python -m ypl.cli mcp-revoke-token <token-id> \
 python -m ypl.cli mcp-audit-log
 
 # Filter by engineer
-python -m ypl.cli mcp-audit-log --email engineer@yupp.ai
+python -m ypl.cli mcp-audit-log --email engineer@example.com
 
 # Filter by tool
 python -m ypl.cli mcp-audit-log --tool search_gcp_logs
@@ -267,9 +267,9 @@ Total Calls: 1234
 Average Execution Time: 245ms
 
 Top Engineers:
-  alice@yupp.ai: 450 calls
-  bob@yupp.ai: 320 calls
-  charlie@yupp.ai: 280 calls
+  alice@example.com: 450 calls
+  bob@example.com: 320 calls
+  charlie@example.com: 280 calls
 
 Top Tools:
   search_gcp_logs: 720 calls
@@ -288,14 +288,14 @@ The repository includes a project-level `.mcp.json` that configures the yuppster
   "mcpServers": {
     "yuppster-mcp-server": {
       "type": "http",
-      "url": "https://yuppster-mcp.yupp.ai/mcp",
+      "url": "https://yuppster-mcp.example.com/mcp",
       "headers": {
         "Authorization": "Bearer ${YUPPSTER_MCP_TOKEN}"
       }
     },
     "yuppster-mcp-server-staging": {
       "type": "http",
-      "url": "https://yuppster-mcp-staging.yupp.ai/mcp",
+      "url": "https://yuppster-mcp-staging.example.com/mcp",
       "headers": {
         "Authorization": "Bearer ${YUPPSTER_MCP_TOKEN_STAGING}"
       },
@@ -352,7 +352,7 @@ Then restart your terminal or run `source ~/.zshrc`.
 Add the server directly to your personal Claude Code configuration (stored in `~/.claude.json`):
 ```bash
 claude mcp add --transport http yuppster-mcp-server --scope user \
-  https://yuppster-mcp.yupp.ai/mcp \
+  https://yuppster-mcp.example.com/mcp \
   --header "Authorization: Bearer yupp_dev_YOUR_TOKEN_HERE"
 ```
 
@@ -411,11 +411,11 @@ For simpler integrations or testing, REST convenience endpoints are also availab
 
 ```bash
 # List available tools
-curl https://yuppster-mcp.yupp.ai/mcp/tools \
+curl https://yuppster-mcp.example.com/mcp/tools \
   -H "Authorization: Bearer yupp_dev_xxx"
 
 # Invoke a tool
-curl -X POST https://yuppster-mcp.yupp.ai/mcp/tools/search_gcp_logs \
+curl -X POST https://yuppster-mcp.example.com/mcp/tools/search_gcp_logs \
   -H "Authorization: Bearer yupp_dev_xxx" \
   -H "Content-Type: application/json" \
   -d '{"arguments": {"query": "severity=ERROR"}}'
@@ -461,7 +461,7 @@ OAuth Mode (required when `MCP_SERVER_MODE=OAUTH`):
 - `REDIS_URL` - Redis URL for OAuth token storage
 
 Optional:
-- `ALLOWED_MCP_EMAIL_DOMAINS=yupp.ai` - Restrict access to specific email domains (applies to both modes)
+- `ALLOWED_MCP_EMAIL_DOMAINS=example.com` - Restrict access to specific email domains (applies to both modes)
 
 ## Security Considerations
 
@@ -586,7 +586,7 @@ from ypl.mcp_server.auth_dev_token import create_token
 
 async def test_create():
     token, db_token = await create_token(
-        email="test@yupp.ai",
+        email="test@example.com",
         description="Test token",
     )
     print(f"Token: {token}")

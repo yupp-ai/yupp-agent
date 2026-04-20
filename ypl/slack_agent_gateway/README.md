@@ -16,8 +16,8 @@ For architecture and design details, see [DESIGN.md](./DESIGN.md).
 
 | Environment | URL |
 |-------------|-----|
-| Staging | `https://slack-agent-gateway-staging.yupp.ai` |
-| Production | `https://slack-agent-gateway-production.yupp.ai` |
+| Staging | `https://slack-agent-gateway-staging.example.com` |
+| Production | `https://slack-agent-gateway-production.example.com` |
 
 ## How to Add a New Agent
 
@@ -79,14 +79,14 @@ Use `printf` (not `echo`) to avoid trailing newlines:
 
 ```bash
 # Staging
-printf '%s' "APP_ID" | gcloud secrets create ym-slack-agent-gateway-{name}-app-id-staging --data-file=- --project=yupp-llms
-printf '%s' "xoxb-TOKEN" | gcloud secrets create ym-slack-agent-gateway-{name}-bot-token-staging --data-file=- --project=yupp-llms
-printf '%s' "SIGNING_SECRET" | gcloud secrets create ym-slack-agent-gateway-{name}-signing-secret-staging --data-file=- --project=yupp-llms
+printf '%s' "APP_ID" | gcloud secrets create ym-slack-agent-gateway-{name}-app-id-staging --data-file=- --project=$GCP_PROJECT_ID
+printf '%s' "xoxb-TOKEN" | gcloud secrets create ym-slack-agent-gateway-{name}-bot-token-staging --data-file=- --project=$GCP_PROJECT_ID
+printf '%s' "SIGNING_SECRET" | gcloud secrets create ym-slack-agent-gateway-{name}-signing-secret-staging --data-file=- --project=$GCP_PROJECT_ID
 
 # Production
-printf '%s' "APP_ID" | gcloud secrets create ym-slack-agent-gateway-{name}-app-id-production --data-file=- --project=yupp-llms
-printf '%s' "xoxb-TOKEN" | gcloud secrets create ym-slack-agent-gateway-{name}-bot-token-production --data-file=- --project=yupp-llms
-printf '%s' "SIGNING_SECRET" | gcloud secrets create ym-slack-agent-gateway-{name}-signing-secret-production --data-file=- --project=yupp-llms
+printf '%s' "APP_ID" | gcloud secrets create ym-slack-agent-gateway-{name}-app-id-production --data-file=- --project=$GCP_PROJECT_ID
+printf '%s' "xoxb-TOKEN" | gcloud secrets create ym-slack-agent-gateway-{name}-bot-token-production --data-file=- --project=$GCP_PROJECT_ID
+printf '%s' "SIGNING_SECRET" | gcloud secrets create ym-slack-agent-gateway-{name}-signing-secret-production --data-file=- --project=$GCP_PROJECT_ID
 ```
 
 #### 4. Update Secret-Env-Var Mapping
@@ -114,12 +114,12 @@ Add the agent to `data/dynamic_app_settings_base.yml`:
 2. In Slack app settings, configure **Interactivity & Shortcuts**:
    - Toggle **Interactivity** to **ON**
    - Set **Request URL** to the appropriate endpoint:
-     - **Staging**: `https://slack-agent-gateway-staging.yupp.ai/api/v1/slack/interactions`
-     - **Production**: `https://slack-agent-gateway-production.yupp.ai/api/v1/slack/interactions`
+     - **Staging**: `https://slack-agent-gateway-staging.example.com/api/v1/slack/interactions`
+     - **Production**: `https://slack-agent-gateway-production.example.com/api/v1/slack/interactions`
 3. Configure **Event Subscriptions**:
    - Set **Request URL** to the appropriate endpoint:
-     - **Staging**: `https://slack-agent-gateway-staging.yupp.ai/api/v1/slack/events`
-     - **Production**: `https://slack-agent-gateway-production.yupp.ai/api/v1/slack/events`
+     - **Staging**: `https://slack-agent-gateway-staging.example.com/api/v1/slack/events`
+     - **Production**: `https://slack-agent-gateway-production.example.com/api/v1/slack/events`
 4. Subscribe to bot events: `app_mention`, `reaction_added`
 
 </details>
@@ -219,8 +219,8 @@ All endpoints are available under both `/api/v1` (preferred) and `/slack-agent-g
 ## Local Development
 
 ```bash
-# Copy .env from main repo if in worktree (adjust path as needed)
-cp /path/to/yupp-mind/.env .
+# Copy the repo .env (populated via ``python -m ypl.mono_server.setup``)
+cp ../../.env .
 
 # Run the server
 poetry run uvicorn ypl.slack_agent_gateway.server:app --reload --port 8080
