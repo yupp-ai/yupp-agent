@@ -703,7 +703,7 @@ class TestAddAppCollaborator:
             patch(f"{MODULE}.get_valid_app_config_token", new_callable=AsyncMock, return_value="tok"),
             patch(f"{MODULE}.httpx.AsyncClient", return_value=mock_client),
         ):
-            await add_app_collaborator("A123", "user@yupp.ai", "owner", "refresh-tok")
+            await add_app_collaborator("A123", "user@example.com", "owner", "refresh-tok")
 
     async def test_raises_on_api_error(self) -> None:
         response_data = {"ok": False, "error": "user_not_found"}
@@ -735,7 +735,7 @@ class TestAddAppCollaborator:
             patch(f"{MODULE}.clear_token_cache", new_callable=AsyncMock) as mock_clear,
             patch(f"{MODULE}.httpx.AsyncClient", return_value=mock_client),
         ):
-            await add_app_collaborator("A123", "user@yupp.ai", "owner", "refresh-tok")
+            await add_app_collaborator("A123", "user@example.com", "owner", "refresh-tok")
 
         mock_clear.assert_awaited_once()
 
@@ -754,4 +754,4 @@ class TestAddAppCollaborator:
             patch(f"{MODULE}.httpx.AsyncClient", return_value=mock_client),
             pytest.raises(RuntimeError, match="Failed to add collaborator"),
         ):
-            await add_app_collaborator("A123", "user@yupp.ai", "reader", "refresh-tok")
+            await add_app_collaborator("A123", "user@example.com", "reader", "refresh-tok")

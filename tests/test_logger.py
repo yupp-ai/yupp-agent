@@ -81,8 +81,8 @@ class TestRedactingMixin:
     def test_redact_string_value(self) -> None:
         mixin = self._make_mixin()
         with patch.dict(os.environ, {"ENVIRONMENT": "production"}):
-            result = mixin._redact_value("Contact admin@yupp.ai for help")
-        assert "admin@yupp.ai" not in result
+            result = mixin._redact_value("Contact admin@example.com for help")
+        assert "admin@example.com" not in result
 
     def test_redact_dict_value(self) -> None:
         mixin = self._make_mixin()
@@ -112,7 +112,7 @@ class TestRedactingMixin:
     def test_redact_record(self) -> None:
         mixin = self._make_mixin()
         record = MagicMock()
-        record.msg = "Contact admin@yupp.ai"
+        record.msg = "Contact admin@example.com"
         record.extra = {}
 
         with patch.dict(os.environ, {"ENVIRONMENT": "production"}):

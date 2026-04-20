@@ -234,7 +234,7 @@ class TestInvokeTool:
 
         if has_token:
             req.state.mcp_token = MagicMock()
-            req.state.engineer_email = "dev@yupp.ai"
+            req.state.engineer_email = "dev@example.com"
         else:
             req.state.mcp_token = None
             req.state.engineer_email = None

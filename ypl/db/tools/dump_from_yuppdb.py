@@ -116,6 +116,14 @@ def main() -> None:
         help="Source connection string (or set SOURCE_DB env var)",
     )
     parser.add_argument("--output-dir", required=True, help="Directory to write CSV files to")
+    parser.add_argument(
+        "--user-email-domain",
+        default=os.environ.get("USER_EMAIL_DOMAIN", ""),
+        help=(
+            "Restrict the users dump to emails ending in this domain (e.g. 'example.com'). "
+            "Empty = dump all users. Also reads USER_EMAIL_DOMAIN env var."
+        ),
+    )
     args = parser.parse_args()
 
     if not args.source:
@@ -151,11 +159,20 @@ def main() -> None:
             print(f"  {old_name} -> {new_name}: SKIPPED ({e})")
             conn.rollback()
 
-    # 3. Users (only @yupp.ai employees, subset of columns)
+    # 3. Users (subset of columns; optionally filtered by email domain)
     try:
         cols = ", ".join(USERS_COLUMNS)
-        count = dump_table(cur, "users", args.output_dir, columns=cols, where="email LIKE '%@yupp.ai'")
-        print(f"  users (@yupp.ai only): {count} rows")
+        users_where: str | None
+        if args.user_email_domain:
+            # Parameterized via argparse; single-quote-escape any ' that sneaks in.
+            safe_domain = args.user_email_domain.replace("'", "''")
+            users_where = f"email LIKE '%@{safe_domain}'"
+            label = f"users (@{args.user_email_domain} only)"
+        else:
+            users_where = None
+            label = "users (all)"
+        count = dump_table(cur, "users", args.output_dir, columns=cols, where=users_where)
+        print(f"  {label}: {count} rows")
         total += count
     except Exception as e:
         print(f"  users: SKIPPED ({e})")

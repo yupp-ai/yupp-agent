@@ -44,7 +44,7 @@ webhook_router = APIRouter(prefix="/webhook", tags=["github-webhook"])
 _REVIEWER_AGENT = "master-reviewer"
 _WEBHOOK_TRIGGER = "webhook"
 _WEBHOOK_SOURCE = "github_webhook"
-_WEBHOOK_USER_EMAIL = "system-github-webhook@yupp.ai"
+_WEBHOOK_USER_EMAIL = settings.SYSTEM_GITHUB_WEBHOOK_USER_EMAIL
 
 # Cached webhook user_id — looked up once from DB, then reused.
 _cached_webhook_user_id: str | None = None

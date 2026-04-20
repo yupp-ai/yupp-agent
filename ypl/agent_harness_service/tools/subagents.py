@@ -28,6 +28,7 @@ from ypl.agent_harness_service.tools.mcp_instance import (
     mcp,
 )
 from ypl.backend.db import get_async_session, get_async_session_read_replica
+from ypl.backend.utils.email_domains import is_allowed_email_domain
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -327,7 +328,7 @@ async def create_agent_tool(
 ) -> dict[str, Any]:
     """Create a new personal agent.
 
-    The agent name is auto-derived from the user's email prefix (e.g. alice@yupp.ai → yuppclaw-alice).
+    The agent name is auto-derived from the user's email prefix (e.g. alice@example.com → yuppclaw-alice).
     Pass user_id and owner_name from the session context.
 
     Args:
@@ -365,8 +366,8 @@ async def create_agent_tool(
         return {"error": f"No email found for user_id '{user_id}'"}
 
     email = str(row[0])
-    if not email.endswith("@yupp.ai"):
-        return {"error": "Only @yupp.ai users can create personal agents"}
+    if not is_allowed_email_domain(email):
+        return {"error": "Only users from allowed email domains can create personal agents"}
 
     email_prefix = re.sub(r"[^a-z0-9-]", "-", email.split("@")[0].lower()).strip("-")
     # Use the first personal agent prefix (yuppclaw)

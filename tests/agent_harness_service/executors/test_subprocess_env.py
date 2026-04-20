@@ -43,7 +43,7 @@ class TestBuildSubprocessEnv:
             "LC_ALL": "en_US.UTF-8",
             "LC_CTYPE": "UTF-8",
             "GIT_AUTHOR_NAME": "Agent",
-            "GIT_COMMITTER_EMAIL": "agent@yupp.ai",
+            "GIT_COMMITTER_EMAIL": "agent@example.com",
             "XDG_CONFIG_HOME": "/home/agent/.config",
         }
         result = self._build_with_env(env)

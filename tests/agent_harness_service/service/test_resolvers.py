@@ -8,10 +8,12 @@ import os
 import sys
 import types
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterator
 from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 # ---------------------------------------------------------------------------
 # Stub heavy SDK deps
@@ -353,6 +355,11 @@ class TestResolveUserNameFromDb:
 class TestResolvePersonalAgentForUser:
     """Tests for _resolve_personal_agent_for_user."""
 
+    @pytest.fixture(autouse=True)
+    def _restrict_domain(self) -> Iterator[None]:
+        with patch("ypl.backend.utils.email_domains.settings.ALLOWED_EMAIL_DOMAINS", ["example.com"]):
+            yield
+
     async def test_returns_none_when_user_not_found(self) -> None:
         from ypl.agent_harness_service.service.resolvers import _resolve_personal_agent_for_user
 
@@ -369,7 +376,7 @@ class TestResolvePersonalAgentForUser:
             assert name is None
             assert display_name is None
 
-    async def test_returns_none_for_non_yupp_ai_user(self) -> None:
+    async def test_returns_none_for_non_allowed_domain_user(self) -> None:
         from ypl.agent_harness_service.service.resolvers import _resolve_personal_agent_for_user
 
         mock_db = AsyncMock()
@@ -385,13 +392,13 @@ class TestResolvePersonalAgentForUser:
             assert name is None
             assert display_name is None
 
-    async def test_resolves_personal_agent_for_yupp_ai_user(self) -> None:
+    async def test_resolves_personal_agent_for_allowed_domain_user(self) -> None:
         from ypl.agent_harness_service.service.resolvers import _resolve_personal_agent_for_user
 
         mock_db = AsyncMock()
         # First execute: SELECT email, name
         email_result = MagicMock()
-        email_result.first.return_value = ("alice@yupp.ai", "Alice Smith")
+        email_result.first.return_value = ("alice@example.com", "Alice Smith")
         # Second execute: SELECT 1 FROM agents WHERE name = ...
         exists_result = MagicMock()
         exists_result.first.return_value = (1,)  # exists
@@ -412,7 +419,7 @@ class TestResolvePersonalAgentForUser:
         mock_db = AsyncMock()
         # First execute: SELECT email, name
         email_result = MagicMock()
-        email_result.first.return_value = ("bob@yupp.ai", "Bob Jones")
+        email_result.first.return_value = ("bob@example.com", "Bob Jones")
         # Second execute: SELECT 1 FROM agents WHERE name = ... (not found)
         exists_result = MagicMock()
         exists_result.first.return_value = None

@@ -48,15 +48,6 @@ class RoleDeniedError(SoulAuthError):
         super().__init__(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
 
 
-TLM_EMAILS = {
-    "pankaj@yupp.ai",
-    "ansuman@yupp.ai",
-    "gcmouli@yupp.ai",
-    "gilad@yupp.ai",
-    "will@yupp.ai",
-}
-
-
 async def validate_read_yuppaste(x_creator_email: str = Header(..., alias="X-Creator-Email")) -> None:
     """Validate that the user has READ_YUPPASTE permission."""
     await validate_permissions([SoulPermission.READ_YUPPASTE], x_creator_email)

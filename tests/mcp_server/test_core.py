@@ -35,15 +35,15 @@ from ypl.mcp_server.core import (
 class TestGetAuthenticatedUserEmail:
     def test_dev_token_path(self) -> None:
         mock_token = MagicMock()
-        mock_token.email = "dev@yupp.ai"
+        mock_token.email = "dev@example.com"
         request_context.set({"token": mock_token})
 
-        assert get_authenticated_user_email() == "dev@yupp.ai"
+        assert get_authenticated_user_email() == "dev@example.com"
 
     def test_oauth_path(self) -> None:
-        request_context.set({"email": "oauthuser@yupp.ai"})
+        request_context.set({"email": "oauthuser@example.com"})
 
-        assert get_authenticated_user_email() == "oauthuser@yupp.ai"
+        assert get_authenticated_user_email() == "oauthuser@example.com"
 
     def test_empty_context_returns_unknown(self) -> None:
         request_context.set(None)
@@ -64,10 +64,10 @@ class TestGetAuthenticatedUserEmail:
     def test_token_takes_precedence_over_email(self) -> None:
         """DevToken context wins even if 'email' key is also present."""
         mock_token = MagicMock()
-        mock_token.email = "token@yupp.ai"
-        request_context.set({"token": mock_token, "email": "other@yupp.ai"})
+        mock_token.email = "token@example.com"
+        request_context.set({"token": mock_token, "email": "other@example.com"})
 
-        assert get_authenticated_user_email() == "token@yupp.ai"
+        assert get_authenticated_user_email() == "token@example.com"
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +204,7 @@ class TestToolCallLoggingMiddleware:
         middleware = ToolCallLoggingMiddleware()
 
         mock_token = MagicMock()
-        mock_token.email = "dev@yupp.ai"
+        mock_token.email = "dev@example.com"
         request_context.set({"token": mock_token, "ip_address": "1.2.3.4", "user_agent": "pytest"})
 
         mock_ctx = _make_middleware_context()
@@ -233,7 +233,7 @@ class TestToolCallLoggingMiddleware:
         middleware = ToolCallLoggingMiddleware()
 
         mock_token = MagicMock()
-        mock_token.email = "dev@yupp.ai"
+        mock_token.email = "dev@example.com"
         request_context.set({"token": mock_token, "ip_address": "1.2.3.4", "user_agent": "pytest"})
 
         mock_ctx = _make_middleware_context()

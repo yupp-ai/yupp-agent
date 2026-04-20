@@ -436,11 +436,11 @@ class TestGetUserEmailFromSlack:
     async def test_falls_back_to_static_mapping_without_token(self) -> None:
         with patch(
             "ypl.backend.utils.slack_utils.SLACK_ID_TO_EMAIL",
-            {"UMAPPED": "mapped@yupp.ai"},
+            {"UMAPPED": "mapped@example.com"},
         ):
             result = await get_user_email_from_slack("UMAPPED")
 
-        assert result == "mapped@yupp.ai"
+        assert result == "mapped@example.com"
 
 
 # ---------------------------------------------------------------------------

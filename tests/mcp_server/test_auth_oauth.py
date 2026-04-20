@@ -32,12 +32,12 @@ class TestIsAllowedEmailDomain:
 
     def test_allowed_domain(self) -> None:
         with patch("ypl.mcp_server.auth_oauth.settings") as s:
-            s.ALLOWED_MCP_EMAIL_DOMAINS = ["yupp.ai"]
-            assert is_allowed_email_domain("dev@yupp.ai") is True
+            s.ALLOWED_MCP_EMAIL_DOMAINS = ["example.com"]
+            assert is_allowed_email_domain("dev@example.com") is True
 
     def test_disallowed_domain(self) -> None:
         with patch("ypl.mcp_server.auth_oauth.settings") as s:
-            s.ALLOWED_MCP_EMAIL_DOMAINS = ["yupp.ai"]
+            s.ALLOWED_MCP_EMAIL_DOMAINS = ["example.com"]
             assert is_allowed_email_domain("user@gmail.com") is False
 
     def test_case_insensitive(self) -> None:
@@ -47,20 +47,20 @@ class TestIsAllowedEmailDomain:
 
     def test_empty_email(self) -> None:
         with patch("ypl.mcp_server.auth_oauth.settings") as s:
-            s.ALLOWED_MCP_EMAIL_DOMAINS = ["yupp.ai"]
+            s.ALLOWED_MCP_EMAIL_DOMAINS = ["example.com"]
             assert is_allowed_email_domain("") is False
 
     def test_multiple_allowed_domains(self) -> None:
         with patch("ypl.mcp_server.auth_oauth.settings") as s:
-            s.ALLOWED_MCP_EMAIL_DOMAINS = ["yupp.ai", "partner.com"]
+            s.ALLOWED_MCP_EMAIL_DOMAINS = ["example.com", "partner.com"]
             assert is_allowed_email_domain("user@partner.com") is True
             assert is_allowed_email_domain("user@other.com") is False
 
     def test_subdomain_not_matched(self) -> None:
-        """Exact domain match only — sub.yupp.ai is NOT allowed when only yupp.ai is."""
+        """Exact domain match only — sub.example.com is NOT allowed when only example.com is."""
         with patch("ypl.mcp_server.auth_oauth.settings") as s:
-            s.ALLOWED_MCP_EMAIL_DOMAINS = ["yupp.ai"]
-            assert is_allowed_email_domain("user@sub.yupp.ai") is False
+            s.ALLOWED_MCP_EMAIL_DOMAINS = ["example.com"]
+            assert is_allowed_email_domain("user@sub.example.com") is False
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +98,7 @@ class TestAllowedDomainsGoogleProviderVerifyToken:
             ),
             patch("ypl.mcp_server.auth_oauth.settings") as s,
         ):
-            s.ALLOWED_MCP_EMAIL_DOMAINS = ["yupp.ai"]
+            s.ALLOWED_MCP_EMAIL_DOMAINS = ["example.com"]
             result = await AllowedDomainsGoogleProvider.verify_token(provider, "token")
 
         assert result is None
@@ -115,7 +115,7 @@ class TestAllowedDomainsGoogleProviderVerifyToken:
             ),
             patch("ypl.mcp_server.auth_oauth.settings") as s,
         ):
-            s.ALLOWED_MCP_EMAIL_DOMAINS = ["yupp.ai"]
+            s.ALLOWED_MCP_EMAIL_DOMAINS = ["example.com"]
             result = await AllowedDomainsGoogleProvider.verify_token(provider, "token")
 
         assert result is None
@@ -123,7 +123,7 @@ class TestAllowedDomainsGoogleProviderVerifyToken:
     async def test_returns_none_when_no_permission(self) -> None:
         provider = _make_provider()
         mock_token = MagicMock()
-        mock_token.claims = {"email": "dev@yupp.ai"}
+        mock_token.claims = {"email": "dev@example.com"}
 
         with (
             patch(
@@ -136,7 +136,7 @@ class TestAllowedDomainsGoogleProviderVerifyToken:
                 new=AsyncMock(return_value=False),
             ),
         ):
-            s.ALLOWED_MCP_EMAIL_DOMAINS = ["yupp.ai"]
+            s.ALLOWED_MCP_EMAIL_DOMAINS = ["example.com"]
             result = await AllowedDomainsGoogleProvider.verify_token(provider, "token")
 
         assert result is None
@@ -144,7 +144,7 @@ class TestAllowedDomainsGoogleProviderVerifyToken:
     async def test_successful_verification_returns_token(self) -> None:
         provider = _make_provider()
         mock_token = MagicMock()
-        mock_token.claims = {"email": "dev@yupp.ai"}
+        mock_token.claims = {"email": "dev@example.com"}
         mock_token.client_id = "https://callback.example.com"
 
         from ypl.mcp_server.context_vars import request_context
@@ -163,7 +163,7 @@ class TestAllowedDomainsGoogleProviderVerifyToken:
                 new=AsyncMock(return_value=True),
             ),
         ):
-            s.ALLOWED_MCP_EMAIL_DOMAINS = ["yupp.ai"]
+            s.ALLOWED_MCP_EMAIL_DOMAINS = ["example.com"]
             result = await AllowedDomainsGoogleProvider.verify_token(provider, "valid-token")
 
         assert result is mock_token
@@ -171,7 +171,7 @@ class TestAllowedDomainsGoogleProviderVerifyToken:
     async def test_successful_verification_sets_request_context(self) -> None:
         provider = _make_provider()
         mock_token = MagicMock()
-        mock_token.claims = {"email": "dev@yupp.ai"}
+        mock_token.claims = {"email": "dev@example.com"}
         mock_token.client_id = "https://callback.example.com"
 
         from ypl.db.mcp import MCPTokenType
@@ -190,12 +190,12 @@ class TestAllowedDomainsGoogleProviderVerifyToken:
                 new=AsyncMock(return_value=True),
             ),
         ):
-            s.ALLOWED_MCP_EMAIL_DOMAINS = ["yupp.ai"]
+            s.ALLOWED_MCP_EMAIL_DOMAINS = ["example.com"]
             await AllowedDomainsGoogleProvider.verify_token(provider, "valid-token")
 
         ctx = request_context.get()
         assert ctx is not None
-        assert ctx["email"] == "dev@yupp.ai"
+        assert ctx["email"] == "dev@example.com"
         assert ctx["token_type"] == MCPTokenType.OAUTH
         assert ctx["callback_url"] == "https://callback.example.com"
 
@@ -211,7 +211,7 @@ class TestAllowedDomainsGoogleProviderVerifyToken:
             ),
             patch("ypl.mcp_server.auth_oauth.settings") as s,
         ):
-            s.ALLOWED_MCP_EMAIL_DOMAINS = ["yupp.ai"]
+            s.ALLOWED_MCP_EMAIL_DOMAINS = ["example.com"]
             result = await AllowedDomainsGoogleProvider.verify_token(provider, "token")
 
         assert result is None
