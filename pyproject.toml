@@ -166,9 +166,7 @@ anthropic = ">=0.49.0"
 # Declared as a dependency so the package is available at runtime; the runner
 # implementation uses the ``anthropic`` SDK directly for its well-known API.
 claude-agent-sdk = ">=0.0.1"
-langchain-core = ">=0.3.0"
 openai = ">=1.30.0"
-tiktoken = ">=0.7.0"
 
 # Utilities
 bcrypt = "^4.0"
@@ -252,10 +250,6 @@ omit = [
     # Stubs & no-ops (interfaces only, implementation in other repos)
     "ypl/backend/email/*",
     "ypl/backend/llm/agent_memory_indexing.py",
-    "ypl/backend/llm/model_heuristics.py",
-    # Import-time side-effects only
-    "ypl/warning_utils.py",
-    "ypl/cache.py",
     # Dev-only mock
     "ypl/slack_agent_gateway/mock_agent_service.py",
     # Pure external API wrappers (thin plumbing over Linear/Slack/external GraphQL/BigQuery)
