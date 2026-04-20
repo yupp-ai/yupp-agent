@@ -5,7 +5,8 @@ Bootstraps a fresh deployment by:
   2. Generating .env from template with prompted values + auto-generated secrets
   3. Running ``alembic upgrade head``
   4. Seeding roles: ADMIN (all perms), ENGINEER (agent + MCP perms), MCP_USER (USE_MCP only)
-  5. Creating the first admin user (prompted) and the system user (system@yupp.ai)
+  5. Creating the first admin user (prompted) and the system user
+     (address taken from ``SYSTEM_USER_EMAIL``)
   6. Optionally creating an MCP developer token
 
 Usage::
@@ -30,6 +31,7 @@ from rich.prompt import Confirm, Prompt
 from sqlalchemy.ext.asyncio import create_async_engine
 
 import ypl.db.all_models  # noqa: F401 — register all SQLModel mappers before any query
+from ypl.backend.config import settings
 from ypl.db.rbac import RoleName
 from ypl.db.users import UserType
 from ypl.mono_server.db import (
@@ -607,14 +609,22 @@ async def setup_interactive() -> int:
     try:
         await seed_roles(engine)
 
-        # Create the system user (system@yupp.ai) for internal webhook calls.
-        await create_user_with_role(
-            engine,
-            email="system@yupp.ai",
-            name="System",
-            user_type=UserType.SYSTEM,
-            role_name=None,
-        )
+        # Create the system user for internal webhook calls. Address is
+        # configured via SYSTEM_USER_EMAIL so deployments can use their own
+        # domain (e.g. system@example.com).
+        if not settings.SYSTEM_USER_EMAIL:
+            console.print(
+                "[yellow]⚠ SYSTEM_USER_EMAIL is not set — skipping system user creation."
+                " Set it in .env and re-run to create the internal system account.[/yellow]"
+            )
+        else:
+            await create_user_with_role(
+                engine,
+                email=settings.SYSTEM_USER_EMAIL,
+                name="System",
+                user_type=UserType.SYSTEM,
+                role_name=None,
+            )
     finally:
         await engine.dispose()
 

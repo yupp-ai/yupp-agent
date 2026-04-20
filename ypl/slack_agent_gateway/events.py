@@ -974,7 +974,7 @@ async def handle_reaction_added(
         )
         return {"status": "skipped", "reason": "not an agent reply"}
 
-    # Resolve Slack user ID to internal Yupp user_id (None if not a known @yupp.ai employee)
+    # Resolve Slack user ID to internal user_id (None if not a known allowed-domain employee)
     try:
         yupp_user_id = await resolve_slack_user_to_yupp_user_id(user_id, bot_token=app_config.bot_token)
     except Exception:

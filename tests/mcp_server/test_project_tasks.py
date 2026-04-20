@@ -63,7 +63,7 @@ USER_ID = "user-abc-123"
 NOW = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
 
 
-def _set_auth_context(user_id: str = USER_ID, email: str = "test@yupp.ai") -> None:
+def _set_auth_context(user_id: str = USER_ID, email: str = "test@example.com") -> None:
     """Set up a valid authenticated request context."""
     request_context.set({"requesting_user_id": user_id, "email": email})
 
@@ -388,7 +388,7 @@ class TestAddProject:
         assert "Authentication required" in result["error"]
 
     async def test_resolves_user_from_email_when_no_user_id(self) -> None:
-        request_context.set({"email": "engineer@yupp.ai"})
+        request_context.set({"email": "engineer@example.com"})
 
         mock_session = _make_mock_session()
 
@@ -407,7 +407,7 @@ class TestAddProject:
         assert result["success"] is True
 
     async def test_user_resolution_error(self) -> None:
-        request_context.set({"email": "engineer@yupp.ai"})
+        request_context.set({"email": "engineer@example.com"})
 
         with patch(
             "ypl.mcp_server.tools.project_tasks.resolve_user_id_from_email",

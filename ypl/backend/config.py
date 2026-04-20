@@ -422,8 +422,34 @@ class Settings(BaseSettings):
     MAXMIND_API_KEY: str = ""
     MAXMIND_ACCOUNT_ID: str = ""
 
-    # Allowed email domains for MCP server token creation.
-    ALLOWED_MCP_EMAIL_DOMAINS: list[str] = ["yupp.ai"]
+    # Allowed email domains for identity gating across services (AHS personal
+    # agent creation, user resolution, etc). When empty the check is disabled.
+    # Supply as a JSON array in the env var, e.g. ALLOWED_EMAIL_DOMAINS=["example.com"].
+    ALLOWED_EMAIL_DOMAINS: list[str] = []
+
+    # Allowed email domains for MCP server token creation. Scoped separately
+    # from ALLOWED_EMAIL_DOMAINS because MCP and AHS may allow different sets
+    # (e.g. MCP open to partners, AHS restricted to employees). Empty = no gate.
+    ALLOWED_MCP_EMAIL_DOMAINS: list[str] = []
+
+    # System "robot" account emails used by internal operations. Required when
+    # running mono_server setup/manage (creates the row) or github webhooks
+    # (looks it up to attribute webhook-triggered sessions).
+    SYSTEM_USER_EMAIL: str = ""
+    SYSTEM_GITHUB_WEBHOOK_USER_EMAIL: str = ""
+
+    # Synthetic email domain used to mint identities for programmatic agent
+    # users (e.g. ``agent-<uuid>@<AGENT_USER_EMAIL_DOMAIN>``). Kept distinct
+    # from ALLOWED_EMAIL_DOMAINS so agent identities stay outside human flows.
+    AGENT_USER_EMAIL_DOMAIN: str = ""
+
+    # Transactional email sender addresses (Resend). Format:
+    # "Display Name <local@domain.tld>". Required if email sending is enabled.
+    TEAM_FROM_EMAIL_ADDRESS: str = ""
+    SUPPORT_FROM_EMAIL_ADDRESS: str = ""
+    NOTICE_FROM_EMAIL_ADDRESS: str = ""
+    ONBOARDING_FROM_EMAIL_ADDRESS: str = ""
+    PAYMENTS_FROM_EMAIL_ADDRESS: str = ""
 
     # Public base URL for the MCP server, used in emails and docs.
     MCP_SERVER_BASE_URL: str = "http://localhost:8080"
