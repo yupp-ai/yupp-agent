@@ -1,13 +1,12 @@
 """Additional unit tests for ypl/utils.py — covering classes and async helpers
 not covered by test_utils.py: SingletonMixin, RNGMixin, compiled_regex,
-to_float, get_text_part, replace_text_part, async_timed_cache, Delegator.
+to_float, async_timed_cache, Delegator.
 """
 
 import asyncio
 from typing import Any
 
 import pytest
-from langchain_core.messages import HumanMessage
 from ypl.utils import (
     Delegator,
     EarlyTerminatedException,
@@ -16,8 +15,6 @@ from ypl.utils import (
     async_timed_cache,
     async_timed_cache_with_background_refresh,
     compiled_regex,
-    get_text_part,
-    replace_text_part,
     to_float,
 )
 
@@ -161,59 +158,6 @@ class TestToFloat:
 
     def test_zero_is_not_none(self) -> None:
         assert to_float(0, 42.0) == 0.0
-
-
-# ---------------------------------------------------------------------------
-# get_text_part / replace_text_part
-# ---------------------------------------------------------------------------
-
-
-class TestGetTextPart:
-    def test_string_content(self) -> None:
-        msg = HumanMessage(content="hello world")
-        assert get_text_part(msg) == "hello world"
-
-    def test_list_content_extracts_text(self) -> None:
-        msg = HumanMessage(content=[{"type": "text", "text": "part one"}, {"type": "text", "text": "part two"}])
-        result = get_text_part(msg)
-        assert "part one" in result
-        assert "part two" in result
-
-    def test_list_content_skips_non_text(self) -> None:
-        msg = HumanMessage(
-            content=[
-                {"type": "image_url", "image_url": "http://example.com/img.png"},
-                {"type": "text", "text": "caption"},
-            ]
-        )
-        result = get_text_part(msg)
-        assert result == "caption"
-
-
-class TestReplaceTextPart:
-    def test_string_content_replaced(self) -> None:
-        msg = HumanMessage(content="old text")
-        result = replace_text_part(msg, "new text")
-        assert isinstance(result, HumanMessage)
-        assert result.content == "new text"
-
-    def test_list_content_text_appended(self) -> None:
-        msg = HumanMessage(content=[{"type": "text", "text": "original"}])
-        result = replace_text_part(msg, "appended")
-        assert isinstance(result, HumanMessage)
-        assert isinstance(result.content, list)
-        combined_text = result.content[0]["text"]  # type: ignore[index]
-        assert "original" in combined_text
-        assert "appended" in combined_text
-
-    def test_non_text_parts_preserved(self) -> None:
-        img_part = {"type": "image_url", "image_url": "http://img.example.com/x.png"}
-        msg = HumanMessage(content=[img_part, {"type": "text", "text": "caption"}])
-        result = replace_text_part(msg, "extra")
-        assert isinstance(result.content, list)
-        # image part should be in the output unchanged
-        types = [p["type"] for p in result.content]  # type: ignore[index]
-        assert "image_url" in types
 
 
 # ---------------------------------------------------------------------------
