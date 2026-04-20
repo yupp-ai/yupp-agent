@@ -7,7 +7,8 @@ from typing import Any
 
 import streamlit as st
 from sqlmodel import col, select
-from ypl.backend.db import get_async_engine, get_async_session, get_async_session_read_replica, retry_db
+from ypl.backend.config import settings
+from ypl.backend.db import get_async_engine_for, get_async_session, get_async_session_read_replica, retry_db
 from ypl.backend.utils.streamlit_utils import run_coroutine_in_lit_worker
 from ypl.db.mcp import MCPDevToken, MCPTokenStatus
 from ypl.mono_server.db import create_mcp_dev_token
@@ -49,7 +50,7 @@ async def fetch_tokens(
 
 
 async def _issue_token(email: str, description: str, expires_at: datetime | None) -> str:
-    engine = get_async_engine()
+    engine = get_async_engine_for(settings.DEFAULT_DB)
     token = await create_mcp_dev_token(engine, email=email, description=description)
 
     if expires_at is not None:
