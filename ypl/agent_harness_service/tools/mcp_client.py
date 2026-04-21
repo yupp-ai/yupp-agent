@@ -1,12 +1,15 @@
 """MCP client connections for raw executor tool access.
 
-Manages fastmcp Client instances for harness MCP and yuppster MCP servers,
-providing tool schemas and a unified tool executor for the raw executor loop.
+Manages fastmcp Client instances for the local ``harness`` MCP and the
+first-class ``agcouch`` MCP, providing tool schemas and a unified tool
+executor for the raw executor loop.
+
+TODO(phase-9): once the DB-backed external MCP registry lands, extend
+the session setup loop below to also open clients for any enabled rows
+in ``mcp_servers`` beyond agcouch.
 """
 
 import asyncio
-import json
-import os
 from collections.abc import Mapping
 from typing import Any
 
@@ -16,10 +19,10 @@ from fastmcp.client.transports import StreamableHttpTransport
 from ypl.agent_harness_service.common.constants import (
     AHS_MCP_BASE_URL,
     AHS_MCP_SECRET,
-    AHS_REPOS_DIR,
     ALL_MCP_SERVERS,
     PERM_DENY,
 )
+from ypl.backend.config import settings
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -92,30 +95,34 @@ class MCPToolAccess:
             }
             await self._connect("harness", harness_url, harness_headers)
 
-        # 2. Yuppster MCP (only if allowed AND token is available)
-        if "yuppster-mcp-server" in self._allowed_servers:
-            yuppster_token = os.environ.get("YUPPSTER_MCP_TOKEN")
-            if not yuppster_token:
+        # 2. Agcouch MCP — first-class remote MCP shipped with this repo.
+        # Only connect if: enabled, allowed by the agent's server list, and
+        # a bearer token is configured.
+        if settings.AGCOUCH_MCP_ENABLED and settings.AGCOUCH_MCP_SERVER_NAME in self._allowed_servers:
+            agcouch_mcp_token = settings.AGCOUCH_MCP_TOKEN
+            agcouch_mcp_url = settings.AGCOUCH_MCP_SERVER_URL
+            if not agcouch_mcp_token:
                 logger.warning(
-                    "Yuppster MCP skipped: YUPPSTER_MCP_TOKEN not set",
+                    "Agcouch MCP skipped: AGCOUCH_MCP_TOKEN not set",
+                    session_id=self._session_id,
+                )
+            elif not agcouch_mcp_url:
+                logger.warning(
+                    "Agcouch MCP skipped: AGCOUCH_MCP_SERVER_URL not set",
                     session_id=self._session_id,
                 )
             else:
-                yuppster_url = self._resolve_yuppster_url()
-                if not yuppster_url:
-                    logger.warning(
-                        "Yuppster MCP skipped: URL not resolved from .mcp.json",
-                        session_id=self._session_id,
-                    )
-                else:
-                    yuppster_headers: dict[str, str] = {"Authorization": f"Bearer {yuppster_token}"}
-                    if self._user_id:
-                        yuppster_headers["X-User-ID"] = self._user_id
-                    if self._agent_name:
-                        yuppster_headers["X-AHS-Agent-Name"] = self._agent_name
-                    if self._session_id:
-                        yuppster_headers["X-AHS-Session-ID"] = self._session_id
-                    await self._connect("yuppster", yuppster_url, yuppster_headers)
+                agcouch_mcp_headers: dict[str, str] = {"Authorization": f"Bearer {agcouch_mcp_token}"}
+                if self._user_id:
+                    agcouch_mcp_headers["X-User-ID"] = self._user_id
+                if self._agent_name:
+                    agcouch_mcp_headers["X-AHS-Agent-Name"] = self._agent_name
+                if self._session_id:
+                    agcouch_mcp_headers["X-AHS-Session-ID"] = self._session_id
+                await self._connect(settings.AGCOUCH_MCP_SERVER_NAME, agcouch_mcp_url, agcouch_mcp_headers)
+
+        # TODO(phase-9): iterate DB-registered external MCP servers here
+        # and open a client for each enabled row using the same pattern.
 
         # Register read_resource synthetic tool if any resources were discovered
         if self._resource_catalog:
@@ -316,25 +323,3 @@ class MCPToolAccess:
                 server=server_name,
                 resource_count=resource_count,
             )
-
-    @staticmethod
-    def _resolve_yuppster_url() -> str | None:
-        """Read yuppster MCP URL from the repo's .mcp.json."""
-        mcp_json_path = os.path.join(AHS_REPOS_DIR, "yupp-agent", ".mcp.json")
-        try:
-            with open(mcp_json_path) as f:
-                config = json.load(f)
-            server = config.get("mcpServers", {}).get("yuppster-mcp-server", {})
-            if not server:
-                logger.warning("yuppster-mcp-server not found in .mcp.json", path=mcp_json_path)
-                return None
-            if server.get("disabled"):
-                logger.info("yuppster-mcp-server is disabled in .mcp.json", path=mcp_json_path)
-                return None
-            url: str | None = server.get("url")
-            if not url:
-                logger.warning("yuppster-mcp-server has no URL in .mcp.json", path=mcp_json_path)
-            return url
-        except (FileNotFoundError, json.JSONDecodeError):
-            logger.warning("Could not resolve yuppster MCP URL", path=mcp_json_path)
-            return None

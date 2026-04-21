@@ -22,7 +22,7 @@ class TestBuildSubprocessEnv:
             "ANTHROPIC_API_KEY": "sk-ant-xxx",
             "OPENAI_API_KEY": "sk-xxx",
             "ENVIRONMENT": "production",
-            "YUPPSTER_MCP_TOKEN": "tok-123",
+            "AGCOUCH_MCP_TOKEN": "tok-123",
             "GITHUB_TOKEN": "ghp_abc",
             "SSH_AUTH_SOCK": "/tmp/ssh.sock",
             "AHS_DATA_DIR": "/data",

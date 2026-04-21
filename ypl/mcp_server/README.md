@@ -6,10 +6,10 @@ Internal development tooling that allows engineers' AI agents (Claude Code, Curs
 
 Here's how to set it up to work with Claude Code:
 - Type /create-mcp-token slack command in `#agentic-couch` slack channel, and dialog will show up.
-- Upon submission, a token will be created and email to the example.com email you specified. (Create for other yuppsters are supported, but logged!)
+- Upon submission, a token will be created and email to the example.com email you specified. (Create for other agcouchs are supported, but logged!)
 - Copy your Access Token from the email you received, and add it to your bash environment.
-  - e.g. `echo "export YUPPSTER_MCP_TOKEN=yupp_dev_{...}" >> ~/.zshrc` if you use zsh, or any other places where you keep environment variables. (Remember to `source ~/.zshrc` when you are done, so it's part of current terminal)
-  - or `export YUPPSTER_MCP_TOKEN=yupp_dev_{...}` directly on your terminal if you don't want to it set for every terminal session.
+  - e.g. `echo "export AGCOUCH_MCP_TOKEN=yupp_dev_{...}" >> ~/.zshrc` if you use zsh, or any other places where you keep environment variables. (Remember to `source ~/.zshrc` when you are done, so it's part of current terminal)
+  - or `export AGCOUCH_MCP_TOKEN=yupp_dev_{...}` directly on your terminal if you don't want to it set for every terminal session.
 - In your Claude Code, run `/mcp` command in yupp-mind repo, it should automatically discover the MCP server, and authenticate for you.
 - Just ask Claude some question that requires knowledge of our DB, Bigquery, Redis, GCP (BE) and Vercel (FE) logs
 
@@ -17,16 +17,16 @@ For using Claude code on Web UI (remote agent). You should:
 - go to https://claude.ai/code
 - Click the ☁️ (environment) button (☁️ is located on the right bottom corner of the main chat box)
 - Click the settings icon (⚙️) 
-- Add `YUPPSTER_MCP_TOKEN=yupp_dev_{...}` to your environment variables
+- Add `AGCOUCH_MCP_TOKEN=yupp_dev_{...}` to your environment variables
 - Also, please set the Network Access to "Full", so claude code can access our MCP server.
 
-To use Yuppster MCP server on Claude Cowork:
+To use Agcouch MCP server on Claude Cowork:
 - Go to Settings -> Connectors;
 - Click "Add Custom Connector" button
-- Enter "Yuppster MCP" as the name.
-- Enter `https://yuppster-mcp-oauth.example.com/mcp` on the Remote MCP server URL field
+- Enter "Agcouch MCP" as the name.
+- Enter `https://agcouch-mcp-oauth.example.com/mcp` on the Remote MCP server URL field
 - After a little bit when the "Connect" button lights up, click the button and follow the steps to finish oauth setup
-- Optional: if you want to setup staging server instead, please use `https://yuppster-mcp-oauth-staging.example.com/mcp`
+- Optional: if you want to setup staging server instead, please use `https://agcouch-mcp-oauth-staging.example.com/mcp`
 
 To set up the staging MCP server to debug staging issues, please refer to [Staging Server Setup](#staging-server-setup).
 
@@ -70,7 +70,7 @@ Search Google Cloud Logging for Yupp MIND production logs.
 
 **Example:**
 ```bash
-curl -X POST https://yuppster-mcp.example.com/mcp/tools/search_gcp_logs \
+curl -X POST https://agcouch-mcp.example.com/mcp/tools/search_gcp_logs \
   -H "Authorization: Bearer yupp_dev_xxx" \
   -H "Content-Type: application/json" \
   -d '{
@@ -281,23 +281,23 @@ Top Tools:
 
 ### Project Configuration (`.mcp.json`)
 
-The repository includes a project-level `.mcp.json` that configures the yuppster-mcp server for all engineers and CI/agent workflows:
+The repository includes a project-level `.mcp.json` that configures the agcouch-mcp server for all engineers and CI/agent workflows:
 
 ```json
 {
   "mcpServers": {
-    "yuppster-mcp-server": {
+    "agcouch-mcp-server": {
       "type": "http",
-      "url": "https://yuppster-mcp.example.com/mcp",
+      "url": "https://agcouch-mcp.example.com/mcp",
       "headers": {
-        "Authorization": "Bearer ${YUPPSTER_MCP_TOKEN}"
+        "Authorization": "Bearer ${AGCOUCH_MCP_TOKEN}"
       }
     },
-    "yuppster-mcp-server-staging": {
+    "agcouch-mcp-server-staging": {
       "type": "http",
-      "url": "https://yuppster-mcp-staging.example.com/mcp",
+      "url": "https://agcouch-mcp-staging.example.com/mcp",
       "headers": {
-        "Authorization": "Bearer ${YUPPSTER_MCP_TOKEN_STAGING}"
+        "Authorization": "Bearer ${AGCOUCH_MCP_TOKEN_STAGING}"
       },
       "disabled": true
     }
@@ -305,7 +305,7 @@ The repository includes a project-level `.mcp.json` that configures the yuppster
 }
 ```
 
-The `${YUPPSTER_MCP_TOKEN}` placeholder is expanded from environment variables at runtime. See setup instructions below.
+The `${AGCOUCH_MCP_TOKEN}` placeholder is expanded from environment variables at runtime. See setup instructions below.
 
 ### Staging Server Setup
 
@@ -319,14 +319,14 @@ Run the `Create MCP Token` GitHub Action to create a token for the staging envir
 
 Add to your shell profile (`~/.zshrc` or `~/.bashrc`):
 ```bash
-export YUPPSTER_MCP_TOKEN_STAGING="yupp_dev_YOUR_STAGING_TOKEN_HERE"
+export AGCOUCH_MCP_TOKEN_STAGING="yupp_dev_YOUR_STAGING_TOKEN_HERE"
 ```
 
 Then restart your terminal or run `source ~/.zshrc`.
 
 **Step 3: Enable the staging server**
 
-In Claude Code, run `/mcp` and enable `yuppster-mcp-server-staging` for your session.
+In Claude Code, run `/mcp` and enable `agcouch-mcp-server-staging` for your session.
 
 ### Engineer Setup (Local/Interactive Mode)
 
@@ -342,7 +342,7 @@ Run the GitHub Actions workflow or contact a team lead to create a token for you
 
 Add to your shell profile (`~/.zshrc` or `~/.bashrc`):
 ```bash
-export YUPPSTER_MCP_TOKEN="yupp_dev_YOUR_TOKEN_HERE"
+export AGCOUCH_MCP_TOKEN="yupp_dev_YOUR_TOKEN_HERE"
 ```
 
 Then restart your terminal or run `source ~/.zshrc`.
@@ -351,8 +351,8 @@ Then restart your terminal or run `source ~/.zshrc`.
 
 Add the server directly to your personal Claude Code configuration (stored in `~/.claude.json`):
 ```bash
-claude mcp add --transport http yuppster-mcp-server --scope user \
-  https://yuppster-mcp.example.com/mcp \
+claude mcp add --transport http agcouch-mcp-server --scope user \
+  https://agcouch-mcp.example.com/mcp \
   --header "Authorization: Bearer yupp_dev_YOUR_TOKEN_HERE"
 ```
 
@@ -360,7 +360,7 @@ This user-scoped config takes precedence over the project `.mcp.json` and keeps 
 
 **Step 3: Verify**
 
-Start Claude Code and check that `yuppster-mcp-server` appears in your available MCP servers:
+Start Claude Code and check that `agcouch-mcp-server` appears in your available MCP servers:
 ```bash
 claude mcp list
 ```
@@ -372,7 +372,7 @@ For automated workflows and agent mode, configure the token via GitHub Secrets:
 **Step 1: Add the secret**
 
 1. Go to repository Settings → Secrets and variables → Actions
-2. Add a new secret: `YUPPSTER_MCP_TOKEN` with the token value
+2. Add a new secret: `AGCOUCH_MCP_TOKEN` with the token value
 
 **Step 2: Reference in workflow**
 
@@ -381,14 +381,14 @@ jobs:
   claude-agent:
     runs-on: ubuntu-latest
     env:
-      YUPPSTER_MCP_TOKEN: ${{ secrets.YUPPSTER_MCP_TOKEN }}
+      AGCOUCH_MCP_TOKEN: ${{ secrets.AGCOUCH_MCP_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - name: Run Claude Code
         run: claude -p "Your prompt here"
 ```
 
-The `.mcp.json` in the repository will automatically use the `YUPPSTER_MCP_TOKEN` environment variable.
+The `.mcp.json` in the repository will automatically use the `AGCOUCH_MCP_TOKEN` environment variable.
 
 ### MCP Protocol Details
 
@@ -411,11 +411,11 @@ For simpler integrations or testing, REST convenience endpoints are also availab
 
 ```bash
 # List available tools
-curl https://yuppster-mcp.example.com/mcp/tools \
+curl https://agcouch-mcp.example.com/mcp/tools \
   -H "Authorization: Bearer yupp_dev_xxx"
 
 # Invoke a tool
-curl -X POST https://yuppster-mcp.example.com/mcp/tools/search_gcp_logs \
+curl -X POST https://agcouch-mcp.example.com/mcp/tools/search_gcp_logs \
   -H "Authorization: Bearer yupp_dev_xxx" \
   -H "Content-Type: application/json" \
   -d '{"arguments": {"query": "severity=ERROR"}}'
@@ -435,7 +435,7 @@ curl -X POST https://yuppster-mcp.example.com/mcp/tools/search_gcp_logs \
 
 ```bash
 # Build and deploy
-gcloud run deploy yuppster-mcp-server \
+gcloud run deploy agcouch-mcp-server \
   --source . \
   --region us-central1 \
   --set-env-vars="BACKEND_OPERATING_MODE=mcp" \

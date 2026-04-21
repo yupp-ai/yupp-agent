@@ -1,1 +1,1 @@
-"""Shared utilities for MCP servers (yuppster MCP and AHS local MCP)."""
+"""Shared utilities for MCP servers (agcouch MCP and AHS local MCP)."""

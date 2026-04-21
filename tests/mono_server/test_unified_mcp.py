@@ -245,7 +245,7 @@ class TestRegisterUnifiedToolsIdempotency:
                 # Restore original flag regardless of test outcome
                 _mod._tools_registered = original_flag
 
-        assert first_call_count == 2, f"Expected 2 import_server calls (harness + yuppster), got {first_call_count}"
+        assert first_call_count == 2, f"Expected 2 import_server calls (harness + agcouch), got {first_call_count}"
         assert second_call_count == 2, (
             "import_server should NOT be called again on second register_unified_tools() call"
         )

@@ -119,7 +119,7 @@ class SessionPermissions(BaseModel):
 
     @classmethod
     def restricted(cls) -> SessionPermissions:
-        """Only harness server with basic tools (no yuppster, no privileged tools)."""
+        """Only harness server with basic tools (no agcouch, no privileged tools)."""
         return cls(
             allowed_servers=["harness"],
             allowed_harness_tools=list(RESTRICTED_HARNESS_TOOLS),

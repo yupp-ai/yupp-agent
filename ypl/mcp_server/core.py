@@ -106,11 +106,11 @@ def _create_mcp_server() -> FastMCP:
 
         oauth_provider = create_oauth_provider()
         logger.info("Creating MCP server with OAuth authentication")
-        return FastMCP(name="yuppster-mcp-server", auth=oauth_provider)
+        return FastMCP(name=settings.AGCOUCH_MCP_SERVER_NAME, auth=oauth_provider)
 
     # DEV_TOKEN mode - auth handled by Starlette middleware
     logger.info("Creating MCP server with DevToken authentication")
-    return FastMCP(name="yuppster-mcp-server", auth=None)
+    return FastMCP(name=settings.AGCOUCH_MCP_SERVER_NAME, auth=None)
 
 
 # Create FastMCP server instance based on mode

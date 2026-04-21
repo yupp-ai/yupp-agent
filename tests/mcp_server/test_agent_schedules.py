@@ -231,7 +231,7 @@ class TestCreateAgentScheduleTool:
             patch("ypl.mcp_server.tools.agent_schedules.get_requesting_user_id", return_value=None),
             patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@example.com"),
             patch(
-                "ypl.mcp_server.tools.agent_schedules.resolve_yuppster_user_id",
+                "ypl.mcp_server.tools.agent_schedules.resolve_user_id",
                 new=AsyncMock(return_value=(user_id, None)),
             ),
             patch(
@@ -257,7 +257,7 @@ class TestCreateAgentScheduleTool:
             patch("ypl.mcp_server.tools.agent_schedules.get_requesting_user_id", return_value=None),
             patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@example.com"),
             patch(
-                "ypl.mcp_server.tools.agent_schedules.resolve_yuppster_user_id",
+                "ypl.mcp_server.tools.agent_schedules.resolve_user_id",
                 new=AsyncMock(return_value=(None, "User not found")),
             ),
         ):

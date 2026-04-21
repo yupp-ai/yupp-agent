@@ -105,7 +105,7 @@ class AgentConfig(BaseModel):
     # that instructs the agent to call ToolSearch(query="select:<tools>") as its very
     # first action — eliminating per-session tool-discovery turns.
     # Format: list of fully-qualified tool names, e.g.
-    #   ["mcp__yuppster-mcp-server__query_agentdb", "mcp__harness__send_slack_message"]
+    #   ["mcp__agcouch-mcp-server__query_agentdb", "mcp__harness__send_slack_message"]
     required_tools: list[str] = Field(default_factory=list)
 
 

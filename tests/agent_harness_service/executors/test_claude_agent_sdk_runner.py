@@ -56,7 +56,7 @@ def _make_context(**overrides: Any) -> RunContext:
         "llm_session_id": None,
         "session_context": {
             "permissions": {
-                "allowed_servers": ["harness", "yuppster-mcp-server"],
+                "allowed_servers": ["harness", "agcouch-mcp-server"],
                 "allowed_harness_tools": ["*"],
             }
         },

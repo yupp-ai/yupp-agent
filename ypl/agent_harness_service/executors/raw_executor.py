@@ -630,7 +630,7 @@ def _create_client(provider: str) -> anthropic.AsyncAnthropic | openai.AsyncOpen
 
 # --- Main Loop ---
 # TODO (Phase 7): Raw executors currently have no local filesystem or shell access.
-# They can only use MCP tools (harness, yuppster). To enable code editing and
+# They can only use MCP tools (harness, agcouch). To enable code editing and
 # command execution, add file/shell MCP tools to the harness server.
 # See ROADMAP.md §Phase 7.
 
