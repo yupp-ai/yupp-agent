@@ -7,7 +7,7 @@ allowed-tools: Bash, Read, Write, Edit, Grep, Glob
 # DB Schema Change
 
 Anything that adds, alters, or drops columns / tables / indexes / enums in
-the ``agentdb`` or ``yuppdb`` schema.
+the application database.
 
 ## Hard rules
 
@@ -37,15 +37,33 @@ Autogenerate diffs the ORM against the live DB, so the DB must already be
 at the revision recorded in ``current_head.txt`` — otherwise every
 missing-since-then migration will also show up in the output.
 
+**Do not start a database automatically.** The operator is expected to have
+one already running (either via ``docker compose``, a native Homebrew /
+systemd service, or a hosted instance). Check the connection first; if it
+fails, surface a clear warning and *ask* before trying to bring one up.
+
 ```bash
-# Bring up Postgres + Redis via docker-compose if not already:
-docker compose up -d postgres redis
-
-# Apply any pending migrations:
-poetry run alembic -c alembic.ini upgrade head
-
-# Sanity check — should match current_head.txt:
+# Sanity-check the connection using whatever POSTGRES_* settings are in .env.
+# alembic exits non-zero if it can't reach the DB.
 poetry run alembic -c alembic.ini current
+```
+
+If that command fails to connect, stop and tell the operator. Offer (don't
+execute) something like:
+
+> Local Postgres is not reachable at `<host:port>`. If you want me to start
+> the docker-compose service, run:
+>
+>     docker compose up -d postgres redis
+>
+> Then re-run step 2.
+
+Once the DB is reachable, apply any pending migrations and verify the head
+matches the file:
+
+```bash
+poetry run alembic -c alembic.ini upgrade head
+poetry run alembic -c alembic.ini current    # should match current_head.txt
 cat ypl/db/alembic/current_head.txt
 ```
 
