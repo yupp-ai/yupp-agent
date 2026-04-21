@@ -25,6 +25,7 @@ from ypl.agent_harness_service.artifact_store import (
     ArtifactError,
     Attachment,
     archive_artifact,
+    archive_artifacts_by_slug,
     create_artifact,
     get_artifact_by_id,
     get_artifact_by_slug,
@@ -32,6 +33,7 @@ from ypl.agent_harness_service.artifact_store import (
     list_artifacts,
     read_artifact_attachment,
     read_artifact_content,
+    search_artifacts,
     validate_named_slug,
 )
 from ypl.agent_harness_service.common.auth import verify_api_key
@@ -115,6 +117,11 @@ class ArtifactListResponse(BaseModel):
 class ArtifactVersionsResponse(BaseModel):
     named_slug: str
     versions: list[ArtifactResponse]
+
+
+class ArchiveBySlugResponse(BaseModel):
+    named_slug: str
+    archived_count: int
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +222,28 @@ async def list_artifacts_route(
     return ArtifactListResponse(artifacts=[_artifact_to_response(a) for a in rows])
 
 
+# IMPORTANT: ``/search`` must be declared before the ``/{artifact_id}``
+# routes below — FastAPI matches path templates in declaration order, and
+# ``search`` would otherwise be interpreted as a (malformed) UUID.
+@artifact_router.get("/search", response_model=ArtifactListResponse)
+async def search_artifacts_route(
+    q: str = Query(..., min_length=1, description="Substring to match (case-insensitive)"),
+    artifact_type: AgentArtifactType | None = _OPTIONAL_TYPE_QUERY,
+    include_archived: bool = False,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> ArtifactListResponse:
+    """Substring search over title, description, slug, and attachment filenames."""
+    rows = await search_artifacts(
+        q,
+        artifact_type=artifact_type,
+        include_archived=include_archived,
+        limit=limit,
+        offset=offset,
+    )
+    return ArtifactListResponse(artifacts=[_artifact_to_response(a) for a in rows])
+
+
 @artifact_router.get("/{artifact_id}", responses={200: {"content": {"*/*": {}}}})
 async def read_artifact_route(artifact_id: uuid.UUID) -> Response:
     """Return the artifact's main content with its declared Content-Type."""
@@ -293,3 +322,20 @@ async def archive_artifact_route(artifact_id: uuid.UUID) -> Response:
     if not archived:
         raise HTTPException(status_code=404, detail=f"Artifact {artifact_id} not found")
     return Response(status_code=204)
+
+
+@artifact_router.delete("/by-slug/{slug}", response_model=ArchiveBySlugResponse)
+async def archive_by_slug_route(
+    slug: str,
+    artifact_type: AgentArtifactType = _TYPE_QUERY,
+) -> ArchiveBySlugResponse:
+    """Archive every non-archived version of an artifact slug.
+
+    Returns 404 only if no versions exist for the slug at all; an
+    already-fully-archived slug returns 200 with ``archived_count=0``.
+    """
+    existing = await list_artifact_versions(slug, artifact_type=artifact_type)
+    if not existing:
+        raise HTTPException(status_code=404, detail=f"No {artifact_type.value} artifact for slug {slug!r}")
+    count = await archive_artifacts_by_slug(slug, artifact_type=artifact_type)
+    return ArchiveBySlugResponse(named_slug=slug, archived_count=count)

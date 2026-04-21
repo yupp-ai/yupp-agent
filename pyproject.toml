@@ -5,6 +5,9 @@ version = "0.0.1"
 readme = "README.md"
 requires-python = ">=3.12"
 
+[project.scripts]
+ahs-artifact = "ypl.tools.ahs_artifact_cli:main"
+
 
 [tool.ruff]
 # The directories to consider when resolving first- vs. third-party imports
