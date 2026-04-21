@@ -377,15 +377,20 @@ class Settings(BaseSettings):
     LINEAR_API_KEY: str = os.getenv("LINEAR_API_KEY", "")
     READ_COMMIT_HISTORY_GITHUB_TOKEN: str = os.getenv("READ_COMMIT_HISTORY_GITHUB_TOKEN", "")
 
-    YUPPASTE_BQ_DATASET: str = os.getenv("YUPPASTE_BQ_DATASET", "yupp_pastes")
-    YUPPASTE_BQ_TABLE: str = os.getenv("YUPPASTE_BQ_TABLE", "pastes")
     GCS_BUCKET_NAME: str = os.getenv("GCS_BUCKET_NAME", "yupp-data")
     AGENT_MEMORY_BUCKET: str = os.getenv("AGENT_MEMORY_BUCKET", "yupp-agents")
 
-    # Blob store settings — pluggable storage backend for artifact/paste blobs.
-    # BLOB_STORE_BACKEND: "local" uses the filesystem; "gcs" uses GCS_BUCKET_NAME.
-    BLOB_STORE_BACKEND: str = "local"
-    BLOB_STORE_LOCAL_ROOT: str = "/data/artifacts"
+    # Blob store — pluggable storage backend used by the artifact system
+    # (``ypl/agent_harness_service/artifact_store.py``). ``local`` writes
+    # under the configured directory; ``gcs`` uses ``GCS_BUCKET_NAME``.
+    #
+    # Logical paths passed to the store are scoped by UUID shard, e.g.
+    # ``ab/<uuid>/<uuid>.md``. The store-level prefix (``artifacts/``) is
+    # omitted — ``BLOB_STORE_LOCAL_DIR`` already ends in ``artifacts/`` and
+    # operators who share a GCS bucket with other data can scope via a
+    # dedicated bucket name.
+    BLOB_STORE_ENGINE: str = "local"
+    BLOB_STORE_LOCAL_DIR: str = "/data/ahs/artifacts"
     BLOB_STORE_LOCAL_BASE_URL: str = ""
 
     # Data Takeout settings
@@ -501,12 +506,6 @@ class Settings(BaseSettings):
     # Set this to the webhook secret configured on the GitHub App.
     # Generate with: python -c "import secrets; print(secrets.token_hex(32))"
     AHS_GITHUB_WEBHOOK_SECRET: str = ""
-
-    # HMAC secret for signing artifact viewer URLs (/p/{uuid}?sig=...&exp=...).
-    # Set on the production/staging host directly (not via GCP Secret Manager).
-    # Generate with: python -c "import secrets; print(secrets.token_hex(32))"
-    # The default below is a dev/test placeholder — override in real deployments.
-    ARTIFACT_SIGNING_SECRET: str = "changethis-dev-placeholder-not-for-production"
 
     def _parse_address_list(self, value: str) -> list[str]:
         """Parse a string containing addresses in JSON array or comma-separated format."""

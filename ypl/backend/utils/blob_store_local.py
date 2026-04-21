@@ -3,9 +3,9 @@
 Objects are stored under a configurable root directory.  The logical path
 maps directly to a relative file path beneath that root, e.g.::
 
-    root=/data/artifacts
-    path=pastes/ab/abcd.../report.txt
-    → /data/artifacts/pastes/ab/abcd.../report.txt
+    root=/data/ahs/artifacts
+    path=ab/abcd.../abcd....md
+    → /data/ahs/artifacts/ab/abcd.../abcd....md
 
 A path-traversal guard prevents callers from escaping the root directory.
 """

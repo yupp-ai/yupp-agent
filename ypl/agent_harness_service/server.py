@@ -8,11 +8,11 @@ gateway (and other callers) via REST + SSE.
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 
-from ypl.agent_harness_service.common.auth import verify_api_key
+from ypl.agent_harness_service.artifact_routes import artifact_router
 from ypl.agent_harness_service.github_webhook import webhook_router
 from ypl.agent_harness_service.lifespan import AHSState, ahs_shutdown, ahs_startup
 from ypl.agent_harness_service.middleware import AHSRequestLoggingMiddleware, McpTokenAuthMiddleware
@@ -20,7 +20,6 @@ from ypl.agent_harness_service.projects.project_routes import project_router
 from ypl.agent_harness_service.routes import router
 from ypl.agent_harness_service.tools.local_mcp_server import mcp as harness_mcp
 from ypl.backend.config import settings
-from ypl.backend.routes.v1.yuppaste import router as yuppaste_router
 
 # Create the MCP sub-app once so we can wire its lifespan into the main app.
 # json_response=True: return application/json instead of SSE-wrapped responses.
@@ -83,7 +82,7 @@ def create_app() -> FastAPI:
 
     application.add_middleware(AHSRequestLoggingMiddleware)
     router.include_router(project_router)
-    router.include_router(yuppaste_router, tags=["yuppaste"], dependencies=[Depends(verify_api_key)])
+    router.include_router(artifact_router)
     router.include_router(webhook_router)
     application.include_router(router)
 

@@ -40,7 +40,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Depends, FastAPI
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse, Response
 
@@ -48,13 +48,12 @@ from fastapi.responses import ORJSONResponse, Response
 # agcouch MCP tools.  This is a side-effect-only import -- without it the
 # agcouch FastMCP instance has an empty tool registry.
 import ypl.mcp_server.mcp_tools  # noqa: F401
-from ypl.agent_harness_service.common.auth import verify_api_key
+from ypl.agent_harness_service.artifact_routes import artifact_router
 from ypl.agent_harness_service.host_path_guard import HostPathGuardMiddleware
 from ypl.agent_harness_service.lifespan import AHSState, ahs_shutdown, ahs_startup
 from ypl.agent_harness_service.middleware import AHSRequestLoggingMiddleware
 from ypl.agent_harness_service.projects.project_routes import project_router
 from ypl.agent_harness_service.routes import router as ahs_router
-from ypl.backend.routes.v1.yuppaste import router as yuppaste_router
 from ypl.mcp_server.lifespan import mcp_shutdown, mcp_startup
 from ypl.mono_server.config import MonoConfig
 from ypl.mono_server.gateway_plugin import GatewayPlugin
@@ -124,11 +123,7 @@ def _setup_ahs_router(config: MonoConfig) -> None:
     if _ahs_router_setup_done:
         return
     ahs_router.include_router(project_router)
-    ahs_router.include_router(
-        yuppaste_router,
-        tags=["yuppaste"],
-        dependencies=[Depends(verify_api_key)],
-    )
+    ahs_router.include_router(artifact_router)
     _ahs_router_setup_done = True
 
 

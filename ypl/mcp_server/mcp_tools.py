@@ -20,19 +20,6 @@ from fastmcp.tools.tool import ToolResult
 # Import tool modules to trigger @mcp_server.tool() registration.
 # Each module registers its own tools via the @mcp_server.tool() decorator at import time.
 # These are side-effect-only imports — the modules self-register on import.
-import ypl.mcp_server.tools.agent_artifacts
-import ypl.mcp_server.tools.agent_memory
-import ypl.mcp_server.tools.agent_schedules
-import ypl.mcp_server.tools.database
-import ypl.mcp_server.tools.gcp_logs
-import ypl.mcp_server.tools.linear_sync
-import ypl.mcp_server.tools.project_tasks
-import ypl.mcp_server.tools.redis
-import ypl.mcp_server.tools.security_incidents
-import ypl.mcp_server.tools.sentry
-import ypl.mcp_server.tools.slack
-import ypl.mcp_server.tools.twitter
-import ypl.mcp_server.tools.yuppaste  # noqa: F401
 from ypl.mcp_server.core import mcp_server
 from ypl.structured_logger import get_logger
 from ypl.utils import find_repo_root

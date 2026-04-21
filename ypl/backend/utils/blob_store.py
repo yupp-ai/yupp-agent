@@ -1,15 +1,21 @@
 """BlobStore — pluggable blob-storage abstraction.
 
-Logical path convention (enforced by callers, not this module):
-    pastes/{uuid[:2]}/{uuid}/{filename}
+Used by the artifact system to store textual artifact content and
+attachments. Logical path convention is set by the caller — the store
+just reads/writes at that path.
 
-Usage::
+The artifact service (``ypl/agent_harness_service/artifact_store.py``)
+uses this convention::
 
-    from ypl.backend.utils.blob_store import get_blob_store
+    {uuid[:2]}/{uuid}/{uuid}.{ext}    # main artifact content
+    {uuid[:2]}/{uuid}/{filename}      # attachments
 
-    store = get_blob_store()
-    await store.upload("pastes/ab/abcd.../report.txt", data, "text/plain")
-    url   = await store.get_access_url("pastes/ab/abcd.../report.txt")
+Backend selection is driven by ``settings.BLOB_STORE_ENGINE``:
+
+- ``"local"`` → :class:`~ypl.backend.utils.blob_store_local.LocalBlobStore`
+  Writes under ``BLOB_STORE_LOCAL_DIR``.
+- ``"gcs"``   → :class:`~ypl.backend.utils.blob_store_gcs.GCSBlobStore`
+  Writes under ``gs://{GCS_BUCKET_NAME}/``.
 """
 
 from __future__ import annotations
@@ -86,23 +92,23 @@ class BlobStore(Protocol):
 def get_blob_store() -> BlobStore:
     """Factory that returns the configured BlobStore backend.
 
-    Reads ``settings.BLOB_STORE_BACKEND`` to choose the implementation:
+    Reads ``settings.BLOB_STORE_ENGINE`` to choose the implementation:
     - ``"local"`` → :class:`~ypl.backend.utils.blob_store_local.LocalBlobStore`
     - ``"gcs"``   → :class:`~ypl.backend.utils.blob_store_gcs.GCSBlobStore`
 
     Raises:
-        ValueError: for unknown backend names.
+        ValueError: for unknown engine values.
     """
-    backend = settings.BLOB_STORE_BACKEND
-    if backend == "local":
+    engine = settings.BLOB_STORE_ENGINE
+    if engine == "local":
         from ypl.backend.utils.blob_store_local import LocalBlobStore
 
         return LocalBlobStore(
-            root=settings.BLOB_STORE_LOCAL_ROOT,
+            root=settings.BLOB_STORE_LOCAL_DIR,
             base_url=settings.BLOB_STORE_LOCAL_BASE_URL,
         )
-    if backend == "gcs":
+    if engine == "gcs":
         from ypl.backend.utils.blob_store_gcs import GCSBlobStore
 
         return GCSBlobStore(bucket=settings.GCS_BUCKET_NAME)
-    raise ValueError(f"Unknown BLOB_STORE_BACKEND: {backend!r}. Expected 'local' or 'gcs'.")
+    raise ValueError(f"Unknown BLOB_STORE_ENGINE: {engine!r}. Expected 'local' or 'gcs'.")
