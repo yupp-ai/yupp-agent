@@ -85,22 +85,21 @@ async def resolve_user_id(user_input: str | None) -> str | None:
     """
     from sqlmodel import col, select
     from ypl.backend.db import get_async_session
-    from ypl.backend.llm.constants import LINEAR_TO_EMAIL, TEAM_DIRECTORY
-    from ypl.db.users import User
+    from ypl.db.users import User, UserType
 
-    # If user provided a specific ID, try it directly
+    # If user provided a specific ID, try it directly.
     if user_input:
-        # Check if it's a Linear name -> convert to email
-        if user_input in LINEAR_TO_EMAIL:
-            email = LINEAR_TO_EMAIL[user_input]
-            print(f"  Mapped Linear name '{user_input}' to email '{email}'")
-            user_input = email
-
-        # Try to find user by email or user_id
         async with get_async_session() as db:
+            # Accept email, user_id, linear_name, github_username, or slack_user_id.
             result = await db.execute(
                 select(User)
-                .where((col(User.email) == user_input) | (col(User.user_id) == user_input))
+                .where(
+                    (col(User.email) == user_input)
+                    | (col(User.user_id) == user_input)
+                    | (col(User.linear_name) == user_input)
+                    | (col(User.github_username) == user_input)
+                    | (col(User.slack_user_id) == user_input)
+                )
                 .where(col(User.deleted_at).is_(None))
             )
             user = result.scalars().first()
@@ -111,19 +110,17 @@ async def resolve_user_id(user_input: str | None) -> str | None:
 
         print(f"  WARNING: User '{user_input}' not found in database")
 
-    # Try to find any user from the team directory
-    print("  Looking for any team member in database...")
+    # Fall back to any active human user.
+    print("  Looking for any human user in database...")
     async with get_async_session() as db:
-        team_emails = [member.email for member in TEAM_DIRECTORY if member.email]
-        if team_emails:
-            result = await db.execute(
-                select(User).where(col(User.email).in_(team_emails)).where(col(User.deleted_at).is_(None)).limit(1)
-            )
-            user = result.scalars().first()
-            if user:
-                print(f"  Found team member: {user.user_id} ({user.email})")
-                found_user_id: str = user.user_id
-                return found_user_id
+        result = await db.execute(
+            select(User).where(User.user_type == UserType.HUMAN).where(col(User.deleted_at).is_(None)).limit(1)
+        )
+        user = result.scalars().first()
+        if user:
+            print(f"  Found team member: {user.user_id} ({user.email})")
+            found_user_id: str = user.user_id
+            return found_user_id
 
     return None
 

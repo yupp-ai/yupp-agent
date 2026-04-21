@@ -21,7 +21,6 @@ from ypl.agent_harness_service.task_executor import (
     resume_task,
 )
 from ypl.backend.db import get_async_session, get_async_session_read_replica, retry_db
-from ypl.backend.llm.constants import TEAM_DIRECTORY
 from ypl.backend.utils.streamlit_utils import run_coroutine_in_lit_worker
 from ypl.db.agent_harness import (
     Agent,
@@ -35,7 +34,7 @@ from ypl.db.agent_harness import (
     AgentTaskPriority,
     AgentTaskStatus,
 )
-from ypl.db.users import User
+from ypl.db.users import User, UserType
 from ypl.streamlit_server.auth import require_auth
 from ypl.streamlit_server.permissions import get_current_user_email
 from ypl.structured_logger import get_logger
@@ -510,18 +509,20 @@ async def update_task_agent(task_id: uuid.UUID, agent_name: str | None) -> bool:
 
 @retry_db
 async def fetch_team_members() -> list[dict[str, Any]]:
-    """Fetch team members with their user_ids from the database.
+    """Fetch human team members from the users table.
 
-    Uses TEAM_DIRECTORY emails to look up users.
+    Returns every active ``HUMAN`` user (excludes ``AGENT`` / ``SYSTEM``
+    rows), ordered by name. Populate ``users.slack_user_id`` /
+    ``users.github_username`` / ``users.linear_name`` on the rows you want
+    cross-identity attribution on.
 
     Returns:
         List of dicts with user_id, name, and email.
     """
-    team_emails = [m.email for m in TEAM_DIRECTORY if m.email]
     async with get_async_session_read_replica() as session:
         result = await session.exec(
             select(User.user_id, User.name, User.email)
-            .where(col(User.email).in_(team_emails))
+            .where(User.user_type == UserType.HUMAN)
             .where(col(User.deleted_at).is_(None))
             .order_by(User.name)
         )

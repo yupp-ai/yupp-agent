@@ -16,7 +16,6 @@ import streamlit as st
 from sqlalchemy import text
 from sqlmodel import col, select
 from ypl.backend.db import get_async_session_read_replica, retry_db
-from ypl.backend.llm.constants import LINEAR_TO_SLACK_ID
 from ypl.backend.utils.streamlit_utils import run_coroutine_in_lit_worker
 from ypl.db.agent_harness import Agent
 from ypl.streamlit_server.auth import require_auth
@@ -30,10 +29,9 @@ warnings.filterwarnings("ignore", message=".*You probably want to use.*session.e
 
 # ── Slack user-name resolution ───────────────────────────────────────────────
 
+# Reverse map: Slack ID → human-readable name. Empty by default — the display
+# helper below falls back to the raw Slack ID when a name is missing.
 _SLACK_ID_TO_NAME: dict[str, str] = {}
-for _name, _sid in LINEAR_TO_SLACK_ID.items():
-    if _sid not in _SLACK_ID_TO_NAME or len(_name) > len(_SLACK_ID_TO_NAME[_sid]):
-        _SLACK_ID_TO_NAME[_sid] = _name
 
 
 def _resolve_slack_names(df: pd.DataFrame, column: str = "slack_user_id") -> pd.DataFrame:

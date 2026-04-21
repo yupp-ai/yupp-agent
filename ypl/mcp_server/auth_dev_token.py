@@ -24,7 +24,7 @@ from ypl.backend.config import settings
 from ypl.backend.db import get_async_session, retry_db
 from ypl.backend.utils.soul_utils import has_permission_cached
 from ypl.db.mcp import MCPDevToken, MCPTokenStatus, MCPTokenType
-from ypl.db.soul_rbac import SoulPermission
+from ypl.db.rbac import Permission
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -158,7 +158,7 @@ async def create_token(
         raise ValueError(f"Email domain {email_domain} not in allowed domains: {allowed_domains}")
 
     # Check if user has USE_MCP permission
-    if not await has_permission_cached(email, SoulPermission.USE_MCP):
+    if not await has_permission_cached(email, Permission.USE_MCP):
         logger.warning("Token creation denied - user lacks USE_MCP permission", email_local_part=email.split("@")[0])
         raise PermissionError(
             f"User {email} does not have USE_MCP permission. Please contact your TLM to add the permission."
@@ -333,7 +333,7 @@ class DevTokenAuthMiddleware(BaseHTTPMiddleware):
         email_local_part = db_token.email.split("@")[0]
 
         # Check if user has USE_MCP permission
-        if not await has_permission_cached(db_token.email, SoulPermission.USE_MCP):
+        if not await has_permission_cached(db_token.email, Permission.USE_MCP):
             logger.warning(
                 "DevToken authentication rejected - user lacks USE_MCP permission",
                 email_local_part=email_local_part,

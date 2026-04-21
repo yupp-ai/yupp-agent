@@ -1,5 +1,4 @@
 from enum import Enum
-from typing import NamedTuple
 
 
 # TODO(Tian): retire ChatProvider class and use something else that doesn't depend on hard-coded values.
@@ -147,53 +146,5 @@ def is_html_gen_or_edit_category(category: str) -> bool:
 def has_html_gen_or_edit_category(categories: list[str]) -> bool:
     return any(is_html_gen_or_edit_category(c) for c in categories)
 
-
-# ---------------------------------------------------------------------------
-# Consolidated team directory – single source of truth for identity mappings.
-# source: https://github.com/yupp-ai/yupp-head/blob/main/apps/web/lib/utils/user-utils.ts
-# ---------------------------------------------------------------------------
-
-
-class TeamMember(NamedTuple):
-    email: str | None
-    slack_id: str
-    linear_name: str | None
-    github_login: str | None
-
-
-TEAM_DIRECTORY: tuple[TeamMember, ...] = (
-    TeamMember("amadeus.guan@gmail.com", "U0ASXC300G2", "lguan", "AmaxGuan"),
-    TeamMember("wangtianthu@gmail.com", "U0ATRKR7FR6", "tian", "wangtian24"),
-)
-
-# --- Derived lookup dicts (all generated from TEAM_DIRECTORY) ---------------
-
-LINEAR_TO_SLACK_ID: dict[str, str] = {m.linear_name: m.slack_id for m in TEAM_DIRECTORY if m.linear_name}
-
-GITHUB_TO_LINEAR_NAME: dict[str, str] = {
-    m.github_login: m.linear_name for m in TEAM_DIRECTORY if m.github_login and m.linear_name
-}
-
-EMAIL_TO_SLACK_ID: dict[str, str] = {m.email: m.slack_id for m in TEAM_DIRECTORY if m.email}
-
-SLACK_ID_TO_EMAIL: dict[str, str] = {m.slack_id: m.email for m in TEAM_DIRECTORY if m.email}
-
-SLACK_ID_TO_LINEAR_NAME: dict[str, str] = {m.slack_id: m.linear_name for m in TEAM_DIRECTORY if m.linear_name}
-
-EMAIL_TO_LINEAR_NAME: dict[str, str] = {m.email: m.linear_name for m in TEAM_DIRECTORY if m.email and m.linear_name}
-
-LINEAR_TO_EMAIL: dict[str, str] = {m.linear_name: m.email for m in TEAM_DIRECTORY if m.linear_name and m.email}
-
-GITHUB_TO_SLACK_ID: dict[str, str] = {m.github_login: m.slack_id for m in TEAM_DIRECTORY if m.github_login}
-
-GITHUB_TO_EMAIL: dict[str, str] = {m.github_login: m.email for m in TEAM_DIRECTORY if m.github_login and m.email}
-
-LINEAR_TO_GITHUB: dict[str, str] = {
-    m.linear_name: m.github_login for m in TEAM_DIRECTORY if m.linear_name and m.github_login
-}
-
-SLACK_ID_TO_GITHUB: dict[str, str] = {m.slack_id: m.github_login for m in TEAM_DIRECTORY if m.github_login}
-
-EMAIL_TO_GITHUB: dict[str, str] = {m.email: m.github_login for m in TEAM_DIRECTORY if m.email and m.github_login}
 
 NONE_TAG_NAME = "None"

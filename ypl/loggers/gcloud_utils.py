@@ -1,11 +1,8 @@
-import base64
-import contextlib
 import logging
 import os
 import sys
 from datetime import UTC, datetime, timedelta
 
-import orjson
 import requests
 from google.cloud.logging_v2.handlers import CloudLoggingFilter
 from google.cloud.logging_v2.handlers._helpers import (
@@ -14,7 +11,6 @@ from google.cloud.logging_v2.handlers._helpers import (
 from pydantic import TypeAdapter
 
 from ypl.middlewares.trace_context_middleware import gcp_cloud_trace_context
-from ypl.middlewares.yupp_context_middleware import yupp_context
 
 GCP_PROJECT_NAME = os.environ.get("GCP_PROJECT_NAME", "yupp-llms")
 
@@ -34,11 +30,6 @@ class TraceAndProcessLoggingFilter(CloudLoggingFilter):
             record.span_id = span_id
             record.trace_sampled = trace_sampled
 
-        yupp_context_dict = None
-        if yupp_context.get() != "":
-            with contextlib.suppress(Exception):
-                yupp_context_dict = orjson.loads(base64.b64decode(yupp_context.get()))
-
         record.labels = {
             # `main-worker`, or `some-other-worker:{id}`. Helps identify the type of workers
             # if there are multiple types of processes running in the same container.
@@ -53,8 +44,6 @@ class TraceAndProcessLoggingFilter(CloudLoggingFilter):
             self._build_git_sha = os.environ.get("BUILD_GIT_SHA")
         if self._build_git_sha:
             record.labels["build_git_sha"] = self._build_git_sha  # type: ignore[attr-defined]
-        if yupp_context_dict is not None and "userId" in yupp_context_dict:
-            record.labels["user_id"] = yupp_context_dict["userId"]  # type: ignore[attr-defined]
 
         return super().filter(record)  # type: ignore
 

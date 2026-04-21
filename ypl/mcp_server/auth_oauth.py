@@ -17,7 +17,7 @@ import ypl.db.all_models  # noqa: F401
 from ypl.backend.config import settings
 from ypl.backend.utils.soul_utils import has_permission_cached
 from ypl.db.mcp import MCPTokenType
-from ypl.db.soul_rbac import SoulPermission
+from ypl.db.rbac import Permission
 from ypl.mcp_server.context_vars import request_context
 from ypl.structured_logger import get_logger
 
@@ -71,7 +71,7 @@ class AllowedDomainsGoogleProvider(GoogleProvider):
             return None
 
         # Check if user has USE_MCP permission
-        if not await has_permission_cached(email, SoulPermission.USE_MCP):
+        if not await has_permission_cached(email, Permission.USE_MCP):
             logger.warning(
                 "OAuth authentication rejected - user lacks USE_MCP permission. "
                 "Please contact your TLM to add the permission.",

@@ -31,6 +31,54 @@ async def get_user_email(user_id: str) -> str | None:
         return (await session.exec(query)).one_or_none()
 
 
+@async_timed_cache(seconds=3600)
+@retry_db
+async def get_user_id_by_github_username(github_username: str) -> str | None:
+    """Resolve a GitHub username to a user ID via the ``users.github_username`` column."""
+    query = select(User.user_id).where(
+        User.github_username == github_username,
+        User.deleted_at.is_(None),  # type: ignore[union-attr]
+    )
+    async with get_async_session() as session:
+        return (await session.exec(query)).one_or_none()
+
+
+@async_timed_cache(seconds=3600)
+@retry_db
+async def get_user_id_by_slack_user_id(slack_user_id: str) -> str | None:
+    """Resolve a Slack user ID to a user ID via the ``users.slack_user_id`` column."""
+    query = select(User.user_id).where(
+        User.slack_user_id == slack_user_id,
+        User.deleted_at.is_(None),  # type: ignore[union-attr]
+    )
+    async with get_async_session() as session:
+        return (await session.exec(query)).one_or_none()
+
+
+@async_timed_cache(seconds=3600)
+@retry_db
+async def get_email_by_slack_user_id(slack_user_id: str) -> str | None:
+    """Resolve a Slack user ID to the user's email via the ``users`` row."""
+    query = select(User.email).where(
+        User.slack_user_id == slack_user_id,
+        User.deleted_at.is_(None),  # type: ignore[union-attr]
+    )
+    async with get_async_session() as session:
+        return (await session.exec(query)).one_or_none()
+
+
+@async_timed_cache(seconds=3600)
+@retry_db
+async def get_linear_name_by_email(email: str) -> str | None:
+    """Resolve a user email to their Linear display name (or ``None`` if no mapping)."""
+    query = select(User.linear_name).where(
+        func.lower(User.email) == func.lower(email),
+        User.deleted_at.is_(None),  # type: ignore[union-attr]
+    )
+    async with get_async_session() as session:
+        return (await session.exec(query)).one_or_none()
+
+
 async def get_active_model_count() -> int:
     """Return 0 — yupp-agent doesn't have language_models table."""
     return 0

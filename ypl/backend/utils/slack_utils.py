@@ -19,7 +19,7 @@ from tenacity import retry, retry_if_exception, retry_if_exception_type, stop_af
 
 from ypl.backend.config import settings
 from ypl.backend.db import get_async_session_read_replica
-from ypl.backend.llm.constants import SLACK_ID_TO_EMAIL
+from ypl.backend.llm.db_helpers import get_email_by_slack_user_id
 from ypl.backend.utils.async_utils import create_background_task
 from ypl.backend.utils.json import json_dumps
 from ypl.structured_logger import get_logger
@@ -303,14 +303,14 @@ async def get_user_email_from_slack(user_id: str, bot_token: str | None = None) 
     """Get user email from a Slack user ID.
 
     Tries the Slack API first (if a bot token is provided), then falls back
-    to the hardcoded ``SLACK_ID_TO_EMAIL`` mapping for known team members.
+    to ``users.slack_user_id`` in the database for pre-populated rows.
 
     Args:
         user_id: Slack user ID.
         bot_token: Optional Slack bot token (needs ``users:read`` +
             ``users:read.email`` scopes). Typically the agent's own bot token —
             pass ``(await get_agent_config_by_app_id(app_id)).bot_token``.
-            If omitted, only the hardcoded mapping is consulted.
+            If omitted, only the DB lookup is consulted.
 
     Returns:
         Email string, or None if neither source resolves the user.
@@ -336,8 +336,9 @@ async def get_user_email_from_slack(user_id: str, bot_token: str | None = None) 
                     }
                 )
             )
-    # Static fallback — hardcoded team directory in ypl.backend.llm.constants
-    return SLACK_ID_TO_EMAIL.get(user_id)
+    # Fallback — ``users`` row keyed off ``slack_user_id``.
+    fallback: str | None = await get_email_by_slack_user_id(user_id)
+    return fallback
 
 
 @async_timed_cache(seconds=3600 * 12)
@@ -348,9 +349,8 @@ async def resolve_slack_user_to_yupp_user_id(
     """Resolve a Slack member ID to an internal Yupp user_id.
 
     Delegates to :func:`get_user_email_from_slack` which tries the Slack API
-    (if ``bot_token`` provided) then falls back to the hardcoded
-    ``SLACK_ID_TO_EMAIL`` mapping. The resulting email is looked up in the
-    ``users`` table.
+    (if ``bot_token`` provided) then falls back to the ``users.slack_user_id``
+    column. The resulting email is then used to look up the ``user_id``.
 
     Uses a raw SQL query to avoid triggering SQLAlchemy mapper configuration, which
     can fail in services that don't import all ORM models (e.g., MemoryEmbedding).
