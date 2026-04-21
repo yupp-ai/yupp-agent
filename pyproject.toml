@@ -255,7 +255,6 @@ omit = [
     "ypl/mcp_server/tools/linear_sync.py",
     "ypl/mcp_server/tools/agent_schedules.py",
     "ypl/backend/utils/linear.py",
-    "ypl/backend/internal_tools/yuppaste_backend.py",
     # Pure boilerplate (no logic — just startup hooks, HTTP forwarding, or try/except routing)
     "ypl/agent_harness_service/lifespan.py",
     "ypl/agent_harness_service/routes.py",

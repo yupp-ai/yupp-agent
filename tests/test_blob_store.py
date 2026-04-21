@@ -433,8 +433,8 @@ class TestGCSBlobStoreDelete:
 class TestGetBlobStore:
     def test_returns_local_store_by_default(self, tmp_path: pathlib.Path) -> None:
         with patch("ypl.backend.utils.blob_store.settings") as mock_settings:
-            mock_settings.BLOB_STORE_BACKEND = "local"
-            mock_settings.BLOB_STORE_LOCAL_ROOT = str(tmp_path)
+            mock_settings.BLOB_STORE_ENGINE = "local"
+            mock_settings.BLOB_STORE_LOCAL_DIR = str(tmp_path)
             mock_settings.BLOB_STORE_LOCAL_BASE_URL = "https://example.com"
             store = get_blob_store()
         assert isinstance(store, LocalBlobStore)
@@ -443,7 +443,7 @@ class TestGetBlobStore:
         from ypl.backend.utils.blob_store_gcs import GCSBlobStore
 
         with patch("ypl.backend.utils.blob_store.settings") as mock_settings:
-            mock_settings.BLOB_STORE_BACKEND = "gcs"
+            mock_settings.BLOB_STORE_ENGINE = "gcs"
             mock_settings.GCS_BUCKET_NAME = "my-bucket"
             store = get_blob_store()
         assert isinstance(store, GCSBlobStore)
@@ -451,6 +451,6 @@ class TestGetBlobStore:
 
     def test_raises_on_unknown_backend(self) -> None:
         with patch("ypl.backend.utils.blob_store.settings") as mock_settings:
-            mock_settings.BLOB_STORE_BACKEND = "s3"
-            with pytest.raises(ValueError, match="Unknown BLOB_STORE_BACKEND"):
+            mock_settings.BLOB_STORE_ENGINE = "s3"
+            with pytest.raises(ValueError, match="Unknown BLOB_STORE_ENGINE"):
                 get_blob_store()

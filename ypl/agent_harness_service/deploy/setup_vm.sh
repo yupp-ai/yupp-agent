@@ -222,6 +222,7 @@ echo "  Step 5/13: Creating directory structure"
 echo "--------------------------------------------"
 mkdir -p /data/{shared,agents,repos,sessions,session_logs}
 mkdir -p /data/ahs
+mkdir -p /data/ahs/artifacts
 chown -R ahs:ahs /data
 echo "  /data/ directory structure ready"
 fi
