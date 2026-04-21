@@ -45,7 +45,27 @@ class User(BaseModel, table=True):
         ),
     )
 
+    # External identity mappings. All nullable — populated only for users
+    # whose activity the platform needs to attribute across surfaces (GitHub
+    # webhooks, Slack mentions, Linear sync). Uniqueness enforced by partial
+    # indexes below (one row per external identity when the column is set).
+    slack_user_id: str | None = Field(default=None, sa_type=sa.Text, index=True)
+    github_username: str | None = Field(default=None, sa_type=sa.Text, index=True)
+    linear_name: str | None = Field(default=None, sa_type=sa.Text, index=True)
+
     __table_args__ = (
         UniqueConstraint("email", name="users_email_key"),
         sa.Index("idx_users_lower_email", sa.text("lower(email)"), unique=True),
+        sa.Index(
+            "idx_users_slack_user_id_unique",
+            "slack_user_id",
+            unique=True,
+            postgresql_where=sa.text("slack_user_id IS NOT NULL"),
+        ),
+        sa.Index(
+            "idx_users_github_username_unique",
+            "github_username",
+            unique=True,
+            postgresql_where=sa.text("github_username IS NOT NULL"),
+        ),
     )
