@@ -156,7 +156,7 @@ class TestSearchTwitter:
     async def test_bearer_token_error_returns_error(self) -> None:
         with patch(
             "ypl.mcp_server.tools.twitter._get_bearer_token",
-            new=AsyncMock(side_effect=ValueError("no token")),
+            side_effect=ValueError("no token"),
         ):
             result = await search_twitter("hello")
 
@@ -166,7 +166,7 @@ class TestSearchTwitter:
     async def test_401_returns_auth_error(self) -> None:
         resp = _make_httpx_response(401)
         with (
-            patch("ypl.mcp_server.tools.twitter._get_bearer_token", new=AsyncMock(return_value="tok")),
+            patch("ypl.mcp_server.tools.twitter._get_bearer_token", return_value="tok"),
             patch("ypl.mcp_server.tools.twitter._twitter_get", new=AsyncMock(return_value=resp)),
         ):
             result = await search_twitter("test")
@@ -176,7 +176,7 @@ class TestSearchTwitter:
     async def test_429_returns_rate_limit_error(self) -> None:
         resp = _make_httpx_response(429)
         with (
-            patch("ypl.mcp_server.tools.twitter._get_bearer_token", new=AsyncMock(return_value="tok")),
+            patch("ypl.mcp_server.tools.twitter._get_bearer_token", return_value="tok"),
             patch("ypl.mcp_server.tools.twitter._twitter_get", new=AsyncMock(return_value=resp)),
         ):
             result = await search_twitter("test")
@@ -186,7 +186,7 @@ class TestSearchTwitter:
     async def test_non_200_returns_error(self) -> None:
         resp = _make_httpx_response(500, text="Server Error")
         with (
-            patch("ypl.mcp_server.tools.twitter._get_bearer_token", new=AsyncMock(return_value="tok")),
+            patch("ypl.mcp_server.tools.twitter._get_bearer_token", return_value="tok"),
             patch("ypl.mcp_server.tools.twitter._twitter_get", new=AsyncMock(return_value=resp)),
         ):
             result = await search_twitter("test")
@@ -224,7 +224,7 @@ class TestSearchTwitter:
         }
         resp = _make_httpx_response(200, json_data=data)
         with (
-            patch("ypl.mcp_server.tools.twitter._get_bearer_token", new=AsyncMock(return_value="tok")),
+            patch("ypl.mcp_server.tools.twitter._get_bearer_token", return_value="tok"),
             patch("ypl.mcp_server.tools.twitter._twitter_get", new=AsyncMock(return_value=resp)),
         ):
             result = await search_twitter("hello")
@@ -239,7 +239,7 @@ class TestSearchTwitter:
     async def test_timeout_returns_error(self) -> None:
         timeout_err = httpx.TimeoutException("timeout")
         with (
-            patch("ypl.mcp_server.tools.twitter._get_bearer_token", new=AsyncMock(return_value="tok")),
+            patch("ypl.mcp_server.tools.twitter._get_bearer_token", return_value="tok"),
             patch("ypl.mcp_server.tools.twitter._twitter_get", new=AsyncMock(side_effect=timeout_err)),
         ):
             result = await search_twitter("test")
@@ -248,7 +248,7 @@ class TestSearchTwitter:
 
     async def test_generic_exception_returns_error(self) -> None:
         with (
-            patch("ypl.mcp_server.tools.twitter._get_bearer_token", new=AsyncMock(return_value="tok")),
+            patch("ypl.mcp_server.tools.twitter._get_bearer_token", return_value="tok"),
             patch("ypl.mcp_server.tools.twitter._twitter_get", new=AsyncMock(side_effect=RuntimeError("boom"))),
         ):
             result = await search_twitter("test")
@@ -264,7 +264,7 @@ class TestSearchTwitter:
             return _make_httpx_response(200, json_data={"data": [], "includes": {}})
 
         with (
-            patch("ypl.mcp_server.tools.twitter._get_bearer_token", new=AsyncMock(return_value="tok")),
+            patch("ypl.mcp_server.tools.twitter._get_bearer_token", return_value="tok"),
             patch("ypl.mcp_server.tools.twitter._twitter_get", new=AsyncMock(side_effect=fake_twitter_get)),
         ):
             await search_twitter("test", max_results=200)
@@ -295,7 +295,7 @@ class TestGetUserTimeline:
         timeline_resp = _make_httpx_response(200, json_data=timeline_data)
 
         with (
-            patch("ypl.mcp_server.tools.twitter._get_bearer_token", new=AsyncMock(return_value="tok")),
+            patch("ypl.mcp_server.tools.twitter._get_bearer_token", return_value="tok"),
             patch("ypl.mcp_server.tools.twitter._twitter_get", new=AsyncMock(side_effect=[user_resp, timeline_resp])),
         ):
             result = await get_user_timeline("@alice")
@@ -305,7 +305,7 @@ class TestGetUserTimeline:
 
     async def test_bearer_token_error(self) -> None:
         err = ValueError("no secret")
-        with patch("ypl.mcp_server.tools.twitter._get_bearer_token", new=AsyncMock(side_effect=err)):
+        with patch("ypl.mcp_server.tools.twitter._get_bearer_token", side_effect=err):
             result = await get_user_timeline("someuser")
 
         assert "error" in result
@@ -316,7 +316,7 @@ class TestGetUserTimeline:
 
         resp = _make_httpx_response(404)
         with (
-            patch("ypl.mcp_server.tools.twitter._get_bearer_token", new=AsyncMock(return_value="tok")),
+            patch("ypl.mcp_server.tools.twitter._get_bearer_token", return_value="tok"),
             patch("ypl.mcp_server.tools.twitter._twitter_get", new=AsyncMock(return_value=resp)),
         ):
             result = await get_user_timeline("nobody")
@@ -328,7 +328,7 @@ class TestGetUserTimeline:
 
         resp = _make_httpx_response(429)
         with (
-            patch("ypl.mcp_server.tools.twitter._get_bearer_token", new=AsyncMock(return_value="tok")),
+            patch("ypl.mcp_server.tools.twitter._get_bearer_token", return_value="tok"),
             patch("ypl.mcp_server.tools.twitter._twitter_get", new=AsyncMock(return_value=resp)),
         ):
             result = await get_user_timeline("ratelimited")
@@ -340,7 +340,7 @@ class TestGetUserTimeline:
 
         resp = _make_httpx_response(503)
         with (
-            patch("ypl.mcp_server.tools.twitter._get_bearer_token", new=AsyncMock(return_value="tok")),
+            patch("ypl.mcp_server.tools.twitter._get_bearer_token", return_value="tok"),
             patch("ypl.mcp_server.tools.twitter._twitter_get", new=AsyncMock(return_value=resp)),
         ):
             result = await get_user_timeline("baduser")
@@ -352,7 +352,7 @@ class TestGetUserTimeline:
 
         resp = _make_httpx_response(200, json_data={"data": None})
         with (
-            patch("ypl.mcp_server.tools.twitter._get_bearer_token", new=AsyncMock(return_value="tok")),
+            patch("ypl.mcp_server.tools.twitter._get_bearer_token", return_value="tok"),
             patch("ypl.mcp_server.tools.twitter._twitter_get", new=AsyncMock(return_value=resp)),
         ):
             result = await get_user_timeline("emptyuser")
@@ -381,7 +381,7 @@ class TestGetUserTimeline:
         }
         resp = _make_httpx_response(200, json_data=timeline_data)
         with (
-            patch("ypl.mcp_server.tools.twitter._get_bearer_token", new=AsyncMock(return_value="tok")),
+            patch("ypl.mcp_server.tools.twitter._get_bearer_token", return_value="tok"),
             patch("ypl.mcp_server.tools.twitter._twitter_get", new=AsyncMock(return_value=resp)),
         ):
             result = await get_user_timeline("cached_user")
@@ -396,7 +396,7 @@ class TestGetUserTimeline:
 
         resp = _make_httpx_response(401)
         with (
-            patch("ypl.mcp_server.tools.twitter._get_bearer_token", new=AsyncMock(return_value="tok")),
+            patch("ypl.mcp_server.tools.twitter._get_bearer_token", return_value="tok"),
             patch("ypl.mcp_server.tools.twitter._twitter_get", new=AsyncMock(return_value=resp)),
         ):
             result = await get_user_timeline("auth_fail_user")
@@ -409,7 +409,7 @@ class TestGetUserTimeline:
 
         timeout_err = httpx.TimeoutException("timeout")
         with (
-            patch("ypl.mcp_server.tools.twitter._get_bearer_token", new=AsyncMock(return_value="tok")),
+            patch("ypl.mcp_server.tools.twitter._get_bearer_token", return_value="tok"),
             patch("ypl.mcp_server.tools.twitter._twitter_get", new=AsyncMock(side_effect=timeout_err)),
         ):
             result = await get_user_timeline("timeout_user")
@@ -422,7 +422,7 @@ class TestGetUserTimeline:
 
         resolve_timeout = httpx.TimeoutException("timeout")
         with (
-            patch("ypl.mcp_server.tools.twitter._get_bearer_token", new=AsyncMock(return_value="tok")),
+            patch("ypl.mcp_server.tools.twitter._get_bearer_token", return_value="tok"),
             patch("ypl.mcp_server.tools.twitter._twitter_get", new=AsyncMock(side_effect=resolve_timeout)),
         ):
             result = await get_user_timeline("slow_user")
@@ -443,7 +443,7 @@ class TestGetTweet:
 
     async def test_bearer_token_error(self) -> None:
         bearer_err = ValueError("no secret")
-        with patch("ypl.mcp_server.tools.twitter._get_bearer_token", new=AsyncMock(side_effect=bearer_err)):
+        with patch("ypl.mcp_server.tools.twitter._get_bearer_token", side_effect=bearer_err):
             result = await get_tweet("12345678901234567")
 
         assert "no secret" in result["error"]
@@ -451,7 +451,7 @@ class TestGetTweet:
     async def test_401_returns_auth_error(self) -> None:
         resp = _make_httpx_response(401)
         with (
-            patch("ypl.mcp_server.tools.twitter._get_bearer_token", new=AsyncMock(return_value="tok")),
+            patch("ypl.mcp_server.tools.twitter._get_bearer_token", return_value="tok"),
             patch("ypl.mcp_server.tools.twitter._twitter_get", new=AsyncMock(return_value=resp)),
         ):
             result = await get_tweet("12345678901234567")
@@ -461,7 +461,7 @@ class TestGetTweet:
     async def test_429_returns_rate_limit_error(self) -> None:
         resp = _make_httpx_response(429)
         with (
-            patch("ypl.mcp_server.tools.twitter._get_bearer_token", new=AsyncMock(return_value="tok")),
+            patch("ypl.mcp_server.tools.twitter._get_bearer_token", return_value="tok"),
             patch("ypl.mcp_server.tools.twitter._twitter_get", new=AsyncMock(return_value=resp)),
         ):
             result = await get_tweet("12345678901234567")
@@ -471,7 +471,7 @@ class TestGetTweet:
     async def test_non_200_returns_error(self) -> None:
         resp = _make_httpx_response(503, text="Service Unavailable")
         with (
-            patch("ypl.mcp_server.tools.twitter._get_bearer_token", new=AsyncMock(return_value="tok")),
+            patch("ypl.mcp_server.tools.twitter._get_bearer_token", return_value="tok"),
             patch("ypl.mcp_server.tools.twitter._twitter_get", new=AsyncMock(return_value=resp)),
         ):
             result = await get_tweet("12345678901234567")
@@ -482,7 +482,7 @@ class TestGetTweet:
         data = {"data": None, "errors": [{"detail": "Tweet not found (deleted)"}]}
         resp = _make_httpx_response(200, json_data=data)
         with (
-            patch("ypl.mcp_server.tools.twitter._get_bearer_token", new=AsyncMock(return_value="tok")),
+            patch("ypl.mcp_server.tools.twitter._get_bearer_token", return_value="tok"),
             patch("ypl.mcp_server.tools.twitter._twitter_get", new=AsyncMock(return_value=resp)),
         ):
             result = await get_tweet("12345678901234567")
@@ -517,7 +517,7 @@ class TestGetTweet:
         }
         resp = _make_httpx_response(200, json_data=data)
         with (
-            patch("ypl.mcp_server.tools.twitter._get_bearer_token", new=AsyncMock(return_value="tok")),
+            patch("ypl.mcp_server.tools.twitter._get_bearer_token", return_value="tok"),
             patch("ypl.mcp_server.tools.twitter._twitter_get", new=AsyncMock(return_value=resp)),
         ):
             result = await get_tweet("123")
@@ -545,7 +545,7 @@ class TestGetTweet:
         }
         resp = _make_httpx_response(200, json_data=data)
         with (
-            patch("ypl.mcp_server.tools.twitter._get_bearer_token", new=AsyncMock(return_value="tok")),
+            patch("ypl.mcp_server.tools.twitter._get_bearer_token", return_value="tok"),
             patch("ypl.mcp_server.tools.twitter._twitter_get", new=AsyncMock(return_value=resp)),
         ):
             result = await get_tweet("https://x.com/user/status/9999")
@@ -558,7 +558,7 @@ class TestGetTweet:
     async def test_timeout_returns_error(self) -> None:
         tweet_timeout = httpx.TimeoutException("timeout")
         with (
-            patch("ypl.mcp_server.tools.twitter._get_bearer_token", new=AsyncMock(return_value="tok")),
+            patch("ypl.mcp_server.tools.twitter._get_bearer_token", return_value="tok"),
             patch("ypl.mcp_server.tools.twitter._twitter_get", new=AsyncMock(side_effect=tweet_timeout)),
         ):
             result = await get_tweet("12345678901234567")
@@ -567,7 +567,7 @@ class TestGetTweet:
 
     async def test_generic_exception_returns_error(self) -> None:
         with (
-            patch("ypl.mcp_server.tools.twitter._get_bearer_token", new=AsyncMock(return_value="tok")),
+            patch("ypl.mcp_server.tools.twitter._get_bearer_token", return_value="tok"),
             patch("ypl.mcp_server.tools.twitter._twitter_get", new=AsyncMock(side_effect=RuntimeError("boom"))),
         ):
             result = await get_tweet("12345678901234567")

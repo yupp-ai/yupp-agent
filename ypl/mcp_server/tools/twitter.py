@@ -12,12 +12,9 @@ import asyncio
 import re
 import time
 from datetime import UTC, datetime, timedelta
-from functools import lru_cache
 from typing import Any
 
 import httpx
-from google.api_core import exceptions as core_exceptions
-from google.cloud import secretmanager_v1 as secretmanager
 
 from ypl.backend.config import settings
 from ypl.mcp_server.core import mcp_server
@@ -31,7 +28,6 @@ _X_API_TWEET_LOOKUP_URL = _X_API_BASE_URL + "/tweets/{tweet_id}"
 _X_API_USER_BY_USERNAME_URL = _X_API_BASE_URL + "/users/by/username/{username}"
 _X_API_USER_TWEETS_URL = _X_API_BASE_URL + "/users/{user_id}/tweets"
 
-_X_API_BEARER_TOKEN_SECRET_NAME = "twitter-api-bearer-token"
 _MAX_RESULTS_LIMIT = 100
 _RATE_LIMIT_WAIT_SECONDS = 60
 _SINCE_HOURS_MIN = 1
@@ -54,33 +50,17 @@ _USER_ID_CACHE: dict[str, tuple[str, float]] = {}
 _USER_ID_CACHE_TTL_SECONDS = 86400  # 24 hours
 
 
-@lru_cache
-def _get_secret_manager_client() -> secretmanager.SecretManagerServiceAsyncClient:
-    """Return a cached async Secret Manager client."""
-    return secretmanager.SecretManagerServiceAsyncClient()
+def _get_bearer_token() -> str:
+    """Return the X / Twitter API bearer token from ``settings.X_API_BEARER_TOKEN``.
 
-
-# TODO: Extract _get_secret_manager_client + _get_bearer_token into a shared GCP Secret Manager
-# util (e.g. ypl/backend/utils/gcp_secrets.py) so other modules (SAG, etc.) can reuse it
-# without copy-pasting the client setup. Tracked in PR #11258 review.
-async def _get_bearer_token() -> str:
-    """Fetch the X/Twitter API bearer token from GCP Secret Manager.
-
-    Called at request time — never cached in memory to avoid accidental exposure.
-    Raises ValueError if the secret cannot be retrieved.
+    The value is loaded from env (or ``.env``) at process start. Rotating the
+    token requires restarting the process, which is consistent with how every
+    other secret is handled in the monolith.
     """
-    if not settings.GCP_PROJECT_ID:
-        raise ValueError("GCP_PROJECT_ID not configured; cannot fetch Twitter bearer token")
-
-    client = _get_secret_manager_client()
-    name = f"projects/{settings.GCP_PROJECT_ID}/secrets/{_X_API_BEARER_TOKEN_SECRET_NAME}/versions/latest"
-    try:
-        response = await client.access_secret_version(request={"name": name}, timeout=5.0)
-        return response.payload.data.decode("UTF-8")
-    except core_exceptions.NotFound:
-        raise ValueError(f"GCP secret '{_X_API_BEARER_TOKEN_SECRET_NAME}' not found") from None
-    except Exception as e:
-        raise ValueError(f"Failed to fetch Twitter bearer token from Secret Manager: {e}") from e
+    token = settings.X_API_BEARER_TOKEN
+    if not token:
+        raise ValueError("X_API_BEARER_TOKEN is not set; configure it in .env to enable X/Twitter search tools.")
+    return token
 
 
 async def _twitter_get(
@@ -166,7 +146,7 @@ async def search_twitter(
     since_hours = max(_SINCE_HOURS_MIN, min(since_hours, _SINCE_HOURS_MAX))
 
     try:
-        bearer_token = await _get_bearer_token()
+        bearer_token = _get_bearer_token()
     except ValueError as e:
         return {"error": str(e)}
 
@@ -261,7 +241,7 @@ async def get_user_timeline(
     since_hours = max(_SINCE_HOURS_MIN, min(since_hours, _SINCE_HOURS_MAX))
 
     try:
-        bearer_token = await _get_bearer_token()
+        bearer_token = _get_bearer_token()
     except ValueError as e:
         return {"error": str(e)}
 
@@ -392,7 +372,7 @@ async def get_tweet(
         }
 
     try:
-        bearer_token = await _get_bearer_token()
+        bearer_token = _get_bearer_token()
     except ValueError as e:
         return {"error": str(e)}
 

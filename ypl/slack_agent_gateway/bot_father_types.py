@@ -79,6 +79,13 @@ class BotCreationRecord(BaseModel):
     oauth_client_id: str | None = Field(None, description="OAuth client ID for the app")
     oauth_client_secret: str | None = Field(None, description="OAuth client secret (encrypted or redacted in logs)")
     oauth_install_url: str | None = Field(None, description="URL for admin to click to complete OAuth install")
+    signing_secret_encrypted: str | None = Field(
+        None,
+        description=(
+            "Fernet-encrypted Slack app signing secret. Captured when the app is created, "
+            "then written onto the slack_agents row alongside the bot token after OAuth completes."
+        ),
+    )
 
     # Set after OAuth completion (Phase 2)
     completed_at: datetime | None = Field(None, description="When the bot was fully created")

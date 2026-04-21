@@ -1,2 +1,0 @@
-# Environment variables specific to slack-agent-gateway in production
-env_vars: {}

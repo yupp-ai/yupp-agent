@@ -1712,25 +1712,6 @@ protobuf = ">=3.20.2,<4.21.0 || >4.21.0,<4.21.1 || >4.21.1,<4.21.2 || >4.21.2,<4
 pandas = ["pandas (>=0.23.2)"]
 
 [[package]]
-name = "google-cloud-secret-manager"
-version = "2.25.0"
-description = "Google Cloud Secret Manager API client library"
-optional = false
-python-versions = ">=3.7"
-files = [
-    {file = "google_cloud_secret_manager-2.25.0-py3-none-any.whl", hash = "sha256:eaf1adce3ff5dc0f24335709eba3410dc7e9d20aeea3e8df5b758e27080ebf14"},
-    {file = "google_cloud_secret_manager-2.25.0.tar.gz", hash = "sha256:a3792bb1cb307326908297a61536031ac94852c22248f04ae112ff51a853b561"},
-]
-
-[package.dependencies]
-google-api-core = {version = ">=1.34.1,<2.0.dev0 || >=2.11.dev0,<3.0.0", extras = ["grpc"]}
-google-auth = ">=2.14.1,<2.24.0 || >2.24.0,<2.25.0 || >2.25.0,<3.0.0"
-grpc-google-iam-v1 = ">=0.14.0,<1.0.0"
-grpcio = ">=1.33.2,<2.0.0"
-proto-plus = ">=1.22.3,<2.0.0"
-protobuf = ">=3.20.2,<4.21.0 || >4.21.0,<4.21.1 || >4.21.1,<4.21.2 || >4.21.2,<4.21.3 || >4.21.3,<4.21.4 || >4.21.4,<4.21.5 || >4.21.5,<7.0.0"
-
-[[package]]
 name = "google-cloud-sqlcommenter"
 version = "2.0.0"
 description = "Augment SQL statements with meta information about frameworks and the running environment."
@@ -6497,4 +6478,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.12,<3.13"
-content-hash = "2db24eea1bc8d7a98cbd6bee75abcb2efe792d66964b25c47f1a54b38db6a186"
+content-hash = "72a2acdda2c16653ac1085ac13d4e26720df8d96c6d5edbdf7b6e37c6ff0f549"
