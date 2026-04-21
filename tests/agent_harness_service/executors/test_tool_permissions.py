@@ -244,7 +244,7 @@ class TestBuildArgsToolFlags:
         tools = args[idx + 1].split(",")
         assert "Read" in tools
         assert "mcp__harness__*" in tools
-        assert "mcp__yuppster-mcp-server__*" in tools
+        assert "mcp__agcouch-mcp-server__*" in tools
 
     def test_deny_all_with_mcp_restricted(self) -> None:
         """*:deny with MCP but restricted access appends only restricted harness tools."""

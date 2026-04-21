@@ -45,8 +45,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse, Response
 
 # Import mcp_tools to trigger @mcp_server.tool() decorator registration for all
-# yuppster MCP tools.  This is a side-effect-only import -- without it the
-# yuppster FastMCP instance has an empty tool registry.
+# agcouch MCP tools.  This is a side-effect-only import -- without it the
+# agcouch FastMCP instance has an empty tool registry.
 import ypl.mcp_server.mcp_tools  # noqa: F401
 from ypl.agent_harness_service.common.auth import verify_api_key
 from ypl.agent_harness_service.host_path_guard import HostPathGuardMiddleware
@@ -145,7 +145,7 @@ async def combined_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
       1. AHS (wires orchestration callbacks, starts warm process pool,
          launches scheduler, creates unified MCP lifespan context)
       2. Enter unified MCP lifespan (via AHSState._mcp_lifespan_ctx)
-      3. register_unified_tools() -- copy all tools from harness + yuppster
+      3. register_unified_tools() -- copy all tools from harness + agcouch
          FastMCP instances into the unified instance
       4. Yuppster batch-system init (mcp_startup)
       5. Enabled gateway plugins in registration order (see discover_plugins)
@@ -169,7 +169,7 @@ async def combined_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     async with ahs_state._mcp_lifespan_ctx:
         try:
             # --- 3. Tool registration ------------------------------------------
-            # Both harness and yuppster tool registrations have already fired at
+            # Both harness and agcouch tool registrations have already fired at
             # module load time via side-effect imports (local_mcp_server import +
             # mcp_tools import at the top of this file).  register_unified_tools()
             # copies the fully-populated tool registries into unified_mcp.

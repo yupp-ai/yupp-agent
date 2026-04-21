@@ -25,8 +25,8 @@ from ypl.mcp_common.scheduled_agent_call_helpers import (
     edit_agent_schedule_fields,
     parse_execute_at,
     parse_schedule_context,
+    resolve_user_id,
     resolve_user_id_from_email,
-    resolve_yuppster_user_id,
     validate_cron_expression,
     validate_timezone,
 )
@@ -130,7 +130,7 @@ async def create_agent_schedule_tool(
             auth_email = get_authenticated_user_email()
             if auth_email == "unknown":
                 return {"success": False, "error": "Authentication required to create agent schedules"}
-            created_by_user, user_error = await resolve_yuppster_user_id(email=auth_email)
+            created_by_user, user_error = await resolve_user_id(email=auth_email)
             if user_error:
                 return {"success": False, "error": user_error}
 
@@ -196,7 +196,7 @@ async def create_recurring_agent_schedule_tool(
             auth_email = get_authenticated_user_email()
             if auth_email == "unknown":
                 return {"success": False, "error": "Authentication required to create agent schedules"}
-            created_by_user, user_error = await resolve_yuppster_user_id(email=auth_email)
+            created_by_user, user_error = await resolve_user_id(email=auth_email)
             if user_error:
                 return {"success": False, "error": user_error}
 

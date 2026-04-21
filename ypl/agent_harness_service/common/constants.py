@@ -6,6 +6,8 @@ import uuid as _uuid
 from contextvars import ContextVar
 from typing import Any
 
+from ypl.backend.config import settings
+
 # Filesystem paths (configurable via env vars for local dev)
 # In production: AHS_DATA_DIR=/data (mounted volume).
 # In local dev: falls back to /tmp/ahs when /data doesn't exist.
@@ -192,8 +194,15 @@ HARNESS_TO_CLI_TOOL_MAP: dict[str, str] = {
 _CLI_TOOLS_SUPERSEDED_BY_MCP: list[str] = []
 
 # All known MCP server names that a session can be granted access to.
-# These must match the actual keys in .mcp.json (and the dynamically injected "harness").
-ALL_MCP_SERVERS: list[str] = ["harness", "yuppster-mcp-server"]
+# These must match the actual keys in .mcp.json (and the dynamically
+# injected ``harness``). ``settings.AGCOUCH_MCP_SERVER_NAME`` is resolved
+# at import time so tests that override settings still see the default
+# here; actual connection wiring in ``mcp_client.py`` re-reads the
+# setting at runtime.
+#
+# TODO(phase-9): externally-registered MCP servers (from the DB registry)
+# will be appended to this list at runtime when the session starts.
+ALL_MCP_SERVERS: list[str] = ["harness", settings.AGCOUCH_MCP_SERVER_NAME]
 
 # Harness MCP tools that require USE_MCP permission (bare names, no CLI prefix).
 # Used by both the harnessed path (runner.py, with mcp__harness__ prefix) and

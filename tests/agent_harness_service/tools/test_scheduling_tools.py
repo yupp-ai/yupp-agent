@@ -27,7 +27,7 @@ INVALID_SESSION = "not-a-uuid"
 def _mock_session_and_agent() -> tuple[MagicMock, MagicMock]:
     """Return (session, agent) mocks."""
     session = MagicMock()
-    session.context = {"user_id": "user-abc", "is_yuppster": True}
+    session.context = {"user_id": "user-abc", "is_agcouch": True}
     agent = MagicMock()
     agent.name = "sre"
     return session, agent
@@ -149,7 +149,7 @@ class TestScheduleAgentCall:
         assert result["success"] is False
         assert "JSON" in result["error"]
 
-    async def test_non_yuppster_rejected(self) -> None:
+    async def test_non_agcouch_rejected(self) -> None:
         session, agent = _mock_session_and_agent()
         with (
             _patch_get_session_and_agent(session=session, agent=agent),
@@ -162,7 +162,7 @@ class TestScheduleAgentCall:
                 "ypl.agent_harness_service.tools.scheduling.parse_schedule_context",
                 return_value=({}, None),
             ),
-            _patch_resolve_creator(error="Only Yuppsters can schedule"),
+            _patch_resolve_creator(error="Only Agcouchs can schedule"),
         ):
             result = await schedule_agent_call(
                 session_id=VALID_SESSION,
@@ -172,7 +172,7 @@ class TestScheduleAgentCall:
             )
 
         assert result["success"] is False
-        assert "Yuppster" in result["error"]
+        assert "Agcouch" in result["error"]
 
     async def test_success(self) -> None:
         session, agent = _mock_session_and_agent()

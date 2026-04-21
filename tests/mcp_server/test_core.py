@@ -139,10 +139,11 @@ class TestCreateMcpServer:
 
         with patch("ypl.mcp_server.core.settings") as mock_settings:
             mock_settings.MCP_SERVER_MODE = "DEV_TOKEN"
+            mock_settings.AGCOUCH_MCP_SERVER_NAME = "agcouch-mcp-server"
             server = _create_mcp_server()
 
         assert isinstance(server, FastMCP)
-        assert server.name == "yuppster-mcp-server"
+        assert server.name == "agcouch-mcp-server"
 
     def test_oauth_mode_creates_server_with_auth(self) -> None:
         from fastmcp import FastMCP
@@ -153,6 +154,7 @@ class TestCreateMcpServer:
 
         with patch("ypl.mcp_server.core.settings") as mock_settings:
             mock_settings.MCP_SERVER_MODE = "OAUTH"
+            mock_settings.AGCOUCH_MCP_SERVER_NAME = "agcouch-mcp-server"
             with patch.dict(
                 "sys.modules",
                 {

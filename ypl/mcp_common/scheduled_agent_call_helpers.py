@@ -1,6 +1,7 @@
 """Shared helper functions for agent schedules.
 
-Used by both yuppster MCP server, AHS local MCP server, and AHS REST endpoints.
+Used by the agcouch MCP server, the AHS local MCP server, and AHS REST
+endpoints.
 """
 
 import json
@@ -71,12 +72,12 @@ async def resolve_email_from_user_id(user_id: str) -> str | None:
         return None
 
 
-async def resolve_yuppster_user_id(
+async def resolve_user_id(
     email: str | None = None,
     user_id: str | None = None,
     slack_user_id: str | None = None,
 ) -> tuple[str | None, str | None]:
-    """Resolve user identity to user_id and verify they are a Yuppster.
+    """Resolve any user identifier to the platform ``user_id``.
 
     These three identifiers are mutually exclusive - pass exactly ONE:
     - email: Direct email lookup (most common)
@@ -132,11 +133,11 @@ async def resolve_yuppster_user_id(
         return user.user_id, None
 
 
-async def resolve_yuppster_from_context(context: dict[str, Any] | None) -> tuple[str | None, str | None]:
-    """Resolve user identity from session context and verify they are a Yuppster.
+async def resolve_user_id_from_context(context: dict[str, Any] | None) -> tuple[str | None, str | None]:
+    """Resolve a platform ``user_id`` from a session context dict.
 
     Checks context keys in order: slack_user_email, user_email, user_id, slack_user_id.
-    For slack_user_id, calls Slack API to resolve the email first.
+    For slack_user_id, calls the Slack API to resolve the email first.
 
     Args:
         context: Session context dict with user identity fields
@@ -150,17 +151,17 @@ async def resolve_yuppster_from_context(context: dict[str, Any] | None) -> tuple
     # Try email-based lookup first (most reliable)
     email = context.get("slack_user_email") or context.get("user_email")
     if email:
-        return await resolve_yuppster_user_id(email=email)
+        return await resolve_user_id(email=email)
 
     # Try direct user_id lookup
     uid = context.get("user_id")
     if uid:
-        return await resolve_yuppster_user_id(user_id=uid)
+        return await resolve_user_id(user_id=uid)
 
     # Try slack_user_id (requires API call)
     slack_uid = context.get("slack_user_id")
     if slack_uid:
-        return await resolve_yuppster_user_id(slack_user_id=slack_uid)
+        return await resolve_user_id(slack_user_id=slack_uid)
 
     return None, "No valid user identifier in session context (need email, user_id, or slack_user_id)"
 

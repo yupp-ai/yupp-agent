@@ -1,7 +1,7 @@
 """E2E tests for AHS project and task lifecycle via MCP tools + REST API.
 
 Projects and tasks are created via MCP tools (add_project, add_tasks) called over
-JSON-RPC 2.0 at /mcp/. Auth uses YUPPSTER_MCP_TOKEN (Bearer yupp_dev_*).
+JSON-RPC 2.0 at /mcp/. Auth uses AGCOUCH_MCP_TOKEN (Bearer yupp_dev_*).
 CRUD, status transitions, and dependency cascade are tested via REST API.
 """
 

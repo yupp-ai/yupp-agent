@@ -3,7 +3,7 @@
 This module is the business-logic layer for the AHS → Linear push direction.
 It can be invoked from two entry points:
 
-1. **Agent-initiated (MCP)**: Called from the yuppster MCP server tool
+1. **Agent-initiated (MCP)**: Called from the agcouch MCP server tool
    ``export_project_to_linear`` (``ypl/mcp_server/tools/linear_sync.py``),
    allowing agents to explicitly trigger a sync when needed.
 

@@ -131,7 +131,7 @@ separate replica. Copy the `POSTGRES_*_READ_REPLICA` vars from the main backend 
 | `GATEWAY_BASE_URL` | Main backend URL for Slack reply callbacks |
 | `X_API_KEY` | API key for authenticating with the gateway (outbound callbacks) |
 | `OPENAI_API_KEY` | For Codex CLI and raw executor OpenAI models |
-| `YUPPSTER_MCP_TOKEN` | Token for yuppster MCP server access (agents with MCP) |
+| `AGCOUCH_MCP_TOKEN` | Token for agcouch MCP server access (agents with MCP) |
 | `GCP_PROJECT_ID` | For structured logging |
 | `GITHUB_TOKEN` | Alternative to `gh auth login` |
 | `AHS_SCHEDULER_ENABLED` | Set to `false` to disable the scheduler (default: `true`) |

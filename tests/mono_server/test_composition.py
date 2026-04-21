@@ -85,7 +85,7 @@ class TestRouteRegistration:
         assert ahs_paths, f"No /ahs routes found. All paths: {paths}"
 
     def test_unified_mcp_mounted(self) -> None:
-        """Unified MCP (harness + yuppster) is mounted at /mcp."""
+        """Unified MCP (harness + agcouch) is mounted at /mcp."""
         from ypl.mono_server.server import app
 
         mounts = _mount_paths(app)
@@ -97,7 +97,7 @@ class TestRouteRegistration:
 
         mounts = _mount_paths(app)
         assert "/mcp/harness" in mounts, f"Missing /mcp/harness legacy mount: {mounts}"
-        assert "/mcp/yuppster" not in mounts, f"Unexpected /mcp/yuppster mount: {mounts}"
+        assert "/mcp/agcouch" not in mounts, f"Unexpected /mcp/agcouch mount: {mounts}"
 
     def test_slack_gateway_routes_present_by_default(self) -> None:
         """SAG routes are present when GATEWAY_SLACK_ENABLED=true (default)."""

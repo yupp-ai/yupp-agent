@@ -1,7 +1,7 @@
 """Unified MCP server for monolith mode.
 
 A single :class:`fastmcp.FastMCP` instance that exposes all tools from both
-the *harness MCP* (for agents) and the *yuppster MCP* (for developers),
+the *harness MCP* (for agents) and the *agcouch MCP* (for developers),
 mounted at a single ``/mcp`` endpoint.
 
 Authentication is header-based — callers identify themselves via one of two
@@ -14,7 +14,7 @@ mutually exclusive paths:
 
 * **Developer path** — ``Authorization: Bearer yupp_dev_*``.  Validates
   the dev-token against yuppdb (``MCPDevToken`` table) and populates
-  ``request_context`` so yuppster tools can identify the caller.  If yuppdb
+  ``request_context`` so agcouch tools can identify the caller.  If yuppdb
   is not configured (one-box mode without the product database), returns
   HTTP 503 with a descriptive message rather than crashing.
 
@@ -55,7 +55,7 @@ logger = get_logger()
 # Unified FastMCP instance
 # ---------------------------------------------------------------------------
 
-#: Single FastMCP instance that combines all harness and yuppster tools.
+#: Single FastMCP instance that combines all harness and agcouch tools.
 #: Tools are populated by :func:`register_unified_tools` during startup.
 unified_mcp: FastMCP = FastMCP("unified-mcp")
 
@@ -76,7 +76,7 @@ class UnifiedMcpAuthMiddleware(BaseHTTPMiddleware):
        Sets ``mcp_session_id_var`` so harness tools can identify the session.
 
     2. **Developer path**: ``Authorization: Bearer yupp_dev_*``.
-       Validated against yuppdb.  Sets ``request_context`` so yuppster tools
+       Validated against yuppdb.  Sets ``request_context`` so agcouch tools
        can identify the caller.  Returns HTTP 503 when yuppdb is unavailable
        (e.g. one-box mode without the product database).
 
@@ -209,7 +209,7 @@ class UnifiedMcpAuthMiddleware(BaseHTTPMiddleware):
                 detail = "Invalid token"
             return JSONResponse(content={"detail": detail}, status_code=401)
 
-        # Valid token — populate request_context for yuppster tools.
+        # Valid token — populate request_context for agcouch tools.
         ctx = create_request_context(db_token, request)
         cv_token = request_context.set(ctx)
         try:
@@ -250,8 +250,8 @@ async def register_unified_tools() -> None:
 
     * ``harness_mcp`` (from :mod:`ypl.agent_harness_service.tools.local_mcp_server`)
       has all harness tools registered via ``@mcp.tool()`` decorators.
-    * ``yuppster_mcp_server`` (from :mod:`ypl.mcp_server.core`) has all
-      yuppster tools registered via ``@mcp_server.tool()`` decorators.
+    * ``agcouch_mcp_server`` (from :mod:`ypl.mcp_server.core`) has all
+      agcouch tools registered via ``@mcp_server.tool()`` decorators.
 
     Uses :meth:`fastmcp.FastMCP.import_server` which copies tool *definitions*
     from the source servers into :data:`unified_mcp`.  Middleware and
@@ -273,13 +273,13 @@ async def register_unified_tools() -> None:
             return
 
         from ypl.agent_harness_service.tools.local_mcp_server import mcp as harness_mcp
-        from ypl.mcp_server.core import mcp_server as yuppster_mcp
+        from ypl.mcp_server.core import mcp_server as agcouch_mcp
 
         await unified_mcp.import_server(harness_mcp)
         logger.info("Unified MCP: imported harness tools")
 
-        await unified_mcp.import_server(yuppster_mcp)
-        logger.info("Unified MCP: imported yuppster tools")
+        await unified_mcp.import_server(agcouch_mcp)
+        logger.info("Unified MCP: imported agcouch tools")
 
         tools = await unified_mcp.get_tools()
         logger.info("Unified MCP ready", tool_count=len(tools))

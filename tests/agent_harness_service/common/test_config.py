@@ -292,7 +292,7 @@ class TestLoadAgentConfig:
     def test_required_tools_loaded(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         agent_dir = tmp_path / "tool-agent"
         agent_dir.mkdir()
-        tools = ["mcp__harness__send_slack_message", "mcp__yuppster-mcp-server__query_agentdb"]
+        tools = ["mcp__harness__send_slack_message", "mcp__agcouch-mcp-server__query_agentdb"]
         self._write_config(agent_dir, {"required_tools": tools, "tool_permissions": {"*": "allow"}})
         import ypl.agent_harness_service.common.config as _config
 

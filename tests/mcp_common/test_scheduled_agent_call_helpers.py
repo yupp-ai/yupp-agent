@@ -11,8 +11,8 @@ Covers pure-logic functions that require no live database:
 And DB-backed functions with mocked sessions:
   - resolve_user_id_from_email
   - resolve_email_from_user_id
-  - resolve_yuppster_user_id
-  - resolve_yuppster_from_context
+  - resolve_user_id
+  - resolve_user_id_from_context
   - create_agent_schedule
   - edit_agent_schedule_fields
   - list_agent_schedules_by_filters
@@ -472,21 +472,21 @@ class TestResolveEmailFromUserId:
 
 
 # ---------------------------------------------------------------------------
-# resolve_yuppster_user_id (DB mocked)
+# resolve_user_id (DB mocked)
 # ---------------------------------------------------------------------------
 
 
 class TestResolveYuppsterUserId:
     async def test_no_identifiers_returns_error(self) -> None:
-        from ypl.mcp_common.scheduled_agent_call_helpers import resolve_yuppster_user_id
+        from ypl.mcp_common.scheduled_agent_call_helpers import resolve_user_id
 
-        user_id, err = await resolve_yuppster_user_id()
+        user_id, err = await resolve_user_id()
         assert user_id is None
         assert err is not None
         assert "No user identifier" in err
 
     async def test_email_lookup_success(self) -> None:
-        from ypl.mcp_common.scheduled_agent_call_helpers import resolve_yuppster_user_id
+        from ypl.mcp_common.scheduled_agent_call_helpers import resolve_user_id
 
         mock_user = MagicMock()
         mock_user.user_id = "user-abc"
@@ -496,13 +496,13 @@ class TestResolveYuppsterUserId:
         ctx = _make_ctx_manager(session)
 
         with patch("ypl.mcp_common.scheduled_agent_call_helpers.get_async_session", return_value=ctx):
-            uid, err = await resolve_yuppster_user_id(email="test@example.com")
+            uid, err = await resolve_user_id(email="test@example.com")
 
         assert err is None
         assert uid == "user-abc"
 
     async def test_user_id_lookup_success(self) -> None:
-        from ypl.mcp_common.scheduled_agent_call_helpers import resolve_yuppster_user_id
+        from ypl.mcp_common.scheduled_agent_call_helpers import resolve_user_id
 
         mock_user = MagicMock()
         mock_user.user_id = "direct-user-id"
@@ -512,13 +512,13 @@ class TestResolveYuppsterUserId:
         ctx = _make_ctx_manager(session)
 
         with patch("ypl.mcp_common.scheduled_agent_call_helpers.get_async_session", return_value=ctx):
-            uid, err = await resolve_yuppster_user_id(user_id="direct-user-id")
+            uid, err = await resolve_user_id(user_id="direct-user-id")
 
         assert err is None
         assert uid == "direct-user-id"
 
     async def test_slack_user_id_resolves_to_email_then_user(self) -> None:
-        from ypl.mcp_common.scheduled_agent_call_helpers import resolve_yuppster_user_id
+        from ypl.mcp_common.scheduled_agent_call_helpers import resolve_user_id
 
         mock_user = MagicMock()
         mock_user.user_id = "user-from-slack"
@@ -534,26 +534,26 @@ class TestResolveYuppsterUserId:
             ),
             patch("ypl.mcp_common.scheduled_agent_call_helpers.get_async_session", return_value=ctx),
         ):
-            uid, err = await resolve_yuppster_user_id(slack_user_id="U12345")
+            uid, err = await resolve_user_id(slack_user_id="U12345")
 
         assert err is None
         assert uid == "user-from-slack"
 
     async def test_slack_user_id_resolution_failure_returns_error(self) -> None:
-        from ypl.mcp_common.scheduled_agent_call_helpers import resolve_yuppster_user_id
+        from ypl.mcp_common.scheduled_agent_call_helpers import resolve_user_id
 
         with patch(
             "ypl.mcp_common.scheduled_agent_call_helpers.get_user_email_from_slack",
             new=AsyncMock(return_value=None),
         ):
-            uid, err = await resolve_yuppster_user_id(slack_user_id="UNKNOWN")
+            uid, err = await resolve_user_id(slack_user_id="UNKNOWN")
 
         assert uid is None
         assert err is not None
         assert "Could not resolve" in err
 
     async def test_deleted_user_returns_error(self) -> None:
-        from ypl.mcp_common.scheduled_agent_call_helpers import resolve_yuppster_user_id
+        from ypl.mcp_common.scheduled_agent_call_helpers import resolve_user_id
 
         mock_user = MagicMock()
         mock_user.user_id = "deleted-user"
@@ -563,7 +563,7 @@ class TestResolveYuppsterUserId:
         ctx = _make_ctx_manager(session)
 
         with patch("ypl.mcp_common.scheduled_agent_call_helpers.get_async_session", return_value=ctx):
-            uid, err = await resolve_yuppster_user_id(email="deleted@example.com")
+            uid, err = await resolve_user_id(email="deleted@example.com")
 
         assert uid is None
         assert err is not None
@@ -571,34 +571,34 @@ class TestResolveYuppsterUserId:
 
 
 # ---------------------------------------------------------------------------
-# resolve_yuppster_from_context
+# resolve_user_id_from_context
 # ---------------------------------------------------------------------------
 
 
 class TestResolveYuppsterFromContext:
     async def test_no_context_returns_error(self) -> None:
-        from ypl.mcp_common.scheduled_agent_call_helpers import resolve_yuppster_from_context
+        from ypl.mcp_common.scheduled_agent_call_helpers import resolve_user_id_from_context
 
-        uid, err = await resolve_yuppster_from_context(None)
+        uid, err = await resolve_user_id_from_context(None)
         assert uid is None
         assert err is not None
         assert "No session context" in err
 
     async def test_empty_context_returns_error(self) -> None:
-        from ypl.mcp_common.scheduled_agent_call_helpers import resolve_yuppster_from_context
+        from ypl.mcp_common.scheduled_agent_call_helpers import resolve_user_id_from_context
 
-        uid, err = await resolve_yuppster_from_context({})
+        uid, err = await resolve_user_id_from_context({})
         assert uid is None
         assert err is not None
 
     async def test_slack_user_email_takes_priority(self) -> None:
-        from ypl.mcp_common.scheduled_agent_call_helpers import resolve_yuppster_from_context
+        from ypl.mcp_common.scheduled_agent_call_helpers import resolve_user_id_from_context
 
         with patch(
-            "ypl.mcp_common.scheduled_agent_call_helpers.resolve_yuppster_user_id",
+            "ypl.mcp_common.scheduled_agent_call_helpers.resolve_user_id",
             new=AsyncMock(return_value=("user-123", None)),
         ) as mock_resolve:
-            uid, err = await resolve_yuppster_from_context(
+            uid, err = await resolve_user_id_from_context(
                 {"slack_user_email": "slack@example.com", "user_email": "other@example.com"}
             )
 
@@ -607,37 +607,37 @@ class TestResolveYuppsterFromContext:
         mock_resolve.assert_called_once_with(email="slack@example.com")
 
     async def test_user_email_used_when_no_slack_email(self) -> None:
-        from ypl.mcp_common.scheduled_agent_call_helpers import resolve_yuppster_from_context
+        from ypl.mcp_common.scheduled_agent_call_helpers import resolve_user_id_from_context
 
         with patch(
-            "ypl.mcp_common.scheduled_agent_call_helpers.resolve_yuppster_user_id",
+            "ypl.mcp_common.scheduled_agent_call_helpers.resolve_user_id",
             new=AsyncMock(return_value=("user-456", None)),
         ) as mock_resolve:
-            uid, err = await resolve_yuppster_from_context({"user_email": "user@example.com"})
+            uid, err = await resolve_user_id_from_context({"user_email": "user@example.com"})
 
         assert uid == "user-456"
         mock_resolve.assert_called_once_with(email="user@example.com")
 
     async def test_user_id_context_key(self) -> None:
-        from ypl.mcp_common.scheduled_agent_call_helpers import resolve_yuppster_from_context
+        from ypl.mcp_common.scheduled_agent_call_helpers import resolve_user_id_from_context
 
         with patch(
-            "ypl.mcp_common.scheduled_agent_call_helpers.resolve_yuppster_user_id",
+            "ypl.mcp_common.scheduled_agent_call_helpers.resolve_user_id",
             new=AsyncMock(return_value=("user-789", None)),
         ) as mock_resolve:
-            uid, err = await resolve_yuppster_from_context({"user_id": "user-789"})
+            uid, err = await resolve_user_id_from_context({"user_id": "user-789"})
 
         assert uid == "user-789"
         mock_resolve.assert_called_once_with(user_id="user-789")
 
     async def test_slack_user_id_context_key(self) -> None:
-        from ypl.mcp_common.scheduled_agent_call_helpers import resolve_yuppster_from_context
+        from ypl.mcp_common.scheduled_agent_call_helpers import resolve_user_id_from_context
 
         with patch(
-            "ypl.mcp_common.scheduled_agent_call_helpers.resolve_yuppster_user_id",
+            "ypl.mcp_common.scheduled_agent_call_helpers.resolve_user_id",
             new=AsyncMock(return_value=("user-slack", None)),
         ) as mock_resolve:
-            uid, err = await resolve_yuppster_from_context({"slack_user_id": "U999"})
+            uid, err = await resolve_user_id_from_context({"slack_user_id": "U999"})
 
         assert uid == "user-slack"
         mock_resolve.assert_called_once_with(slack_user_id="U999")

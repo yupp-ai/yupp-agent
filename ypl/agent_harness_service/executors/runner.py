@@ -184,8 +184,7 @@ _ALLOWED_EXACT: frozenset[str] = frozenset(
         # Claude CLI
         "ANTHROPIC_API_KEY",
         # MCP tokens (referenced in .mcp.json via ${VAR})
-        "YUPPSTER_MCP_TOKEN",
-        "YUPPSTER_MCP_TOKEN_STAGING",
+        "AGCOUCH_MCP_TOKEN",
         # Git / GitHub
         "SSH_AUTH_SOCK",
         "GITHUB_TOKEN",
@@ -283,7 +282,7 @@ def build_subprocess_env() -> dict[str, str]:
 
 # CLI-prefixed versions of BLOCKED_HARNESS_TOOLS for --allowedTools / --disallowedTools.
 _BLOCKED_HARNESS_TOOLS_CLI = [f"mcp__harness__{t}" for t in BLOCKED_HARNESS_TOOLS] + [
-    "mcp__yuppster-mcp-server__*",
+    "mcp__agcouch-mcp-server__*",
 ]
 _RESTRICTED_HARNESS_TOOLS_CLI = [
     "mcp__harness__request_feedback",
@@ -316,18 +315,18 @@ _TOP_HARNESS_TOOLS_PREDECLARED: list[str] = [
     "mcp__harness__create_pr",
     "mcp__harness__list_available_repos",
 ]
-_TOP_YUPPSTER_TOOLS_PREDECLARED: list[str] = [
-    "mcp__yuppster-mcp-server__query_yuppdb",
-    "mcp__yuppster-mcp-server__search_gcp_logs",
-    "mcp__yuppster-mcp-server__create_yuppaste",
-    "mcp__yuppster-mcp-server__read_yuppaste",
-    "mcp__yuppster-mcp-server__search_agent_memory",
-    "mcp__yuppster-mcp-server__get_agent_memory",
-    "mcp__yuppster-mcp-server__store_agent_memory",
-    "mcp__yuppster-mcp-server__read_slack_thread",
+_TOP_AGCOUCH_TOOLS_PREDECLARED: list[str] = [
+    "mcp__agcouch-mcp-server__query_yuppdb",
+    "mcp__agcouch-mcp-server__search_gcp_logs",
+    "mcp__agcouch-mcp-server__create_yuppaste",
+    "mcp__agcouch-mcp-server__read_yuppaste",
+    "mcp__agcouch-mcp-server__search_agent_memory",
+    "mcp__agcouch-mcp-server__get_agent_memory",
+    "mcp__agcouch-mcp-server__store_agent_memory",
+    "mcp__agcouch-mcp-server__read_slack_thread",
     # Security incident reporting — pre-declared so SECURITY.md instructions work
     # without a ToolSearch round-trip. Fire-and-forget; never blocks a response.
-    "mcp__yuppster-mcp-server__report_security_incident",
+    "mcp__agcouch-mcp-server__report_security_incident",
 ]
 
 
@@ -666,9 +665,9 @@ class ClaudeCodeRunner(AgentRunner):
                     # (non-deferred). Wildcards follow as catch-alls for the rest.
                     # Explicitly named tools skip ToolSearch discovery; wildcards still defer.
                     allowed.extend(_TOP_HARNESS_TOOLS_PREDECLARED)
-                    allowed.extend(_TOP_YUPPSTER_TOOLS_PREDECLARED)
+                    allowed.extend(_TOP_AGCOUCH_TOOLS_PREDECLARED)
                     allowed.append("mcp__harness__*")
-                    allowed.append("mcp__yuppster-mcp-server__*")
+                    allowed.append("mcp__agcouch-mcp-server__*")
                 else:
                     allowed.extend(_RESTRICTED_HARNESS_TOOLS_CLI)
             # When the allowed list is empty, Claude CLI ignores --allowedTools ""

@@ -19,9 +19,9 @@ from ypl.agent_harness_service.executors.mcp_config import (
 # Minimal base .mcp.json content used across tests
 _BASE_MCP_JSON: dict[str, Any] = {
     "mcpServers": {
-        "yuppster-mcp-server": {
+        "agcouch-mcp-server": {
             "type": "http",
-            "url": "http://mcp.internal/yuppster/",
+            "url": "http://mcp.internal/agcouch/",
             "headers": {},
         },
     }
@@ -71,56 +71,56 @@ class TestResolveMcpServers:
         assert servers["harness"]["headers"]["X-AHS-Session-ID"] == "my-session-123"
 
     def test_full_access_keeps_all_servers(self) -> None:
-        """Full access permissions keeps both yuppster and harness servers."""
+        """Full access permissions keeps both agcouch and harness servers."""
         perms = SessionPermissions.full_access()
         ctx: dict[str, Any] = {"permissions": perms.model_dump(mode="json")}
         with _patch_base_mcp():
             servers = resolve_mcp_servers(session_id="sess-1", session_context=ctx)
         assert "harness" in servers
-        assert "yuppster-mcp-server" in servers
+        assert "agcouch-mcp-server" in servers
 
-    def test_restricted_permissions_removes_yuppster(self) -> None:
+    def test_restricted_permissions_removes_agcouch(self) -> None:
         """Restricted permissions removes servers not in allowed_servers list."""
         perms = SessionPermissions.restricted()  # allowed_servers=["harness"]
         ctx: dict[str, Any] = {"permissions": perms.model_dump(mode="json")}
         with _patch_base_mcp():
             servers = resolve_mcp_servers(session_id="sess-1", session_context=ctx)
         assert "harness" in servers
-        assert "yuppster-mcp-server" not in servers
+        assert "agcouch-mcp-server" not in servers
 
     def test_slack_session_without_permissions_is_restricted(self) -> None:
         """Slack session with no permissions defaults to restricted (fail-secure)."""
         with _patch_base_mcp():
             servers = resolve_mcp_servers(session_id="sess-1", is_slack=True)
-        # Only harness should be present (restricted removes yuppster)
+        # Only harness should be present (restricted removes agcouch)
         assert "harness" in servers
-        assert "yuppster-mcp-server" not in servers
+        assert "agcouch-mcp-server" not in servers
 
-    def test_yuppster_gets_user_id_header(self) -> None:
-        """User ID from session context is injected into yuppster headers."""
+    def test_agcouch_gets_user_id_header(self) -> None:
+        """User ID from session context is injected into agcouch headers."""
         ctx: dict[str, Any] = {"user_id": "user-abc-123"}
         with _patch_base_mcp():
             servers = resolve_mcp_servers(session_id="sess-1", session_context=ctx)
-        assert servers["yuppster-mcp-server"]["headers"]["X-User-ID"] == "user-abc-123"
+        assert servers["agcouch-mcp-server"]["headers"]["X-User-ID"] == "user-abc-123"
 
     def test_current_turn_user_id_takes_priority(self) -> None:
-        """current_turn_user_id overrides user_id for yuppster header."""
+        """current_turn_user_id overrides user_id for agcouch header."""
         ctx: dict[str, Any] = {"user_id": "static-user", "current_turn_user_id": "turn-user"}
         with _patch_base_mcp():
             servers = resolve_mcp_servers(session_id="sess-1", session_context=ctx)
-        assert servers["yuppster-mcp-server"]["headers"]["X-User-ID"] == "turn-user"
+        assert servers["agcouch-mcp-server"]["headers"]["X-User-ID"] == "turn-user"
 
     def test_agent_name_header_injected(self) -> None:
-        """Agent name is injected into yuppster headers when provided."""
+        """Agent name is injected into agcouch headers when provided."""
         with _patch_base_mcp():
             servers = resolve_mcp_servers(session_id="sess-1", agent_name="sre")
-        assert servers["yuppster-mcp-server"]["headers"]["X-AHS-Agent-Name"] == "sre"
+        assert servers["agcouch-mcp-server"]["headers"]["X-AHS-Agent-Name"] == "sre"
 
     def test_disabled_servers_are_dropped(self) -> None:
         """Servers with disabled=True are excluded from the result."""
         base: dict[str, Any] = {
             "mcpServers": {
-                "yuppster-mcp-server": {
+                "agcouch-mcp-server": {
                     "type": "http",
                     "url": "http://mcp.internal/",
                     "headers": {},
@@ -130,7 +130,7 @@ class TestResolveMcpServers:
         }
         with _patch_base_mcp(content=base):
             servers = resolve_mcp_servers(session_id="sess-1")
-        assert "yuppster-mcp-server" not in servers
+        assert "agcouch-mcp-server" not in servers
         assert "harness" in servers  # harness is injected, not from base
 
     def test_missing_base_mcp_json_still_returns_harness(self) -> None:
@@ -203,12 +203,12 @@ class TestBuildCodexMcpArgs:
         assert "harness" in args_str
         assert CODEX_HARNESS_BEARER_ENV in args_str
 
-    def test_yuppster_bearer_env_var(self) -> None:
-        """Yuppster MCP server gets YUPPSTER_MCP_TOKEN as bearer env var."""
+    def test_agcouch_bearer_env_var(self) -> None:
+        """Agcouch MCP server gets AGCOUCH_MCP_TOKEN as bearer env var."""
         with _patch_base_mcp():
             args = build_codex_mcp_args(session_id="sess-1")
         args_str = " ".join(args)
-        assert "YUPPSTER_MCP_TOKEN" in args_str
+        assert "AGCOUCH_MCP_TOKEN" in args_str
 
     def test_no_url_servers_skipped(self) -> None:
         """Servers without a URL are excluded from Codex args."""
