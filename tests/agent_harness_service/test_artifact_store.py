@@ -275,3 +275,17 @@ class TestReadArtifactAttachment:
         artifact = _artifact(metadata=None)
         with pytest.raises(ArtifactError):
             await read_artifact_attachment(artifact, "any.png", blob_store=store)
+
+
+# ---------------------------------------------------------------------------
+# search_artifacts — shape of query input
+# ---------------------------------------------------------------------------
+
+
+class TestSearchArtifacts:
+    async def test_empty_query_returns_empty(self) -> None:
+        """A blank query short-circuits without touching the DB."""
+        from ypl.agent_harness_service.artifact_store import search_artifacts
+
+        assert await search_artifacts("") == []
+        assert await search_artifacts("   ") == []

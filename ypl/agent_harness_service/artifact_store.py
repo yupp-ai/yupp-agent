@@ -24,7 +24,7 @@ import re
 import uuid
 from typing import Any
 
-from sqlalchemy import func, text
+from sqlalchemy import func, or_, text
 from sqlmodel import col, select
 
 from ypl.backend.db import get_async_session, get_async_session_read_replica, retry_db
@@ -376,6 +376,37 @@ async def archive_artifact(artifact_id: uuid.UUID) -> bool:
         return True
 
 
+@retry_db
+async def archive_artifacts_by_slug(
+    slug: str,
+    artifact_type: AgentArtifactType = AgentArtifactType.YUPPASTE,
+) -> int:
+    """Archive every non-archived version under ``slug``.
+
+    Returns the number of versions that were newly flipped to archived
+    (already-archived versions are skipped silently).
+    """
+    async with get_async_session() as session:
+        stmt = select(AgentArtifact).where(
+            AgentArtifact.named_slug == slug,
+            AgentArtifact.artifact_type == artifact_type,
+            col(AgentArtifact.deleted_at).is_(None),
+            text("(agent_artifacts.artifact_metadata->>'is_archived') IS DISTINCT FROM 'true'"),
+        )
+        result = await session.execute(stmt)
+        artifacts = list(result.scalars().all())
+        for artifact in artifacts:
+            metadata = dict(artifact.artifact_metadata or {})
+            metadata["is_archived"] = True
+            await session.execute(
+                AgentArtifact.__table__.update()  # type: ignore[attr-defined]
+                .where(AgentArtifact.agent_artifact_id == artifact.agent_artifact_id)
+                .values(artifact_metadata=metadata)
+            )
+        await session.commit()
+        return len(artifacts)
+
+
 # ---------------------------------------------------------------------------
 # Listing (non-slug, for admin/search use)
 # ---------------------------------------------------------------------------
@@ -404,6 +435,52 @@ async def list_artifacts(
             stmt = stmt.where(AgentArtifact.agent_task_id == agent_task_id)
         if not include_archived:
             stmt = stmt.where(text("(agent_artifacts.artifact_metadata->>'is_archived') IS DISTINCT FROM 'true'"))
+        stmt = stmt.order_by(col(AgentArtifact.created_at).desc()).limit(limit).offset(offset)
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
+
+@retry_db
+async def search_artifacts(
+    query: str,
+    *,
+    artifact_type: AgentArtifactType | None = None,
+    include_archived: bool = False,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[AgentArtifact]:
+    """Case-insensitive match over title, description, named_slug, and attachment filenames.
+
+    Matching is substring (``ILIKE '%query%'``) — no tsvector/full-text over
+    the content body yet. Results are reverse-chronological.
+    """
+    q = query.strip()
+    if not q:
+        return []
+    like_pattern = f"%{q}%"
+    # JSONB path: match if any attachment record's filename contains the query.
+    attachment_filename_match = text(
+        "EXISTS ("
+        "SELECT 1 FROM jsonb_array_elements("
+        "COALESCE(agent_artifacts.artifact_metadata->'attachments', '[]'::jsonb)"
+        ") AS att WHERE att->>'filename' ILIKE :q"
+        ")"
+    ).bindparams(q=like_pattern)
+
+    async with get_async_session_read_replica() as session:
+        stmt = select(AgentArtifact).where(col(AgentArtifact.deleted_at).is_(None))
+        if artifact_type is not None:
+            stmt = stmt.where(AgentArtifact.artifact_type == artifact_type)
+        if not include_archived:
+            stmt = stmt.where(text("(agent_artifacts.artifact_metadata->>'is_archived') IS DISTINCT FROM 'true'"))
+        stmt = stmt.where(
+            or_(
+                col(AgentArtifact.title).ilike(like_pattern),
+                col(AgentArtifact.description).ilike(like_pattern),
+                col(AgentArtifact.named_slug).ilike(like_pattern),
+                attachment_filename_match,
+            )
+        )
         stmt = stmt.order_by(col(AgentArtifact.created_at).desc()).limit(limit).offset(offset)
         result = await session.execute(stmt)
         return list(result.scalars().all())
