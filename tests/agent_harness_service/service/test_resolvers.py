@@ -450,7 +450,7 @@ class TestDownloadAttachmentsToWorkspace:
             filename="../../etc/passwd",
             content_type="text/plain",
             size=100,
-            gcs_url="gs://bucket/evil",
+            blob_path="attachments/sess/evil",
         )
 
         result = await _download_attachments_to_workspace([att], str(tmp_path))
@@ -475,7 +475,7 @@ class TestDownloadAttachmentsToWorkspace:
             filename="..",
             content_type="text/plain",
             size=10,
-            gcs_url="gs://bucket/file",
+            blob_path="attachments/sess/file",
         )
         result = await _download_attachments_to_workspace([att], str(tmp_path))
         assert result == []
@@ -487,17 +487,20 @@ class TestDownloadAttachmentsToWorkspace:
             filename="report.txt",
             content_type="text/plain",
             size=12,
-            gcs_url="gs://bucket/report.txt",
+            blob_path="attachments/sess/report.txt",
         )
 
+        store = MagicMock()
+        store.download = AsyncMock(return_value=b"hello world!")
         with patch(
-            "ypl.backend.utils.gcs_utils.download_from_gcs",
-            AsyncMock(return_value=b"hello world!"),
+            "ypl.backend.utils.blob_store.get_blob_store",
+            return_value=store,
         ):
             result = await _download_attachments_to_workspace([att], str(tmp_path))
             assert len(result) == 1
             assert result[0].endswith("report.txt")
             assert os.path.exists(result[0])
+            store.download.assert_awaited_once_with("attachments/sess/report.txt")
 
     async def test_handles_download_error_gracefully(self, tmp_path: Any) -> None:
         from ypl.agent_harness_service.service.resolvers import _download_attachments_to_workspace
@@ -506,12 +509,14 @@ class TestDownloadAttachmentsToWorkspace:
             filename="bad.txt",
             content_type="text/plain",
             size=5,
-            gcs_url="gs://bucket/bad.txt",
+            blob_path="attachments/sess/bad.txt",
         )
 
+        store = MagicMock()
+        store.download = AsyncMock(side_effect=RuntimeError("blob store error"))
         with patch(
-            "ypl.backend.utils.gcs_utils.download_from_gcs",
-            AsyncMock(side_effect=RuntimeError("GCS error")),
+            "ypl.backend.utils.blob_store.get_blob_store",
+            return_value=store,
         ):
             result = await _download_attachments_to_workspace([att], str(tmp_path))
             assert result == []

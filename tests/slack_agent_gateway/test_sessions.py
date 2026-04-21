@@ -34,6 +34,31 @@ from ypl.slack_agent_gateway.types import AgentSession, SessionStatus
 # ---------------------------------------------------------------------------
 
 
+class _FakeStore:
+    """In-memory BlobStore stub for process_slack_attachments tests."""
+
+    def __init__(self) -> None:
+        self.uploaded: dict[str, bytes] = {}
+
+    async def upload(self, path: str, data: bytes, content_type: str = "application/octet-stream") -> None:
+        self.uploaded[path] = data
+
+    async def download(self, path: str) -> bytes:
+        return self.uploaded[path]
+
+    async def get_size(self, path: str) -> int:
+        return len(self.uploaded[path])
+
+    async def get_access_url(self, path: str, expiry_seconds: int = 3 * 24 * 3600) -> str:
+        return f"https://example.test/{path}"
+
+    async def exists(self, path: str) -> bool:
+        return path in self.uploaded
+
+    async def delete(self, path: str) -> None:
+        self.uploaded.pop(path, None)
+
+
 def _make_session(
     channel_id: str = "C123",
     thread_ts: str = "111.000",
@@ -408,7 +433,12 @@ class TestBuildMessageFromEvent:
         from ypl.slack_agent_gateway.types import Attachment
 
         event = {"text": "check this", "user": "U123", "ts": "111.000"}
-        att = Attachment(filename="test.pdf", content_type="application/pdf", size=100, gcs_url="gs://b/test.pdf")
+        att = Attachment(
+            filename="test.pdf",
+            content_type="application/pdf",
+            size=100,
+            blob_path="attachments/sess-1/test.pdf",
+        )
         msg = build_message_from_event(event, attachments=[att])
         assert len(msg.attachments) == 1
         assert msg.attachments[0].filename == "test.pdf"
@@ -466,8 +496,8 @@ class TestProcessSlackAttachments:
                 return_value=mock_data,
             ),
             patch(
-                "ypl.slack_agent_gateway.sessions.upload_to_gcs",
-                new_callable=AsyncMock,
+                "ypl.slack_agent_gateway.sessions.get_blob_store",
+                return_value=_FakeStore(),
             ),
         ):
             result = await process_slack_attachments(files, "sess-abc", "xoxb-token")
@@ -476,7 +506,8 @@ class TestProcessSlackAttachments:
         assert result[0].filename == "report.pdf"
         assert result[0].content_type == "application/pdf"
         assert result[0].size == len(mock_data)
-        assert "sess-abc" in result[0].gcs_url
+        # Logical blob path, backend-agnostic.
+        assert result[0].blob_path == "attachments/sess-abc/report.pdf"
 
     @pytest.mark.asyncio
     async def test_deduplicates_filenames(self) -> None:
@@ -505,8 +536,8 @@ class TestProcessSlackAttachments:
                 return_value=mock_data,
             ),
             patch(
-                "ypl.slack_agent_gateway.sessions.upload_to_gcs",
-                new_callable=AsyncMock,
+                "ypl.slack_agent_gateway.sessions.get_blob_store",
+                return_value=_FakeStore(),
             ),
         ):
             result = await process_slack_attachments(files, "sess-abc", "xoxb-token")

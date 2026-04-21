@@ -142,12 +142,16 @@ class SessionPermissions(BaseModel):
 
 
 class AttachmentInfo(BaseModel):
-    """Metadata for a file attachment stored in GCS."""
+    """Metadata for a file attachment stored in the configured blob store."""
 
     filename: str = Field(..., description="Sanitized filename")
     content_type: str = Field(..., description="MIME type (e.g., 'image/png')")
     size: int = Field(..., description="File size in bytes")
-    gcs_url: str = Field(..., description="GCS URL (e.g., gs://yupp-agents/attachments/{session_id}/file.png)")
+    blob_path: str = Field(
+        ...,
+        description="Logical blob-store path (e.g., 'attachments/{session_id}/file.png'). "
+        "Resolved against the configured BlobStore backend at read time.",
+    )
 
 
 # --- Request Models ---
@@ -170,7 +174,7 @@ class SessionCreateRequest(BaseModel):
     )
     attachments: list[AttachmentInfo] | None = Field(
         None,
-        description="File attachments stored in GCS to download into the workspace.",
+        description="File attachments stored in the blob store to download into the workspace.",
     )
     source: AHSSource = Field(
         "api",
@@ -197,7 +201,7 @@ class SessionMessageRequest(BaseModel):
     user_id: str | None = Field(None, description="Yupp user ID of message sender")
     attachments: list[AttachmentInfo] | None = Field(
         None,
-        description="File attachments stored in GCS to download into the workspace.",
+        description="File attachments stored in the blob store to download into the workspace.",
     )
     source: AHSSource = Field(
         "api",

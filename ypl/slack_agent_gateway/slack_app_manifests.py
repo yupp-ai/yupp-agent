@@ -47,12 +47,15 @@ _DEFAULT_TOKEN_TTL_SECONDS = 11 * 60 * 60
 # Lock for token refresh to prevent concurrent refresh attempts
 _token_refresh_lock = asyncio.Lock()
 
-# OAuth scopes required by all SAG-managed bots
+# OAuth scopes required by all SAG-managed bots. ``files:read`` is needed to
+# download files attached to Slack messages — without it, Slack 403s the
+# ``url_private_download`` URL and attachments silently drop.
 _BOT_SCOPES = [
     "app_mentions:read",
     "channels:read",
     "channels:history",
     "chat:write",
+    "files:read",
     "groups:read",
     "groups:history",
     "incoming-webhook",
