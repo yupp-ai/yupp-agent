@@ -28,12 +28,16 @@ class MessageSender(BaseModel):
 
 
 class Attachment(BaseModel):
-    """A file attachment uploaded to GCS for agent processing."""
+    """A file attachment uploaded to the configured blob store."""
 
     filename: str = Field(..., description="Sanitized filename")
     content_type: str = Field(..., description="MIME type (e.g., 'image/png')")
     size: int = Field(..., description="File size in bytes")
-    gcs_url: str = Field(..., description="GCS URL (e.g., gs://yupp-agents/attachments/...)")
+    blob_path: str = Field(
+        ...,
+        description="Logical blob-store path (e.g., 'attachments/{session_id}/file.png'). "
+        "Resolved against the configured BlobStore backend at read time.",
+    )
 
 
 class Message(BaseModel):
@@ -42,7 +46,10 @@ class Message(BaseModel):
     text: str = Field(..., description="Message content")
     sender: MessageSender = Field(..., description="Who sent the message")
     ts: str = Field(..., description="Message timestamp from Slack")
-    attachments: list[Attachment] = Field(default_factory=list, description="File attachments uploaded to GCS")
+    attachments: list[Attachment] = Field(
+        default_factory=list,
+        description="File attachments uploaded to the configured blob store",
+    )
 
 
 class AgentAppConfig(BaseModel):

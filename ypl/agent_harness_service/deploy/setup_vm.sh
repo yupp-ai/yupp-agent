@@ -223,6 +223,7 @@ echo "--------------------------------------------"
 mkdir -p /data/{shared,agents,repos,sessions,session_logs}
 mkdir -p /data/ahs
 mkdir -p /data/ahs/artifacts
+mkdir -p /data/ahs/attachments
 chown -R ahs:ahs /data
 echo "  /data/ directory structure ready"
 fi
