@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% from "_artifact_table.html" import artifact_table %}
+{% block title %}Search{% if query %} — “{{ query }}”{% endif %} · Artifact Viewer{% endblock %}
+{% block content %}
+<h1>Search</h1>
+{% if query %}
+    <p class="muted">Results for “<strong>{{ query }}</strong>”.</p>
+    {{ artifact_table(artifacts) }}
+    <nav class="pager">
+        {% if offset > 0 %}
+            <a href="/search?q={{ query }}&limit={{ limit }}&offset={{ [0, offset - limit]|max }}">← Previous</a>
+        {% endif %}
+        {% if artifacts|length == limit %}
+            <a href="/search?q={{ query }}&limit={{ limit }}&offset={{ offset + limit }}">Next →</a>
+        {% endif %}
+    </nav>
+{% else %}
+    <p class="muted">Type a query into the search bar above.</p>
+{% endif %}
+{% endblock %}

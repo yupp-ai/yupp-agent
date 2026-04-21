@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>{% block title %}Artifact Viewer{% endblock %}</title>
+    <link rel="stylesheet" href="/static/style.css">
+    {% block head_extra %}{% endblock %}
+</head>
+<body>
+<header class="topbar">
+    <div class="topbar-inner">
+        <a href="/" class="brand">Artifact Viewer</a>
+        <form class="search" action="/search" method="get">
+            <input type="search" name="q" placeholder="Search title, slug, or attachment…" value="{{ query or '' }}" autocomplete="off">
+        </form>
+        <div class="user">
+            {% if user and user.email %}
+                {% if user.picture %}<img class="avatar" src="{{ user.picture }}" alt="">{% endif %}
+                <span class="user-email">{{ user.email }}</span>
+                <a href="/auth/logout" class="logout">Sign out</a>
+            {% endif %}
+        </div>
+    </div>
+</header>
+<main class="main">
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>
