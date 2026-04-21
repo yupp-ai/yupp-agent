@@ -17,7 +17,7 @@ from ypl.mcp_common.scheduled_agent_call_helpers import (
     create_agent_schedule,
     parse_execute_at,
     parse_schedule_context,
-    resolve_yuppster_from_context,
+    resolve_user_id_from_context,
     validate_cron_expression,
     validate_timezone,
 )
@@ -63,7 +63,7 @@ async def _resolve_creator_info(
     created_by_agent = caller_agent.name if caller_agent else None
 
     # Resolve user identity to user_id and verify Yuppster status
-    user_id, error = await resolve_yuppster_from_context(session_context)
+    user_id, error = await resolve_user_id_from_context(session_context)
     if error:
         return None, created_by_agent, error
 

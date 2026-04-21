@@ -189,6 +189,19 @@ class Settings(BaseSettings):
     # ``SLACK_AGENT_GATEWAY_<NAME>_BOT_TOKEN`` / ``_SIGNING_SECRET`` in
     # GCP-free environments, GCP Secret Manager elsewhere.
 
+    # Agcouch MCP — the default/first-class remote MCP this repo ships.
+    # Hosted in-process when running ``mono_server``; can also run as a
+    # standalone service in the future (just point the URL elsewhere). The
+    # AHS connects to it by name and reads its tools during session startup.
+    #
+    # TODO(phase-9): support additional 3rd-party MCP servers via a
+    # DB-backed registry + Streamlit admin UI. For now, only this one
+    # first-class server is wired up.
+    AGCOUCH_MCP_SERVER_NAME: str = "agcouch-mcp-server"
+    AGCOUCH_MCP_SERVER_URL: str = "http://localhost:8090/mcp/agcouch"
+    AGCOUCH_MCP_TOKEN: str = ""
+    AGCOUCH_MCP_ENABLED: bool = True
+
     # Agent Harness Service (AHS) base URL (SAG calls AHS here)
     AGENT_HARNESS_SERVICE_BASE_URL: str = ""
     # API key shared between SAG and AHS for mutual authentication

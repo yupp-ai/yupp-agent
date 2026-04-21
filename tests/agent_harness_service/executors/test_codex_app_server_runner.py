@@ -64,7 +64,7 @@ def _make_context(**overrides: Any) -> RunContext:
         "llm_session_id": None,
         "session_context": {
             "permissions": {
-                "allowed_servers": ["harness", "yuppster-mcp-server"],
+                "allowed_servers": ["harness", "agcouch-mcp-server"],
                 "allowed_harness_tools": ["*"],
             }
         },
@@ -731,20 +731,20 @@ class TestMcpServerUrlInjection:
         call_kwargs = mock_mcp.call_args
         assert call_kwargs.kwargs.get("session_id") == "ffffffff-0000-1111-2222-333333333333"
 
-    def test_build_server_args_harness_and_yuppster_urls_in_args(self) -> None:
+    def test_build_server_args_harness_and_agcouch_urls_in_args(self) -> None:
         runner = CodexAppServerRunner(_make_config())
         ctx = _make_context()
         mcp_args = [
             "-c",
             'mcp_servers.harness.url="http://127.0.0.1:8090/mcp/harness/"',
             "-c",
-            'mcp_servers.yuppster.url="https://mcp.example.com/"',
+            'mcp_servers.agcouch.url="https://mcp.example.com/"',
         ]
         with _patch_mcp_args(mcp_args):
             args = runner._build_server_args(9090, ctx)
 
         assert 'mcp_servers.harness.url="http://127.0.0.1:8090/mcp/harness/"' in args
-        assert 'mcp_servers.yuppster.url="https://mcp.example.com/"' in args
+        assert 'mcp_servers.agcouch.url="https://mcp.example.com/"' in args
 
     @pytest.mark.asyncio
     async def test_spawn_passes_mcp_env_to_subprocess(self) -> None:
