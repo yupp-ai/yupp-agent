@@ -410,3 +410,84 @@ class TestArchiveArtifactRoute:
         ):
             resp = client.delete(f"/ahs/artifacts/{FAKE_ARTIFACT_ID}")
         assert resp.status_code == 404
+
+
+class TestArchiveBySlugRoute:
+    def test_archive_all_versions(self, client: TestClient) -> None:
+        v1 = _mock_artifact(version=1)
+        v2 = _mock_artifact(version=2)
+        with (
+            patch(
+                "ypl.agent_harness_service.artifact_routes.list_artifact_versions",
+                new=AsyncMock(return_value=[v1, v2]),
+            ),
+            patch(
+                "ypl.agent_harness_service.artifact_routes.archive_artifacts_by_slug",
+                new=AsyncMock(return_value=2),
+            ),
+        ):
+            resp = client.delete("/ahs/artifacts/by-slug/my-slug")
+        assert resp.status_code == 200
+        assert resp.json() == {"named_slug": "my-slug", "archived_count": 2}
+
+    def test_archive_unknown_slug_returns_404(self, client: TestClient) -> None:
+        with patch(
+            "ypl.agent_harness_service.artifact_routes.list_artifact_versions",
+            new=AsyncMock(return_value=[]),
+        ):
+            resp = client.delete("/ahs/artifacts/by-slug/nope")
+        assert resp.status_code == 404
+
+    def test_all_already_archived_returns_zero_count(self, client: TestClient) -> None:
+        v1 = _mock_artifact(version=1)
+        with (
+            patch(
+                "ypl.agent_harness_service.artifact_routes.list_artifact_versions",
+                new=AsyncMock(return_value=[v1]),
+            ),
+            patch(
+                "ypl.agent_harness_service.artifact_routes.archive_artifacts_by_slug",
+                new=AsyncMock(return_value=0),
+            ),
+        ):
+            resp = client.delete("/ahs/artifacts/by-slug/already-gone")
+        assert resp.status_code == 200
+        assert resp.json()["archived_count"] == 0
+
+
+class TestSearchArtifactsRoute:
+    def test_returns_matches(self, client: TestClient) -> None:
+        fake = _mock_artifact(title="Quarterly report 2026 Q1")
+        with patch(
+            "ypl.agent_harness_service.artifact_routes.search_artifacts",
+            new=AsyncMock(return_value=[fake]),
+        ) as mock_search:
+            resp = client.get("/ahs/artifacts/search", params={"q": "quarterly"})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body["artifacts"]) == 1
+        # Query forwarded positionally.
+        assert mock_search.call_args.args[0] == "quarterly"
+
+    def test_requires_query(self, client: TestClient) -> None:
+        resp = client.get("/ahs/artifacts/search")
+        assert resp.status_code == 422
+
+    def test_empty_query_rejected(self, client: TestClient) -> None:
+        resp = client.get("/ahs/artifacts/search", params={"q": ""})
+        assert resp.status_code == 422
+
+    def test_forwards_pagination_and_type(self, client: TestClient) -> None:
+        with patch(
+            "ypl.agent_harness_service.artifact_routes.search_artifacts",
+            new=AsyncMock(return_value=[]),
+        ) as mock_search:
+            resp = client.get(
+                "/ahs/artifacts/search",
+                params={"q": "foo", "limit": 10, "offset": 20, "type": "YUPPASTE"},
+            )
+        assert resp.status_code == 200
+        kwargs = mock_search.call_args.kwargs
+        assert kwargs["limit"] == 10
+        assert kwargs["offset"] == 20
+        assert kwargs["artifact_type"] == AgentArtifactType.YUPPASTE
