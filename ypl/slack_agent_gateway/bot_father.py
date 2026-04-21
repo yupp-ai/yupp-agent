@@ -18,12 +18,11 @@ from slack_sdk.web.async_client import AsyncWebClient
 from sqlmodel import select
 
 from ypl.backend.db import get_async_session, retry_db
-from ypl.backend.llm.db_helpers import get_user_email, get_user_id_by_email
-from ypl.backend.llm.yuppster_helpers import slack_id_to_yupp_user_id
+from ypl.backend.llm.db_helpers import get_user_email, get_user_id_by_email, get_user_id_by_slack_user_id
 from ypl.backend.utils.soul_utils import has_permission_cached
+from ypl.db.rbac import Permission
 from ypl.db.redis import get_redis_client
 from ypl.db.slack_agent import SlackAgent, SlackAgentStatus
-from ypl.db.soul_rbac import SoulPermission
 from ypl.slack_agent_gateway.bot_father_types import (
     BotApprovalStatus,
     BotCreationRecord,
@@ -151,7 +150,7 @@ async def request_bot_creation(request: BotCreationRequest) -> BotCreationRespon
     if request.requested_by:
         if _is_slack_user_id(request.requested_by):
             # Slack user ID -> resolve to Yupp user ID -> get email
-            requester_user_id = await slack_id_to_yupp_user_id(request.requested_by)
+            requester_user_id = await get_user_id_by_slack_user_id(request.requested_by)
             if requester_user_id and not requester_email:
                 requester_email = await get_user_email(requester_user_id)
         else:
@@ -162,7 +161,7 @@ async def request_bot_creation(request: BotCreationRequest) -> BotCreationRespon
 
     # Permission check: requester must have USE_MCP soul permission
     if requester_email:
-        if not await has_permission_cached(requester_email, SoulPermission.CREATE_AGENT):
+        if not await has_permission_cached(requester_email, Permission.CREATE_AGENT):
             raise PermissionError(f"User {requester_email} lacks CREATE_AGENT permission to create bots.")
     else:
         # Fail closed: deny if we cannot verify the requester's identity

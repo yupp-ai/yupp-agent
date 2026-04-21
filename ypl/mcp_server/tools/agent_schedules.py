@@ -18,7 +18,7 @@ from ypl.db.agent_harness import (
     AgentScheduleStatus,
     AgentScheduleType,
 )
-from ypl.db.soul_rbac import SoulPermission
+from ypl.db.rbac import Permission
 from ypl.mcp_common.scheduled_agent_call_helpers import (
     compute_next_run_for_cron,
     create_agent_schedule,
@@ -248,7 +248,7 @@ async def cancel_agent_schedule(
         if auth_email == "unknown":
             return {"success": False, "error": "Authentication required to cancel agent schedules"}
 
-        if not await has_permission_cached(auth_email, SoulPermission.USE_MCP):
+        if not await has_permission_cached(auth_email, Permission.USE_MCP):
             return {"success": False, "error": "You do not have permission to use MCP tools"}
 
         # Resolve email to user_id for ownership check
@@ -360,7 +360,7 @@ async def edit_agent_schedule(
         if auth_email == "unknown":
             return {"success": False, "error": "Authentication required to edit agent schedules"}
 
-        if not await has_permission_cached(auth_email, SoulPermission.USE_MCP):
+        if not await has_permission_cached(auth_email, Permission.USE_MCP):
             return {"success": False, "error": "You do not have permission to use MCP tools"}
 
         caller_user_id, user_error = await resolve_user_id_from_email(auth_email)
@@ -443,7 +443,7 @@ async def list_agent_schedules(
         if auth_email == "unknown":
             return {"success": False, "error": "Authentication required to list agent schedules"}
 
-        if not await has_permission_cached(auth_email, SoulPermission.USE_MCP):
+        if not await has_permission_cached(auth_email, Permission.USE_MCP):
             return {"success": False, "error": "You do not have permission to use MCP tools"}
 
         # Default to caller's schedules if no created_by filter provided

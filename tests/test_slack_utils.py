@@ -412,7 +412,7 @@ class TestGetUserEmailFromSlack:
                 "ypl.backend.utils.slack_utils.AsyncWebClient",
                 return_value=mock_client,
             ),
-            patch("ypl.backend.utils.slack_utils.SLACK_ID_TO_EMAIL", {}),
+            patch("ypl.backend.utils.slack_utils.get_email_by_slack_user_id", new=AsyncMock(return_value=None)),
         ):
             result = await get_user_email_from_slack("U123456", bot_token="xoxb-test")
 
@@ -427,16 +427,16 @@ class TestGetUserEmailFromSlack:
                 "ypl.backend.utils.slack_utils.AsyncWebClient",
                 return_value=mock_client,
             ),
-            patch("ypl.backend.utils.slack_utils.SLACK_ID_TO_EMAIL", {}),
+            patch("ypl.backend.utils.slack_utils.get_email_by_slack_user_id", new=AsyncMock(return_value=None)),
         ):
             result = await get_user_email_from_slack("U123456", bot_token="xoxb-test")
 
         assert result is None
 
-    async def test_falls_back_to_static_mapping_without_token(self) -> None:
+    async def test_falls_back_to_db_lookup_without_token(self) -> None:
         with patch(
-            "ypl.backend.utils.slack_utils.SLACK_ID_TO_EMAIL",
-            {"UMAPPED": "mapped@example.com"},
+            "ypl.backend.utils.slack_utils.get_email_by_slack_user_id",
+            new=AsyncMock(return_value="mapped@example.com"),
         ):
             result = await get_user_email_from_slack("UMAPPED")
 
@@ -525,7 +525,7 @@ class TestResolveSlackUserToYuppUserId:
                 "ypl.backend.utils.slack_utils.get_user_email_from_slack",
                 AsyncMock(return_value=None),
             ),
-            patch("ypl.backend.utils.slack_utils.SLACK_ID_TO_EMAIL", {}),
+            patch("ypl.backend.utils.slack_utils.get_email_by_slack_user_id", new=AsyncMock(return_value=None)),
         ):
             result = await resolve_slack_user_to_yupp_user_id.__wrapped__("UUNKNOWN")
 

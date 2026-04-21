@@ -16,7 +16,6 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import col, select
 from ypl.agent_harness_service.common.constants import AHS_WAR_ROOM_BASE_URL
 from ypl.backend.db import get_async_session_read_replica, retry_db
-from ypl.backend.llm.constants import LINEAR_TO_SLACK_ID
 from ypl.backend.utils.streamlit_utils import run_coroutine_in_lit_worker
 from ypl.db.agent_harness import (
     Agent,
@@ -82,12 +81,11 @@ def _time_ago(dt: datetime | None) -> str:
 
 # ── Slack user-name resolution ────────────────────────────────────────────────
 
-# Reverse map: Slack ID → short name (from the LINEAR_TO_SLACK_ID mapping).
-# For duplicate IDs, prefer the longer (more descriptive) name.
+# Reverse map: Slack ID → human-readable name. Populated on first use from
+# ``users.linear_name`` / ``users.name`` rows that have ``slack_user_id`` set.
+# Empty when no users have been mapped yet; display falls back to the raw
+# Slack ID in that case.
 _SLACK_ID_TO_NAME: dict[str, str] = {}
-for _name, _sid in LINEAR_TO_SLACK_ID.items():
-    if _sid not in _SLACK_ID_TO_NAME or len(_name) > len(_SLACK_ID_TO_NAME[_sid]):
-        _SLACK_ID_TO_NAME[_sid] = _name
 
 
 def _first_available_agent_bot_token() -> str | None:

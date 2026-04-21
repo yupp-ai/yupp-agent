@@ -102,8 +102,8 @@ from ypl.db.agent_harness import (
     AgentSessionStatus,
     AgentSessionTrigger,
 )
+from ypl.db.rbac import Permission
 from ypl.db.redis import get_redis_client
-from ypl.db.soul_rbac import SoulPermission
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -1052,7 +1052,7 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
             pass
         else:
             try:
-                has_mcp_access = await has_permission_by_user_id_cached(user_id, SoulPermission.USE_MCP)
+                has_mcp_access = await has_permission_by_user_id_cached(user_id, Permission.USE_MCP)
                 if not has_mcp_access:
                     logger.info(
                         "User lacks USE_MCP permission, yuppster-mcp tools will be disabled",
@@ -1563,7 +1563,7 @@ async def send_message(request: SessionMessageRequest) -> SessionMessageResponse
         has_mcp_access = False
         if sender_user_id:
             try:
-                has_mcp_access = await has_permission_by_user_id_cached(sender_user_id, SoulPermission.USE_MCP)
+                has_mcp_access = await has_permission_by_user_id_cached(sender_user_id, Permission.USE_MCP)
             except Exception:
                 logger.error(
                     "Error checking USE_MCP for follow-up sender, disabling MCP",

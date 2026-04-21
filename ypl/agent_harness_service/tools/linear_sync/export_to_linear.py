@@ -62,7 +62,6 @@ from ypl.agent_harness_service.tools.linear_sync.types import (
 )
 from ypl.backend.config import settings
 from ypl.backend.db import get_async_session, retry_db
-from ypl.backend.llm.constants import EMAIL_TO_LINEAR_NAME
 from ypl.backend.utils.linear import LinearClient
 from ypl.db.agent_harness import AgentProject, AgentTask
 from ypl.db.users import User
@@ -82,8 +81,10 @@ async def _resolve_creator_linear_user_id(
 ) -> str | None:
     """Resolve the Linear user ID for the AHS project creator.
 
-    Uses the TEAM_DIRECTORY mapping from constants to convert the creator's
-    email → Linear name, then fetches Linear users to find the matching ID.
+    Reads the creator's ``linear_name`` from the ``users`` row and matches it
+    against Linear's user list. Returns ``None`` when the creator doesn't have
+    a ``linear_name`` populated (operator hasn't mapped them yet) or when no
+    Linear user matches.
 
     Args:
         project: The AHS project record.
@@ -96,23 +97,24 @@ async def _resolve_creator_linear_user_id(
         logger.info("Project has no creator_user_id, skipping assignee mapping")
         return None
 
-    # Fetch creator's email from database (best-effort)
+    # Fetch creator's linear_name from users row (best-effort).
     try:
         async with get_async_session() as session:
             result = await session.execute(select(User).where(col(User.user_id) == project.creator_user_id))
             user = result.scalars().first()
-            if not user or not user.email:
-                logger.warning("Creator user not found or has no email", user_id=project.creator_user_id)
+            if not user:
+                logger.warning("Creator user not found", user_id=project.creator_user_id)
                 return None
-            creator_email = user.email
+            linear_name = user.linear_name
     except Exception as e:
         logger.warning("Failed to fetch creator from DB, skipping assignee mapping", error=str(e))
         return None
 
-    # Map email → Linear name
-    linear_name = EMAIL_TO_LINEAR_NAME.get(creator_email)
     if not linear_name:
-        logger.warning("No Linear name mapping for creator email", email=creator_email)
+        logger.info(
+            "Creator has no linear_name in users row — set users.linear_name to enable assignee mapping",
+            user_id=project.creator_user_id,
+        )
         return None
 
     # Fetch Linear users and find by name (best-effort: API failure should not crash export)
@@ -128,7 +130,7 @@ async def _resolve_creator_linear_user_id(
                 linear_user_id = linear_user.get("id")
                 logger.info(
                     "Resolved creator to Linear user",
-                    creator_email=creator_email,
+                    creator_user_id=project.creator_user_id,
                     linear_name=linear_name,
                     linear_user_id=linear_user_id,
                 )

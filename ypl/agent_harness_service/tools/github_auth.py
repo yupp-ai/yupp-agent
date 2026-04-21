@@ -27,7 +27,7 @@ from ypl.agent_harness_service.tools.mcp_instance import (
     _validate_session_id,
     mcp,
 )
-from ypl.backend.llm.yuppster_helpers import github_username_to_yupp_user_id
+from ypl.backend.llm.db_helpers import get_user_id_by_github_username
 from ypl.backend.utils.async_utils import create_background_task
 from ypl.structured_logger import get_logger
 
@@ -312,10 +312,10 @@ async def _poll_for_token(
                         _session_auth_terminal_states[session_id] = AUTH_STATE_ERROR
                         return
 
-                    # Map GitHub username to Yupp user_id
-                    user_id = await github_username_to_yupp_user_id(github_username)
+                    # Map GitHub username to internal user_id via users.github_username.
+                    user_id = await get_user_id_by_github_username(github_username)
                     if not user_id:
-                        logger.warning("Could not map GitHub user to Yupp user_id", github_username=github_username)
+                        logger.warning("Could not map GitHub user to user_id", github_username=github_username)
                         _session_auth_terminal_states[session_id] = AUTH_STATE_ERROR
                         return
 
