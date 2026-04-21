@@ -194,6 +194,7 @@ yupp-agent/
 │   ├── mcp_common/              # Shared MCP utilities
 │   ├── streamlit_server/        # Operational dashboards
 │   ├── mono_server/             # Single-process entrypoint (AHS + SAG + MCP)
+│   ├── tools/                   # Operator CLIs (ahs-artifact, …) — see ypl/tools/README.md
 │   ├── backend/                 # Shared backend (DB, config, utils)
 │   └── db/                      # SQLModel database models + migrations
 ├── apps/
@@ -225,6 +226,12 @@ python -m ypl.db.tools.restore_dump --file ~/tmp/yadb-dumps/yadb_prod_<timestamp
 ```
 
 Both scripts have `--help` with the full flag list.
+
+## Operator CLIs
+
+Installed via `[project.scripts]` in `pyproject.toml`, so `pip install -e .` / `poetry install` puts them on `$PATH`.
+
+- **`ahs-artifact`** — create, read, search, and archive textual artifacts via the AHS REST API. See [`ypl/tools/README.md`](./ypl/tools/README.md) for the full command reference.
 
 ## Database migrations
 

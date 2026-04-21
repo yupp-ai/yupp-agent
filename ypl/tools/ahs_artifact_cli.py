@@ -27,7 +27,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -208,13 +208,11 @@ def cmd_add(args: argparse.Namespace) -> int:
 
 def _get_by_id_or_slug(http: httpx.Client, ident: str, version: int | None) -> dict[str, Any]:
     if _is_uuid(ident):
-        result: dict[str, Any] = _handle(http.get(f"/ahs/artifacts/{ident}/meta"))
-        return result
+        return cast(dict[str, Any], _handle(http.get(f"/ahs/artifacts/{ident}/meta")))
     params: dict[str, Any] = {}
     if version is not None:
         params["version"] = version
-    result = _handle(http.get(f"/ahs/artifacts/by-slug/{ident}", params=params))
-    return result
+    return cast(dict[str, Any], _handle(http.get(f"/ahs/artifacts/by-slug/{ident}", params=params)))
 
 
 def cmd_get(args: argparse.Namespace) -> int:
