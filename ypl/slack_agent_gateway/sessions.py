@@ -5,7 +5,7 @@ Handles session lifecycle:
 - Get session info
 - Update session activity
 - Session expiration (soft expiration model)
-- File attachment processing (download from Slack, upload to GCS)
+- File attachment processing (download from Slack, upload to the blob store)
 """
 
 import re
@@ -15,7 +15,7 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
-from ypl.backend.utils.gcs_utils import upload_to_gcs
+from ypl.backend.utils.blob_store import BlobStore, get_blob_store
 from ypl.slack_agent_gateway.constants import DEFAULT_SESSION_EXPIRATION_SECONDS
 from ypl.slack_agent_gateway.redis_client import (
     get_session,
@@ -35,9 +35,10 @@ from ypl.structured_logger import get_logger
 
 logger = get_logger()
 
-# GCS bucket and prefix for file attachments
-_GCS_ATTACHMENT_BUCKET = "yupp-agents"
-_GCS_ATTACHMENT_PREFIX = "attachments"
+# Blob-store path prefix for file attachments. Resolves to
+# /data/ahs/attachments/... on local storage or gs://{bucket}/attachments/...
+# on GCS, depending on BLOB_STORE_ENGINE.
+_BLOB_ATTACHMENT_PREFIX = "attachments"
 
 # Max file size we'll download from Slack (20 MB)
 _MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
@@ -280,25 +281,31 @@ async def process_slack_attachments(
     files: list[dict[str, Any]],
     session_id: str,
     bot_token: str,
+    blob_store: BlobStore | None = None,
 ) -> list[Attachment]:
-    """Download files from Slack and upload to GCS.
+    """Download files from Slack and upload to the configured blob store.
 
     For each file in the Slack event:
-    1. Download from Slack using url_private_download
-    2. Sanitize the filename
-    3. Upload to gs://yupp-agents/attachments/{session_id}/{filename}
-    4. Return Attachment metadata
+    1. Download from Slack using url_private_download.
+    2. Sanitize the filename.
+    3. Upload to ``attachments/{session_id}/{filename}`` — resolves to
+       ``/data/ahs/attachments/...`` on local storage or
+       ``gs://{GCS_BUCKET_NAME}/attachments/...`` on GCS, depending on
+       ``settings.BLOB_STORE_ENGINE``.
+    4. Return :class:`Attachment` metadata with the logical ``blob_path``.
 
     Args:
         files: List of Slack file dicts from the event payload.
-        session_id: Session ID for GCS path scoping.
+        session_id: Session ID for path scoping.
         bot_token: Slack bot token for downloading files.
+        blob_store: Optional override for the blob store (tests).
 
     Returns:
         List of Attachment objects for successfully processed files.
     """
     attachments: list[Attachment] = []
     used_names: set[str] = set()
+    store = blob_store or get_blob_store()
 
     for file_info in files:
         download_url = file_info.get("url_private_download")
@@ -334,25 +341,25 @@ async def process_slack_attachments(
             sanitized_name = f"{stem}_{counter}{ext}"
         used_names.add(sanitized_name)
 
-        gcs_url = f"gs://{_GCS_ATTACHMENT_BUCKET}/{_GCS_ATTACHMENT_PREFIX}/{session_id}/{sanitized_name}"
+        blob_path = f"{_BLOB_ATTACHMENT_PREFIX}/{session_id}/{sanitized_name}"
 
         try:
             data = await _download_slack_file(download_url, bot_token)
-            await upload_to_gcs(data, gcs_url, content_type=content_type)
+            await store.upload(blob_path, data, content_type=content_type)
 
             attachments.append(
                 Attachment(
                     filename=sanitized_name,
                     content_type=content_type,
                     size=len(data),
-                    gcs_url=gcs_url,
+                    blob_path=blob_path,
                 )
             )
             logger.info(
-                "Uploaded Slack attachment to GCS",
+                "Uploaded Slack attachment to blob store",
                 filename=sanitized_name,
                 size=len(data),
-                gcs_url=gcs_url,
+                blob_path=blob_path,
                 session_id=session_id,
             )
         except ValueError as e:

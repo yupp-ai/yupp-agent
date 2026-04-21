@@ -194,22 +194,25 @@ async def _download_attachments_to_workspace(
     attachments: list[AttachmentInfo],
     workspace: str,
 ) -> list[str]:
-    """Download attachments from GCS into the session workspace.
+    """Download attachments from the blob store into the session workspace.
 
-    Files are saved to {workspace}/attachments/{filename}. Already-downloaded
-    files (same path exists) are skipped to avoid redundant downloads.
+    Files are saved to ``{workspace}/attachments/{filename}``. The source
+    path is the logical ``AttachmentInfo.blob_path`` (e.g.,
+    ``attachments/{session_id}/file.png``); the configured ``BlobStore``
+    resolves it against local storage or GCS.
 
     Args:
-        attachments: Attachment metadata with GCS URLs.
+        attachments: Attachment metadata with logical blob paths.
         workspace: Session workspace root directory.
 
     Returns:
-        List of absolute paths (e.g., "/data/sessions/{id}/attachments/screenshot.png") for
+        List of absolute paths (e.g., ``/data/sessions/{id}/attachments/screenshot.png``) for
         successfully downloaded files. Absolute paths are used so the agent can pass them
         directly to the Read tool without guessing the workspace root.
     """
-    from ypl.backend.utils.gcs_utils import download_from_gcs
+    from ypl.backend.utils.blob_store import get_blob_store
 
+    store = get_blob_store()
     attachments_dir = os.path.join(workspace, "attachments")
     os.makedirs(attachments_dir, exist_ok=True)
 
@@ -223,7 +226,7 @@ async def _download_attachments_to_workspace(
         local_path = os.path.join(attachments_dir, safe_name)
 
         try:
-            data = await download_from_gcs(att.gcs_url)
+            data = await store.download(att.blob_path)
             with open(local_path, "wb") as f:
                 f.write(data)
             downloaded_paths.append(local_path)
@@ -235,9 +238,9 @@ async def _download_attachments_to_workspace(
             )
         except Exception:
             logger.error(
-                "Failed to download attachment from GCS",
+                "Failed to download attachment from blob store",
                 filename=att.filename,
-                gcs_url=att.gcs_url,
+                blob_path=att.blob_path,
                 exc_info=True,
             )
 

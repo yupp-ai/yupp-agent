@@ -302,7 +302,7 @@ class TestSessionCreateRequest:
             filename="report.pdf",
             content_type="application/pdf",
             size=1024,
-            gcs_url="gs://yupp-agents/attachments/sess/report.pdf",
+            blob_path="attachments/sess/report.pdf",
         )
         req = SessionCreateRequest(agent_id="sre", trigger="api", attachments=[attachment])
         assert req.attachments is not None
@@ -345,9 +345,9 @@ class TestAttachmentInfo:
             filename="image.png",
             content_type="image/png",
             size=2048,
-            gcs_url="gs://yupp-agents/attachments/sess/image.png",
+            blob_path="attachments/sess/image.png",
         )
         assert att.filename == "image.png"
         assert att.content_type == "image/png"
         assert att.size == 2048
-        assert att.gcs_url == "gs://yupp-agents/attachments/sess/image.png"
+        assert att.blob_path == "attachments/sess/image.png"

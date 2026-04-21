@@ -1240,8 +1240,10 @@ class TestDrainPendingMessages:
         from ypl.agent_harness_service.service.state import PendingMessage, _pending_messages
 
         sid = uuid.uuid4()
-        att1 = AttachmentInfo(filename="a.pdf", gcs_url="gs://bucket/a.pdf", content_type="application/pdf", size=100)
-        att2 = AttachmentInfo(filename="b.png", gcs_url="gs://bucket/b.png", content_type="image/png", size=200)
+        att1 = AttachmentInfo(
+            filename="a.pdf", blob_path="attachments/sid/a.pdf", content_type="application/pdf", size=100
+        )
+        att2 = AttachmentInfo(filename="b.png", blob_path="attachments/sid/b.png", content_type="image/png", size=200)
         _pending_messages[sid] = [
             PendingMessage(message="first", attachments=[att1]),
             PendingMessage(message="second", attachments=[att2]),
