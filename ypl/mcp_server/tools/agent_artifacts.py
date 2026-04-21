@@ -1,16 +1,34 @@
 """MCP tools for managing agent artifacts.
 
-Agents call add_artifact when they produce a trackable output (PR, yuppaste,
-report, etc.) and update_artifact to revise the record as the artifact evolves.
-All writes are attributed to the calling agent's session via AHS headers.
+Two flavors of artifact creation live here:
+
+- ``add_artifact`` — records a *pointer* to an externally-hosted artifact
+  (PR link, doc URL, …). Metadata only; no content is stored by AHS.
+- ``create_artifact`` — creates a *textual* artifact (type ``YUPPASTE`` by
+  default). Content + optional attachments are uploaded to the AHS
+  blob store and served back from ``/ahs/artifacts/{uuid}``.
+
+Both attribute writes to the calling agent's session via AHS headers.
 """
 
 import asyncio
+import base64
+import binascii
+import json
 import uuid
 from typing import Any
 
 from sqlalchemy.exc import IntegrityError
 
+from ypl.agent_harness_service.artifact_store import (
+    ArtifactError,
+    Attachment,
+    archive_artifact,
+    create_artifact,
+    get_artifact_by_id,
+    get_artifact_by_slug,
+    read_artifact_content,
+)
 from ypl.backend.db import get_async_session, get_async_session_read_replica, retry_db
 from ypl.db.agent_harness import AgentArtifact, AgentArtifactType
 from ypl.mcp_server.core import get_ahs_agent_name, get_ahs_session_id, get_requesting_user_id, mcp_server
@@ -459,3 +477,168 @@ async def _resolve_agent_id(agent_name: str) -> uuid.UUID | None:
         )
         row = result.first()
         return row.agent_id if row else None
+
+
+# ============================================================================
+# Textual-artifact tools (content-carrying)
+# ============================================================================
+
+
+def _decode_attachments_arg(raw: str | None) -> list[Attachment]:
+    """Decode the MCP ``attachments`` JSON-string argument into Attachment objects.
+
+    Shape::
+
+        [{"filename": "image.png", "content_base64": "...", "content_type": "image/png"}, ...]
+    """
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ArtifactError(f"Invalid JSON for attachments: {exc}") from exc
+    if not isinstance(parsed, list):
+        raise ArtifactError("attachments must be a JSON array")
+    result: list[Attachment] = []
+    for i, item in enumerate(parsed):
+        if not isinstance(item, dict):
+            raise ArtifactError(f"attachments[{i}] must be an object")
+        try:
+            data = base64.b64decode(item["content_base64"])
+        except (KeyError, binascii.Error, ValueError) as exc:
+            raise ArtifactError(f"attachments[{i}]: invalid content_base64") from exc
+        result.append(
+            Attachment(
+                filename=str(item.get("filename", f"attachment-{i}")),
+                data=data,
+                content_type=str(item.get("content_type", "application/octet-stream")),
+            )
+        )
+    return result
+
+
+@mcp_server.tool(
+    name="create_artifact",
+    description=(
+        "Create a new textual artifact (default type YUPPASTE — a shareable "
+        "markdown/text/html document). Content is stored in the AHS blob store; "
+        "metadata is written to the ``agent_artifacts`` DB table. Returns a URL "
+        "that points at /ahs/artifacts/{uuid}. "
+        "Optionally attach images or other files via ``attachments`` (JSON array "
+        "of {filename, content_base64, content_type}). Reference them inline with "
+        "``![alt](attachment:<filename>)`` in the content. "
+        "For named artifacts with versioning: set ``named_slug`` to a URL-safe "
+        "identifier and ``create_new_slug=True`` to start a new slug (version 1), "
+        "or ``False`` to append the next version onto an existing slug."
+    ),
+)
+async def mcp_create_artifact(
+    content: str,
+    title: str = "",
+    description: str | None = None,
+    content_type: str = "text/markdown",
+    named_slug: str | None = None,
+    create_new_slug: bool = False,
+    attachments: str | None = None,
+) -> dict[str, Any]:
+    """Create a textual artifact. Attribution comes from the MCP session headers."""
+    try:
+        decoded_attachments = _decode_attachments_arg(attachments)
+    except ArtifactError as exc:
+        return {"error": str(exc)}
+
+    session_id = _parse_session_id(get_ahs_session_id())
+    user_id = get_requesting_user_id()
+    agent_name = get_ahs_agent_name()
+    agent_id = await _resolve_agent_id(agent_name) if agent_name else None
+
+    resolved_title = title or (f"paste-{uuid.uuid4().hex[:8]}")
+
+    try:
+        artifact = await create_artifact(
+            content=content.encode("utf-8"),
+            content_type=content_type,
+            title=resolved_title,
+            description=description,
+            creator_user_id=user_id,
+            creator_agent_id=agent_id,
+            agent_session_id=session_id,
+            named_slug=named_slug,
+            create_new_slug=create_new_slug,
+            attachments=decoded_attachments,
+        )
+    except ArtifactError as exc:
+        return {"error": str(exc)}
+
+    return {
+        "artifact_id": str(artifact.agent_artifact_id),
+        "url": artifact.url,
+        "slug": artifact.named_slug,
+        "version": artifact.version,
+        "content_type": artifact.content_type,
+        "title": artifact.title,
+    }
+
+
+@mcp_server.tool(
+    name="read_artifact",
+    description=(
+        "Read a textual artifact by ID or slug. Returns its content inline "
+        "along with metadata. Pass ``id_or_slug`` as either a UUID or a "
+        "named slug; when reading by slug, optionally pass ``version`` to "
+        "select a specific version (defaults to the latest non-archived)."
+    ),
+)
+async def mcp_read_artifact(
+    id_or_slug: str,
+    version: int | None = None,
+) -> dict[str, Any]:
+    """Fetch an artifact's content + metadata."""
+    artifact: AgentArtifact | None = None
+    # Try UUID first, fall back to slug.
+    try:
+        artifact_uuid = uuid.UUID(id_or_slug)
+        artifact = await get_artifact_by_id(artifact_uuid)
+    except ValueError:
+        artifact = await get_artifact_by_slug(id_or_slug, version=version)
+
+    if artifact is None:
+        return {"error": f"Artifact not found: {id_or_slug!r}"}
+
+    try:
+        data, content_type = await read_artifact_content(artifact)
+    except ArtifactError as exc:
+        return {"error": str(exc)}
+    except FileNotFoundError:
+        return {"error": f"Artifact {artifact.agent_artifact_id} metadata exists but content is missing"}
+
+    return {
+        "artifact_id": str(artifact.agent_artifact_id),
+        "url": artifact.url,
+        "title": artifact.title,
+        "description": artifact.description,
+        "content": data.decode("utf-8"),
+        "content_type": content_type,
+        "slug": artifact.named_slug,
+        "version": artifact.version,
+        "attachments": (artifact.artifact_metadata or {}).get("attachments", []),
+    }
+
+
+@mcp_server.tool(
+    name="archive_artifact",
+    description=(
+        "Archive (soft-delete) a textual artifact by UUID. The row stays in the "
+        "DB with ``is_archived=true``; blobs are retained so the artifact can be "
+        "un-archived later by a migration/admin if needed."
+    ),
+)
+async def mcp_archive_artifact(artifact_id: str) -> dict[str, Any]:
+    try:
+        artifact_uuid = uuid.UUID(artifact_id)
+    except ValueError:
+        return {"error": f"Invalid artifact_id: {artifact_id!r}"}
+    archived = await archive_artifact(artifact_uuid)
+    if not archived:
+        return {"error": f"Artifact not found: {artifact_id}"}
+    return {"artifact_id": artifact_id, "archived": True}

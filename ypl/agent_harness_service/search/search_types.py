@@ -239,7 +239,7 @@ class ArtifactPRResult(BaseModel):
 
 
 class ArtifactDocResult(BaseModel):
-    """A single document artifact (yuppaste, file, report, …) matched by search."""
+    """A single document artifact (textual artifact, file, report, …) matched by search."""
 
     id: str = Field(..., description="Artifact UUID or external identifier")
     title: str | None = Field(None, description="Document title or filename")
