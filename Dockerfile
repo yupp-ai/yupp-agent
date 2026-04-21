@@ -1,51 +1,46 @@
-FROM gcr.io/yupp-llms/agent-base-py312:latest
+FROM python:3.12-slim
 
-# set work directory
 WORKDIR /app
 
-# Environment variables
 ENV PYTHONPATH=/app \
-    GRPC_DNS_RESOLVER=native \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    GRPC_DNS_RESOLVER=native
 
-# Copy dependency files (needed for poetry build)
-COPY ./pyproject.toml ./poetry.lock* ./README.md /app/
+# Install poetry
+RUN pip install --no-cache-dir poetry==1.8.5 && \
+    poetry config virtualenvs.create false
 
-# Copy application code and data
+# Dependency layer — cached until pyproject.toml / poetry.lock change.
+COPY pyproject.toml poetry.lock README.md /app/
+RUN set -e && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends cmake g++ git make && \
+    poetry install --no-root --without dev --no-interaction --no-ansi --compile && \
+    apt-get purge -y --auto-remove cmake g++ make && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* ~/.cache /root/.cache /tmp/* /var/tmp/* && \
+    find /usr/local/lib/python3.12/site-packages -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true
+
+# Application code + data. ``.env`` is injected at runtime (docker-compose
+# ``env_file:`` / systemd ``EnvironmentFile=``) — never bake it into the image.
 COPY ./ypl/ /app/ypl/
 COPY ./scripts/ /app/scripts/
 COPY ./data/ /app/data/
 # Skills are registered as MCP resources by ypl/mcp_server/mcp_tools.py
 COPY ./.agents/skills/ /app/.agents/skills/
 
-# Copy .env file too, which is generated earlier in the build process,
-# and has some build variables that get logged on server startup.
-COPY .env /app/.env
+RUN python -m compileall /app -q -f && \
+    python -c "import ypl; print('Package installed successfully')"
 
-# Sync dependencies (updates only if poetry.lock changed since base build)
-RUN set -e && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends cmake g++ make && \
-    echo "Syncing dependencies with poetry.lock..." && \
-    poetry lock --no-update && \
-    poetry install --no-root --without dev --compile && \
-    apt-get purge -y --auto-remove cmake g++ make && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/* ~/.cache /root/.cache /tmp/*
-
-
-RUN python -m compileall /app -q -f
-
-# Verify installation
-RUN python -c "import ypl; print('Package installed successfully')"
-
-# Set executable permissions for all entrypoint scripts
+# Make every entrypoint shell script executable so operators can point
+# SCRIPT_TO_RUN at whichever one they want without chmod-ing by hand.
 RUN find /app/ypl -type f -name "*entrypoint.sh" -exec chmod +x {} +
 
-EXPOSE 8080
+EXPOSE 8090
 
-# Default: AHS entrypoint (overridden per-service in deploy)
-ENV SCRIPT_TO_RUN=/app/ypl/agent_harness_service/entrypoint.sh
+# Default: the monolith (AHS + SAG + MCP in one process). Override
+# SCRIPT_TO_RUN (e.g. to streamlit_server_entrypoint.sh) for other services.
+ENV SCRIPT_TO_RUN=/app/ypl/mono_server/entrypoint.sh
 
-# Use shell form to allow for environment variable expansion
+# Shell form so the env var is expanded at container start.
 ENTRYPOINT exec $SCRIPT_TO_RUN

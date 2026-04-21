@@ -7,8 +7,8 @@ End-to-end tests for the SAG → AHS → SAG flow using a real Slack bot and loc
 - Docker (for Postgres + Redis)
 - `ngrok` or `cloudflared` (for exposing local server to Slack)
 - A Slack bot created via Bot Father (or manually)
-- Access to staging DB (for `dump_staging_to_local`)
-- `gcloud` authenticated (for GCP Secret Manager access)
+- A populated local `yadb` (load from your own dump using
+  `python -m ypl.db.tools.restore_dump`)
 
 ## Setup Steps
 
@@ -71,7 +71,7 @@ GATEWAY_BASE_URL="http://localhost:8090"
 # (counterintuitive name: "proxy handles encryption" → disable client SSL)
 ENABLE_CLOUDSQL_PROXY="true"
 
-# Point to local DB (dump_staging_to_local restores to 'yadb' by default)
+# Point to local DB (default DB name from ypl/mono_server/setup.py is "yadb")
 POSTGRES_CONNECTION_AGENTDB={"user":"postgres","password":"postgres","host":"localhost:5432","database":"yadb"}
 POSTGRES_CONNECTION_AGENTDB_REPLICA={"user":"postgres","password":"postgres","host":"localhost:5432","database":"yadb"}
 
@@ -94,15 +94,22 @@ USE_GOOGLE_CLOUD_LOGGING="false"
 > - Trailing `\n` in JSON values → "Invalid JSON: trailing characters"
 > - `database: "yupp_agent"` instead of `"yadb"` → empty slack_agents table
 
-### 6. Dump staging DB to local
+### 6. Load a seed DB dump
 
-This **must** be done after creating the bot (step 3), so the bot's `slack_agents` row is included:
+Load a dump into your local `yadb` — both the bot's `slack_agents` row and
+anything else the test flow needs. Dump from a source you control, then
+restore with the env-driven tool:
 
 ```bash
-poetry run python -m ypl.db.tools.dump_staging_to_local
-```
+# On the source host (see ypl/db/tools/dump_prod_yadb.py for flags):
+export PG_SOURCE_URL='postgresql://USER:PASS@HOST:5432/yadb?sslmode=require'
+poetry run python -m ypl.db.tools.dump_prod_yadb
 
-The tool will offer to restore an existing local dump if one exists, or download fresh from staging.
+# On your laptop:
+export PG_DEST_URL='postgresql://postgres:postgres@127.0.0.1:5432/yadb'
+poetry run python -m ypl.db.tools.restore_dump \
+    --file ~/tmp/yadb-dumps/yadb_prod_<timestamp>.dump --stamp-alembic
+```
 
 > **After the dump, stamp alembic**:
 > ```bash
@@ -215,7 +222,7 @@ poetry run pytest tests/e2e/ -v -m e2e --timeout=120
 
 ### "No Slack agent apps configured" (500 error)
 - `ENVIRONMENT` must be `staging` (not `local`) so SAG reads bot config from DB
-- The bot's `slack_agents` row must exist in local DB — re-run `dump_staging_to_local`
+- The bot's `slack_agents` row must exist in local DB — re-run the restore step above
 - SAG caches configs for 60s — wait or restart the monolith
 
 ### "PostgreSQL server rejected SSL upgrade"

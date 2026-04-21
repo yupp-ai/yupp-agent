@@ -17,7 +17,6 @@ from slack_sdk.errors import SlackApiError
 from slack_sdk.web.async_client import AsyncWebClient
 from sqlmodel import select
 
-from ypl.backend.config import settings
 from ypl.backend.db import get_async_session, retry_db
 from ypl.backend.llm.db_helpers import get_user_email, get_user_id_by_email
 from ypl.backend.llm.yuppster_helpers import slack_id_to_yupp_user_id
@@ -34,7 +33,6 @@ from ypl.slack_agent_gateway.bot_father_types import (
 )
 from ypl.slack_agent_gateway.constants import get_agent_config_by_name, get_bot_father_config
 from ypl.slack_agent_gateway.crypto import decrypt_secret, encrypt_secret
-from ypl.slack_agent_gateway.secrets import create_agent_secret
 from ypl.slack_agent_gateway.slack_app_manifests import (
     add_app_collaborator,
     build_manifest,
@@ -380,7 +378,6 @@ async def create_slack_bot(record: BotCreationRecord) -> None:
         record: The approved BotCreationRecord.
     """
     refresh_token = await get_bot_father_refresh_token()
-    environment = settings.ENVIRONMENT
 
     app_id: str | None = None
 
@@ -429,10 +426,11 @@ async def create_slack_bot(record: BotCreationRecord) -> None:
                 agent_name=record.agent_name,
             )
 
-        # Step 3: Store signing_secret in GCP Secret Manager (bot_token added after OAuth)
-        await create_agent_secret(record.slack_name, "signing-secret", signing_secret, environment)
-        await create_agent_secret(record.slack_name, "app-id", app_id, environment)
-        logger.info("Stored signing secret in GCP", slack_name=record.slack_name)
+        # Step 3: Encrypt the signing secret and stash it on the pending
+        # BotCreationRecord. The slack_agents row is created in
+        # ``complete_oauth_flow`` below, once we also have the bot_token.
+        record.signing_secret_encrypted = encrypt_secret(signing_secret)
+        logger.info("Encrypted signing secret for agent", slack_name=record.slack_name)
 
         # Step 4: Generate OAuth install URL with request_id as state for CSRF
         oauth_install_url = build_oauth_install_url(oauth_client_id, state=record.request_id)
@@ -545,8 +543,6 @@ async def complete_oauth_installation(code: str, state: str) -> BotCreationRecor
         await redis.delete(claim_key)
         raise ValueError(f"Bot creation request {request_id} missing OAuth credentials")
 
-    environment = settings.ENVIRONMENT
-
     try:
         # Step 1: Exchange code for bot token
         oauth_result = await exchange_oauth_code(
@@ -562,20 +558,20 @@ async def complete_oauth_installation(code: str, state: str) -> BotCreationRecor
             app_id=record.slack_app_id,
         )
 
-        # Step 2: Store bot token in GCP Secret Manager
-        await create_agent_secret(record.slack_name, "bot-token", bot_token, environment)
-        logger.info("Stored bot token in GCP", slack_name=record.slack_name)
-
-        # Step 3: Add agent to the database
+        # Step 2: Add agent to the database with encrypted bot_token +
+        # signing_secret (signing_secret was captured at creation time).
         # Use the pre-resolved user ID from the record, with fallback for old records or email-only requests
         created_by_user_id = record.requested_by_user_id
         if not created_by_user_id and record.requested_by_email:
             created_by_user_id = await get_user_id_by_email(record.requested_by_email)
+        bot_token_encrypted = encrypt_secret(bot_token)
         await _add_agent_to_database(
             app_id=record.slack_app_id or "",
             agent_name=record.agent_name,
             bot_name=record.slack_name,
             display_name=record.display_name,
+            bot_token_encrypted=bot_token_encrypted,
+            signing_secret_encrypted=record.signing_secret_encrypted,
             created_by_user_id=created_by_user_id,
             bot_creation_request_id=record.request_id,
         )
@@ -850,6 +846,8 @@ async def _add_agent_to_database(
     agent_name: str,
     bot_name: str,
     display_name: str,
+    bot_token_encrypted: str | None = None,
+    signing_secret_encrypted: str | None = None,
     created_by_user_id: str | None = None,
     bot_creation_request_id: str | None = None,
 ) -> None:
@@ -858,9 +856,13 @@ async def _add_agent_to_database(
     Args:
         app_id: Slack app ID.
         agent_name: AHS agent name.
-        bot_name: Bot name used for GCP secret lookup.
+        bot_name: Bot name (also the env-var fallback key for secrets).
         display_name: Human-readable display name.
-        created_by_user_id: Yupp user ID of the creator.
+        bot_token_encrypted: Fernet-encrypted bot OAuth token (xoxb-...). Null
+            for rows where operators will supply the token via env var.
+        signing_secret_encrypted: Fernet-encrypted signing secret. Same null
+            semantics as ``bot_token_encrypted``.
+        created_by_user_id: User ID of the creator.
         bot_creation_request_id: Bot Father request ID.
     """
     async with get_async_session() as session:
@@ -880,6 +882,8 @@ async def _add_agent_to_database(
             agent_name=agent_name.lower(),
             bot_name=bot_name.lower(),
             display_name=display_name,
+            bot_token_encrypted=bot_token_encrypted,
+            signing_secret_encrypted=signing_secret_encrypted,
             status=SlackAgentStatus.ACTIVE,
             created_by_user_id=created_by_user_id,
             bot_creation_request_id=bot_creation_request_id,

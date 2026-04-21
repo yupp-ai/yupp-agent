@@ -121,6 +121,6 @@ The `lint_and_test.yml` workflow runs on PRs and pushes to main. All four jobs m
 | `ypl/agent_harness_service/ARCHITECTURE.md` | Detailed AHS layering documentation |
 | `ypl/db/models/agent_harness.py` | Core DB models (Agent, AgentSession, AgentTask, etc.) |
 | `data/feature_flags.yml` | Runtime feature toggles |
-| `data/secret-env-var-map.yml` | Secret-to-env-var mappings |
+| `docs/secrets.md` | How to populate `.env` from GCP Secret Manager / AWS SSM / Vault / k8s |
 | `.agents/skills/` | 33 agent skill definitions (MCP tools) |
 | `ypl/agent_harness_service/deploy/agent_configs/` | Per-agent config.json + ROLE.md files |

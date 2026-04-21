@@ -1,8 +1,12 @@
 """Database models for Slack Agent Gateway agents.
 
 The SlackAgent table stores the list of registered Slack bots (agents) that can
-receive messages through the Slack Agent Gateway. Secrets (bot_token, signing_secret)
-remain in GCP Secret Manager for security.
+receive messages through the Slack Agent Gateway. Per-agent secrets (bot_token,
+signing_secret) are stored encrypted on the row itself, keyed off
+``SLACK_AGENT_GW_ENCRYPTION_KEY``. For GCP-free / self-hosted deployments, the
+env-var fallback (``SLACK_AGENT_GATEWAY_<BOT>_BOT_TOKEN`` etc.) still works for
+agents where the encrypted columns are null — handy for importing bots not
+provisioned via BotFather.
 """
 
 import enum
@@ -29,11 +33,12 @@ class SlackAgent(BaseModel, table=True):
     uses this table to:
     1. Verify incoming webhooks (lookup by app_id)
     2. Route messages to the correct AHS agent (agent_name)
-    3. Identify which bot to use for replies (bot_name for GCP secrets)
+    3. Reply via the bot's OAuth token (bot_token_encrypted)
 
-    Secrets (bot_token, signing_secret) are stored in GCP Secret Manager,
-    not in this table, following the naming convention:
-        ym-slack-agent-gateway-{bot_name}-{secret_type}-{environment}
+    Secrets are encrypted at rest with ``SLACK_AGENT_GW_ENCRYPTION_KEY`` via
+    ``ypl.slack_agent_gateway.crypto``. For rows imported from elsewhere (not
+    provisioned via BotFather), the encrypted columns can be null and the
+    gateway falls back to env vars keyed off ``bot_name``.
     """
 
     __tablename__ = "slack_agents"
@@ -59,12 +64,27 @@ class SlackAgent(BaseModel, table=True):
         nullable=False,
         sa_type=sa.Text,
         index=True,
-        description="Bot name used for GCP secret lookup (e.g., 'giladovski')",
+        description="Bot name — also the env-var fallback key when the encrypted columns are null",
     )
     display_name: str = Field(
         nullable=False,
         sa_type=sa.Text,
         description="Human-readable display name (e.g., 'Giladovski')",
+    )
+
+    # Encrypted per-agent secrets. Nullable so imported rows (no encrypted
+    # payload) can fall back to env vars via ``fetch_agent_secret``.
+    bot_token_encrypted: str | None = Field(
+        default=None,
+        nullable=True,
+        sa_type=sa.Text,
+        description="Fernet-encrypted bot user OAuth token (xoxb-...)",
+    )
+    signing_secret_encrypted: str | None = Field(
+        default=None,
+        nullable=True,
+        sa_type=sa.Text,
+        description="Fernet-encrypted Slack app signing secret",
     )
 
     # Status
@@ -81,7 +101,7 @@ class SlackAgent(BaseModel, table=True):
     created_by_user_id: str | None = Field(
         default=None,
         sa_type=sa.Text,
-        description="Yupp user ID of the creator",
+        description="User ID of the creator",
     )
 
     # Bot Father request tracking

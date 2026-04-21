@@ -2,7 +2,7 @@
 
 Covers:
 - Module-level constants (values/types)
-- _fetch_agent_secrets (concurrent fetch)
+- _resolve_agent_secrets (decrypted row → env fallback chain)
 - get_agent_configs (DB-backed; empty + non-empty paths)
 - get_agent_config_by_app_id / get_agent_config_by_name
 - get_all_signing_secrets
@@ -35,7 +35,7 @@ from ypl.slack_agent_gateway.constants import (
     SURVEY_RESPONSE_TTL_SECONDS,
     THREAD_SESSION_MAPPING_TTL_SECONDS,
     TOOL_ENTRIES_TTL_SECONDS,
-    _fetch_agent_secrets,
+    _resolve_agent_secrets,
     clear_config_cache,
     get_agent_config_by_app_id,
     get_agent_config_by_name,
@@ -110,28 +110,67 @@ class TestConstants:
 
 
 # ---------------------------------------------------------------------------
-# _fetch_agent_secrets
+# _resolve_agent_secrets
 # ---------------------------------------------------------------------------
 
 
-class TestFetchAgentSecrets:
-    async def test_returns_bot_token_and_signing_secret(self) -> None:
-        async def _mock_fetch(agent_name: str, secret_type: str) -> str | None:
-            if secret_type == "bot-token":
-                return "xoxb-tok"
-            if secret_type == "signing-secret":
-                return "signing-sec"
-            return None
+def _fake_agent(
+    bot_name: str = "giladovski",
+    bot_token_encrypted: str | None = None,
+    signing_secret_encrypted: str | None = None,
+) -> MagicMock:
+    """Minimal stand-in for a SlackAgent row with the attributes the resolver touches."""
+    agent = MagicMock()
+    agent.bot_name = bot_name
+    agent.bot_token_encrypted = bot_token_encrypted
+    agent.signing_secret_encrypted = signing_secret_encrypted
+    return agent
 
-        with patch(f"{MODULE}.fetch_agent_secret", side_effect=_mock_fetch):
-            bot_token, signing_secret = await _fetch_agent_secrets("giladovski")
 
-        assert bot_token == "xoxb-tok"
-        assert signing_secret == "signing-sec"
+class TestResolveAgentSecrets:
+    def test_prefers_decrypted_row_values(self) -> None:
+        agent = _fake_agent(bot_token_encrypted="ct_bot", signing_secret_encrypted="ct_sig")
+        with (
+            patch(f"{MODULE}.decrypt_secret", side_effect=lambda v: f"pt:{v}"),
+            patch(f"{MODULE}.get_env_var_secret") as mock_env,
+        ):
+            bot_token, signing_secret = _resolve_agent_secrets(agent)
 
-    async def test_returns_none_when_secret_not_found(self) -> None:
-        with patch(f"{MODULE}.fetch_agent_secret", new_callable=AsyncMock, return_value=None):
-            bot_token, signing_secret = await _fetch_agent_secrets("noagent")
+        assert bot_token == "pt:ct_bot"
+        assert signing_secret == "pt:ct_sig"
+        mock_env.assert_not_called()
+
+    def test_falls_back_to_env_when_columns_null(self) -> None:
+        agent = _fake_agent(bot_token_encrypted=None, signing_secret_encrypted=None)
+
+        def env_lookup(bot_name: str, secret_type: str) -> str | None:
+            return {"bot-token": "env-bot", "signing-secret": "env-sig"}[secret_type]
+
+        with patch(f"{MODULE}.get_env_var_secret", side_effect=env_lookup):
+            bot_token, signing_secret = _resolve_agent_secrets(agent)
+
+        assert bot_token == "env-bot"
+        assert signing_secret == "env-sig"
+
+    def test_falls_back_to_env_when_decrypt_fails(self) -> None:
+        agent = _fake_agent(bot_token_encrypted="bogus", signing_secret_encrypted="bogus")
+
+        def env_lookup(bot_name: str, secret_type: str) -> str | None:
+            return "env-" + secret_type
+
+        with (
+            patch(f"{MODULE}.decrypt_secret", side_effect=RuntimeError("bad key")),
+            patch(f"{MODULE}.get_env_var_secret", side_effect=env_lookup),
+        ):
+            bot_token, signing_secret = _resolve_agent_secrets(agent)
+
+        assert bot_token == "env-bot-token"
+        assert signing_secret == "env-signing-secret"
+
+    def test_returns_none_when_neither_source_has_a_value(self) -> None:
+        agent = _fake_agent()
+        with patch(f"{MODULE}.get_env_var_secret", return_value=None):
+            bot_token, signing_secret = _resolve_agent_secrets(agent)
 
         assert bot_token is None
         assert signing_secret is None
