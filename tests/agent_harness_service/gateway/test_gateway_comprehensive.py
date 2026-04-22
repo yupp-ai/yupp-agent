@@ -1159,9 +1159,31 @@ class TestFormatMessages:
 
 
 class TestFetchSlackThreadContent:
+    """Slack client + display-name resolution live in ``ypl.slack_common.ops_bot``.
+
+    The prefetch tests here patch the imported references inside
+    ``ypl.agent_harness_service.gateway.slack_prefetch`` so they exercise the
+    prefetch formatting / truncation / pagination logic without a real Slack
+    connection. Client-initialisation behaviour (token env vars, singleton
+    reuse) is covered in ``tests/slack_common/test_ops_bot.py``.
+    """
+
+    @staticmethod
+    def _patches(mock_client: AsyncMock) -> tuple[Any, Any]:
+        """Common patch pair: read client + display-name resolver."""
+        return (
+            patch(
+                "ypl.agent_harness_service.gateway.slack_prefetch.get_ops_bot_user_client",
+                return_value=mock_client,
+            ),
+            patch(
+                "ypl.agent_harness_service.gateway.slack_prefetch.resolve_display_name",
+                AsyncMock(side_effect=lambda uid: "Alice" if uid == "U1" else uid),
+            ),
+        )
+
     @pytest.mark.asyncio
     async def test_success_simple(self) -> None:
-        from ypl.agent_harness_service.gateway import slack_prefetch
         from ypl.agent_harness_service.gateway.slack_prefetch import fetch_slack_thread_content
 
         mock_client = AsyncMock()
@@ -1173,11 +1195,8 @@ class TestFetchSlackThreadContent:
                 "response_metadata": {"next_cursor": ""},
             }
         )
-        mock_client.users_info = AsyncMock(
-            return_value={"ok": True, "user": {"profile": {"display_name": "Alice"}, "name": "alice"}}
-        )
-
-        with patch.object(slack_prefetch, "_slack_bot_client", mock_client):
+        read_patch, resolver_patch = self._patches(mock_client)
+        with read_patch, resolver_patch:
             result = await fetch_slack_thread_content("C123", "1.0")
 
         assert result is not None
@@ -1186,33 +1205,30 @@ class TestFetchSlackThreadContent:
 
     @pytest.mark.asyncio
     async def test_returns_none_on_exception(self) -> None:
-        from ypl.agent_harness_service.gateway import slack_prefetch
         from ypl.agent_harness_service.gateway.slack_prefetch import fetch_slack_thread_content
 
         mock_client = AsyncMock()
         mock_client.conversations_replies = AsyncMock(side_effect=OSError("network error"))
-
-        with patch.object(slack_prefetch, "_slack_bot_client", mock_client):
+        read_patch, resolver_patch = self._patches(mock_client)
+        with read_patch, resolver_patch:
             result = await fetch_slack_thread_content("C123", "1.0")
 
         assert result is None
 
     @pytest.mark.asyncio
     async def test_returns_none_when_ok_false(self) -> None:
-        from ypl.agent_harness_service.gateway import slack_prefetch
         from ypl.agent_harness_service.gateway.slack_prefetch import fetch_slack_thread_content
 
         mock_client = AsyncMock()
         mock_client.conversations_replies = AsyncMock(return_value={"ok": False, "error": "channel_not_found"})
-
-        with patch.object(slack_prefetch, "_slack_bot_client", mock_client):
+        read_patch, resolver_patch = self._patches(mock_client)
+        with read_patch, resolver_patch:
             result = await fetch_slack_thread_content("C123", "1.0")
 
         assert result is None
 
     @pytest.mark.asyncio
     async def test_content_truncated_at_15000_chars(self) -> None:
-        from ypl.agent_harness_service.gateway import slack_prefetch
         from ypl.agent_harness_service.gateway.slack_prefetch import fetch_slack_thread_content
 
         long_text = "x" * 20000
@@ -1225,11 +1241,8 @@ class TestFetchSlackThreadContent:
                 "response_metadata": {},
             }
         )
-        mock_client.users_info = AsyncMock(
-            return_value={"ok": True, "user": {"profile": {"display_name": "Alice"}, "name": "alice"}}
-        )
-
-        with patch.object(slack_prefetch, "_slack_bot_client", mock_client):
+        read_patch, resolver_patch = self._patches(mock_client)
+        with read_patch, resolver_patch:
             result = await fetch_slack_thread_content("C123", "1.0")
 
         assert result is not None
@@ -1240,7 +1253,6 @@ class TestFetchSlackThreadContent:
 
     @pytest.mark.asyncio
     async def test_has_more_hint_appended(self) -> None:
-        from ypl.agent_harness_service.gateway import slack_prefetch
         from ypl.agent_harness_service.gateway.slack_prefetch import fetch_slack_thread_content
 
         mock_client = AsyncMock()
@@ -1252,11 +1264,8 @@ class TestFetchSlackThreadContent:
                 "response_metadata": {"next_cursor": "cursor-abc"},
             }
         )
-        mock_client.users_info = AsyncMock(
-            return_value={"ok": True, "user": {"profile": {"display_name": "Alice"}, "name": "alice"}}
-        )
-
-        with patch.object(slack_prefetch, "_slack_bot_client", mock_client):
+        read_patch, resolver_patch = self._patches(mock_client)
+        with read_patch, resolver_patch:
             result = await fetch_slack_thread_content("C123", "1.0")
 
         assert result is not None
@@ -1265,8 +1274,6 @@ class TestFetchSlackThreadContent:
 
     @pytest.mark.asyncio
     async def test_user_resolution_failure_falls_back_to_id(self) -> None:
-        from slack_sdk.errors import SlackApiError
-        from ypl.agent_harness_service.gateway import slack_prefetch
         from ypl.agent_harness_service.gateway.slack_prefetch import fetch_slack_thread_content
 
         mock_client = AsyncMock()
@@ -1278,51 +1285,11 @@ class TestFetchSlackThreadContent:
                 "response_metadata": {},
             }
         )
-        # Simulate Slack API error during user resolution
-        mock_client.users_info = AsyncMock(side_effect=SlackApiError("user_not_found", {"error": "user_not_found"}))  # type: ignore[no-untyped-call]
-
-        with patch.object(slack_prefetch, "_slack_bot_client", mock_client):
+        # Resolver returns the raw ID when it can't look up a name — prefetch
+        # should still produce content with the raw ID in place of the name.
+        read_patch, resolver_patch = self._patches(mock_client)
+        with read_patch, resolver_patch:
             result = await fetch_slack_thread_content("C123", "1.0")
 
-        # Should still return content, with raw user ID as name fallback
         assert result is not None
         assert "U999" in result
-
-
-class TestGetSlackBotClient:
-    def setup_method(self) -> None:
-        import ypl.agent_harness_service.gateway.slack_prefetch as sp
-
-        sp._slack_bot_client = None
-
-    def teardown_method(self) -> None:
-        import ypl.agent_harness_service.gateway.slack_prefetch as sp
-
-        sp._slack_bot_client = None
-
-    def test_raises_when_token_not_set(self) -> None:
-        from ypl.agent_harness_service.gateway.slack_prefetch import _get_slack_bot_client
-
-        with patch.dict("os.environ", {}, clear=True):
-            # Remove the env var if present
-            import os
-
-            os.environ.pop("SLACK_MCP_SERVER_APP_BOT_TOKEN", None)
-            with pytest.raises(ValueError, match="SLACK_MCP_SERVER_APP_BOT_TOKEN"):
-                _get_slack_bot_client()
-
-    def test_creates_client_with_token(self) -> None:
-        from slack_sdk.web.async_client import AsyncWebClient
-        from ypl.agent_harness_service.gateway.slack_prefetch import _get_slack_bot_client
-
-        with patch.dict("os.environ", {"SLACK_MCP_SERVER_APP_BOT_TOKEN": "xoxb-test-token"}):
-            client = _get_slack_bot_client()
-            assert isinstance(client, AsyncWebClient)
-
-    def test_singleton_reuses_same_client(self) -> None:
-        from ypl.agent_harness_service.gateway.slack_prefetch import _get_slack_bot_client
-
-        with patch.dict("os.environ", {"SLACK_MCP_SERVER_APP_BOT_TOKEN": "xoxb-test-token"}):
-            c1 = _get_slack_bot_client()
-            c2 = _get_slack_bot_client()
-            assert c1 is c2

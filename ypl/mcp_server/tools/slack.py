@@ -1,105 +1,20 @@
 """MCP tools for Slack integration.
 
 Provides tools for reading Slack threads and searching Slack messages
-with user ID resolution and caching.
+with user ID resolution and caching. All reads use OpsBot (the shared
+workspace reader app); see :mod:`ypl.slack_common.ops_bot` for the policy.
 """
 
 import asyncio
-import os
 from typing import Any
 
-from cachetools import TTLCache
 from slack_sdk.errors import SlackApiError
-from slack_sdk.http_retry.builtin_async_handlers import AsyncRateLimitErrorRetryHandler
-from slack_sdk.web.async_client import AsyncWebClient
 
 from ypl.mcp_server.core import mcp_server
+from ypl.slack_common import get_ops_bot_user_client, resolve_display_name
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
-
-
-# ============================================================================
-# Singletons and Cache
-# ============================================================================
-
-# TTL cache for Slack user ID -> display name resolution (1 hour, max 2k entries).
-# Only successful lookups are cached; transient failures are retried on next call.
-_slack_user_cache: TTLCache[str, str] = TTLCache(maxsize=2000, ttl=3600)
-
-# Singleton Slack clients (lazy-initialized) with rate-limit retry.
-_slack_bot_client: AsyncWebClient | None = None
-_slack_user_client: AsyncWebClient | None = None
-
-
-# ============================================================================
-# Helpers
-# ============================================================================
-
-
-def _get_slack_bot_client() -> AsyncWebClient:
-    """Get or create the singleton Slack bot client."""
-    global _slack_bot_client
-    if _slack_bot_client is None:
-        token = os.environ.get("SLACK_MCP_SERVER_APP_BOT_TOKEN")
-        if not token:
-            raise ValueError("SLACK_MCP_SERVER_APP_BOT_TOKEN environment variable is not set")
-        _slack_bot_client = AsyncWebClient(
-            token=token,
-            retry_handlers=[AsyncRateLimitErrorRetryHandler(max_retry_count=2)],
-        )
-    return _slack_bot_client
-
-
-def _get_slack_user_client() -> AsyncWebClient:
-    """Get or create the singleton Slack user-token client.
-
-    The user token (xoxp-...) is required for search.messages, which does not
-    support bot tokens.
-    """
-    global _slack_user_client
-    if _slack_user_client is None:
-        token = os.environ.get("SLACK_MCP_SERVER_APP_USER_TOKEN")
-        if not token:
-            raise ValueError("SLACK_MCP_SERVER_APP_USER_TOKEN environment variable is not set")
-        _slack_user_client = AsyncWebClient(
-            token=token,
-            retry_handlers=[AsyncRateLimitErrorRetryHandler(max_retry_count=2)],
-        )
-    return _slack_user_client
-
-
-async def _resolve_slack_user(client: AsyncWebClient, user_id: str) -> str:
-    """Resolve a Slack user ID to a display name, with caching.
-
-    Only successful resolutions are cached. Transient failures (rate limits,
-    network errors) return the raw user_id without caching so the next call
-    can retry.
-    """
-    if user_id in _slack_user_cache:
-        return str(_slack_user_cache[user_id])
-
-    try:
-        response = await client.users_info(user=user_id)
-        if response.get("ok") and response.get("user"):
-            user = response["user"]
-            profile = user.get("profile", {})
-            # display_name can be "" when unset — the or-chain relies on empty
-            # string being falsy to fall through to real_name / name.
-            display_name = (
-                profile.get("display_name")
-                or profile.get("real_name")
-                or user.get("real_name")
-                or user.get("name")
-                or user_id
-            )
-            _slack_user_cache[user_id] = display_name
-            return display_name
-    except SlackApiError as e:
-        logger.warning("Failed to resolve Slack user", user_id=user_id, error=str(e))
-
-    # Don't cache failures — return raw ID so next call can retry
-    return user_id
 
 
 # ============================================================================
@@ -137,7 +52,10 @@ async def read_slack_thread(
         Bot/email messages include `attachments_text` and/or `blocks` with their content.
     """
     try:
-        client = _get_slack_bot_client()
+        # Reads go through OpsBot's user token so we don't need to invite a bot
+        # to every channel. ``resolve_display_name`` uses OpsBot's bot token
+        # (``users:read``) internally; see :mod:`ypl.slack_common.ops_bot`.
+        read_client = get_ops_bot_user_client()
 
         kwargs: dict[str, Any] = {
             "channel": channel,
@@ -147,7 +65,7 @@ async def read_slack_thread(
         if cursor:
             kwargs["cursor"] = cursor
 
-        response = await client.conversations_replies(**kwargs)
+        response = await read_client.conversations_replies(**kwargs)
 
         if not response.get("ok"):
             return {
@@ -161,7 +79,7 @@ async def read_slack_thread(
         # Using a dict avoids serial retries inside the loop when a transient
         # API failure prevents caching during the gather phase.
         unique_user_ids = list({msg.get("user", "") for msg in raw_messages} - {""})
-        resolved_names = await asyncio.gather(*(_resolve_slack_user(client, uid) for uid in unique_user_ids))
+        resolved_names = await asyncio.gather(*(resolve_display_name(uid) for uid in unique_user_ids))
         user_map: dict[str, Any] = dict(zip(unique_user_ids, resolved_names, strict=True))
 
         messages = []
@@ -240,13 +158,14 @@ async def read_slack_thread(
     except SlackApiError as e:
         slack_error = e.response.get("error", "unknown_slack_error")
         if slack_error == "not_in_channel":
+            # Reads use the user token, so this means the installing user
+            # (not the bot) isn't in the channel — usually a private channel.
             friendly = (
-                f"Bot is not a member of channel {channel} — "
-                "please invite the Yupp MCP bot to the channel first "
-                "(e.g. type `/invite @YuppMCP` in the channel, or go to the channel's Apps/Integrations settings)."
+                f"Channel {channel} is not accessible with the current reader — "
+                "add the reader user to the private channel, or verify the channel ID."
             )
             logger.warning(
-                "Slack bot not in channel",
+                "Slack reader not in channel",
                 channel=channel,
                 thread_ts=thread_ts,
                 slack_error=slack_error,
@@ -294,7 +213,7 @@ async def search_slack(
         Dictionary containing matching messages with channel, timestamp, and text.
     """
     try:
-        client = _get_slack_user_client()
+        client = get_ops_bot_user_client()
 
         response = await client.search_messages(
             query=query,
