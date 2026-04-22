@@ -1,0 +1,14 @@
+[Unit]
+Description=AHS — periodic pull of agent-workspace repos (every 5 min)
+
+[Timer]
+# Fire shortly after boot (don't wait a full interval), then every 5 min.
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+# If the machine is off when the timer would have fired, run on next boot.
+Persistent=true
+Unit=ahs-pull-agent-repos.service
+
+[Install]
+WantedBy=timers.target
