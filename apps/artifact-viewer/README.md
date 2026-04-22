@@ -38,14 +38,30 @@ Resource profile (single uvicorn worker): ~40 MB RSS, ~200 ms cold start. No dat
 
 ## Config
 
-All env vars are documented in [`.env.example`](.env.example). The ones you must set:
+Config is env-driven. See [`.env.example`](.env.example) for the full
+list. Every viewer-specific variable is prefixed with `VIEWER_` so the
+sub-app can share the monolith's `.env` file without colliding with
+AHS / SAG / MCP settings.
 
-- `AHS_API_KEY` — same shared secret SAG uses to talk to AHS
-- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` — from Google Cloud Console
-- `SESSION_SECRET_KEY` — 32+ random bytes; rotate to invalidate all sessions
-- `ALLOWED_EMAIL_DOMAINS` — default `agcouch.com`
+On the monolith VM the viewer reads `/opt/yupp-agent/.env` directly
+(via its systemd unit's `EnvironmentFile=`). **You only need to append
+`VIEWER_*` entries to that file.** The shared
+`AGENT_HARNESS_SERVICE_API_KEY` is reused from what AHS already has.
 
-## Run locally
+Required keys:
+
+| Var | Required | Notes |
+|---|---|---|
+| `AGENT_HARNESS_SERVICE_API_KEY` | ✓ (shared) | Already set for AHS — viewer reads the same value |
+| `VIEWER_GOOGLE_CLIENT_ID` | ✓ | Google Cloud Console OAuth client ID |
+| `VIEWER_GOOGLE_CLIENT_SECRET` | ✓ | Paired secret |
+| `VIEWER_OAUTH_REDIRECT_URL` | ✓ | Must match the Cloud Console authorized URI exactly |
+| `VIEWER_SESSION_SECRET_KEY` | ✓ | 32+ random bytes; rotate to invalidate all sessions |
+| `VIEWER_ALLOWED_EMAIL_DOMAINS` | optional | Default `agcouch.com` |
+| `VIEWER_AHS_BASE_URL` | optional | Default `https://ahs.agcouch.com` |
+| `VIEWER_HOST`, `VIEWER_PORT` | optional | Default `127.0.0.1:8095` |
+
+## Run locally (dev)
 
 ```bash
 cd apps/artifact-viewer
@@ -54,8 +70,8 @@ pip install -e '.[dev]'
 
 cp .env.example .env   # fill in secrets
 # For local HTTP development:
-#   SESSION_COOKIE_SECURE=false
-#   OAUTH_REDIRECT_URL=http://127.0.0.1:8095/auth/callback
+#   VIEWER_SESSION_COOKIE_SECURE=false
+#   VIEWER_OAUTH_REDIRECT_URL=http://127.0.0.1:8095/auth/callback
 artifact-viewer
 # or: uvicorn artifact_viewer.app:app --reload --port 8095
 ```
@@ -72,30 +88,41 @@ mypy .
 
 ## Deploy to the monolith VM
 
-The systemd unit in [`deploy/artifact-viewer.service`](deploy/artifact-viewer.service) assumes:
+The viewer is fully wired into the repo's install/deploy scripts:
 
-- Code lives in `/opt/artifact-viewer` (a clone of this repo, or just this sub-app)
-- Virtualenv in `/opt/artifact-viewer/.venv`
-- `.env` in `/opt/artifact-viewer/.env`
-- Run as the `ahs` user
+- **First-time install** (also does ahs-mono + ahs-streamlit):
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/yupp-ai/yupp-agent/main/deploy/bare-metal/install.sh | sudo bash
+  ```
+  This creates `apps/artifact-viewer/.venv` in-tree, `pip install -e`'s
+  the sub-app into it, and registers the systemd unit — but does
+  **not** start it yet (you need to add `VIEWER_*` entries to `.env`
+  first).
 
-First-time install on the VM:
+- **Rolling deploys after install**:
+  ```bash
+  sudo bash /opt/yupp-agent/deploy/bare-metal/deploy-latest.sh
+  ```
+  This pulls the repo, reinstalls both the monolith deps and
+  `apps/artifact-viewer/` (cheap no-op if nothing changed), syncs any
+  updated unit files, and restarts all three services
+  (`ahs-mono`, `ahs-streamlit`, `artifact-viewer`).
 
-```bash
-sudo mkdir -p /opt/artifact-viewer
-sudo chown ahs:ahs /opt/artifact-viewer
-sudo -u ahs git clone --depth 1 https://github.com/yupp-ai/yupp-agent.git /tmp/yupp-agent
-sudo -u ahs cp -r /tmp/yupp-agent/apps/artifact-viewer/. /opt/artifact-viewer/
-sudo -u ahs python3.12 -m venv /opt/artifact-viewer/.venv
-sudo -u ahs /opt/artifact-viewer/.venv/bin/pip install -e /opt/artifact-viewer
-sudo -u ahs cp /opt/artifact-viewer/.env.example /opt/artifact-viewer/.env
-# edit /opt/artifact-viewer/.env
-sudo cp /opt/artifact-viewer/deploy/artifact-viewer.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now artifact-viewer
-```
+- **After install, one-time config**:
+  ```bash
+  sudo -u ahs nano /opt/yupp-agent/.env   # add VIEWER_* entries
+  sudo systemctl start artifact-viewer
+  sudo systemctl status artifact-viewer
+  curl http://localhost:8095/healthz      # → {"ok": true}
+  ```
 
-Then point `artifacts.agcouch.com` at `127.0.0.1:8095` via your reverse proxy (Cloudflare tunnel, nginx, whatever fronts the VM). No TLS termination in-process.
+- **Cloudflare exposure**: the tunnel config at
+  `deploy/cloudflared/config.yml` already has an `artifacts.*` ingress
+  block pointing at `127.0.0.1:8095`. On your DNS side:
+  ```bash
+  sudo -u ahs -H cloudflared tunnel route dns yupp-agent artifacts.agcouch.com
+  sudo systemctl restart cloudflared
+  ```
 
 ## Security notes
 

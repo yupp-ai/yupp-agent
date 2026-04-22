@@ -45,6 +45,14 @@ ingress:
     originRequest:
       connectTimeout: 10s
 
+  # Artifact Viewer — read-only Google-OAuth'd web UI for textual artifacts.
+  # Runs as its own systemd unit (see apps/artifact-viewer/deploy/).
+  # DNS: cloudflared tunnel route dns yupp-agent artifacts.yourdomain.com
+  - hostname: artifacts.yourdomain.com
+    service: http://localhost:8095
+    originRequest:
+      connectTimeout: 10s
+
   # MCP — publicly-reachable MCP endpoint for remote Claude Code clients.
   # The mono-server's HostPathGuardMiddleware restricts this subdomain to
   # /mcp and /health; everything else (AHS, gateway) returns 404 even though

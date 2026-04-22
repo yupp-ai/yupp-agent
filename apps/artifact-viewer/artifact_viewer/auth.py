@@ -33,8 +33,8 @@ def get_oauth() -> OAuth:
         _oauth = OAuth()
         _oauth.register(
             name="google",
-            client_id=settings.GOOGLE_CLIENT_ID,
-            client_secret=settings.GOOGLE_CLIENT_SECRET,
+            client_id=settings.VIEWER_GOOGLE_CLIENT_ID,
+            client_secret=settings.VIEWER_GOOGLE_CLIENT_SECRET,
             server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
             client_kwargs={"scope": "openid email profile"},
         )
@@ -52,7 +52,7 @@ async def login(request: Request) -> Response:
     next_url = request.query_params.get("next") or "/"
     request.session["next_url"] = next_url
     oauth = get_oauth()
-    return await oauth.google.authorize_redirect(request, settings.OAUTH_REDIRECT_URL)  # type: ignore[no-any-return]
+    return await oauth.google.authorize_redirect(request, settings.VIEWER_OAUTH_REDIRECT_URL)  # type: ignore[no-any-return]
 
 
 async def callback(request: Request) -> Response:
