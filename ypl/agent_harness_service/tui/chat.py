@@ -176,6 +176,7 @@ class AHSTui(App[None]):
         self._connected = False
         self._delta_buffer: str = ""
         self._delta_line_count: int = 0
+        self._streamed_message: bool = False
         self._thinking: bool = False
         self._pending_tool: bool = False
         self._slash_hints_shown: bool = False
@@ -412,6 +413,7 @@ class AHSTui(App[None]):
             if item_type == "agent_message":
                 self._set_thinking(False)
                 self._flush_delta_buffer(log)
+                self._streamed_message = False
                 # End tool cluster if one was active
                 if self._in_tool_cluster:
                     log.write("")
@@ -437,6 +439,13 @@ class AHSTui(App[None]):
             delta = event.get("delta", "")
             if delta:
                 self._delta_buffer += delta
+                # Flush every newline-terminated line as soon as it's complete so
+                # the user sees text appear progressively instead of one chunk on
+                # item/completed. The trailing partial line stays buffered.
+                while "\n" in self._delta_buffer:
+                    line, self._delta_buffer = self._delta_buffer.split("\n", 1)
+                    log.write(_render_assistant_markdown(line))
+                    self._streamed_message = True
 
         elif etype == "item/completed":
             item = event.get("item", {})
@@ -445,10 +454,22 @@ class AHSTui(App[None]):
                 if self._in_tool_cluster:
                     log.write("")
                     self._in_tool_cluster = False
-                full_text = item.get("text", "") or self._delta_buffer
-                self._flush_delta_buffer(log)
-                if full_text:
-                    log.write(_render_assistant_markdown(full_text))
+                if self._streamed_message:
+                    # We already streamed every full line; emit any trailing
+                    # partial line and skip re-rendering the whole message
+                    # (which would duplicate text on screen).
+                    tail = self._delta_buffer
+                    self._flush_delta_buffer(log)
+                    if tail:
+                        log.write(_render_assistant_markdown(tail))
+                else:
+                    # Non-streaming code path (cached replay, no deltas seen):
+                    # render the full message as before.
+                    full_text = item.get("text", "") or self._delta_buffer
+                    self._flush_delta_buffer(log)
+                    if full_text:
+                        log.write(_render_assistant_markdown(full_text))
+                self._streamed_message = False
             elif item_type in ("command_execution", "file_change", "mcp_tool_call"):
                 log.write(f"[dim]{_escape_markup(_render_tool_completed(item))}[/dim]")
 
@@ -456,6 +477,7 @@ class AHSTui(App[None]):
             self._set_thinking(False)
             self._showing_assistant = False
             self._in_tool_cluster = False
+            self._streamed_message = False
             self._flush_delta_buffer(log)
             status = event.get("status", "completed")
             if status == "failed":
@@ -512,6 +534,7 @@ class AHSTui(App[None]):
 
     def _flush_delta_buffer(self, log: RichLog) -> None:
         self._delta_buffer = ""
+        self._streamed_message = False
         self._delta_line_count = 0
 
     # --- Input handling ---
@@ -701,6 +724,7 @@ class AHSTui(App[None]):
             self._showing_assistant = False
             self._in_tool_cluster = False
             self._delta_buffer = ""
+            self._streamed_message = False
 
             # Reconnect WS
             if self._ws and not self._ws.closed:
@@ -743,6 +767,7 @@ class AHSTui(App[None]):
         self._showing_assistant = False
         self._in_tool_cluster = False
         self._delta_buffer = ""
+        self._streamed_message = False
         self._agent_name = session_info.get("agent_name", "?")
 
         # Load history of the new session
