@@ -154,12 +154,21 @@ pages = {
             ),
         },
         {
-            "name": "User Permissions",
-            "link": "admin_user_permissions",
+            "name": "Roles & Permissions",
+            "link": "admin_roles_permissions",
             "emoji": "🔐",
             "description": (
-                "Manage roles, role permissions, and user-role assignments. "
-                "Browse by role or by user, and assign/remove roles and permissions. Admin-only."
+                "View roles and their permissions, edit role permissions, "
+                "and manage which users belong to each role. Admin-only."
+            ),
+        },
+        {
+            "name": "Users",
+            "link": "admin_users",
+            "emoji": "👥",
+            "description": (
+                "Browse, add, and edit user records. Assign roles to existing users "
+                "or create new users for agent onboarding. Admin-only."
             ),
         },
         {
