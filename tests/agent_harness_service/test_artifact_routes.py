@@ -50,7 +50,7 @@ def _mock_artifact(
 ) -> MagicMock:
     m = MagicMock()
     m.agent_artifact_id = artifact_id
-    m.artifact_type = AgentArtifactType.YUPPASTE
+    m.artifact_type = AgentArtifactType.TEXT
     m.title = title
     m.description = None
     m.url = f"/ahs/artifacts/{artifact_id}"
@@ -203,7 +203,7 @@ class TestListArtifactsRoute:
             resp = client.get(
                 "/ahs/artifacts",
                 params={
-                    "type": "YUPPASTE",
+                    "type": "TEXT",
                     "agent_session_id": str(sess_id),
                     "limit": 10,
                 },
@@ -211,7 +211,7 @@ class TestListArtifactsRoute:
         assert resp.status_code == 200
         assert len(resp.json()["artifacts"]) == 1
         kwargs = mock_list.call_args.kwargs
-        assert kwargs["artifact_type"] == AgentArtifactType.YUPPASTE
+        assert kwargs["artifact_type"] == AgentArtifactType.TEXT
         assert kwargs["agent_session_id"] == sess_id
         assert kwargs["limit"] == 10
 
@@ -350,10 +350,10 @@ class TestReadBySlugRoute:
             resp = client.get("/ahs/artifacts/by-slug/my-slug")
         assert resp.status_code == 200
         assert resp.json()["named_slug"] == "my-slug"
-        # Defaults to YUPPASTE, no version.
+        # Defaults to TEXT, no version.
         kwargs = mock_get.call_args.kwargs
         assert kwargs["version"] is None
-        assert kwargs["artifact_type"] == AgentArtifactType.YUPPASTE
+        assert kwargs["artifact_type"] == AgentArtifactType.TEXT
 
     def test_forwards_version_param(self, client: TestClient) -> None:
         fake = _mock_artifact(version=3)
@@ -484,10 +484,10 @@ class TestSearchArtifactsRoute:
         ) as mock_search:
             resp = client.get(
                 "/ahs/artifacts/search",
-                params={"q": "foo", "limit": 10, "offset": 20, "type": "YUPPASTE"},
+                params={"q": "foo", "limit": 10, "offset": 20, "type": "TEXT"},
             )
         assert resp.status_code == 200
         kwargs = mock_search.call_args.kwargs
         assert kwargs["limit"] == 10
         assert kwargs["offset"] == 20
-        assert kwargs["artifact_type"] == AgentArtifactType.YUPPASTE
+        assert kwargs["artifact_type"] == AgentArtifactType.TEXT

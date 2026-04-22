@@ -64,8 +64,8 @@ class CreateArtifactRequest(BaseModel):
     title: str = Field(..., description="Short title for the artifact")
     description: str | None = Field(None, description="Optional longer description")
     type: AgentArtifactType = Field(
-        AgentArtifactType.YUPPASTE,
-        description="Artifact type. Defaults to YUPPASTE (textual content).",
+        AgentArtifactType.TEXT,
+        description="Artifact type. Defaults to TEXT (textual content).",
     )
     named_slug: str | None = Field(None, description="Stable URL-safe slug")
     create_new_slug: bool = Field(False, description="True → allocate a fresh slug. False → append next version.")
@@ -283,7 +283,7 @@ async def read_attachment_route(artifact_id: uuid.UUID, filename: str) -> Respon
     return Response(content=data, media_type=content_type)
 
 
-_TYPE_QUERY = Query(AgentArtifactType.YUPPASTE, alias="type")
+_TYPE_QUERY = Query(AgentArtifactType.TEXT, alias="type")
 
 
 @artifact_router.get("/by-slug/{slug}", response_model=ArtifactResponse)

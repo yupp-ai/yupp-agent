@@ -48,14 +48,14 @@ class RoleDeniedError(SoulAuthError):
         super().__init__(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
 
 
-async def validate_read_yuppaste(x_creator_email: str = Header(..., alias="X-Creator-Email")) -> None:
-    """Validate that the user has READ_YUPPASTE permission."""
-    await validate_permissions([Permission.READ_YUPPASTE], x_creator_email)
+async def validate_read_artifact(x_creator_email: str = Header(..., alias="X-Creator-Email")) -> None:
+    """Validate that the user has READ_ARTIFACT permission."""
+    await validate_permissions([Permission.READ_ARTIFACT], x_creator_email)
 
 
-async def validate_write_yuppaste(x_creator_email: str = Header(..., alias="X-Creator-Email")) -> None:
-    """Validate that the user has WRITE_YUPPASTE permission."""
-    await validate_permissions([Permission.WRITE_YUPPASTE], x_creator_email)
+async def validate_write_artifact(x_creator_email: str = Header(..., alias="X-Creator-Email")) -> None:
+    """Validate that the user has WRITE_ARTIFACT permission."""
+    await validate_permissions([Permission.WRITE_ARTIFACT], x_creator_email)
 
 
 async def validate_admin(x_creator_email: str = Header(..., alias="X-Creator-Email")) -> None:

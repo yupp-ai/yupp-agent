@@ -582,7 +582,7 @@ async def _search_schedules(
 async def _search_artifacts(
     query: SearchQuery,
     caller_user_id: str,
-    artifact_type_filter: str,  # "YUPPASTE" → ArtifactDocResult, "CODE_REVIEW" → ArtifactPRResult
+    artifact_type_filter: str,  # "TEXT" → ArtifactDocResult, "CODE_REVIEW" → ArtifactPRResult
 ) -> list[ArtifactPRResult | ArtifactDocResult]:
     q = query.q
     pat = _ilike(q)
@@ -745,7 +745,7 @@ async def execute_search(query: SearchQuery, caller_user_id: str) -> SearchRespo
     if SearchType.ARTIFACT_PR in enabled_types:
         coro_map[SearchType.ARTIFACT_PR] = _search_artifacts(query, caller_user_id, "CODE_REVIEW")
     if SearchType.ARTIFACT_DOC in enabled_types:
-        coro_map[SearchType.ARTIFACT_DOC] = _search_artifacts(query, caller_user_id, "YUPPASTE")
+        coro_map[SearchType.ARTIFACT_DOC] = _search_artifacts(query, caller_user_id, "TEXT")
 
     if not coro_map:
         return SearchResponse(query=query, results={}, total_count=0)
