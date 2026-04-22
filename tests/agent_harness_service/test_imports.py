@@ -83,7 +83,7 @@ EXECUTOR_MODULES = [
     "ypl.agent_harness_service.executors.context",
     "ypl.agent_harness_service.executors.system_prompt",
     "ypl.agent_harness_service.executors.sandbox",
-    "ypl.agent_harness_service.executors.providers",
+    "ypl.agent_harness_service.common.providers",
 ]
 
 

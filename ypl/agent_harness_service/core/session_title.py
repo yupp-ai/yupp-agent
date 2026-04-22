@@ -3,9 +3,10 @@
 import os
 import uuid
 
-import anthropic
+import openai
 from sqlmodel import col, select
 
+from ypl.agent_harness_service.common.providers import get_provider_config, parse_model_string
 from ypl.backend.db import get_async_session
 from ypl.db.agent_harness import (
     AgentSession,
@@ -20,7 +21,10 @@ logger = get_logger()
 # Title is generated on turn 1 and refreshed on turn 4.
 TITLE_GENERATE_TURNS = {1, 4}
 
-_TITLE_MODEL = "claude-haiku-4-5-20251001"
+# Full registry id ({provider}/{model_id}). Resolves through common.providers
+# so switching models or endpoints stays consistent across title gen, raw
+# executors, and future guardrail callers.
+_TITLE_MODEL_ID = "cerebras/gpt-oss-120b"
 
 _TITLE_PROMPT = (
     "Generate a very short title (max 8 words) for the conversation below. "
@@ -40,25 +44,33 @@ _TRIGGER_PREFIX: dict[str, str] = {
 
 
 async def _generate_title_text(user_messages: list[str]) -> str | None:
-    """Call Haiku to produce a short title from user messages."""
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    """Call the title model to produce a short title from user messages.
+
+    The model is resolved through common.providers; currently
+    ``cerebras/gpt-oss-120b`` (OpenAI-compatible API).
+    """
+    provider, model_id = parse_model_string(_TITLE_MODEL_ID)
+    provider_config = get_provider_config(provider)
+    api_key = os.environ.get(provider_config.env_key)
     if not api_key:
-        logger.warning("ANTHROPIC_API_KEY not set, skipping title generation")
+        logger.warning(f"{provider_config.env_key} not set, skipping title generation")
         return None
 
     combined = "\n---\n".join(msg[:500] for msg in user_messages[:5])
     prompt = _TITLE_PROMPT.format(messages=combined)
 
-    client = anthropic.AsyncAnthropic(api_key=api_key)
-    response = await client.messages.create(
-        model=_TITLE_MODEL,
+    client = openai.AsyncOpenAI(api_key=api_key, base_url=provider_config.api_base)
+    response = await client.chat.completions.create(
+        model=model_id,
         max_tokens=50,
         messages=[{"role": "user", "content": prompt}],
     )
-    first_block = response.content[0] if response.content else None
-    if not first_block or not hasattr(first_block, "text"):
+    if not response.choices:
         return None
-    title = first_block.text.strip()
+    content = response.choices[0].message.content
+    if not content:
+        return None
+    title = content.strip()
     if not title or title == "[NO TITLE]":
         return None
     return title
