@@ -29,6 +29,7 @@ from ypl.agent_harness_service.common.constants import (
     HARNESS_CODEX_CLI,
     HARNESSED_MODELS,
 )
+from ypl.agent_harness_service.common.providers import KNOWN_MODELS
 from ypl.agent_harness_service.common.types import (
     AHSValidationError,
     AttachmentInfo,
@@ -47,7 +48,6 @@ from ypl.agent_harness_service.core.streaming import (
     get_pubsub,
 )
 from ypl.agent_harness_service.executors.command_handler import CommandHandlerManager
-from ypl.agent_harness_service.executors.providers import KNOWN_MODELS
 from ypl.agent_harness_service.executors.runner import (
     ClaudeCodeRunner,
     RunContext,

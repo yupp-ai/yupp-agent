@@ -212,7 +212,7 @@ async def list_models_route() -> ModelsListResponse:
     Use the returned values as the ``force_model`` field in POST /ahs/session/create.
     """
     from ypl.agent_harness_service.common.constants import HARNESSED_MODELS
-    from ypl.agent_harness_service.executors.providers import KNOWN_MODELS
+    from ypl.agent_harness_service.common.providers import KNOWN_MODELS
 
     return ModelsListResponse(
         harnessed=list(HARNESSED_MODELS),

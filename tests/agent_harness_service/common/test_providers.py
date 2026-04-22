@@ -1,7 +1,7 @@
 """Tests for executors/providers.py — model string parsing, resolution, and provider config."""
 
 import pytest
-from ypl.agent_harness_service.executors.providers import (
+from ypl.agent_harness_service.common.providers import (
     PROVIDERS,
     get_provider_config,
     is_openai_compatible,
