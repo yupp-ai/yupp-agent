@@ -644,7 +644,7 @@ class AgentArtifact(BaseModel, table=True):
     """A pointer to an artifact created by or shared with agents.
 
     Artifacts are lightweight metadata records pointing to external resources
-    (yuppastes, PR reviews, documents, etc.). No content is stored here — only
+    (artifacts, PR reviews, documents, etc.). No content is stored here — only
     the URL and enough context to find, filter, and attribute the artifact.
     """
 
@@ -654,7 +654,7 @@ class AgentArtifact(BaseModel, table=True):
     artifact_type: AgentArtifactType = Field(sa_column=Column(sa.Enum(AgentArtifactType), nullable=False))
     title: str = Field(nullable=False, sa_type=sa.Text)
     description: str | None = Field(default=None, sa_type=sa.Text)
-    # The canonical pointer to the artifact (yuppaste URL, PR link, etc.)
+    # The canonical pointer to the artifact (artifact URL, PR link, etc.)
     url: str = Field(nullable=False, sa_type=sa.Text)
 
     # Attribution: who/what created this artifact (no FK constraint — user may not exist in this DB)
@@ -672,7 +672,7 @@ class AgentArtifact(BaseModel, table=True):
     # Flexible bag for type-specific data (e.g. {"pr_number": 123, "repo": "yupp-mind"})
     artifact_metadata: dict[str, Any] | None = Field(default=None, sa_column=Column(JSONB, nullable=True))
 
-    # Unify Yuppaste and Artifact: stable human-readable identity and versioning
+    # Unify Artifact and Artifact: stable human-readable identity and versioning
     named_slug: str | None = Field(default=None, nullable=True, sa_type=sa.Text)
     version: int | None = Field(default=None, nullable=True)
     content_type: str | None = Field(default=None, nullable=True, sa_type=sa.Text)

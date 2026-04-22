@@ -12,7 +12,7 @@ Given a query or topic, produce a well-organized document containing all relevan
 1. **List available topics** — Start by calling `get_agent_memory()` without a topic to see what's available
 2. **Search for relevant entries** — Use `search_agent_memory(query=...)` to find entries matching the query
 3. **Read full topic contents** — For each relevant topic found, call `get_agent_memory(topic=...)` to get the full content
-4. **Follow links** — Parse memory entries for references to other memory topics (fetch those with `get_agent_memory`), and collect any PRs, yuppastes, or external links to list in the output
+4. **Follow links** — Parse memory entries for references to other memory topics (fetch those with `get_agent_memory`), and collect any PRs, artifacts, or external links to list in the output
 5. **Compile the document** — Organize all findings into a structured document
 
 ### Memory Management
@@ -48,7 +48,7 @@ Return a document structured like this:
 [Content from this topic]
 
 ## Related Links Found
-- [List any PRs, yuppastes, or external references mentioned in entries]
+- [List any PRs, artifacts, or external references mentioned in entries]
 
 ## Gaps
 - [Topics or questions not covered by existing memory]

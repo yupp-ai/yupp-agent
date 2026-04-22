@@ -1,7 +1,7 @@
 ---
 name: data-science-investigation
 description: Data science investigation and analysis on Yupp production data. Use for leaderboard ranking analysis (why does model A rank above B?), engagement and usage analytics, geographic/demographic breakdowns, feature impact analysis, model performance deep-dives, and any ad-hoc data questions requiring narrative + evidence.
-allowed-tools: mcp__yuppster-mcp-server__query_bigquery, mcp__yuppster-mcp-server__query_yuppdb, mcp__yuppster-mcp-server__create_yuppaste, Bash, Read, Write, Glob, Grep, Task, Skill
+allowed-tools: mcp__agcouch-mcp-server__query_bigquery, mcp__agcouch-mcp-server__query_yuppdb, mcp__agcouch-mcp-server__create_artifact, Bash, Read, Write, Glob, Grep, Task, Skill
 ---
 
 # Data Science Investigation Guide
@@ -50,7 +50,7 @@ Use the appropriate data source for each question:
 Produce clear artifacts:
 - **Markdown tables** for quick comparisons (inline in conversation)
 - **Jupyter notebooks** for rich multi-step analysis with charts
-- **Yuppaste** for sharing detailed evidence
+- **Artifact** for sharing detailed evidence
 
 ### Step 4: Narrate Findings
 
@@ -244,15 +244,15 @@ For complex, multi-step analyses, generate a notebook:
    poetry run jupyter nbconvert --to html --no-input notebooks/<name>.ipynb
    ```
    This produces `notebooks/<name>.html` alongside the notebook — an interactive, self-contained report that can be opened in any browser without Jupyter.
-5. **Upload the HTML to yuppaste** for easy sharing. Use `content_type="text/html"` so the paste renders correctly:
+5. **Upload the HTML to artifact** for easy sharing. Use `content_type="text/html"` so the paste renders correctly:
    ```python
-   create_yuppaste(
+   create_artifact(
        content=html_content,  # Read from notebooks/<name>.html
        name="DS Report: <brief description>",
        content_type="text/html"
    )
    ```
-   This returns a go-link (e.g., `http://go/p/<uuid>`) that can be shared in Slack or linked from PRs. The HTML renders interactively with all charts and styling intact.
+   This returns a go-link (e.g., `https://artifacts.agcouch.com/artifacts/<uuid>`) that can be shared in Slack or linked from PRs. The HTML renders interactively with all charts and styling intact.
 
 **Report styling**: Since the HTML companion is the primary deliverable, use styled HTML in markdown cells to produce a polished, readable report. The notebook should look like a professional briefing, not raw markdown.
 
@@ -287,19 +287,19 @@ fig = px.imshow(pivot_df, text_auto=True,
 fig.show()
 ```
 
-### Yuppaste (Shareable Evidence)
+### Artifact (Shareable Evidence)
 
 For findings that need to be shared (e.g., in Slack or PRs):
 
 ```python
 # For plain text/markdown content
-create_yuppaste(
+create_artifact(
     content="<formatted analysis with tables and findings>",
     name="DS Analysis: <brief description>"
 )
 
 # For HTML reports (e.g., from Jupyter notebook export)
-create_yuppaste(
+create_artifact(
     content=html_content,
     name="DS Report: <brief description>",
     content_type="text/html"
@@ -355,7 +355,7 @@ The SQL examples, table schemas, and column references in this skill are illustr
 4. **Prefer the leaderboard API** over raw SQL when possible — it handles weighting, bias correction, and bootstrap CIs that are hard to replicate in ad-hoc queries.
 5. **BigQuery is eventually consistent** — data may lag production by minutes to hours. For real-time data, use `query_yuppdb`.
 6. **Be specific in narratives** — "GPT-4o wins 72% of Coding battles (N=3,200) vs Claude's 65% (N=2,800)" is better than "GPT-4o does better at coding."
-7. **Consider the audience** — when writing for Slack/yuppaste, lead with the punchline, then provide supporting evidence.
+7. **Consider the audience** — when writing for Slack/artifact, lead with the punchline, then provide supporting evidence.
 8. **For temporal analysis**, use at least 7-day windows to smooth out day-of-week effects.
 9. **Category names are lowercase** in the leaderboard API — use `"coding"`, not `"Coding"`. Capitalized names silently return no matches.
 10. **Leaderboard response nesting** — model data is under `.model_rating` (rating, rank, wins, losses, win_rate) and `.model_info` (publisher, family, cost). Use jq paths like `.models[].model_rating.taxonomy_label`.

@@ -6,6 +6,7 @@
             <th>Created (UTC)</th>
             <th>Title</th>
             <th>Slug / Version</th>
+            <th>Status</th>
             <th>Creator</th>
             <th>Type</th>
         </tr>
@@ -18,7 +19,6 @@
                 <a href="/artifacts/{{ a.artifact_id }}">
                     {{ a.title or '(untitled)' }}
                 </a>
-                {% if a.metadata and a.metadata.is_archived %}<span class="tag archived">archived</span>{% endif %}
             </td>
             <td>
                 {% if a.named_slug %}
@@ -26,6 +26,13 @@
                     {% if a.version is not none %}<span class="mono">v{{ a.version }}</span>{% endif %}
                 {% else %}
                     <span class="muted">—</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if a.metadata and a.metadata.is_archived %}
+                    <span class="tag archived">archived</span>
+                {% else %}
+                    <span class="tag active">active</span>
                 {% endif %}
             </td>
             <td class="muted">{{ a.creator_user_id or a.creator_agent_id or '—' }}</td>

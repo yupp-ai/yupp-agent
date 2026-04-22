@@ -76,7 +76,7 @@ A [Model Context Protocol](https://modelcontextprotocol.io/) server that exposes
 - **Database tools** — query PostgreSQL (read-only) and BigQuery with cost guards and byte-limit checks
 - **GCP tools** — search Cloud Logging alerts and query log entries with structured filters (optional; plug in your own for other clouds)
 - **Agent tools** — manage agent schedules, search agent memory, browse artifacts, create projects/tasks
-- **Collaboration tools** — create and read yuppastes, post to Slack channels, search Twitter, file Sentry issues
+- **Collaboration tools** — create and read textual artifacts, post to Slack channels, search Twitter, file Sentry issues
 - **Security tools** — log and query security incidents with severity tracking
 - **Dual auth** — DevToken mode (CLI-created bearer tokens) for engineers, OAuth mode (Google login) for broader access
 - **Audit logging** — every tool call is logged with caller identity, arguments, and execution time

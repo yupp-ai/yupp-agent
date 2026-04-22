@@ -24,9 +24,14 @@
             {% elif meta.creator_agent_id %}
                 <dt>Agent</dt><dd class="mono">{{ meta.creator_agent_id }}</dd>
             {% endif %}
-            {% if meta.metadata and meta.metadata.is_archived %}
-                <dt>Status</dt><dd><span class="tag archived">archived</span></dd>
-            {% endif %}
+            <dt>Status</dt>
+            <dd>
+                {% if meta.metadata and meta.metadata.is_archived %}
+                    <span class="tag archived">archived</span>
+                {% else %}
+                    <span class="tag active">active</span>
+                {% endif %}
+            </dd>
         </dl>
     </header>
 

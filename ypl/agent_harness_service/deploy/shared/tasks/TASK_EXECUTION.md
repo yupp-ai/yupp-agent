@@ -48,7 +48,7 @@ Not all dependencies produce outputs you need to consume. Only fetch dependency 
 For each dependency you need to read:
 1. Call `get_task(task_id=<dependency_uuid>)`
 2. Read its `result` field — this contains the structured output from that task
-3. If the result contains a `yuppaste_url`, fetch the full content from there if needed
+3. If the result contains a `artifact_url`, fetch the full content from there if needed
 
 ### Read Project Shared State
 
@@ -91,7 +91,7 @@ Result format:
   "summary": "One-sentence description of what was accomplished",
   "pr_url": "https://github.com/example-org/example-repo/pull/123",
   "branch_name": "tw/fix-routing-latency",
-  "yuppaste_url": "http://go/p/<uuid>",
+  "artifact_url": "https://artifacts.agcouch.com/artifacts/<uuid>",
   "<task-specific keys>": "..."
 }
 ```
@@ -104,7 +104,7 @@ Common optional keys (use when applicable):
 - `pr_number` — PR number as integer
 - `branch_name` — git branch name
 - `commit_sha` — git commit SHA
-- `yuppaste_url` — link to detailed findings
+- `artifact_url` — link to detailed findings
 - `deploy_url` — URL of deployed service/preview
 
 The result must match what the task description promised in its `**Expected output:**` section.
@@ -194,7 +194,7 @@ set_project_state(project_id=<your_project_id>, key="<descriptive_key>", value='
 ### Keep Results Lean
 
 - Aim for results under 500 characters
-- For large outputs (logs, full analysis, code listings), upload to online storage (currently yuppaste) first, then store the URL in the result
+- For large outputs (logs, full analysis, code listings), upload to online storage (currently artifact) first, then store the URL in the result
 - The result should be a summary + links, not a raw dump
 
 ## Slack Progress Updates

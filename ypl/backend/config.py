@@ -393,6 +393,14 @@ class Settings(BaseSettings):
     BLOB_STORE_LOCAL_DIR: str = "/data/ahs/artifacts"
     BLOB_STORE_LOCAL_BASE_URL: str = ""
 
+    # Public base URL of the artifact viewer (apps/artifact-viewer). Used by
+    # ``create_artifact`` to populate ``agent_artifacts.url`` so callers /
+    # Slack messages / agents get a shareable, human-readable link instead
+    # of the raw AHS REST path. No trailing slash.
+    # If empty, ``agent_artifacts.url`` falls back to the raw
+    # ``/ahs/artifacts/{uuid}`` path.
+    VIEWER_BASE_URL: str = "https://artifacts.agcouch.com"
+
     # Data Takeout settings
     DATA_TAKEOUT_BUCKET: str = "yupp-data-takeouts-staging"  # GCS bucket for takeout ZIPs
     DATA_TAKEOUT_OUTPUT_DIR: str = "/tmp/data-takeouts"  # Local/FUSE path for writing ZIPs

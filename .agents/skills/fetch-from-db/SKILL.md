@@ -1,7 +1,7 @@
 ---
 name: fetch-from-db
 description: Comprehensive Yupp database schema reference. Use when querying language models/taxonomies/providers, chats/turns/messages, routing info, evaluations/feedback, promotions, cost metrics, leaderboard data, or any production database queries.
-allowed-tools: mcp__yuppster-mcp-server__query_yuppdb, mcp__yuppster-mcp-server__query_bigquery
+allowed-tools: mcp__agcouch-mcp-server__query_yuppdb, mcp__agcouch-mcp-server__query_bigquery
 ---
 
 # Yupp Database Schema Knowledge

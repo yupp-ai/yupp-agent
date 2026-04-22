@@ -52,14 +52,14 @@ Every significant output you produce must be registered in the artifact registry
 
 Valid `artifact_type` values: `YUPPASTE`, `CODE_REVIEW`, `OTHER`.
 
-- ✅ After creating a yuppaste → `artifact_type: "YUPPASTE"`, url = the `go_link`
+- ✅ After creating a artifact → `artifact_type: "YUPPASTE"`, url = the `go_link`
 - ✅ After creating a pull request or code review → `artifact_type: "CODE_REVIEW"`, url = PR URL
 - ✅ Any other trackable output → `artifact_type: "OTHER"`
 
 ### When to call `update_artifact`
 
 - When a draft PR is promoted to ready-for-review (update title/description)
-- When a yuppaste is superseded by a newer version (update the URL)
+- When a artifact is superseded by a newer version (update the URL)
 - When you add meaningful metadata to a previously registered artifact
 
 ### How to call the tools

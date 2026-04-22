@@ -23,10 +23,10 @@
                 {% if v.metadata and v.metadata.is_archived %}
                     <span class="tag archived">archived</span>
                 {% else %}
-                    <span class="muted">active</span>
+                    <span class="tag active">active</span>
                 {% endif %}
             </td>
-            <td class="mono muted small">{{ v.artifact_id[:8] }}…</td>
+            <td class="mono small">{{ v.artifact_id }}</td>
         </tr>
     {% endfor %}
     </tbody>

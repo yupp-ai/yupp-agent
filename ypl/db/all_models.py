@@ -3,12 +3,12 @@
 from ypl.db import (
     agent_harness,
     agent_memory_index,
+    artifact_comments,
     mcp,
     rbac,
     slack_agent,
     slack_oauth_token,
     users,
-    yuppaste_comments,
 )
 
 all_models = [
@@ -20,5 +20,5 @@ all_models = [
     slack_agent,
     slack_oauth_token,
     users,
-    yuppaste_comments,
+    artifact_comments,
 ]

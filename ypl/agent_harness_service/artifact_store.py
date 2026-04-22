@@ -25,6 +25,7 @@ from typing import Any
 from sqlalchemy import func, or_, text
 from sqlmodel import col, select
 
+from ypl.backend.config import settings
 from ypl.backend.db import get_async_session, get_async_session_read_replica, retry_db
 from ypl.backend.utils.blob_store import BlobStore, get_blob_store
 from ypl.db.agent_harness import AgentArtifact, AgentArtifactType
@@ -244,12 +245,18 @@ async def create_artifact(
     if extra_metadata:
         metadata.update(extra_metadata)
 
+    # Canonical shareable URL. Uses the configured viewer base so callers /
+    # Slack messages / agents get a human-readable link; falls back to the
+    # raw AHS path when no viewer is deployed.
+    viewer_base = settings.VIEWER_BASE_URL.rstrip("/")
+    url = f"{viewer_base}/artifacts/{artifact_id}" if viewer_base else f"/ahs/artifacts/{artifact_id}"
+
     artifact = AgentArtifact(
         agent_artifact_id=artifact_id,
         artifact_type=artifact_type,
         title=title,
         description=description,
-        url=f"/ahs/artifacts/{artifact_id}",
+        url=url,
         creator_user_id=creator_user_id,
         creator_agent_id=creator_agent_id,
         agent_session_id=agent_session_id,
