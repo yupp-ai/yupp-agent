@@ -21,7 +21,8 @@ def login_screen() -> None:
     st.markdown(f"<style>{css_content}</style>", unsafe_allow_html=True)
 
     st.markdown(
-        "<div style='font-size: 8rem; text-align: center; line-height: 1'>🛋️</div>",
+        "<div style='font-size: 16rem; text-align: center; line-height: 1.3; "
+        "padding: 0.4em 0 0.1em 0; overflow: visible'>🛋️</div>",
         unsafe_allow_html=True,
     )
     st.markdown(
