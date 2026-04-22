@@ -82,6 +82,11 @@ class TestAuthGating:
         assert resp.status_code == 307
         assert resp.headers["location"].startswith("/auth/login")
 
+    def test_download_unauthenticated_redirects(self, client: TestClient) -> None:
+        resp = client.get(f"/artifacts/{ART_ID}/download")
+        assert resp.status_code == 307
+        assert resp.headers["location"].startswith("/auth/login")
+
 
 # ---------------------------------------------------------------------------
 # Authenticated flows
@@ -232,6 +237,58 @@ class TestAttachment:
         assert resp.status_code == 200
         assert resp.content == b"PNGDATA"
         assert resp.headers["content-type"].startswith("image/png")
+
+
+class TestDownload:
+    def test_serves_as_attachment_with_extension_from_content_type(self, client: TestClient) -> None:
+        _sign_in(client)
+        with patch(
+            "artifact_viewer.ahs_client.get_artifact_content",
+            new=AsyncMock(return_value=(b"# Heading\n\nbody", "text/markdown")),
+        ):
+            resp = client.get(f"/artifacts/{ART_ID}/download")
+        assert resp.status_code == 200
+        assert resp.content == b"# Heading\n\nbody"
+        # Must be served as opaque bytes, never as the upstream content-type —
+        # so an HTML artifact can't execute script in the viewer's origin.
+        assert resp.headers["content-type"].startswith("application/octet-stream")
+        disposition = resp.headers["content-disposition"]
+        assert disposition.startswith("attachment;")
+        assert f'filename="{ART_ID}.md"' in disposition
+        assert resp.headers.get("x-content-type-options") == "nosniff"
+
+    def test_html_artifact_downloads_with_html_extension(self, client: TestClient) -> None:
+        _sign_in(client)
+        with patch(
+            "artifact_viewer.ahs_client.get_artifact_content",
+            new=AsyncMock(return_value=(b"<b>hi</b>", "text/html; charset=utf-8")),
+        ):
+            resp = client.get(f"/artifacts/{ART_ID}/download")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("application/octet-stream")
+        assert f'filename="{ART_ID}.html"' in resp.headers["content-disposition"]
+
+    def test_unknown_content_type_falls_back_to_txt(self, client: TestClient) -> None:
+        _sign_in(client)
+        with patch(
+            "artifact_viewer.ahs_client.get_artifact_content",
+            new=AsyncMock(return_value=(b"opaque", "application/octet-stream")),
+        ):
+            resp = client.get(f"/artifacts/{ART_ID}/download")
+        assert resp.status_code == 200
+        assert f'filename="{ART_ID}.txt"' in resp.headers["content-disposition"]
+
+    def test_upstream_error_surfaces_as_error_page(self, client: TestClient) -> None:
+        from artifact_viewer.ahs_client import AHSError
+
+        _sign_in(client)
+        with patch(
+            "artifact_viewer.ahs_client.get_artifact_content",
+            new=AsyncMock(side_effect=AHSError(404, "not found")),
+        ):
+            resp = client.get(f"/artifacts/{ART_ID}/download")
+        assert resp.status_code == 404
+        assert "Upstream error" in resp.text
 
 
 # ---------------------------------------------------------------------------
