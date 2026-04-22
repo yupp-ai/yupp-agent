@@ -8,7 +8,10 @@
 
 !.vscode/settings.json
 !.vscode/extensions.json
-!.mcp.json
+# .mcp.json is per-developer config (copied from .mcp.json.example).
+# The runtime doesn't need a committed template — mcp_config.py builds
+# servers programmatically. Keep .mcp.json.example tracked though.
+!.mcp.json.example
 !ypl/agent_harness_service/**/*.json
 
 # AHS compiled binaries (rebuild via services/command-handler/build.sh)
