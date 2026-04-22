@@ -15,7 +15,6 @@ from ypl.agent_harness_service.common.config import (
 )
 from ypl.agent_harness_service.common.types import AttachmentInfo
 from ypl.backend.db import get_async_session
-from ypl.backend.utils.email_domains import is_allowed_email_domain
 from ypl.db.agent_harness import (
     Agent,
     AgentSession,
@@ -58,15 +57,6 @@ async def _resolve_personal_agent_for_user(base_agent_name: str, user_id: str) -
 
         email = str(row[0])
         user_name = str(row[1]) if row[1] else None
-
-        # Only users from allowed email domains can have personal agents.
-        if not is_allowed_email_domain(email):
-            logger.info(
-                "User domain not allowed, skipping personal agent resolution",
-                user_id=user_id,
-                email_domain=email.split("@")[-1],
-            )
-            return None, None
 
         username = re.sub(r"[^a-z0-9-]", "-", email.split("@")[0].lower()).strip("-")
         personal_agent_name = f"{base_agent_name}-{username}"

@@ -4,7 +4,6 @@ Tests route handlers with mocked service layer functions.
 """
 
 from __future__ import annotations
-from collections.abc import Iterator
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -537,16 +536,6 @@ class TestListModels:
 
 
 class TestResolveUser:
-    @pytest.fixture(autouse=True)
-    def _restrict_domain(self) -> Iterator[None]:
-        """Gate resolve_user on example.com so domain-rejection assertions work."""
-        with patch("ypl.backend.utils.email_domains.settings.ALLOWED_EMAIL_DOMAINS", ["example.com"]):
-            yield
-
-    def test_returns_400_for_non_allowed_domain(self, client: TestClient) -> None:
-        resp = client.post("/ahs/resolve_user", json={"email": "user@gmail.com"})
-        assert resp.status_code == 400
-
     def test_returns_404_when_user_not_found(self, client: TestClient) -> None:
         with patch(
             "ypl.agent_harness_service.routes.get_user_id_by_email",
@@ -565,6 +554,16 @@ class TestResolveUser:
         data = resp.json()
         assert data["user_id"] == "user-uuid-123"
         assert data["email"] == "alice@example.com"
+
+    def test_returns_200_regardless_of_domain_when_user_in_table(self, client: TestClient) -> None:
+        """Any email — including gmail.com etc. — resolves if the row exists."""
+        with patch(
+            "ypl.agent_harness_service.routes.get_user_id_by_email",
+            AsyncMock(return_value="user-uuid-gmail"),
+        ):
+            resp = client.post("/ahs/resolve_user", json={"email": "someone@gmail.com"})
+        assert resp.status_code == 200
+        assert resp.json()["user_id"] == "user-uuid-gmail"
 
 
 # ---------------------------------------------------------------------------

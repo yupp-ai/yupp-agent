@@ -434,14 +434,11 @@ class Settings(BaseSettings):
     MAXMIND_API_KEY: str = ""
     MAXMIND_ACCOUNT_ID: str = ""
 
-    # Allowed email domains for identity gating across services (AHS personal
-    # agent creation, user resolution, etc). When empty the check is disabled.
-    # Supply as a JSON array in the env var, e.g. ALLOWED_EMAIL_DOMAINS=["example.com"].
-    ALLOWED_EMAIL_DOMAINS: list[str] = []
-
-    # Allowed email domains for MCP server token creation. Scoped separately
-    # from ALLOWED_EMAIL_DOMAINS because MCP and AHS may allow different sets
-    # (e.g. MCP open to partners, AHS restricted to employees). Empty = no gate.
+    # Allowed email domains for MCP server token creation. Access control on
+    # AHS itself goes through the ``users`` table (who's allowed to access
+    # anything else is gated by whether there's a row for them); the MCP
+    # OAuth flow needs its own list because tokens can be minted for users
+    # who aren't yet in the DB. Empty = no gate.
     ALLOWED_MCP_EMAIL_DOMAINS: list[str] = []
 
     # System "robot" account emails used by internal operations. Required when
@@ -452,7 +449,7 @@ class Settings(BaseSettings):
 
     # Synthetic email domain used to mint identities for programmatic agent
     # users (e.g. ``agent-<uuid>@<AGENT_USER_EMAIL_DOMAIN>``). Kept distinct
-    # from ALLOWED_EMAIL_DOMAINS so agent identities stay outside human flows.
+    # from human-user domains so agent identities stay outside human flows.
     AGENT_USER_EMAIL_DOMAIN: str = ""
 
     # Transactional email sender addresses (Resend). Format:

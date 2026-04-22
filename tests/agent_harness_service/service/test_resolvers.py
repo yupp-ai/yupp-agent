@@ -8,12 +8,10 @@ import os
 import sys
 import types
 import uuid
-from collections.abc import AsyncGenerator, Iterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
 
 # ---------------------------------------------------------------------------
 # Stub heavy SDK deps
@@ -355,33 +353,12 @@ class TestResolveUserNameFromDb:
 class TestResolvePersonalAgentForUser:
     """Tests for _resolve_personal_agent_for_user."""
 
-    @pytest.fixture(autouse=True)
-    def _restrict_domain(self) -> Iterator[None]:
-        with patch("ypl.backend.utils.email_domains.settings.ALLOWED_EMAIL_DOMAINS", ["example.com"]):
-            yield
-
     async def test_returns_none_when_user_not_found(self) -> None:
         from ypl.agent_harness_service.service.resolvers import _resolve_personal_agent_for_user
 
         mock_db = AsyncMock()
         mock_result = MagicMock()
         mock_result.first.return_value = None
-        mock_db.execute = AsyncMock(return_value=mock_result)
-
-        with patch(
-            "ypl.agent_harness_service.service.resolvers.get_async_session",
-            _make_mock_session_factory(mock_db),
-        ):
-            name, display_name = await _resolve_personal_agent_for_user("yuppclaw", "user-123")
-            assert name is None
-            assert display_name is None
-
-    async def test_returns_none_for_non_allowed_domain_user(self) -> None:
-        from ypl.agent_harness_service.service.resolvers import _resolve_personal_agent_for_user
-
-        mock_db = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.first.return_value = ("external@gmail.com", "Bob")
         mock_db.execute = AsyncMock(return_value=mock_result)
 
         with patch(
