@@ -194,6 +194,8 @@ class SlackGateway(Gateway):
         thread_id: str | None = None,
         ahs_session_id: str | None = None,
         username: str | None = None,
+        unfurl_links: bool = True,
+        unfurl_media: bool = True,
     ) -> GatewaySendResult:
         """Send a proactive message to a Slack channel.
 
@@ -202,13 +204,17 @@ class SlackGateway(Gateway):
         *ahs_session_id* is the AHS session UUID — when provided for a top-level
         message, SAG registers the new Slack thread so human replies route to the
         existing agent session.
+        *unfurl_links* / *unfurl_media* forward to Slack's ``chat.postMessage``
+        API; default True matches Slack's own default for user messages.
         """
         url = f"{self._base_url}/slack-agent-gateway/messages/send"
 
-        payload: dict[str, str] = {
+        payload: dict[str, str | bool] = {
             "agent_name": agent_name,
             "channel": destination,
             "text": text,
+            "unfurl_links": unfurl_links,
+            "unfurl_media": unfurl_media,
         }
         if thread_id:
             payload["thread_ts"] = thread_id

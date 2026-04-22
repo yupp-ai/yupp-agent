@@ -68,6 +68,8 @@ class Gateway(ABC):
         thread_id: str | None = None,
         ahs_session_id: str | None = None,
         username: str | None = None,
+        unfurl_links: bool = True,
+        unfurl_media: bool = True,
     ) -> GatewaySendResult:
         """Proactive message (no existing session).
 
@@ -75,6 +77,9 @@ class Gateway(ABC):
         *ahs_session_id* allows the gateway to register the new thread/conversation
         so that human replies route to the existing agent session.
         *username* overrides the bot's display name for this message.
+        *unfurl_links* / *unfurl_media* control gateway-native link preview
+        behaviour (Slack only, today) — both default True to match Slack's
+        default for user messages.
         """
         ...
 
