@@ -202,7 +202,8 @@ def cmd_add(args: argparse.Namespace) -> int:
     if data.get("named_slug"):
         print(f"slug:        {data['named_slug']} (v{data['version']})", file=sys.stderr)
     base_url, _ = _config()
-    print(f"url:         {base_url}{data['url']}")
+    url = data["url"]
+    print(f"url:         {url if url.startswith(('http://', 'https://')) else base_url + url}")
     return 0
 
 
@@ -327,7 +328,8 @@ def cmd_url(args: argparse.Namespace) -> int:
         return 0
     with _client() as http:
         meta = _handle(http.get(f"/ahs/artifacts/by-slug/{ident}"))
-    print(f"{base_url}{meta['url']}")
+    url = meta["url"]
+    print(url if url.startswith(("http://", "https://")) else f"{base_url}{url}")
     return 0
 
 
