@@ -56,6 +56,18 @@ Valid `artifact_type` values: `TEXT`, `CODE_REVIEW`, `OTHER`.
 - **`CODE_REVIEW`** — pointer to a GitHub PR / code review. Pass `url` (the PR URL). No content is stored locally.
 - **`OTHER`** — pointer to any external resource (doc, dashboard, link). Pass `url`.
 
+### Title convention for TEXT artifacts
+
+If the first line of the markdown `content` is a top-level heading (`# Some Title`), pass that heading text as `title` **and strip the `# Some Title` line from `content`**. The viewer already renders the title prominently at the top of the page, so leaving the H1 in the body double-titles it.
+
+```
+content = "# Unify Agent Memory into Artifacts\n\nDesign doc: collapse…"
+# → title="Unify Agent Memory into Artifacts"
+# → content="Design doc: collapse…"   (H1 line removed)
+```
+
+If the first line isn't a heading, pick a short title that summarizes the document.
+
 ### When to call each tool
 
 - `add_artifact` — whenever you produce a significant output (text report, PR, external link).

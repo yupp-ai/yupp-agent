@@ -335,6 +335,12 @@ async def add_artifact(
     Parameters:
         artifact_type: TEXT, CODE_REVIEW, or OTHER.
         title: Short human-readable name (e.g. "Fix auth bug PR").
+            For TEXT artifacts whose ``content`` begins with a top-level
+            markdown heading (``# Some Title``), use the heading text as the
+            title *and drop the ``# Some Title`` line from ``content``* — the
+            viewer already renders the title prominently, so leaving the H1
+            in the body double-titles the page. If the first line isn't a
+            heading, choose a short title that summarizes the document.
         content: TEXT only — the body of the artifact (markdown/plain/HTML).
             Ignored for CODE_REVIEW / OTHER.
         url: Pointer for CODE_REVIEW / OTHER (the PR URL, doc URL, etc.).
