@@ -2,10 +2,24 @@
 
 Provides tools for agents to interact with Slack: request feedback surveys,
 post multiple-choice questions, and send proactive messages to channels.
+
+Write policy for :func:`send_slack_message`:
+
+1. If the initiating agent has a registered Slack bot (row in ``slack_agents``
+   with a usable token), post through SAG as that bot — the normal case.
+2. Otherwise fall back to OpsBot (the shared workspace bot), logging loudly
+   so the fallback is visible in ops logs. This covers CRON / TASK sessions
+   whose agent has no dedicated Slack identity.
+
+Interactive tools (``request_feedback``, ``ask_question``) are pinned to the
+app that owns the Slack thread — their callback signing won't work with any
+other bot — and are never fallen-back.
 """
 
 from __future__ import annotations
 import uuid as _uuid_mod
+from dataclasses import dataclass
+from typing import Protocol
 
 from sqlalchemy import text
 
@@ -13,9 +27,75 @@ from ypl.agent_harness_service.common.constants import mcp_session_id_var
 from ypl.agent_harness_service.tools.mcp_instance import _resolve_parent_session, _validate_session_id, mcp
 from ypl.backend.db import get_async_session
 from ypl.db.agent_harness import AgentProject, AgentSession
+from ypl.slack_common import agent_has_slack_presence, get_ops_bot_write_client
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
+
+
+class _SendResultLike(Protocol):
+    """Structural type matching what ``send_slack_message`` reads from a send.
+
+    Both :class:`GatewaySendResult` (returned by SAG) and :class:`_SendResult`
+    (returned by the OpsBot fallback path) satisfy this Protocol. Declaring a
+    local Protocol avoids importing from ``gateway/``, which Layer 1 ``tools/``
+    is forbidden from under the AHS layering rules.
+    """
+
+    success: bool
+    message_id: str | None
+    destination: str | None
+    error: str | None
+
+
+@dataclass
+class _SendResult:
+    """Concrete result for the OpsBot fallback path."""
+
+    success: bool
+    message_id: str | None = None
+    destination: str | None = None
+    error: str | None = None
+
+
+async def _post_as_opsbot(
+    channel: str,
+    text: str,
+    thread_ts: str | None,
+) -> _SendResult:
+    """Post directly as OpsBot (fallback when agent has no Slack presence).
+
+    Does not go through SAG — OpsBot isn't a per-agent bot, so SAG has nothing
+    to route. Returns a :class:`_SendResult` matching the GatewaySendResult
+    shape that the SAG path produces, so the caller can treat both paths the
+    same way.
+    """
+    try:
+        client = get_ops_bot_write_client()
+        response = await client.chat_postMessage(
+            channel=channel,
+            text=text,
+            thread_ts=thread_ts,
+        )
+        if not response.get("ok"):
+            return _SendResult(
+                success=False,
+                error=response.get("error", "Unknown Slack error"),
+                destination=channel,
+            )
+        return _SendResult(
+            success=True,
+            message_id=response.get("ts"),
+            destination=response.get("channel") or channel,
+        )
+    except Exception as exc:
+        logger.error(
+            "send_slack_message: OpsBot fallback post failed",
+            channel=channel,
+            error=str(exc),
+            exc_info=True,
+        )
+        return _SendResult(success=False, error=str(exc), destination=channel)
 
 
 async def _resolve_slack_session_id(harness_session_id: str) -> str | None:
@@ -258,25 +338,50 @@ async def send_slack_message(
         project_id=project_id,
     )
 
-    # Resolve harness UUID → agent name
+    # Resolve harness UUID → agent name. Works for every trigger type
+    # (SLACK, CRON, TASK) because AgentSession.agent_id is always set.
     parent_info = await _resolve_parent_session(effective_session_id)
     agent_name = parent_info.get("agent_name")
 
     if not agent_name:
         return {"status": "error", "error": "Could not resolve agent name from session"}
 
-    # Call gateway to send the message
-    gateway = GatewayRegistry.get_instance().get("slack")
-    if not gateway:
-        return {"status": "error", "error": "Slack gateway not registered", "channel": effective_channel}
+    # Decide the poster: initiating agent's bot if it has a Slack presence,
+    # else fall back to OpsBot. The DB check is cheap (indexed unique) and
+    # saves an SAG round-trip for agents without a registered bot.
+    async with get_async_session() as db:
+        has_presence = await agent_has_slack_presence(db, agent_name)
 
-    result = await gateway.send_message(
-        agent_name=agent_name,
-        destination=effective_channel,
-        text=text,
-        thread_id=effective_thread_ts,
-        ahs_session_id=effective_session_id,
-    )
+    result: _SendResultLike
+    if has_presence:
+        gateway = GatewayRegistry.get_instance().get("slack")
+        if not gateway:
+            return {"status": "error", "error": "Slack gateway not registered", "channel": effective_channel}
+
+        result = await gateway.send_message(
+            agent_name=agent_name,
+            destination=effective_channel,
+            text=text,
+            thread_id=effective_thread_ts,
+            ahs_session_id=effective_session_id,
+        )
+    else:
+        # Loud log so OpsBot-as-fallback usage is visible in ops dashboards.
+        # Most write traffic should take the per-agent path; if this shows up
+        # frequently it's a signal the triggering agent is missing a Slack bot.
+        logger.warning(
+            "send_slack_message: OpsBot fallback (agent has no Slack presence)",
+            agent_name=agent_name,
+            channel=effective_channel,
+            in_thread=effective_thread_ts is not None,
+            session_id=effective_session_id,
+            project_id=project_id,
+        )
+        result = await _post_as_opsbot(
+            channel=effective_channel,
+            text=text,
+            thread_ts=effective_thread_ts,
+        )
 
     if not result.success:
         return {

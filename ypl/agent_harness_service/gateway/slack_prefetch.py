@@ -13,55 +13,12 @@ Net saving: ~1.2–3.6s off first-message latency.
 """
 
 import asyncio
-import os
 from typing import Any
 
-from slack_sdk.errors import SlackApiError
-from slack_sdk.http_retry.builtin_async_handlers import AsyncRateLimitErrorRetryHandler
-from slack_sdk.web.async_client import AsyncWebClient
-
+from ypl.slack_common import get_ops_bot_user_client, resolve_display_name
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
-
-# Singleton bot client (lazy-initialised, same token as mcp_tools.py).
-_slack_bot_client: AsyncWebClient | None = None
-
-
-def _get_slack_bot_client() -> AsyncWebClient:
-    """Return (or create) the singleton Slack bot client for prefetching."""
-    global _slack_bot_client
-    if _slack_bot_client is None:
-        token = os.environ.get("SLACK_MCP_SERVER_APP_BOT_TOKEN")
-        if not token:
-            raise ValueError("SLACK_MCP_SERVER_APP_BOT_TOKEN is not set")
-        _slack_bot_client = AsyncWebClient(
-            token=token,
-            retry_handlers=[AsyncRateLimitErrorRetryHandler(max_retry_count=2)],
-        )
-    return _slack_bot_client
-
-
-async def _resolve_user(client: AsyncWebClient, user_id: str) -> str:
-    """Resolve a Slack user ID to a human-readable display name.
-
-    Returns the raw user_id if resolution fails so callers always get a string.
-    """
-    try:
-        response = await client.users_info(user=user_id)
-        if response.get("ok") and response.get("user"):
-            user = response["user"]
-            profile = user.get("profile", {})
-            return (
-                profile.get("display_name")
-                or profile.get("real_name")
-                or user.get("real_name")
-                or user.get("name")
-                or user_id
-            )
-    except SlackApiError as exc:
-        logger.warning("Slack user resolution failed during prefetch", user_id=user_id, error=str(exc))
-    return user_id
 
 
 def _extract_attachment_text(attachments: list[dict[str, Any]]) -> str | None:
@@ -171,8 +128,8 @@ async def fetch_slack_thread_content(
         back to the "please call read_slack_thread" instruction on ``None``.
     """
     try:
-        client = _get_slack_bot_client()
-        response = await client.conversations_replies(
+        read_client = get_ops_bot_user_client()
+        response = await read_client.conversations_replies(
             channel=channel,
             ts=thread_ts,
             limit=limit,
@@ -203,7 +160,7 @@ async def fetch_slack_thread_content(
     # Resolve all user IDs concurrently.
     # Convert set → list to guarantee stable ordering for zip().
     unique_ids_list = list({msg.get("user", "") for msg in raw_messages} - {""})
-    resolved = await asyncio.gather(*(_resolve_user(client, uid) for uid in unique_ids_list), return_exceptions=True)
+    resolved = await asyncio.gather(*(resolve_display_name(uid) for uid in unique_ids_list), return_exceptions=True)
     name_map: dict[str, str] = {
         uid: (name if isinstance(name, str) else uid) for uid, name in zip(unique_ids_list, resolved, strict=True)
     }
