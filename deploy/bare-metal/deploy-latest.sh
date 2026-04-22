@@ -105,9 +105,26 @@ for unit in "${SERVICES[@]}"; do
     fi
 done
 
+# Also sync the periodic pull service + timer (and any other timers we add
+# later). Timer units don't fit in SERVICES (which is used for `systemctl
+# restart`), so handle them here.
+for aux in "ahs-pull-agent-repos.service" "ahs-pull-agent-repos.timer"; do
+    src="${INSTALL_DIR}/deploy/systemd/${aux}"
+    dst="/etc/systemd/system/${aux}"
+    if [[ -f "$src" ]] && ! cmp -s "$src" "$dst"; then
+        info "Updating ${dst}"
+        cp "$src" "$dst"
+        UNITS_CHANGED=1
+    fi
+done
+
 if [[ $UNITS_CHANGED -eq 1 ]]; then
     info "Unit files changed — systemctl daemon-reload"
     systemctl daemon-reload
+    # Make sure the pull timer is enabled and running — no-op if already.
+    if [[ -f /etc/systemd/system/ahs-pull-agent-repos.timer ]]; then
+        systemctl enable --now ahs-pull-agent-repos.timer >/dev/null 2>&1 || true
+    fi
 fi
 
 # --- 4. Database migrations ------------------------------------------------
@@ -128,14 +145,32 @@ systemd-run --wait --quiet --pipe \
 info "Restarting: ${SERVICES[*]}"
 systemctl restart "${SERVICES[@]}"
 
-# --- 6. Status summary -----------------------------------------------------
+# --- 6. Pull agent-workspace repos immediately ------------------------------
+# ``/data/ahs/repos/*`` drives what agent sessions see (their .mcp.json +
+# skill files are seeded from there). The systemd timer pulls these every
+# 5 min, but operators expect their deploy to be effective right away, so
+# kick one pull now. Failure is non-fatal — the next timer tick retries.
+if systemctl list-unit-files | grep -q '^ahs-pull-agent-repos\.service'; then
+    info "Pulling agent-workspace repos (/data/ahs/repos/*)…"
+    if ! systemctl start ahs-pull-agent-repos.service; then
+        warn "Agent-repo pull failed — the 5-min timer will retry. Check: journalctl -u ahs-pull-agent-repos"
+    fi
+fi
+
+# --- 7. Status summary -----------------------------------------------------
 echo
 for unit in "${SERVICES[@]}"; do
     state=$(systemctl is-active "$unit" || true)
     enabled=$(systemctl is-enabled "$unit" || true)
-    printf "  %-20s active=%-10s enabled=%s\n" "$unit" "$state" "$enabled"
+    printf "  %-24s active=%-10s enabled=%s\n" "$unit" "$state" "$enabled"
 done
+if systemctl list-unit-files | grep -q '^ahs-pull-agent-repos\.timer'; then
+    state=$(systemctl is-active ahs-pull-agent-repos.timer || true)
+    enabled=$(systemctl is-enabled ahs-pull-agent-repos.timer || true)
+    printf "  %-24s active=%-10s enabled=%s\n" "ahs-pull-agent-repos.timer" "$state" "$enabled"
+fi
 
 info "Deploy complete. Tail live logs with:"
-echo "    journalctl -u ahs-mono     -f"
-echo "    journalctl -u ahs-streamlit -f"
+echo "    journalctl -u ahs-mono              -f"
+echo "    journalctl -u ahs-streamlit         -f"
+echo "    journalctl -u ahs-pull-agent-repos  -f"

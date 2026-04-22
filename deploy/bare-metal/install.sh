@@ -119,6 +119,7 @@ It will do ${TOTAL_STEPS} steps:
   3. Clone the repo            — walks you through SSH deploy key setup if needed
   4. Install Python deps       — poetry install (production, no dev extras)
   5. Install systemd units     — ahs-mono, ahs-streamlit, artifact-viewer (enabled, not started)
+                                 + ahs-pull-agent-repos.timer (every 5 min, starts immediately)
   6. Create data directories   — for logs, cache, etc.
   7. Install agent CLIs        — Claude Code + Codex (optional, prompted)
   8. Postgres DB + roles       — 'yadb' + schema_manager (DDL) + be_app_user (runtime)
@@ -463,9 +464,22 @@ info "Installing ahs-mono.service, ahs-streamlit.service, and artifact-viewer.se
 cp "${INSTALL_DIR}/deploy/systemd/ahs-mono.service"     /etc/systemd/system/
 cp "${INSTALL_DIR}/deploy/systemd/ahs-streamlit.service" /etc/systemd/system/
 cp "${INSTALL_DIR}/apps/artifact-viewer/deploy/artifact-viewer.service" /etc/systemd/system/
+
+# Periodic pull of agent-workspace repos (every 5 min). Systemd timer so it
+# restarts on boot and logs land in journald. Agent sessions seed their
+# workspace .mcp.json from the repos under /data/ahs/repos/, so stale
+# clones here = stale MCP config in sessions.
+info "Installing ahs-pull-agent-repos.service + .timer (runs every 5 min)…"
+cp "${INSTALL_DIR}/deploy/systemd/ahs-pull-agent-repos.service" /etc/systemd/system/
+cp "${INSTALL_DIR}/deploy/systemd/ahs-pull-agent-repos.timer"   /etc/systemd/system/
+
 systemctl daemon-reload
 systemctl enable ahs-mono ahs-streamlit artifact-viewer
-info "Units enabled (will auto-start on boot). Not started yet — need setup wizard first."
+# Enable the timer so it fires on boot + every 5 min. The .service unit is
+# activated by the timer; nothing to enable directly for it.
+systemctl enable --now ahs-pull-agent-repos.timer
+info "Units enabled (will auto-start on boot). Services not started yet — need setup wizard first."
+info "  ahs-pull-agent-repos.timer is enabled now; first run fires ~2 min after boot."
 
 # ---------------------------------------------------------------------------
 # Step 6. Data / log / cache directories
@@ -772,6 +786,7 @@ Everything below is now installed and ready:
   ✓ Repo             — ${INSTALL_DIR}
   ✓ Python venv      — ${VENV_DIR}
   ✓ systemd units    — ahs-mono, ahs-streamlit, artifact-viewer (enabled, not started)
+                       ahs-pull-agent-repos.timer (enabled + running, every 5 min)
   ✓ Runtime dirs     — /var/log/ahs-mono, ${INSTALL_DIR}/data, ${INSTALL_DIR}/.cache
   ✓ Database         — PostgreSQL '${DB_NAME}' (empty — Alembic migrations run in setup wizard)
   ✓ Postgres roles   — schema_manager (DDL/Alembic), be_app_user (runtime)
