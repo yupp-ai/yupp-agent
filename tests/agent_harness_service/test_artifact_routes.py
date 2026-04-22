@@ -239,6 +239,48 @@ class TestReadArtifactRoute:
         assert resp.content == b"# hello"
         assert resp.headers["content-type"].startswith("text/markdown")
 
+    def test_sets_download_filename_from_title(self, client: TestClient) -> None:
+        # The browser-facing "Raw content" link should save the file using the
+        # artifact title plus a content-type-appropriate extension.
+        fake = _mock_artifact(title="Quarterly report 2026 Q1")
+        with (
+            patch(
+                "ypl.agent_harness_service.artifact_routes.get_artifact_by_id",
+                new=AsyncMock(return_value=fake),
+            ),
+            patch(
+                "ypl.agent_harness_service.artifact_routes.read_artifact_content",
+                new=AsyncMock(return_value=(b"# q1", "text/markdown")),
+            ),
+        ):
+            resp = client.get(f"/ahs/artifacts/{FAKE_ARTIFACT_ID}")
+        assert resp.status_code == 200
+        disp = resp.headers["content-disposition"]
+        assert disp.startswith("attachment;")
+        assert 'filename="Quarterly report 2026 Q1.md"' in disp
+        assert "filename*=UTF-8''Quarterly%20report%202026%20Q1.md" in disp
+
+    def test_download_filename_handles_unicode_and_unsafe_chars(self, client: TestClient) -> None:
+        # Em dash and slashes — ASCII fallback sanitized, UTF-8 copy preserved.
+        fake = _mock_artifact(title="AHS Performance — v2/final?")
+        with (
+            patch(
+                "ypl.agent_harness_service.artifact_routes.get_artifact_by_id",
+                new=AsyncMock(return_value=fake),
+            ),
+            patch(
+                "ypl.agent_harness_service.artifact_routes.read_artifact_content",
+                new=AsyncMock(return_value=(b"body", "text/markdown")),
+            ),
+        ):
+            resp = client.get(f"/ahs/artifacts/{FAKE_ARTIFACT_ID}")
+        assert resp.status_code == 200
+        disp = resp.headers["content-disposition"]
+        # `/` and `?` stripped, em dash replaced with `_` in the ASCII fallback.
+        assert 'filename="AHS Performance _ v2 final.md"' in disp
+        # UTF-8 variant preserves the em dash (%E2%80%94).
+        assert "%E2%80%94" in disp
+
     def test_404_when_missing(self, client: TestClient) -> None:
         with patch(
             "ypl.agent_harness_service.artifact_routes.get_artifact_by_id",
