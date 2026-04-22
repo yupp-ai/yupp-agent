@@ -161,22 +161,40 @@ table.artifacts tbody tr:hover { background: var(--bg-alt); }
 /* --- Artifact page --- */
 
 .artifact-header {
+    display: grid;
+    grid-template-columns: 6fr 4fr;
+    gap: 20px;
+    align-items: start;
     margin-bottom: 24px;
-    padding-bottom: 16px;
-    border-bottom: 1px solid var(--border);
+    padding: 12px 16px;
+    background: var(--bg-alt);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+}
+
+.artifact-header-main {
+    min-width: 0;
+}
+
+.artifact-header h1 {
+    font-size: 18px;
+    margin: 0 0 6px;
 }
 
 .artifact-header .description {
     color: var(--fg-muted);
-    margin: 0 0 12px;
+    font-size: 12px;
+    margin: 0;
 }
 
 .artifact-meta {
     display: grid;
     grid-template-columns: auto 1fr;
-    gap: 4px 16px;
-    font-size: 13px;
+    gap: 2px 12px;
+    font-size: 11px;
+    line-height: 1.4;
     margin: 0;
+    min-width: 0;
 }
 
 .artifact-meta dt {
@@ -184,7 +202,20 @@ table.artifacts tbody tr:hover { background: var(--bg-alt); }
     font-weight: 500;
 }
 
-.artifact-meta dd { margin: 0; }
+.artifact-meta dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.artifact-meta .mono { font-size: 11px; }
+
+.artifact-meta .tag { margin-left: 0; }
+
+@media (max-width: 720px) {
+    .artifact-header {
+        grid-template-columns: 1fr;
+    }
+}
 
 /* Rendered markdown. */
 .artifact-body-markdown h1 { font-size: 22px; margin-top: 24px; }
