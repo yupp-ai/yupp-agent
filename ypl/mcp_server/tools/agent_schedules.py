@@ -251,10 +251,18 @@ async def cancel_agent_schedule(
         if not await has_permission_cached(auth_email, Permission.USE_MCP):
             return {"success": False, "error": "You do not have permission to use MCP tools"}
 
-        # Resolve email to user_id for ownership check
-        caller_user_id, user_error = await resolve_user_id_from_email(auth_email)
-        if user_error:
-            return {"success": False, "error": user_error}
+        # Resolve caller's user_id for the ownership check. Prefer the
+        # requesting-user header injected by AHS (X-User-ID) so an agent
+        # acting on behalf of a user can cancel schedules that user created;
+        # fall back to the MCP-authenticated email only if no header is set.
+        # This mirrors the CREATE path so CREATE vs CANCEL authorization is
+        # symmetric -- whatever identity was used to stamp ``created_by_user``
+        # at create time must also be accepted at cancel time.
+        caller_user_id: str | None = get_requesting_user_id()
+        if not caller_user_id:
+            caller_user_id, user_error = await resolve_user_id_from_email(auth_email)
+            if user_error:
+                return {"success": False, "error": user_error}
 
         # Parse UUID
         try:
@@ -363,9 +371,18 @@ async def edit_agent_schedule(
         if not await has_permission_cached(auth_email, Permission.USE_MCP):
             return {"success": False, "error": "You do not have permission to use MCP tools"}
 
-        caller_user_id, user_error = await resolve_user_id_from_email(auth_email)
-        if user_error:
-            return {"success": False, "error": user_error}
+        # Resolve caller's user_id for the ownership check. Prefer the
+        # requesting-user header injected by AHS (X-User-ID) so an agent
+        # acting on behalf of a user can edit schedules that user created;
+        # fall back to the MCP-authenticated email only if no header is set.
+        # This mirrors the CREATE path so CREATE vs EDIT authorization is
+        # symmetric -- whatever identity was used to stamp ``created_by_user``
+        # at create time must also be accepted at edit time.
+        caller_user_id: str | None = get_requesting_user_id()
+        if not caller_user_id:
+            caller_user_id, user_error = await resolve_user_id_from_email(auth_email)
+            if user_error:
+                return {"success": False, "error": user_error}
 
         # Parse context JSON string if provided
         context_dict: dict[str, Any] | None = None
