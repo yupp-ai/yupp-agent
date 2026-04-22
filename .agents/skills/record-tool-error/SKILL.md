@@ -1,7 +1,7 @@
 ---
 name: record-tool-error
 description: Record a tool call failure to agent memory so future sessions can avoid the same mistake. Usage /record-tool-error [username]
-allowed-tools: Bash, mcp__yuppster-mcp-server__get_agent_memory, mcp__yuppster-mcp-server__store_agent_memory
+allowed-tools: Bash, mcp__agcouch-mcp-server__get_agent_memory, mcp__agcouch-mcp-server__store_agent_memory
 ---
 
 # Record Tool Error

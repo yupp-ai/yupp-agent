@@ -68,9 +68,9 @@ One line, immediately after attribution. Links to all known context.
 
 Context links — include whichever are known, omit the rest:
 - Linear ticket: `[YUP-XXXXX](https://linear.app/...)`
-- Design doc / yuppaste: `[Design doc](http://go/p/...)`
-- Agent project: `[Project](https://yuppster.yupp.ai/projects/...)`
-- Agent task: `[Task](https://yuppster.yupp.ai/tasks/...)`
+- Design doc / artifact: `[Design doc](http://go/p/...)`
+- Agent project: `[Project](https://agcouch.com/projects/...)`
+- Agent task: `[Task](https://agcouch.com/tasks/...)`
 - Slack thread: `[Slack thread](https://yupp-ai.slack.com/...)`
 - Lit session: `[Session](https://lit.yupp.ai/agent_harness_console?session_id=...)`
 - Related PR: `#1234`
@@ -136,7 +136,7 @@ Do NOT include a test plan section by default. Only add it when the human explic
 
 3. **Gather context links**: Check if any of these are available in the conversation or can be inferred:
    - Linear ticket IDs (from branch name, commit messages, or conversation)
-   - Design docs or yuppaste links discussed in the session
+   - Design docs or artifact links discussed in the session
    - Agent project/task IDs (from AHS session context)
    - Slack thread links (from investigation context)
    - Related PRs (from git log or conversation)

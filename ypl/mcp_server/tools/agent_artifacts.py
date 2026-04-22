@@ -236,7 +236,7 @@ async def add_artifact(
 ) -> dict[str, Any]:
     """Register a new artifact in the agent artifact registry.
 
-    Call this immediately after creating any trackable output — a yuppaste,
+    Call this immediately after creating any trackable output — a artifact,
     pull request, investigation report, or other resource. This creates a
     persistent record tied to your current session so the artifact can be
     found, referenced, and tracked across sessions.
@@ -337,7 +337,7 @@ async def update_artifact(
 
     Use this to revise the title, URL, description, or metadata of an artifact
     that was previously registered via add_artifact — for example, when a draft
-    PR is promoted to ready-for-review, or when a yuppaste is superseded.
+    PR is promoted to ready-for-review, or when a artifact is superseded.
 
     Parameters:
         artifact_id: UUID of the artifact to update (returned by add_artifact).

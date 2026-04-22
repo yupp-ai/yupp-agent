@@ -2,7 +2,7 @@
 name: feed-insights
 description: Investigate what happened to a feed post (interesting turn candidate). Use when debugging why a turn was rejected, approved, or stuck in moderation. Accepts a turn_id or feed post URL, and optional environment (production/staging).
 argument-hint: <turn_id_or_url> [staging|production]
-allowed-tools: mcp__yuppster-mcp-server__query_yuppdb, mcp__yuppster-mcp-server-staging__query_yuppdb, mcp__yuppster-mcp-server__search_gcp_logs, mcp__yuppster-mcp-server-staging__search_gcp_logs
+allowed-tools: mcp__agcouch-mcp-server__query_yuppdb, mcp__agcouch-mcp-server-staging__query_yuppdb, mcp__agcouch-mcp-server__search_gcp_logs, mcp__agcouch-mcp-server-staging__search_gcp_logs
 ---
 
 # Feed Post Investigation Guide
@@ -35,8 +35,8 @@ If an explicit environment argument (`$1`) is provided, it takes precedence over
 ## Tool Selection
 
 Based on the environment, use the correct MCP tools:
-- **production**: `mcp__yuppster-mcp-server__query_yuppdb` and `mcp__yuppster-mcp-server__search_gcp_logs`
-- **staging**: `mcp__yuppster-mcp-server-staging__query_yuppdb` and `mcp__yuppster-mcp-server-staging__search_gcp_logs`
+- **production**: `mcp__agcouch-mcp-server__query_yuppdb` and `mcp__agcouch-mcp-server__search_gcp_logs`
+- **staging**: `mcp__agcouch-mcp-server-staging__query_yuppdb` and `mcp__agcouch-mcp-server-staging__search_gcp_logs`
 
 ## Step 1: Gather Core Data
 

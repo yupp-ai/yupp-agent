@@ -1,7 +1,7 @@
 ---
 name: debug-model-promotion
 description: Debug model promotion and cloaked testing issues. Use when investigating why a promoted model is or isn't appearing, traffic pacing issues, or cloaked testing behavior.
-allowed-tools: mcp__yuppster-mcp-server__search_gcp_logs, mcp__yuppster-mcp-server__query_yuppdb, mcp__yuppster-mcp-server__query_bigquery, mcp__yuppster-mcp-server__create_yuppaste, Bash, Read, Write
+allowed-tools: mcp__agcouch-mcp-server__search_gcp_logs, mcp__agcouch-mcp-server__query_yuppdb, mcp__agcouch-mcp-server__query_bigquery, mcp__agcouch-mcp-server__create_artifact, Bash, Read, Write
 ---
 
 # Model Promotion Debug Guide
@@ -291,9 +291,9 @@ WHERE ri.turn_id = '<turn_id>'
 
 6. **Check earlier filters** - A model must survive all filters before PromotionPacer even sees it.
 
-## Preserving Evidence with Yuppaste
+## Preserving Evidence with Artifact
 
-When investigating issues that may lead to a PR fix, **preserve critical evidence** using the `create_yuppaste` MCP tool. It's best to create a separate paste for each distinct piece of evidence (e.g., one for logs, another for database results). This creates shareable links that can be included in PR descriptions.
+When investigating issues that may lead to a PR fix, **preserve critical evidence** using the `create_artifact` MCP tool. It's best to create a separate paste for each distinct piece of evidence (e.g., one for logs, another for database results). This creates shareable links that can be included in PR descriptions.
 
 ### What to Preserve
 
@@ -305,13 +305,13 @@ When investigating issues that may lead to a PR fix, **preserve critical evidenc
 ### How to Use
 
 ```
-create_yuppaste(
+create_artifact(
     content="<formatted logs or query results>",
     name="Promotion Debug: <model_name or description>"
 )
 ```
 
-The tool returns a go-link (e.g., `http://go/p/<uuid>`) that you can include in PR descriptions. Note that the content size is limited to 10MB.
+The tool returns a go-link (e.g., `https://artifacts.agcouch.com/artifacts/<uuid>`) that you can include in PR descriptions. Note that the content size is limited to 10MB.
 
 ### PR Description Format
 

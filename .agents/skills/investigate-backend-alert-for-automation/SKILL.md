@@ -1,12 +1,12 @@
 ---
 name: investigate-backend-alert-for-automation
-description: Investigate backend errors from alert messages, write findings to yuppaste, and optionally create a draft PR with a fix. Designed for automated invocation from Slack alert threads.
-allowed-tools: mcp__yuppster-mcp-server__search_gcp_logs, mcp__yuppster-mcp-server__create_yuppaste, mcp__yuppster-mcp-server__get_gcp_alert_details, mcp__yuppster-mcp-server__read_yuppaste, mcp__yuppster-mcp-server__get_agent_memory, mcp__yuppster-mcp-server__store_agent_memory, mcp__yuppster-mcp-server__read_slack_thread, mcp__yuppster-mcp-server__search_slack, Bash, Read, Write, Edit, Glob, Grep, Task, Skill
+description: Investigate backend errors from alert messages, write findings to artifact, and optionally create a draft PR with a fix. Designed for automated invocation from Slack alert threads.
+allowed-tools: mcp__agcouch-mcp-server__search_gcp_logs, mcp__agcouch-mcp-server__create_artifact, mcp__agcouch-mcp-server__get_gcp_alert_details, mcp__agcouch-mcp-server__read_artifact, mcp__agcouch-mcp-server__get_agent_memory, mcp__agcouch-mcp-server__store_agent_memory, mcp__agcouch-mcp-server__read_slack_thread, mcp__agcouch-mcp-server__search_slack, Bash, Read, Write, Edit, Glob, Grep, Task, Skill
 ---
 
 # Automated Backend Alert Investigation
 
-This skill is designed for automated invocation when a backend alert is received. It orchestrates the full investigation workflow: analyze the alert, investigate root cause, write findings to yuppaste, and optionally create a draft PR fix.
+This skill is designed for automated invocation when a backend alert is received. It orchestrates the full investigation workflow: analyze the alert, investigate root cause, write findings to artifact, and optionally create a draft PR fix.
 
 ## Workflow
 
@@ -47,11 +47,11 @@ Based on the alert content and investigation findings, **automatically generate 
 - The nature of the error (e.g., "KeyError", "timeout", "connection refused", "OOM")
 - Keep it short but informative (e.g., "backend KeyError in chat completion handler", "admin-service GC cleanup failure")
 
-Use this title as the `name` parameter when creating the yuppaste.
+Use this title as the `name` parameter when creating the artifact.
 
-### Step 3: Write Summary to Yuppaste
+### Step 3: Write Summary to Artifact
 
-After completing the investigation, compile a comprehensive summary and write it to a yuppaste using the `create_yuppaste` MCP tool.
+After completing the investigation, compile a comprehensive summary and write it to a artifact using the `create_artifact` MCP tool.
 
 The summary should include:
 - **Title**: The inferred title from Step 2
@@ -64,7 +64,7 @@ The summary should include:
 - **Recommendation**: Whether this needs a code fix, config change, or is transient
 
 ```
-create_yuppaste(
+create_artifact(
     content="<formatted investigation summary>",
     name="<inferred title from Step 2>"
 )
@@ -82,22 +82,22 @@ If the investigation reveals a bug or issue that should be fixed through code ch
    ```bash
    gt submit --publish --no-edit --no-interactive
    ```
-3. Include the yuppaste link in the PR description under an `## Evidence` section.
+3. Include the artifact link in the PR description under an `## Evidence` section.
 4. Note: Branch names should be prefixed with `claude/` to indicate automated creation.
 
 ### Step 5: Post the Response
 
 After the investigation is complete, format your response message with:
 
-1. **The yuppaste link** using the following format:
-   - Display text: the go-link (e.g., `http://go/p/<uuid>`)
-   - URL: the resolved link (e.g., `https://yupp-soul.vercel.app/yuppastes/<uuid>`)
-   - Markdown format: `[http://go/p/<uuid>](https://yupp-soul.vercel.app/yuppastes/<uuid>)`
+1. **The artifact link** using the following format:
+   - Display text: the go-link (e.g., `https://artifacts.agcouch.com/artifacts/<uuid>`)
+   - URL: the resolved link (e.g., `https://artifacts.agcouch.com/artifacts/by-slug/<uuid>`)
+   - Markdown format: `[https://artifacts.agcouch.com/artifacts/<uuid>](https://artifacts.agcouch.com/artifacts/by-slug/<uuid>)`
 
 2. **The PR link** (if a draft PR was created):
    - Include the GitHub PR URL
 
-3. **A brief summary** of the findings (2-3 sentences max in the response itself - the full details are in the yuppaste)
+3. **A brief summary** of the findings (2-3 sentences max in the response itself - the full details are in the artifact)
 
 Example response format:
 ```
@@ -105,7 +105,7 @@ Investigation complete for <service> <error type>.
 
 **Root cause**: <1-2 sentence explanation>
 
-**Full analysis**: [http://go/p/<uuid>](https://yupp-soul.vercel.app/yuppastes/<uuid>)
+**Full analysis**: [https://artifacts.agcouch.com/artifacts/<uuid>](https://artifacts.agcouch.com/artifacts/by-slug/<uuid>)
 
 **Draft PR**: https://github.com/yupp-ai/yupp-mind/pull/<number>
 ```
@@ -117,6 +117,6 @@ If the investigation uncovered a reusable insight (recurring pattern, non-obviou
 ## Important Notes
 
 - Always use the `yupp-ai/yupp-mind` repository for any code investigation or PR creation.
-- The go-link `http://go/p/<uuid>` resolves to `https://yupp-soul.vercel.app/yuppastes/<uuid>`. Always use the resolved URL as the hyperlink target and the go-link as display text.
+- The go-link `https://artifacts.agcouch.com/artifacts/<uuid>` resolves to `https://artifacts.agcouch.com/artifacts/by-slug/<uuid>`. Always use the resolved URL as the hyperlink target and the go-link as display text.
 - Draft PRs should have branch names prefixed with `claude/` so they are not accidentally marked as ready for review.
-- Keep the response message concise - all detailed evidence belongs in the yuppaste.
+- Keep the response message concise - all detailed evidence belongs in the artifact.

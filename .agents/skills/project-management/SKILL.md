@@ -89,7 +89,7 @@ Break the work into tasks following these principles:
   - **PR titles**: `[Q3 migration][2] Implement migration script`
   - **PR descriptions**: Include the project name, task name, and stage marker
   - **Branch names**: Include the marker where practical (e.g. `tw/q3-migration-2-impl-script`)
-  - **Documents/yuppaste**: Include the marker in the title (e.g. `[Q3 migration][1] Routing analysis findings`)
+  - **Documents/artifact**: Include the marker in the title (e.g. `[Q3 migration][1] Routing analysis findings`)
   - **Linear tickets**: Include the marker in the title if a ticket is created for the task
 - The purpose is traceability — anyone seeing a PR or document should immediately know which project and stage it belongs to
 
@@ -104,7 +104,7 @@ Break the work into tasks following these principles:
   - **Config/infra task** → one config change, one deployment, one migration
   - **Design task** → one design doc or schema proposal
 - The deliverable should be human-consumable at a glance — if a human can't tell what the task produced in under a minute, it's too big or too vague
-- For large outputs (detailed logs, full analysis reports, big datasets), upload to online storage (currently yuppaste) and reference the URL in the task result
+- For large outputs (detailed logs, full analysis reports, big datasets), upload to online storage (currently artifact) and reference the URL in the task result
 
 **Task self-containment rules:**
 - A task must be self-contained: an agent picking it up should be able to complete it using ONLY:
@@ -343,7 +343,7 @@ When tasks produce common artifacts, use these standard keys in `task_data` and 
 | `pr_number` | result | PR number as integer |
 | `branch_name` | result, task_data | Git branch name |
 | `linear_issue_id` | task_data | Linear issue ID (e.g. `YPP-1234`) |
-| `yuppaste_url` | result | Link to detailed findings on yuppaste |
+| `artifact_url` | result | Link to detailed findings on artifact |
 | `commit_sha` | result | Git commit SHA |
 | `deploy_url` | result | URL of deployed service/preview |
 | `error_message` | result (on failure) | Brief error description |
@@ -393,6 +393,6 @@ Automatic behavior:
 When writing task descriptions and planning output formats, keep token costs in mind. This applies both to this planning skill and to the executor agents that will run the tasks.
 
 - **Task descriptions**: Don't copy-paste shared background into every task. Put shared context in the project `description` or `shared_state` and reference it.
-- **Task results**: Should be lean (under 500 chars). Large outputs go to online storage (currently yuppaste); the result stores a summary + URL.
+- **Task results**: Should be lean (under 500 chars). Large outputs go to online storage (currently artifact); the result stores a summary + URL.
 - **Status reports**: Summarize for the user rather than echoing raw tool output.
 - **Avoid redundant fetches**: `get_project_tasks` returns all task details — don't follow up with individual `get_task` calls for the same tasks.

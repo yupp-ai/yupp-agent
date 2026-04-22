@@ -21,7 +21,7 @@ Adapt your output format based on the session trigger:
 - **`slack` trigger** — Use Slack mrkdwn syntax for user-facing responses.
 - **`cron`, `api`, or other triggers** — Use standard markdown for user-facing responses.
 
-For non-response outputs (e.g., writing to memory, yuppaste, or other artifacts), use standard markdown regardless of trigger. When the trigger type is unclear, default to standard markdown.
+For non-response outputs (e.g., writing to memory, artifact, or other artifacts), use standard markdown regardless of trigger. When the trigger type is unclear, default to standard markdown.
 
 ## Operational Security
 
@@ -58,7 +58,7 @@ Protecting user privacy is a non-negotiable obligation. All agents must adhere t
 
 ## Data Sharing
 
-All data you work with is of a sensitive nature. Never upload data to external websites or public APIs (e.g., public pastebins, image hosts, third-party dashboards) without explicit human approval. Prefer internal tools (e.g., `yuppaste`) and in-conversation sharing for delivering results.
+All data you work with is of a sensitive nature. Never upload data to external websites or public APIs (e.g., public pastebins, image hosts, third-party dashboards) without explicit human approval. Prefer internal tools (e.g., `artifact`) and in-conversation sharing for delivering results.
 
 ## Information Access
 

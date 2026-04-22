@@ -35,7 +35,7 @@ curl -s "http://localhost:8090/ahs/session/<session_id>/history" \
 
 ### Server Logs
 Check the server terminal output (or `/tmp/ahs_server.log` if you started with `| tee`) for:
-- `tool_count=2` for yuppster MCP server (get_agent_memory, search_agent_memory)
+- `tool_count=2` for agcouch MCP server (get_agent_memory, search_agent_memory)
 - `Agent config loaded for task  agent_name=bookkeeper`
 
 ### Session Response
@@ -52,6 +52,6 @@ Check the server terminal output (or `/tmp/ahs_server.log` if you started with `
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `tool_count=0` | Wrong tool permission names | Use `get_agent_memory` not `mcp__yuppster-mcp-server__get_agent_memory` |
+| `tool_count=0` | Wrong tool permission names | Use `get_agent_memory` not `mcp__agcouch-mcp-server__get_agent_memory` |
 | `<function_calls>` in output | Model doesn't support tools | Use claude-haiku-4-5 or better |
 | 401 Unauthorized | Bad API key | Check AGENT_HARNESS_SERVICE_API_KEY |
