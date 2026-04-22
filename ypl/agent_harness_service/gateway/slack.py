@@ -127,7 +127,23 @@ class SlackGateway(Gateway):
             resp.raise_for_status()
             data = resp.json()
             if not data.get("success"):
-                logger.error("Gateway rejected append", session_id=session_id, error=data.get("error"))
+                # SAG sets buffered=True when the content is safely held in the
+                # Redis buffer and will be retried on the next scheduled flush.
+                # That's transient backpressure, not data loss — log at warning
+                # rather than error so it doesn't trip alerts.
+                if data.get("buffered"):
+                    logger.warning(
+                        "Gateway deferred append (content buffered, will retry)",
+                        session_id=session_id,
+                        error=data.get("error"),
+                    )
+                else:
+                    logger.error(
+                        "Gateway rejected append",
+                        session_id=session_id,
+                        error=data.get("error"),
+                        buffered=data.get("buffered"),
+                    )
                 return False
             logger.info("Gateway accepted append", session_id=session_id, buffered=data.get("buffered"))
             return True
