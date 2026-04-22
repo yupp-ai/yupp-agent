@@ -24,8 +24,8 @@ class AHSError(Exception):
 
 def _client() -> httpx.AsyncClient:
     return httpx.AsyncClient(
-        base_url=settings.AHS_BASE_URL.rstrip("/"),
-        headers={"X-API-Key": settings.AHS_API_KEY},
+        base_url=settings.VIEWER_AHS_BASE_URL.rstrip("/"),
+        headers={"X-API-Key": settings.AGENT_HARNESS_SERVICE_API_KEY},
         timeout=30.0,
     )
 

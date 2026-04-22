@@ -20,7 +20,10 @@ set -euo pipefail
 
 INSTALL_DIR="${INSTALL_DIR:-/opt/yupp-agent}"
 APP_USER="${APP_USER:-ahs}"
-SERVICES=(ahs-mono ahs-streamlit)
+SERVICES=(ahs-mono ahs-streamlit artifact-viewer)
+# Sub-apps with their own pyproject / venv. Each gets ``pip install -e`` on
+# every deploy so code changes take effect without a separate step.
+SUBAPPS=(apps/artifact-viewer)
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 info() { echo -e "${GREEN}[deploy]${NC} $*"; }
@@ -41,24 +44,56 @@ sudo -u "$APP_USER" git -C "$INSTALL_DIR" pull --ff-only \
 # trips git's "dubious ownership" guard.
 info "Now at $(sudo -u "$APP_USER" git -C "$INSTALL_DIR" log -1 --oneline)"
 
-# --- 2. Sync Python deps ----------------------------------------------------
+# --- 2. Sync Python deps (monolith) ----------------------------------------
 info "poetry install (cheap if nothing changed)…"
 sudo -u "$APP_USER" env INSTALL_DIR="$INSTALL_DIR" bash -c '
     cd "$INSTALL_DIR"
     poetry install --no-root --without dev --compile
 '
 
-# --- 3. Sync systemd unit files --------------------------------------------
-UNITS_CHANGED=0
-for unit in "${SERVICES[@]}"; do
-    src="${INSTALL_DIR}/deploy/systemd/${unit}.service"
-    dst="/etc/systemd/system/${unit}.service"
-    if [[ ! -f "$src" ]]; then
-        warn "Skipping ${unit}: ${src} not found in repo."
+# --- 2b. Sync sub-app deps (artifact-viewer, etc.) -------------------------
+for subapp in "${SUBAPPS[@]}"; do
+    app_dir="${INSTALL_DIR}/${subapp}"
+    app_venv="${app_dir}/.venv"
+    if [[ ! -d "$app_dir" ]]; then
+        warn "Sub-app ${subapp} not present in repo — skipping."
         continue
     fi
+    if [[ ! -x "${app_venv}/bin/python" ]]; then
+        info "Creating sub-app venv at ${app_venv}… (install.sh should have done this)"
+        sudo -u "$APP_USER" python3.12 -m venv "$app_venv"
+    fi
+    info "pip install -e ${subapp} (cheap if nothing changed)…"
+    sudo -u "$APP_USER" "${app_venv}/bin/pip" install --quiet -e "$app_dir"
+done
+
+# --- 3. Sync systemd unit files --------------------------------------------
+# Unit files can live under deploy/systemd/ (main services) OR
+# apps/*/deploy/*.service (sub-apps). Each service name maps to whichever
+# source file exists.
+UNITS_CHANGED=0
+unit_source_for() {
+    local unit="$1"
+    local main="${INSTALL_DIR}/deploy/systemd/${unit}.service"
+    if [[ -f "$main" ]]; then
+        echo "$main"; return 0
+    fi
+    for subapp in "${SUBAPPS[@]}"; do
+        local alt="${INSTALL_DIR}/${subapp}/deploy/${unit}.service"
+        if [[ -f "$alt" ]]; then
+            echo "$alt"; return 0
+        fi
+    done
+    return 1
+}
+for unit in "${SERVICES[@]}"; do
+    if ! src=$(unit_source_for "$unit"); then
+        warn "Skipping ${unit}: no .service file found in repo."
+        continue
+    fi
+    dst="/etc/systemd/system/${unit}.service"
     if ! cmp -s "$src" "$dst"; then
-        info "Updating ${dst}"
+        info "Updating ${dst} (source: ${src#$INSTALL_DIR/})"
         cp "$src" "$dst"
         UNITS_CHANGED=1
     fi
