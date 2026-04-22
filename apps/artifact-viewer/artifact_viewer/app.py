@@ -5,6 +5,7 @@ Mount layout::
     GET /                                → home (search + recent)
     GET /search?q=...                    → search results
     GET /artifacts/{uuid}                → rendered artifact
+    GET /artifacts/{uuid}/download       → download raw body as a file
     GET /artifacts/{uuid}/attachments/{filename} → stream attachment
     GET /artifacts/by-slug/{slug}        → latest version by slug
     GET /artifacts/by-slug/{slug}/v/{N}  → pinned version
@@ -146,9 +147,53 @@ async def attachment(request: Request) -> Response:
     return Response(content=data, media_type=content_type)
 
 
+async def download(request: Request) -> Response:
+    """Download an artifact's raw body as a file.
+
+    Proxies the upstream AHS endpoint (which requires ``X-API-Key``) through
+    the viewer's session auth so the browser never needs to talk to
+    ``ahs.agcouch.com`` directly. The response is served as
+    ``application/octet-stream`` with ``Content-Disposition: attachment`` so
+    the browser saves it rather than rendering it — an HTML artifact can't
+    execute script in the viewer's origin this way.
+    """
+    artifact_id = request.path_params["artifact_id"]
+    try:
+        data, content_type = await ahs_client.get_artifact_content(artifact_id)
+    except AHSError as exc:
+        return _error_page(request, exc)
+    filename = _download_filename(artifact_id, content_type)
+    return Response(
+        content=data,
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+_CONTENT_TYPE_EXT = {
+    "text/markdown": "md",
+    "text/html": "html",
+    "text/plain": "txt",
+}
+
+
+def _download_filename(artifact_id: str, content_type: str) -> str:
+    """Build a safe ASCII filename for the Content-Disposition header.
+
+    Uses the artifact id as the base (it's already URL-safe) and picks an
+    extension from the content-type. Unknown types fall back to ``.txt``.
+    """
+    mime = content_type.split(";", 1)[0].strip().lower()
+    ext = _CONTENT_TYPE_EXT.get(mime, "txt")
+    return f"{artifact_id}.{ext}"
 
 
 async def _render_artifact(request: Request, artifact_id: str, *, meta: dict[str, Any] | None = None) -> Response:
@@ -172,7 +217,6 @@ async def _render_artifact(request: Request, artifact_id: str, *, meta: dict[str
             "body_html": body_html,
             "display_mode": display_mode,
             "attachments_html": attach_html,
-            "ahs_base_url": settings.VIEWER_AHS_BASE_URL,
         },
     )
 
@@ -215,6 +259,7 @@ def build_app() -> Starlette:
         Route("/", home, name="home"),
         Route("/search", search_page, name="search"),
         Route("/artifacts/{artifact_id}", artifact_by_id, name="artifact"),
+        Route("/artifacts/{artifact_id}/download", download, name="artifact_download"),
         Route(
             "/artifacts/{artifact_id}/attachments/{filename:path}",
             attachment,
