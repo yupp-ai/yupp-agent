@@ -315,6 +315,48 @@ def cleanup_worktree(session_id: str, repo: str, worktree_dir: str | None = None
         )
 
 
+def _normalize_origin_to_https(workspace: str) -> None:
+    """Rewrite origin from SSH to HTTPS so GH_TOKEN auth applies on push.
+
+    git push over SSH ignores env vars and uses only ``~/.ssh/`` identities /
+    ``SSH_AUTH_SOCK``. When the shared repo's origin has drifted to an SSH
+    URL (e.g. cloned with a deploy key), pushes get routed to a read-only
+    deploy key and fail even when a valid GH_TOKEN is in the env. Rewriting
+    to HTTPS lets the gh credential helper hand off GH_TOKEN for auth.
+    Worktrees share config with the parent repo, so this also heals the
+    shared clone for future sessions. Idempotent.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError:
+        return
+    url = result.stdout.strip()
+    if url.startswith("git@github.com:"):
+        https_url = "https://github.com/" + url[len("git@github.com:") :]
+    elif url.startswith("ssh://git@github.com/"):
+        https_url = "https://github.com/" + url[len("ssh://git@github.com/") :]
+    else:
+        return
+    subprocess.run(
+        ["git", "remote", "set-url", "origin", https_url],
+        cwd=workspace,
+        check=False,
+        capture_output=True,
+    )
+    logger.info(
+        f"Rewrote origin SSH -> HTTPS workspace={workspace!r}",
+        workspace=workspace,
+        old_url=url,
+        new_url=https_url,
+    )
+
+
 def push_and_create_pr(
     workspace: str,
     title: str,
@@ -361,6 +403,8 @@ def push_and_create_pr(
 
     if base:
         _validate_branch_name(base)
+
+    _normalize_origin_to_https(workspace)
 
     # Push the branch
     try:
