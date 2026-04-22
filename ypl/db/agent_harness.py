@@ -27,7 +27,7 @@ from ypl.db.base import BaseModel
 class AgentArtifactType(str, enum.Enum):
     """Type of artifact tracked in the agent artifact registry."""
 
-    YUPPASTE = "YUPPASTE"  # Text content (investigations, reports, summaries)
+    TEXT = "TEXT"  # Text content (investigations, reports, summaries)
     CODE_REVIEW = "CODE_REVIEW"  # GitHub PR review
     OTHER = "OTHER"  # Catch-all for future types
 

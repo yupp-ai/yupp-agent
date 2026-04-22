@@ -39,8 +39,8 @@ ROLE_PERMISSIONS: dict[RoleName, list[Permission]] = {
         Permission.MANAGE_AGENT_SESSIONS,
         Permission.CREATE_AGENT,
         Permission.USE_MCP,
-        Permission.READ_YUPPASTE,
-        Permission.WRITE_YUPPASTE,
+        Permission.READ_ARTIFACT,
+        Permission.WRITE_ARTIFACT,
     ],
     RoleName.MCP_USER: [Permission.USE_MCP],
 }

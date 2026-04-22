@@ -16,7 +16,7 @@ ART_ID = "11111111-2222-3333-4444-555555555555"
 def _meta(**overrides: Any) -> dict[str, Any]:
     body = {
         "artifact_id": ART_ID,
-        "type": "YUPPASTE",
+        "type": "TEXT",
         "title": "Hello",
         "description": None,
         "url": f"/ahs/artifacts/{ART_ID}",

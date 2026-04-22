@@ -623,7 +623,7 @@ async def fetch_project_sessions(
 # ── Artifact helpers ─────────────────────────────────────────────────────────
 
 _ARTIFACT_TYPE_ICON: dict[AgentArtifactType, str] = {
-    AgentArtifactType.YUPPASTE: "📝",
+    AgentArtifactType.TEXT: "📝",
     AgentArtifactType.CODE_REVIEW: "🔍",
     AgentArtifactType.OTHER: "📦",
 }

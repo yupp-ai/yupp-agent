@@ -51,7 +51,7 @@ def _env(monkeypatch: pytest.MonkeyPatch) -> None:
 def _artifact_json(**overrides: Any) -> dict[str, Any]:
     body = {
         "artifact_id": FAKE_ID,
-        "type": "YUPPASTE",
+        "type": "TEXT",
         "title": "sample",
         "description": None,
         "url": f"/ahs/artifacts/{FAKE_ID}",

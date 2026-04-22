@@ -157,7 +157,7 @@ class TestAddArtifact:
         assert "Internal error" in result["error"]
 
     async def test_all_valid_types_accepted(self) -> None:
-        for artifact_type in ["YUPPASTE", "CODE_REVIEW", "OTHER"]:
+        for artifact_type in ["TEXT", "CODE_REVIEW", "OTHER"]:
             art = _make_artifact(artifact_type_value=artifact_type)
             with (
                 patch("ypl.mcp_server.tools.agent_artifacts.get_ahs_session_id", return_value=FAKE_SESSION_ID),
