@@ -5,8 +5,8 @@ entire agent platform can run as one process (one-box deployment).
 
 Route layout when running as the monolith:
   /ahs/*          — Agent Harness Service
-  /mcp/harness/*  — Harness MCP (for agents)
-  /mcp/*          — Yuppster MCP (for developers)
+  /mcp/harness/*  — Harness MCP (for agents; x-ahs-token auth)
+  /mcp/agcouch/*  — Agcouch MCP (for developers; Bearer yupp_dev_* auth)
   /gw/slack/*     — Slack gateway (if GATEWAY_SLACK_ENABLED=true)
   /health         — Liveness probe
 """
