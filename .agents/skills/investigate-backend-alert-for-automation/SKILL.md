@@ -1,7 +1,7 @@
 ---
 name: investigate-backend-alert-for-automation
 description: Investigate backend errors from alert messages, write findings to artifact, and optionally create a draft PR with a fix. Designed for automated invocation from Slack alert threads.
-allowed-tools: mcp__agcouch-mcp-server__search_gcp_logs, mcp__agcouch-mcp-server__create_artifact, mcp__agcouch-mcp-server__get_gcp_alert_details, mcp__agcouch-mcp-server__read_artifact, mcp__agcouch-mcp-server__get_agent_memory, mcp__agcouch-mcp-server__store_agent_memory, mcp__agcouch-mcp-server__read_slack_thread, mcp__agcouch-mcp-server__search_slack, Bash, Read, Write, Edit, Glob, Grep, Task, Skill
+allowed-tools: mcp__agcouch-mcp-server__search_gcp_logs, mcp__agcouch-mcp-server__add_artifact, mcp__agcouch-mcp-server__get_gcp_alert_details, mcp__agcouch-mcp-server__read_artifact, mcp__agcouch-mcp-server__get_agent_memory, mcp__agcouch-mcp-server__store_agent_memory, mcp__agcouch-mcp-server__read_slack_thread, mcp__agcouch-mcp-server__search_slack, Bash, Read, Write, Edit, Glob, Grep, Task, Skill
 ---
 
 # Automated Backend Alert Investigation
@@ -47,11 +47,11 @@ Based on the alert content and investigation findings, **automatically generate 
 - The nature of the error (e.g., "KeyError", "timeout", "connection refused", "OOM")
 - Keep it short but informative (e.g., "backend KeyError in chat completion handler", "admin-service GC cleanup failure")
 
-Use this title as the `name` parameter when creating the artifact.
+Use this title as the `title` parameter when creating the artifact.
 
 ### Step 3: Write Summary to Artifact
 
-After completing the investigation, compile a comprehensive summary and write it to a artifact using the `create_artifact` MCP tool.
+After completing the investigation, compile a comprehensive summary and save it to a TEXT artifact using the `add_artifact` MCP tool.
 
 The summary should include:
 - **Title**: The inferred title from Step 2
@@ -64,9 +64,10 @@ The summary should include:
 - **Recommendation**: Whether this needs a code fix, config change, or is transient
 
 ```
-create_artifact(
+add_artifact(
+    artifact_type="TEXT",
+    title="<inferred title from Step 2>",
     content="<formatted investigation summary>",
-    name="<inferred title from Step 2>"
 )
 ```
 
