@@ -9,7 +9,7 @@ Example .env::
     PORT=8090
     GATEWAY_SLACK_ENABLED=true
     GATEWAY_GITHUB_ENABLED=false   # off by default; requires AHS_GITHUB_WEBHOOK_SECRET
-    HOST_PATH_GUARD={"mcp.agcouch.com":["/mcp","/health"]}
+    HOST_PATH_GUARD={"mcp.agcouch.com":["/mcp/agcouch","/health"]}
 """
 
 import json
