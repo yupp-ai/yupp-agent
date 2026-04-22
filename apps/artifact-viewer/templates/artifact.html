@@ -3,8 +3,10 @@
 {% block content %}
 <article class="artifact">
     <header class="artifact-header">
-        <h1>{{ meta.title or '(untitled)' }}</h1>
-        {% if meta.description %}<p class="description">{{ meta.description }}</p>{% endif %}
+        <div class="artifact-header-main">
+            <h1>{{ meta.title or '(untitled)' }}</h1>
+            {% if meta.description %}<p class="description">{{ meta.description }}</p>{% endif %}
+        </div>
         <dl class="artifact-meta">
             <dt>ID</dt><dd class="mono"><a href="/artifacts/{{ meta.artifact_id }}">{{ meta.artifact_id }}</a></dd>
             {% if meta.named_slug %}
