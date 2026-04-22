@@ -1,7 +1,7 @@
 ---
 name: data-science-investigation
 description: Data science investigation and analysis on Yupp production data. Use for leaderboard ranking analysis (why does model A rank above B?), engagement and usage analytics, geographic/demographic breakdowns, feature impact analysis, model performance deep-dives, and any ad-hoc data questions requiring narrative + evidence.
-allowed-tools: mcp__agcouch-mcp-server__query_bigquery, mcp__agcouch-mcp-server__query_yuppdb, mcp__agcouch-mcp-server__create_artifact, Bash, Read, Write, Glob, Grep, Task, Skill
+allowed-tools: mcp__agcouch-mcp-server__query_bigquery, mcp__agcouch-mcp-server__query_yuppdb, mcp__agcouch-mcp-server__add_artifact, Bash, Read, Write, Glob, Grep, Task, Skill
 ---
 
 # Data Science Investigation Guide
@@ -244,12 +244,13 @@ For complex, multi-step analyses, generate a notebook:
    poetry run jupyter nbconvert --to html --no-input notebooks/<name>.ipynb
    ```
    This produces `notebooks/<name>.html` alongside the notebook — an interactive, self-contained report that can be opened in any browser without Jupyter.
-5. **Upload the HTML to artifact** for easy sharing. Use `content_type="text/html"` so the paste renders correctly:
+5. **Upload the HTML to artifact** for easy sharing. Use `content_type="text/html"` so it renders correctly:
    ```python
-   create_artifact(
+   add_artifact(
+       artifact_type="TEXT",
+       title="DS Report: <brief description>",
        content=html_content,  # Read from notebooks/<name>.html
-       name="DS Report: <brief description>",
-       content_type="text/html"
+       content_type="text/html",
    )
    ```
    This returns a go-link (e.g., `https://artifacts.agcouch.com/artifacts/<uuid>`) that can be shared in Slack or linked from PRs. The HTML renders interactively with all charts and styling intact.
@@ -293,16 +294,18 @@ For findings that need to be shared (e.g., in Slack or PRs):
 
 ```python
 # For plain text/markdown content
-create_artifact(
+add_artifact(
+    artifact_type="TEXT",
+    title="DS Analysis: <brief description>",
     content="<formatted analysis with tables and findings>",
-    name="DS Analysis: <brief description>"
 )
 
 # For HTML reports (e.g., from Jupyter notebook export)
-create_artifact(
+add_artifact(
+    artifact_type="TEXT",
+    title="DS Report: <brief description>",
     content=html_content,
-    name="DS Report: <brief description>",
-    content_type="text/html"
+    content_type="text/html",
 )
 ```
 

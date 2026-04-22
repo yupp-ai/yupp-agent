@@ -44,7 +44,7 @@ def test_critical_agcouch_tools_are_registered() -> None:
     """Name-level check on the tools we rely on most day-to-day.
 
     If any of these go missing, agents can't do their core work — e.g.
-    create_artifact, query_yuppdb, store_agent_memory.
+    add_artifact, query_yuppdb, store_agent_memory.
     """
     import ypl.mcp_server.mcp_tools  # noqa: F401
     from ypl.mcp_server.core import mcp_server
@@ -56,12 +56,17 @@ def test_critical_agcouch_tools_are_registered() -> None:
     tool_names = set(tools_dict.keys())
 
     required = {
-        # Artifact lifecycle (agent_artifacts.py)
-        "create_artifact",
-        "read_artifact",
-        "archive_artifact",
+        # Artifact lifecycle (agent_artifacts.py) — unified surface, post-PR #230
         "add_artifact",
+        "update_artifact",
+        "update_artifact_content",
+        "read_artifact",
         "list_artifacts",
+        "list_artifact_versions",
+        "search_artifacts",
+        "archive_artifact",
+        "archive_artifact_slug",
+        "artifact_url",
         # Databases (database.py)
         "query_yuppdb",
         "query_agentdb",
