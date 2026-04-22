@@ -1,0 +1,22 @@
+{
+  "display_name": "Test GPT-OSS",
+  "description": "Test agent for Cerebras gpt-oss-120b on raw executor.",
+  "default_repo": "yupp-agent",
+  "max_turns": 300,
+  "max_budget_usd": 1.0,
+  "has_mcp": false,
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true
+  },
+  "executor_config": {
+    "type": "raw",
+    "model": "cerebras/gpt-oss-120b"
+  },
+  "tool_permissions": {
+    "*": "allow"
+  },
+  "allowed_subagents": ["*"],
+  "streaming": false,
+  "timeout_s": 36000
+}

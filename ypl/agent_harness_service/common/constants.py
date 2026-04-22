@@ -254,6 +254,7 @@ DEFAULT_TEMPERATURE = None
 
 # Provider identifiers
 PROVIDER_ANTHROPIC = "anthropic"
+PROVIDER_CEREBRAS = "cerebras"
 PROVIDER_MOONSHOT = "moonshot"
 PROVIDER_OPENAI = "openai"
 PROVIDER_ZAI = "zai"
@@ -261,6 +262,7 @@ PROVIDER_MINIMAX = "minimax"
 
 # Default models per provider
 DEFAULT_MODEL_ANTHROPIC = "anthropic/claude-sonnet-4-6"
+DEFAULT_MODEL_CEREBRAS = "cerebras/gpt-oss-120b"
 DEFAULT_MODEL_MOONSHOT = "moonshot/kimi-k2.5"
 DEFAULT_MODEL_OPENAI = "openai/gpt-4o"
 DEFAULT_MODEL_ZAI = "zai/glm-5"

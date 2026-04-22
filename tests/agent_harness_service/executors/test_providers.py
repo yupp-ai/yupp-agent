@@ -133,7 +133,7 @@ class TestGetProviderConfig:
         assert cfg.sdk == "openai"
 
     def test_all_known_providers_exist(self) -> None:
-        for provider in ("anthropic", "openai", "zai", "minimax", "moonshot"):
+        for provider in ("anthropic", "openai", "zai", "minimax", "moonshot", "cerebras"):
             cfg = get_provider_config(provider)
             assert cfg.env_key
             assert cfg.sdk in ("anthropic", "openai")
@@ -163,6 +163,9 @@ class TestIsOpenAICompatible:
 
     def test_moonshot_is_compatible(self) -> None:
         assert is_openai_compatible("moonshot") is True
+
+    def test_cerebras_is_compatible(self) -> None:
+        assert is_openai_compatible("cerebras") is True
 
     def test_all_non_anthropic_are_openai_compatible(self) -> None:
         """All providers except anthropic use the openai-compatible SDK."""

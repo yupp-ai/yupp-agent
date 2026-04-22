@@ -7,11 +7,13 @@ from pydantic import BaseModel
 
 from ypl.agent_harness_service.common.constants import (
     DEFAULT_MODEL_ANTHROPIC,
+    DEFAULT_MODEL_CEREBRAS,
     DEFAULT_MODEL_MINIMAX,
     DEFAULT_MODEL_MOONSHOT,
     DEFAULT_MODEL_OPENAI,
     DEFAULT_MODEL_ZAI,
     PROVIDER_ANTHROPIC,
+    PROVIDER_CEREBRAS,
     PROVIDER_MINIMAX,
     PROVIDER_MOONSHOT,
     PROVIDER_OPENAI,
@@ -59,6 +61,12 @@ PROVIDERS: dict[str, ProviderConfig] = {
         sdk="openai",
         default_model=DEFAULT_MODEL_MOONSHOT,
     ),
+    PROVIDER_CEREBRAS: ProviderConfig(
+        api_base="https://api.cerebras.ai/v1",
+        env_key="CEREBRAS_API_KEY",
+        sdk="openai",
+        default_model=DEFAULT_MODEL_CEREBRAS,
+    ),
 }
 
 # All known models with provider prefix for route_model diversity guarantees
@@ -73,6 +81,9 @@ KNOWN_MODELS: list[str] = [
     "minimax/MiniMax-M2.5",
     "minimax/MiniMax-M2.1",
     "moonshot/kimi-k2.5",
+    "cerebras/gpt-oss-120b",
+    "cerebras/qwen-3-235b-a22b-instruct-2507",
+    "cerebras/zai-glm-4.7",
 ]
 
 
