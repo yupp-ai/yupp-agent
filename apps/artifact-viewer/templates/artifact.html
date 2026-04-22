@@ -46,8 +46,7 @@
     {% endif %}
 
     <footer class="artifact-footer muted small">
-        <a href="{{ ahs_base_url }}/ahs/artifacts/{{ meta.artifact_id }}" rel="nofollow">Raw content (requires API key)</a>
-        · <a href="{{ ahs_base_url }}/ahs/artifacts/{{ meta.artifact_id }}/meta" rel="nofollow">Raw metadata</a>
+        <a href="/artifacts/{{ meta.artifact_id }}/download" rel="nofollow">Download</a>
     </footer>
 </article>
 {% endblock %}
