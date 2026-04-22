@@ -36,6 +36,22 @@ fi
 echo "============================================"
 echo ""
 
+# Resolve data-layout paths. Runtime resolves AHS_REPOS_DIR from AHS_DATA_DIR
+# (see common/constants.py); setup must match, otherwise we clone agent repos
+# into a directory the service never reads from. If /data/ahs/.env already
+# exists (re-run after first install), source it so any override there wins.
+if [ -f /data/ahs/.env ]; then
+    set -o allexport
+    # shellcheck disable=SC1091
+    source /data/ahs/.env
+    set +o allexport
+fi
+AHS_DATA_DIR="${AHS_DATA_DIR:-/data}"
+AHS_REPOS_DIR="${AHS_REPOS_DIR:-${AHS_DATA_DIR}/repos}"
+echo "  AHS_DATA_DIR=${AHS_DATA_DIR}"
+echo "  AHS_REPOS_DIR=${AHS_REPOS_DIR}"
+echo ""
+
 # Python binary path — set in step 1, but needed by step 7.
 # If skipping step 1, detect the existing source-built Python.
 PYTHON_VERSION="3.12.12"
@@ -226,6 +242,16 @@ mkdir -p /data/ahs/artifacts
 mkdir -p /data/ahs/attachments
 chown -R ahs:ahs /data
 echo "  /data/ directory structure ready"
+
+# Seed git identity for the ahs user. The sandbox mounts ~ahs/.gitconfig
+# read-only into the bwrap namespace; without [user] set here, sandboxed
+# `git commit` fails with "Author identity unknown" and the worktree's
+# shared .git/config is read-only so agents can't set it at commit time.
+AGENT_GIT_USER_NAME="${AGENT_GIT_USER_NAME:-Yupp Agent}"
+AGENT_GIT_USER_EMAIL="${AGENT_GIT_USER_EMAIL:-agent@yupp.ai}"
+sudo -u ahs git config --global user.name "$AGENT_GIT_USER_NAME"
+sudo -u ahs git config --global user.email "$AGENT_GIT_USER_EMAIL"
+echo "  Git identity set for ahs: $AGENT_GIT_USER_NAME <$AGENT_GIT_USER_EMAIL>"
 fi
 
 # --- Step 6: Clone the service repo ---
@@ -332,12 +358,22 @@ echo ""
 echo "--------------------------------------------"
 echo "  Step 11/13: Cloning code repos for agents"
 echo "--------------------------------------------"
-cd /data/repos
+mkdir -p "${AHS_REPOS_DIR}"
+chown ahs:ahs "${AHS_REPOS_DIR}"
+cd "${AHS_REPOS_DIR}"
 for repo in yupp-mind yupp-soul yupp-head yupp-agent; do
     if [ ! -d "$repo" ]; then
         sudo -u ahs git clone https://github.com/yupp-ai/${repo}.git "$repo"
     else
-        echo "  $repo already cloned"
+        # Heal origin if it drifted to SSH (e.g. re-cloned by hand via deploy key).
+        # A read-only deploy key blocks push; HTTPS + gh credential helper works.
+        cur_url=$(sudo -u ahs git -C "$repo" remote get-url origin 2>/dev/null || echo "")
+        if [[ "$cur_url" == git@github.com:* ]] || [[ "$cur_url" == ssh://* ]]; then
+            sudo -u ahs git -C "$repo" remote set-url origin "https://github.com/yupp-ai/${repo}.git"
+            echo "  $repo: rewrote origin SSH -> HTTPS"
+        else
+            echo "  $repo already cloned"
+        fi
     fi
 done
 fi
@@ -363,13 +399,23 @@ echo "--------------------------------------------"
 DEPLOY_DIR="/opt/yupp-mind/ypl/agent_harness_service/deploy"
 LOG_DIR="/data/session_logs"
 
+# Validate the GitHub App private key is in place. gh_app_auth.sh mints an
+# installation token from this key every 50 min; without it, the HTTPS
+# credential helper has no bot token and fetches/pushes over HTTPS fail.
+if [ ! -f /data/ahs/github-app-key.pem ]; then
+    echo ""
+    echo "  !!! /data/ahs/github-app-key.pem NOT FOUND !!!"
+    echo "      Copy the GitHub App private key to that path (chown ahs:ahs, chmod 600)"
+    echo "      before the first cron run, or the 50-min refresh will fail silently."
+fi
+
 # Install cron jobs in root's crontab (all run as ahs user via sudo -u)
 ({ crontab -l 2>/dev/null || true; } | grep -v -e gh_app_auth -e sync_configs -e pull_agent_repos || true
 cat <<CRON
 # --- Agent Harness Service cron jobs ---
 # Refresh GitHub App token every 50 min (tokens expire after 1 hour)
-*/50 * * * * sudo -u ahs bash /data/ahs/gh_app_auth.sh >> ${LOG_DIR}/gh_auth.log 2>&1
-# Pull agent repos every 5 min (read-only checkouts in /data/repos/)
+*/50 * * * * sudo -u ahs bash ${DEPLOY_DIR}/gh_app_auth.sh >> ${LOG_DIR}/gh_auth.log 2>&1
+# Pull agent repos every 5 min (read-only checkouts in ${AHS_REPOS_DIR}/)
 */5 * * * * sudo -u ahs bash ${DEPLOY_DIR}/pull_agent_repos.sh >> ${LOG_DIR}/pull_agent_repos.log 2>&1
 # Sync service code + configs every 30 min (git pull /opt/yupp-mind, copy to /data/)
 */30 * * * * sudo -u ahs bash ${DEPLOY_DIR}/sync_configs.sh >> ${LOG_DIR}/sync_configs.log 2>&1
@@ -385,7 +431,10 @@ echo "============================================"
 echo ""
 echo "Next steps:"
 echo "  1. Edit /data/ahs/.env with your actual values (see DEPLOYMENT.md)"
-echo "  2. Authenticate GitHub: sudo -u ahs bash /data/ahs/gh_app_auth.sh"
+echo "  2. Place the GitHub App private key at /data/ahs/github-app-key.pem"
+echo "     (chown ahs:ahs, chmod 600), then run:"
+echo "       sudo -u ahs bash /opt/yupp-mind/ypl/agent_harness_service/deploy/gh_app_auth.sh"
+echo "     This authenticates the gh CLI; the 50-min cron refresh keeps it fresh."
 echo "  3. (Optional) Edit agent configs in /data/agents/"
 echo "  4. Start the service: sudo systemctl start ahs"
 echo "  5. Check status: sudo systemctl status ahs / journalctl -u ahs -f"
