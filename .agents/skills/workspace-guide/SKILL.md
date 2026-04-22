@@ -126,8 +126,8 @@ Prompt the user to authorize using the format from the GitHub Authorization sect
   ```
 
   - Attribution: always include agent name + user. Append project/task link if tied to a Yuppster project task.
-  - **Task URL format**: `https://lit.yupp.ai/agent_projects?project_id={project_id}&task_id={task_id}` — use the project ID and task ID from your session context. Do NOT invent other domains or URL patterns.
-  - Session link format: `https://lit.yupp.ai/agent_harness_console?session_id={session_id}`. Append Slack thread if applicable.
+  - **Task URL format**: `https://lit.agcouch.com/agent_projects?project_id={project_id}&task_id={task_id}` — use the project ID and task ID from your session context. Do NOT invent other domains or URL patterns.
+  - Session link format: `https://lit.agcouch.com/agent_harness_console?session_id={session_id}`. Append Slack thread if applicable.
   - TL;DR: one sentence + all known context links. Reviewer should get the gist from this alone.
   - Do NOT include a test plan unless explicitly requested.
   - Do NOT include `🤖 Generated with Claude Code` or `Co-Authored-By` lines.

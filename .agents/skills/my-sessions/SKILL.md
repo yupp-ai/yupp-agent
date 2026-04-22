@@ -181,7 +181,7 @@ _(past N days · M sessions)_
 
 *{Theme 1}*
 {status_emoji} *{Topic}* — {agent_display_name} · {relative_date}
-  <https://war-room.agcouch.com/session/{session_id}|WR> · <https://lit.yupp.ai/agent_harness_console?session_id={session_id}|Lit>{optional_artifacts}{optional_project_task}
+  <https://war-room.agcouch.com/session/{session_id}|WR> · <https://lit.agcouch.com/agent_harness_console?session_id={session_id}|Lit>{optional_artifacts}{optional_project_task}
 
 {status_emoji} *{Topic}* — ...
 
@@ -233,21 +233,21 @@ _(past 7 days · 18 sessions)_
 
 *Security & Safety*
 :raised_hand: *Security Incident Tracking* — Raccoon · today
-  <https://war-room.agcouch.com/session/7a365f80-...|WR> · <https://lit.yupp.ai/agent_harness_console?session_id=7a365f80-...|Lit> · <https://github.com/yupp-ai/yupp-mind/pull/11216|PR #11216> · <https://artifacts.agcouch.com/artifacts/by-slug/agent-security-plan|artifact> · :card_index: <https://war-room.agcouch.com/project/abc123-...|Agent Security Hardening> / Audit prompt injection vectors
+  <https://war-room.agcouch.com/session/7a365f80-...|WR> · <https://lit.agcouch.com/agent_harness_console?session_id=7a365f80-...|Lit> · <https://github.com/yupp-ai/yupp-mind/pull/11216|PR #11216> · <https://artifacts.agcouch.com/artifacts/by-slug/agent-security-plan|artifact> · :card_index: <https://war-room.agcouch.com/project/abc123-...|Agent Security Hardening> / Audit prompt injection vectors
 
 :white_check_mark: *Agent Security Plan* — Raccoon · yesterday
-  <https://war-room.agcouch.com/session/c4f1f939-...|WR> · <https://lit.yupp.ai/agent_harness_console?session_id=c4f1f939-...|Lit>
+  <https://war-room.agcouch.com/session/c4f1f939-...|WR> · <https://lit.agcouch.com/agent_harness_console?session_id=c4f1f939-...|Lit>
 
 *AHS Performance*
 :white_check_mark: *Latency Metrics Breakdown* — SRE · today
-  <https://war-room.agcouch.com/session/47c64873-...|WR> · <https://lit.yupp.ai/agent_harness_console?session_id=47c64873-...|Lit> · <https://github.com/yupp-ai/yupp-mind/pull/11209|PR #11209>
+  <https://war-room.agcouch.com/session/47c64873-...|WR> · <https://lit.agcouch.com/agent_harness_console?session_id=47c64873-...|Lit> · <https://github.com/yupp-ai/yupp-mind/pull/11209|PR #11209>
 
 *Agent Infrastructure*
 :raised_hand: :eyes: *Tool Use Messages in SAG* — Raccoon · today
-  <https://war-room.agcouch.com/session/eea8bd9c-...|WR> · <https://lit.yupp.ai/agent_harness_console?session_id=eea8bd9c-...|Lit> · :card_index: <https://war-room.agcouch.com/project/def456-...|SAG Improvements> / Add tool_use message support
+  <https://war-room.agcouch.com/session/eea8bd9c-...|WR> · <https://lit.agcouch.com/agent_harness_console?session_id=eea8bd9c-...|Lit> · :card_index: <https://war-room.agcouch.com/project/def456-...|SAG Improvements> / Add tool_use message support
 
 :dust_cloud: *Agent-to-Agent Messaging* — Raccoon · 15 Mar
-  <https://war-room.agcouch.com/session/9f7d4ba5-...|WR> · <https://lit.yupp.ai/agent_harness_console?session_id=9f7d4ba5-...|Lit>
+  <https://war-room.agcouch.com/session/9f7d4ba5-...|WR> · <https://lit.agcouch.com/agent_harness_console?session_id=9f7d4ba5-...|Lit>
 ```
 
 ---

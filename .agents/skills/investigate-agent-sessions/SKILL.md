@@ -19,7 +19,7 @@ Use this skill to investigate why an AHS (Agent Harness Service) session failed,
 The user may provide:
 
 1. **Session ID** (UUID): e.g., `8e717e0e-4e66-405b-845b-70fe1ec0f7e7`
-2. **Lit console URL**: e.g., `https://lit.yupp.ai/agent_harness_console?session_id=8e717e0e-4e66-405b-845b-70fe1ec0f7e7` — extract the `session_id` query parameter
+2. **Lit console URL**: e.g., `https://lit.agcouch.com/agent_harness_console?session_id=8e717e0e-4e66-405b-845b-70fe1ec0f7e7` — extract the `session_id` query parameter
 3. **Message ID** (UUID): Look up the session via `agent_session_messages.agent_session_message_id`
 
 If a message ID is given, resolve the session first:
@@ -445,7 +445,7 @@ Present findings with this structure, tailored to what the user cares about:
 2. {Second recommendation if applicable}
 
 ## Evidence
-{Link to lit console: https://lit.yupp.ai/agent_harness_console?session_id=...}
+{Link to lit console: https://lit.agcouch.com/agent_harness_console?session_id=...}
 {Link to artifact if created}
 ```
 
