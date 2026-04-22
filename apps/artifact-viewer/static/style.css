@@ -8,6 +8,8 @@
     --danger: #cf222e;
     --tag-archived-bg: #ffebe9;
     --tag-archived-fg: #82071e;
+    --tag-active-bg: #dafbe1;
+    --tag-active-fg: #116329;
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace;
     --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
 }
@@ -23,6 +25,8 @@
         --danger: #f85149;
         --tag-archived-bg: #3d1a1a;
         --tag-archived-fg: #ffa198;
+        --tag-active-bg: #0f2d1c;
+        --tag-active-fg: #7ee2a8;
     }
 }
 
@@ -147,6 +151,11 @@ table.artifacts tbody tr:hover { background: var(--bg-alt); }
 .tag.archived {
     background: var(--tag-archived-bg);
     color: var(--tag-archived-fg);
+}
+
+.tag.active {
+    background: var(--tag-active-bg);
+    color: var(--tag-active-fg);
 }
 
 /* --- Artifact page --- */

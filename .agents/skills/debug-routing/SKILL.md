@@ -1,7 +1,7 @@
 ---
 name: debug-routing
 description: Debug model routing issues using GCP logs and database queries. Use when investigating why specific models were chosen, routing failures, or unexpected routing behavior, such as a model appearing or not showing up unexpectedly, or seeing duplicate models or similar models that are not fit the context or following the user request or frontend instructions.
-allowed-tools: mcp__yuppster-mcp-server__search_gcp_logs, mcp__yuppster-mcp-server__query_yuppdb, mcp__yuppster-mcp-server__query_bigquery, mcp__yuppster-mcp-server__create_yuppaste, Bash, Read, Write
+allowed-tools: mcp__agcouch-mcp-server__search_gcp_logs, mcp__agcouch-mcp-server__query_yuppdb, mcp__agcouch-mcp-server__query_bigquery, mcp__agcouch-mcp-server__create_artifact, Bash, Read, Write
 ---
 
 # Model Routing Debug Guide
@@ -150,7 +150,7 @@ Remove models that are definitely not usable for this turn:
 | Exclude Shown Models | `-exclShownModels` | Models already shown in this turn |
 | Exclude Shown Taxonomies | `-exclShownTaxos` | Taxonomies already shown |
 | Exclude Shown Families | `-exclShownFamilies` | Families shown (only for SHOW_ME_MORE) |
-| CostManagementFilter | | User over budget (skipped for onboarding/yuppsters) |
+| CostManagementFilter | | User over budget (skipped for onboarding/agcouch users) |
 
 ### Stage 2: Early Choosers
 Select models with priority before main choosers:
@@ -460,9 +460,9 @@ Key files for understanding routing logic:
 
 6. **Use time windows** - Narrow down with timestamp filters if there are many logs.
 
-## Preserving Evidence with Yuppaste
+## Preserving Evidence with Artifact
 
-When investigating issues that may lead to a PR fix, **preserve critical evidence** using the `create_yuppaste` MCP tool. It's best to create a separate paste for each distinct piece of evidence (e.g., one for logs, another for database results). This creates shareable links that can be included in PR descriptions.
+When investigating issues that may lead to a PR fix, **preserve critical evidence** using the `create_artifact` MCP tool. It's best to create a separate paste for each distinct piece of evidence (e.g., one for logs, another for database results). This creates shareable links that can be included in PR descriptions.
 
 ### What to Preserve
 
@@ -474,13 +474,13 @@ When investigating issues that may lead to a PR fix, **preserve critical evidenc
 ### How to Use
 
 ```
-create_yuppaste(
+create_artifact(
     content="<formatted logs or query results>",
     name="Routing Debug: <turn_id or description>"
 )
 ```
 
-The tool returns a go-link (e.g., `http://go/p/<uuid>`) that you can include in PR descriptions. Note that the content size is limited to 10MB.
+The tool returns a go-link (e.g., `https://artifacts.agcouch.com/artifacts/<uuid>`) that you can include in PR descriptions. Note that the content size is limited to 10MB.
 
 ### PR Description Format
 

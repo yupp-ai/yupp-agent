@@ -1,12 +1,12 @@
 ---
 name: investigate-sentry-issue
-description: Investigate issues from Sentry using yuppster MCP. Use when asked to investigate or fix Sentry errors, debug frontend production issues, investigate frontend exceptions, or resolve yupp-head bugs reported by Sentry alerts.
-allowed-tools: mcp__yuppster-mcp-server__get_sentry_issue_details, mcp__yuppster-mcp-server__get_sentry_issue_tag_values, mcp__yuppster-mcp-server__get_sentry_trace_details, mcp__yuppster-mcp-server__get_sentry_breadcrumbs, Read, Glob, Grep, Bash
+description: Investigate issues from Sentry using agcouch MCP. Use when asked to investigate or fix Sentry errors, debug frontend production issues, investigate frontend exceptions, or resolve yupp-head bugs reported by Sentry alerts.
+allowed-tools: mcp__agcouch-mcp-server__get_sentry_issue_details, mcp__agcouch-mcp-server__get_sentry_issue_tag_values, mcp__agcouch-mcp-server__get_sentry_trace_details, mcp__agcouch-mcp-server__get_sentry_breadcrumbs, Read, Glob, Grep, Bash
 ---
 
 # Investigate Sentry Issue
 
-Investigate issues from Sentry using yuppster MCP. This skill is designed to investigate frontend (git repository yupp-head) production issues reported by Sentry alerts.
+Investigate issues from Sentry using agcouch MCP. This skill is designed to investigate frontend (git repository yupp-head) production issues reported by Sentry alerts.
 
 ## Invoke This Skill When
 

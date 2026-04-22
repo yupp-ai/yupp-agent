@@ -1,4 +1,13 @@
-"""Database models for yuppaste comment threads and comments."""
+"""Dormant models for artifact comment threads and comments.
+
+Currently unused — kept in-tree so Alembic keeps the underlying tables.
+If/when we rebuild comments on top of textual artifacts, start from
+this shape. When reactivated, a follow-up migration should rename the
+tables (``yuppaste_comment_threads`` → ``artifact_comment_threads``,
+etc.) and update ``__tablename__`` + foreign-key references below to
+match. For now the legacy table names are intentionally retained so
+the model maps cleanly to what's already in Postgres.
+"""
 
 import enum
 import uuid
@@ -16,43 +25,44 @@ class CommentThreadStatus(str, enum.Enum):
     RESOLVED = "RESOLVED"
 
 
-class YuppasteCommentThread(BaseModel, table=True):
-    """Stores comment thread metadata and anchor info for a yuppaste.
+class ArtifactCommentThread(BaseModel, table=True):
+    """Comment thread anchored to a specific text selection in an artifact.
 
-    Each thread is anchored to a specific text selection within a paste.
-    For slug-based pastes, threads carry over to new versions when the anchored text still exists.
-    For UUID-based pastes, threads are fixed to that immutable paste.
+    For slug-based artifacts, threads carry over to new versions when the
+    anchored text still exists. For UUID-based artifacts, threads are fixed
+    to that immutable artifact version.
     """
 
-    __tablename__ = "yuppaste_comment_threads"
+    __tablename__ = "yuppaste_comment_threads"  # legacy name; rename in future migration
 
     thread_id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True, nullable=False)
 
-    # Primary identifier - always present
+    # Primary identifier — always present. Legacy column name retained
+    # (``yuppaste_id``) so the model matches the actual DB schema.
     yuppaste_id: uuid.UUID = Field(
         nullable=False,
         index=True,
-        description="UUID of the yuppaste this thread belongs to",
+        description="UUID of the artifact this thread belongs to",
     )
 
-    # Optional slug for slug-based pastes (null for UUID-only pastes)
+    # Optional slug for slug-based artifacts (null for UUID-only).
     slug: str | None = Field(
         default=None,
         nullable=True,
         sa_type=sa.Text,
         index=True,
-        description="Named slug of the yuppaste (null for UUID-only pastes)",
+        description="Named slug of the artifact (null for UUID-only)",
     )
 
-    # Version where thread was created (null for UUID-only pastes which have no versions)
+    # Version where the thread was created (null for UUID-only artifacts).
     paste_version: int | None = Field(
         default=None,
         nullable=True,
         sa_type=sa.Integer,
-        description="Paste version where this thread was created (null for UUID-only pastes)",
+        description="Artifact version where this thread was created (null for UUID-only)",
     )
 
-    # Anchor fields for text-based positioning across versions
+    # Anchor fields for text-based positioning across versions.
     anchor_text: str = Field(
         nullable=False,
         sa_type=sa.Text,
@@ -93,14 +103,14 @@ class YuppasteCommentThread(BaseModel, table=True):
     )
 
 
-class YuppasteComment(BaseModel, table=True):
-    """Stores individual comments with optional 2-level nested reply support.
+class ArtifactComment(BaseModel, table=True):
+    """Individual comment with optional 2-level nested reply support.
 
-    Supports soft deletion via deleted_at (from BaseModel) so the thread structure
-    is preserved even after a comment is removed.
+    Supports soft deletion via ``deleted_at`` (from ``BaseModel``) so the
+    thread structure is preserved even after a comment is removed.
     """
 
-    __tablename__ = "yuppaste_comments"
+    __tablename__ = "yuppaste_comments"  # legacy name; rename in future migration
 
     comment_id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True, nullable=False)
 

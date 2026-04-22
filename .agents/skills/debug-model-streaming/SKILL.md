@@ -1,7 +1,7 @@
 ---
 name: debug-model-streaming
 description: Debug model streaming issues by analyzing completion status, error types, and GCP logs. Use when investigating streaming failures, timeouts, provider errors, or any model response issues for a specific model.
-allowed-tools: mcp__yuppster-mcp-server__search_gcp_logs, mcp__yuppster-mcp-server__query_yuppdb, mcp__yuppster-mcp-server__query_bigquery, mcp__yuppster-mcp-server__create_yuppaste, mcp__yuppster-mcp-server__search_slack, mcp__yuppster-mcp-server__read_slack_thread, Bash, Read, Write
+allowed-tools: mcp__agcouch-mcp-server__search_gcp_logs, mcp__agcouch-mcp-server__query_yuppdb, mcp__agcouch-mcp-server__query_bigquery, mcp__agcouch-mcp-server__create_artifact, mcp__agcouch-mcp-server__search_slack, mcp__agcouch-mcp-server__read_slack_thread, Bash, Read, Write
 ---
 
 # Model Streaming Debug Guide
@@ -395,9 +395,9 @@ This helps determine if the issue has been seen before, if someone is already in
 5. **Check external factors**: Provider status, recent deployments, config changes
 6. **Propose fix**: Update ERROR_KEYWORDS_MAP, adjust timeouts, escalate to provider, etc.
 
-## Preserving Evidence with Yuppaste
+## Preserving Evidence with Artifact
 
-When investigating issues that may lead to a PR fix, **preserve critical evidence** using the `create_yuppaste` MCP tool. It's best to create a separate paste for each distinct piece of evidence (e.g., one for logs, another for database results). This creates shareable links that can be included in PR descriptions.
+When investigating issues that may lead to a PR fix, **preserve critical evidence** using the `create_artifact` MCP tool. It's best to create a separate paste for each distinct piece of evidence (e.g., one for logs, another for database results). This creates shareable links that can be included in PR descriptions.
 
 ### What to Preserve
 
@@ -409,13 +409,13 @@ When investigating issues that may lead to a PR fix, **preserve critical evidenc
 ### How to Use
 
 ```
-create_yuppaste(
+create_artifact(
     content="<formatted logs or query results>",
     name="Streaming Debug: <model_name or description>"
 )
 ```
 
-The tool returns a go-link (e.g., `http://go/p/<uuid>`) that you can include in PR descriptions. Note that the content size is limited to 10MB.
+The tool returns a go-link (e.g., `https://artifacts.agcouch.com/artifacts/<uuid>`) that you can include in PR descriptions. Note that the content size is limited to 10MB.
 
 ### PR Description Format
 

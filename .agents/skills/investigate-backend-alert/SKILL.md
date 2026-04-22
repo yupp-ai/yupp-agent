@@ -1,7 +1,7 @@
 ---
 name: investigate-backend-alert
 description: Investigate backend errors from #alert_backend Slack channel using GCP logs. Use when debugging production errors, analyzing error patterns, or tracing issues from alert notifications.
-allowed-tools: mcp__yuppster-mcp-server__search_gcp_logs, mcp__yuppster-mcp-server__create_yuppaste, mcp__yuppster-mcp-server__get_gcp_alert_details, mcp__yuppster-mcp-server__get_agent_memory, mcp__yuppster-mcp-server__store_agent_memory, Bash, Read, Write, Skill
+allowed-tools: mcp__agcouch-mcp-server__search_gcp_logs, mcp__agcouch-mcp-server__create_artifact, mcp__agcouch-mcp-server__get_gcp_alert_details, mcp__agcouch-mcp-server__get_agent_memory, mcp__agcouch-mcp-server__store_agent_memory, Bash, Read, Write, Skill
 ---
 
 # Backend Alert Investigation Guide
@@ -374,9 +374,9 @@ Search the codebase for:
 2. The HTTP endpoints being called
 3. Any libraries that might be involved (e.g., aiohttp, httpx, gcloud-aio)
 
-## Preserving Evidence with Yuppaste
+## Preserving Evidence with Artifact
 
-When investigating issues that may lead to a PR fix, **preserve critical evidence** using the `create_yuppaste` MCP tool. It's best to create a separate paste for each distinct piece of evidence (e.g., one for logs, another for database results). This creates shareable links that can be included in PR descriptions.
+When investigating issues that may lead to a PR fix, **preserve critical evidence** using the `create_artifact` MCP tool. It's best to create a separate paste for each distinct piece of evidence (e.g., one for logs, another for database results). This creates shareable links that can be included in PR descriptions.
 
 ### What to Preserve
 
@@ -388,13 +388,13 @@ When investigating issues that may lead to a PR fix, **preserve critical evidenc
 ### How to Use
 
 ```
-create_yuppaste(
+create_artifact(
     content="<formatted logs or data>",
     name="Investigation: <brief description>"
 )
 ```
 
-The tool returns a go-link (e.g., `http://go/p/<uuid>`) that you can include in PR descriptions. Note that the content size is limited to 10MB.
+The tool returns a go-link (e.g., `https://artifacts.agcouch.com/artifacts/<uuid>`) that you can include in PR descriptions. Note that the content size is limited to 10MB.
 
 ### PR Description Format
 

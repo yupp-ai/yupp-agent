@@ -1,7 +1,7 @@
 ---
 name: agent-memory
 description: Read and write shared agent memory for cross-session learnings. Use before investigations to check for known patterns, and after to store reusable insights.
-allowed-tools: mcp__yuppster-mcp-server__get_agent_memory, mcp__yuppster-mcp-server__store_agent_memory
+allowed-tools: mcp__agcouch-mcp-server__get_agent_memory, mcp__agcouch-mcp-server__store_agent_memory
 ---
 
 # Agent Memory
@@ -67,7 +67,7 @@ Each entry in a topic file should follow this format:
 - **Pattern**: <error pattern or symptom>
 - **Root cause**: <what causes it>
 - **Fix/Workaround**: <how to resolve>
-- **Evidence**: <yuppaste link or PR link, if available>
+- **Evidence**: <artifact link or PR link, if available>
 ```
 
 ### When to Store

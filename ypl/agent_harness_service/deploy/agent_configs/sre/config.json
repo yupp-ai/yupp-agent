@@ -23,7 +23,7 @@
     "mcp__agcouch-mcp-server__search_agent_memory",
     "mcp__agcouch-mcp-server__get_agent_memory",
     "mcp__agcouch-mcp-server__store_agent_memory",
-    "mcp__agcouch-mcp-server__create_yuppaste",
+    "mcp__agcouch-mcp-server__create_artifact",
     "mcp__agcouch-mcp-server__add_artifact",
     "mcp__agcouch-mcp-server__search_slack",
     "mcp__agcouch-mcp-server__read_slack_thread",

@@ -73,7 +73,7 @@ After completing your investigation, produce a structured report in this exact f
 
 If any section has no relevant data, write "No signals detected" rather than omitting it.
 
-Finally, call `create_yuppaste` with the complete report and include the paste URL in your response.
+Finally, call `create_artifact` with the complete report and include the paste URL in your response.
 
 ## Database Schema Reference
 

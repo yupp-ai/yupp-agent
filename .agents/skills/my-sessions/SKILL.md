@@ -1,12 +1,12 @@
 ---
 name: my-sessions
-description: Look up and summarize the current user's recent AHS sessions, grouped by theme, with links to War Room, Lit console, and any artifacts (PRs, yuppastes). Use when a user asks "show me my sessions", "what have I been working on", "my recent sessions", or "sessions at a glance".
-allowed-tools: mcp__yuppster-mcp-server__query_agentdb, mcp__yuppster-mcp-server__query_yuppdb, mcp__harness__send_slack_message
+description: Look up and summarize the current user's recent AHS sessions, grouped by theme, with links to War Room, Lit console, and any artifacts (PRs, artifacts). Use when a user asks "show me my sessions", "what have I been working on", "my recent sessions", or "sessions at a glance".
+allowed-tools: mcp__agcouch-mcp-server__query_agentdb, mcp__agcouch-mcp-server__query_yuppdb, mcp__harness__send_slack_message
 ---
 
 # My Sessions — At a Glance
 
-Retrieve and summarize the current user's recent AHS sessions, group them by theme, and surface links to War Room, Lit console, PRs, and yuppastes.
+Retrieve and summarize the current user's recent AHS sessions, group them by theme, and surface links to War Room, Lit console, PRs, and artifacts.
 
 ## When to Invoke
 
@@ -73,21 +73,21 @@ WHERE m.role = 'AGENT'
   AND m.completion_status != 'IN_PROGRESS'
 ```
 
-### Query 3: Artifact Extraction (PR and yuppaste links per session)
+### Query 3: Artifact Extraction (PR and artifact links per session)
 
 ```sql
 SELECT
   m.agent_session_id,
   -- GitHub PR links
   array_agg(DISTINCT pr_match[1]) FILTER (WHERE pr_match IS NOT NULL)  AS pr_links,
-  -- Yuppaste links (yupp-soul.vercel.app or go/p/)
-  array_agg(DISTINCT yp_match[1]) FILTER (WHERE yp_match IS NOT NULL) AS yuppaste_links
+  -- Artifact links (yupp-soul.vercel.app or go/p/)
+  array_agg(DISTINCT artifact_match[1]) FILTER (WHERE artifact_match IS NOT NULL) AS artifact_links
 FROM agent_session_messages m
 LEFT JOIN LATERAL (
   SELECT regexp_matches(m.content, 'https://github\.com/yupp-ai/[^/]+/pull/\d+', 'g') AS pr_match
 ) pr ON true
 LEFT JOIN LATERAL (
-  SELECT regexp_matches(m.content, '(?:https://yupp-soul\.vercel\.app/yuppastes/|http://go/p/)[a-z0-9_-]+', 'g') AS yp_match
+  SELECT regexp_matches(m.content, '(?:https://yupp-soul\.vercel\.app/artifacts/|http://go/p/)[a-z0-9_-]+', 'g') AS artifact_match
 ) yp ON true
 WHERE m.agent_session_id IN (
   SELECT agent_session_id FROM agent_sessions
@@ -100,7 +100,7 @@ WHERE m.agent_session_id IN (
 AND m.role = 'AGENT'
 AND (
   m.content LIKE '%github.com/yupp-ai/%/pull/%'
-  OR m.content LIKE '%yupp-soul.vercel.app/yuppastes/%'
+  OR m.content LIKE '%artifacts.agcouch.com/artifacts/by-slug/%'
   OR m.content LIKE '%go/p/%'
 )
 GROUP BY m.agent_session_id
@@ -181,7 +181,7 @@ _(past N days · M sessions)_
 
 *{Theme 1}*
 {status_emoji} *{Topic}* — {agent_display_name} · {relative_date}
-  <https://war-room.yuppster.ai/session/{session_id}|WR> · <https://lit.yupp.ai/agent_harness_console?session_id={session_id}|Lit>{optional_artifacts}{optional_project_task}
+  <https://war-room.agcouch.com/session/{session_id}|WR> · <https://lit.yupp.ai/agent_harness_console?session_id={session_id}|Lit>{optional_artifacts}{optional_project_task}
 
 {status_emoji} *{Topic}* — ...
 
@@ -211,10 +211,10 @@ If the session is linked to a task with status `IN_REVIEW`, also append `:eyes:`
 
 Where `{optional_artifacts}` is appended inline if artifacts exist:
 - For each PR: ` · <{pr_url}|PR #{number}>`
-- For each yuppaste: ` · <{yuppaste_url}|yuppaste>`
+- For each artifact: ` · <{artifact_url}|artifact>`
 
 Where `{optional_project_task}` is appended if the session is linked to a project/task:
-- ` · :card_index: <https://war-room.yuppster.ai/project/{project_id}|{project_name}> / {task_title}`
+- ` · :card_index: <https://war-room.agcouch.com/project/{project_id}|{project_name}> / {task_title}`
 - If only a task (no project name): ` · :card_index: {task_title}`
 
 ### Relative Date Rules
@@ -233,21 +233,21 @@ _(past 7 days · 18 sessions)_
 
 *Security & Safety*
 :raised_hand: *Security Incident Tracking* — Raccoon · today
-  <https://war-room.yuppster.ai/session/7a365f80-...|WR> · <https://lit.yupp.ai/agent_harness_console?session_id=7a365f80-...|Lit> · <https://github.com/yupp-ai/yupp-mind/pull/11216|PR #11216> · <https://yupp-soul.vercel.app/yuppastes/agent-security-plan|yuppaste> · :card_index: <https://war-room.yuppster.ai/project/abc123-...|Agent Security Hardening> / Audit prompt injection vectors
+  <https://war-room.agcouch.com/session/7a365f80-...|WR> · <https://lit.yupp.ai/agent_harness_console?session_id=7a365f80-...|Lit> · <https://github.com/yupp-ai/yupp-mind/pull/11216|PR #11216> · <https://artifacts.agcouch.com/artifacts/by-slug/agent-security-plan|artifact> · :card_index: <https://war-room.agcouch.com/project/abc123-...|Agent Security Hardening> / Audit prompt injection vectors
 
 :white_check_mark: *Agent Security Plan* — Raccoon · yesterday
-  <https://war-room.yuppster.ai/session/c4f1f939-...|WR> · <https://lit.yupp.ai/agent_harness_console?session_id=c4f1f939-...|Lit>
+  <https://war-room.agcouch.com/session/c4f1f939-...|WR> · <https://lit.yupp.ai/agent_harness_console?session_id=c4f1f939-...|Lit>
 
 *AHS Performance*
 :white_check_mark: *Latency Metrics Breakdown* — SRE · today
-  <https://war-room.yuppster.ai/session/47c64873-...|WR> · <https://lit.yupp.ai/agent_harness_console?session_id=47c64873-...|Lit> · <https://github.com/yupp-ai/yupp-mind/pull/11209|PR #11209>
+  <https://war-room.agcouch.com/session/47c64873-...|WR> · <https://lit.yupp.ai/agent_harness_console?session_id=47c64873-...|Lit> · <https://github.com/yupp-ai/yupp-mind/pull/11209|PR #11209>
 
 *Agent Infrastructure*
 :raised_hand: :eyes: *Tool Use Messages in SAG* — Raccoon · today
-  <https://war-room.yuppster.ai/session/eea8bd9c-...|WR> · <https://lit.yupp.ai/agent_harness_console?session_id=eea8bd9c-...|Lit> · :card_index: <https://war-room.yuppster.ai/project/def456-...|SAG Improvements> / Add tool_use message support
+  <https://war-room.agcouch.com/session/eea8bd9c-...|WR> · <https://lit.yupp.ai/agent_harness_console?session_id=eea8bd9c-...|Lit> · :card_index: <https://war-room.agcouch.com/project/def456-...|SAG Improvements> / Add tool_use message support
 
 :dust_cloud: *Agent-to-Agent Messaging* — Raccoon · 15 Mar
-  <https://war-room.yuppster.ai/session/9f7d4ba5-...|WR> · <https://lit.yupp.ai/agent_harness_console?session_id=9f7d4ba5-...|Lit>
+  <https://war-room.agcouch.com/session/9f7d4ba5-...|WR> · <https://lit.yupp.ai/agent_harness_console?session_id=9f7d4ba5-...|Lit>
 ```
 
 ---
