@@ -27,7 +27,8 @@ def _make_slack_api_error(status_code: int, retry_after: str | None = "2") -> Sl
     response = MagicMock()
     response.status_code = status_code
     response.headers = {"retry-after": retry_after} if retry_after is not None else {}
-    return SlackApiError("rate limited", response)
+    # slack_sdk.errors.SlackApiError.__init__ is untyped — silence mypy here.
+    return SlackApiError("rate limited", response)  # type: ignore[no-untyped-call]
 
 
 # ---------------------------------------------------------------------------
@@ -44,7 +45,7 @@ class TestExtractRetryAfter:
         response = MagicMock()
         response.status_code = 429
         response.headers = {"Retry-After": "5"}
-        exc = SlackApiError("rate limited", response)
+        exc = SlackApiError("rate limited", response)  # type: ignore[no-untyped-call]
         assert _extract_retry_after(exc) == 5.0
 
     def test_defaults_to_one_when_missing(self) -> None:
@@ -194,14 +195,14 @@ class TestBuildSlackClient:
         client = build_slack_client("A1", "xoxb-fake")
         # Underlying SDK client should have exactly one retry handler
         # (AsyncRateLimitErrorRetryHandler).
-        inner_handlers = client._inner.retry_handlers  # type: ignore[attr-defined]
+        inner_handlers = client._inner.retry_handlers
         assert len(inner_handlers) == 1
 
     def test_reenqueue_mode_skips_retry_handler(self) -> None:
         # reenqueue callers handle their own retry scheduling — the SDK handler
         # would sleep + retry with stale content, which is wrong for them.
         client = build_slack_client("A1", "xoxb-fake", retry_mode="reenqueue")
-        inner_handlers = client._inner.retry_handlers  # type: ignore[attr-defined]
+        inner_handlers = client._inner.retry_handlers
         assert inner_handlers == []
 
 

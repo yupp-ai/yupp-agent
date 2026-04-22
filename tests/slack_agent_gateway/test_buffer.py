@@ -221,8 +221,8 @@ class TestFlushBuffer:
 
         with (
             patch("ypl.slack_agent_gateway.buffer.get_session", AsyncMock(return_value=mock_session)),
-            patch("ypl.slack_agent_gateway.buffer.get_buffer_type", AsyncMock(return_value="text")),
-            patch("ypl.slack_agent_gateway.buffer.clear_buffer", AsyncMock(return_value="")),
+            # Fast-path: empty buffer returns True before any Slack / rate-limit machinery runs.
+            patch("ypl.slack_agent_gateway.buffer.get_buffer_size", AsyncMock(return_value=0)),
             patch("ypl.slack_agent_gateway.buffer.remove_from_flush_schedule", AsyncMock()),
             patch("ypl.slack_agent_gateway.buffer.clear_buffer_type", AsyncMock()),
         ):
