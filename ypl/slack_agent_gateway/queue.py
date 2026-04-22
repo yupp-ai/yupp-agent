@@ -7,7 +7,6 @@ Handles:
 """
 
 from slack_sdk.errors import SlackApiError
-from slack_sdk.web.async_client import AsyncWebClient
 
 from ypl.slack_agent_gateway.agent_client import (
     create_agent_session,
@@ -23,6 +22,7 @@ from ypl.slack_agent_gateway.redis_client import (
     queue_message,
     requeue_message_front,
 )
+from ypl.slack_agent_gateway.slack_client import build_slack_client
 from ypl.slack_agent_gateway.types import AgentSession, Message
 from ypl.structured_logger import get_logger
 
@@ -43,7 +43,7 @@ async def _post_status_to_slack(session: AgentSession, text: str) -> str | None:
     if not app_config:
         return None
 
-    client = AsyncWebClient(token=app_config.bot_token)
+    client = build_slack_client(app_config.app_id, app_config.bot_token)
 
     try:
         response = await client.chat_postMessage(
@@ -51,7 +51,8 @@ async def _post_status_to_slack(session: AgentSession, text: str) -> str | None:
             thread_ts=session.thread_ts,
             text=text,
         )
-        return response.get("ts")
+        ts: str | None = response.get("ts")
+        return ts
     except SlackApiError as e:
         logger.error(
             "Failed to post status to Slack",

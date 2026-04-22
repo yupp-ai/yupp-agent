@@ -22,6 +22,7 @@ from ypl.slack_agent_gateway.constants import (
     REDIS_KEY_PREFIX_QUEUE,
     REDIS_KEY_PREFIX_REPLY,
     REDIS_KEY_PREFIX_SESSION,
+    REDIS_KEY_PREFIX_SLACK_RATELIMIT,
     REDIS_KEY_PREFIX_STATUS_FLUSH_SCHEDULE,
     REDIS_KEY_PREFIX_STATUS_RATELIMIT,
     REDIS_KEY_PREFIX_SURVEY_RESPONSE,
@@ -30,6 +31,7 @@ from ypl.slack_agent_gateway.constants import (
     REDIS_KEY_PREFIX_TOOL_ENTRIES,
     REPLY_MAPPING_TTL_SECONDS,
     SESSION_REDIS_TTL_SECONDS,
+    SLACK_RATELIMIT_INTERVAL_SECONDS,
     STATUS_PENDING_TTL_SECONDS,
     STATUS_RATELIMIT_SECONDS,
     SURVEY_RESPONSE_TTL_SECONDS,
@@ -434,6 +436,75 @@ async def try_acquire_status_ratelimit(session_id: str) -> bool:
     redis = await get_redis_client()
     key = f"{REDIS_KEY_PREFIX_STATUS_RATELIMIT}:{session_id}"
     result = await redis.set(key, "1", ex=STATUS_RATELIMIT_SECONDS, nx=True)
+    return result is not None
+
+
+def _slack_ratelimit_key(app_id: str, method: str, channel: str | None) -> str:
+    """Build the Redis gate key for a Slack API call.
+
+    Scoping matches Slack's published rate limit dimensions:
+    - ``chat.postMessage`` has an explicit per-channel 1/sec limit on top of
+      the workspace-wide tier → key includes the channel.
+    - Every other method is tier-bucketed per (app × workspace × method) →
+      key omits the channel.
+
+    Note: app_id already scopes to a specific Slack app (and thus a specific
+    workspace, since our agents install per-workspace), so we don't need a
+    separate workspace component in the key.
+    """
+    if method == "chat_postMessage" and channel:
+        return f"{REDIS_KEY_PREFIX_SLACK_RATELIMIT}:{app_id}:{method}:{channel}"
+    return f"{REDIS_KEY_PREFIX_SLACK_RATELIMIT}:{app_id}:{method}"
+
+
+async def try_acquire_slack_ratelimit(
+    app_id: str,
+    method: str,
+    channel: str | None = None,
+    *,
+    interval_seconds: float = SLACK_RATELIMIT_INTERVAL_SECONDS,
+) -> bool:
+    """Attempt to acquire the universal Slack rate-limit gate.
+
+    Uses Redis SET NX EX so only one caller per (app × method [× channel])
+    bucket succeeds per ``interval_seconds`` window.
+
+    Fails *open* on Redis errors — we'd rather occasionally hit Slack's own
+    rate limiter (caught by the reactive Retry-After handler) than block all
+    Slack I/O when Redis hiccups.
+
+    Args:
+        app_id: Slack app id (e.g., ``A123...``).
+        method: slack_sdk method attribute name (e.g., ``chat_update``).
+        channel: Channel id, only used when ``method == 'chat_postMessage'``.
+        interval_seconds: Gate TTL in seconds. Redis SET only accepts int TTLs
+            below the PX threshold, so values are rounded up to the next second
+            when they exceed 1.
+
+    Returns:
+        True if the caller may post now, False if rate-limited.
+    """
+    try:
+        redis = await get_redis_client()
+    except Exception as exc:
+        logger.warning("Redis unavailable for rate limit gate, failing open", error=str(exc))
+        return True
+
+    key = _slack_ratelimit_key(app_id, method, channel)
+    # redis-py's ``ex`` takes int seconds, ``px`` takes int ms. Use px for sub-second.
+    try:
+        if interval_seconds < 1:
+            result = await redis.set(key, "1", px=int(interval_seconds * 1000), nx=True)
+        else:
+            result = await redis.set(key, "1", ex=int(interval_seconds + 0.999), nx=True)
+    except Exception as exc:
+        logger.warning(
+            "Redis error acquiring Slack rate limit gate, failing open",
+            app_id=app_id,
+            method=method,
+            error=str(exc),
+        )
+        return True
     return result is not None
 
 

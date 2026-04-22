@@ -85,6 +85,18 @@ SURVEY_RESPONSE_TTL_SECONDS = 60 * 60
 # Status update rate limit — max one Slack API call per this many seconds
 STATUS_RATELIMIT_SECONDS = 2
 
+# Universal Slack API rate limit interval (per app × method [× channel]).
+# Slack docs: chat.update is Tier 3 (50+/min ≈ 1.2s), chat.postMessage is ~1/sec per channel.
+# A single conservative value covers both and leaves headroom against edge bursts.
+SLACK_RATELIMIT_INTERVAL_SECONDS = 1.2
+
+# Upper bound on how long a Retry-After we'll honor on one call before giving up.
+# Slack rarely asks for more than a few seconds; capping prevents pathological stalls.
+SLACK_RATELIMIT_MAX_RETRY_AFTER_SECONDS = 30
+
+# Redis key prefix for the universal Slack rate-limit gate.
+REDIS_KEY_PREFIX_SLACK_RATELIMIT = "slack_agent_gw:slack_ratelimit"
+
 # Redis TTL for pending status text (1 minute — short-lived hints)
 STATUS_PENDING_TTL_SECONDS = 60
 

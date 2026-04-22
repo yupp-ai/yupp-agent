@@ -11,7 +11,6 @@ import time
 from typing import Any
 
 from slack_sdk.errors import SlackApiError
-from slack_sdk.web.async_client import AsyncWebClient
 
 from ypl.slack_agent_gateway.buffer import discard_buffer
 from ypl.slack_agent_gateway.callbacks_rendering import render_reply_blocks
@@ -39,6 +38,7 @@ from ypl.slack_agent_gateway.redis_client import (
     update_tool_result,
 )
 from ypl.slack_agent_gateway.sessions import record_reply
+from ypl.slack_agent_gateway.slack_client import RateLimitedSlackClient, build_slack_client
 from ypl.slack_agent_gateway.types import (
     AddReplyRequest,
     AddReplyResponse,
@@ -62,21 +62,21 @@ from ypl.structured_logger import get_logger
 logger = get_logger()
 
 
-async def _get_slack_client(session: AgentSession) -> AsyncWebClient | None:
+async def _get_slack_client(session: AgentSession) -> RateLimitedSlackClient | None:
     """Get Slack client for the session's app.
 
     Args:
         session: The agent session
 
     Returns:
-        AsyncWebClient configured with the app's bot token, or None if not found
+        Rate-limited Slack client configured with the app's bot token, or None if not found
     """
     app_config = await get_agent_config_by_app_id(session.app_id)
     if not app_config:
         logger.error("No app config found for session", session_id=session.session_id, app_id=session.app_id)
         return None
 
-    return AsyncWebClient(token=app_config.bot_token)
+    return build_slack_client(app_config.app_id, app_config.bot_token)
 
 
 async def add_reply(request: AddReplyRequest) -> AddReplyResponse:
@@ -569,7 +569,7 @@ async def send_message(request: SendMessageRequest) -> SendMessageResponse:
             error=f"Agent '{request.agent_name}' does not have a Slack presence",
         )
 
-    client = AsyncWebClient(token=agent_config.bot_token)
+    client = build_slack_client(agent_config.app_id, agent_config.bot_token)
 
     # Normalize thread_ts: treat empty string as None
     thread_ts = request.thread_ts or None

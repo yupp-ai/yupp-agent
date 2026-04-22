@@ -385,7 +385,7 @@ class TestAddReply:
         with (
             patch("ypl.slack_agent_gateway.callbacks.get_session", return_value=session),
             patch("ypl.slack_agent_gateway.callbacks.get_agent_config_by_app_id", return_value=app_config),
-            patch("ypl.slack_agent_gateway.callbacks.AsyncWebClient", return_value=mock_client),
+            patch("ypl.slack_agent_gateway.callbacks.build_slack_client", return_value=mock_client),
             patch("ypl.slack_agent_gateway.callbacks.record_reply", new_callable=AsyncMock),
             patch("ypl.slack_agent_gateway.callbacks.store_reply_mapping", new_callable=AsyncMock),
             patch("ypl.slack_agent_gateway.callbacks.get_tool_entries", return_value=[]),
@@ -419,7 +419,7 @@ class TestAddReply:
         with (
             patch("ypl.slack_agent_gateway.callbacks.get_session", return_value=session),
             patch("ypl.slack_agent_gateway.callbacks.get_agent_config_by_app_id", return_value=app_config),
-            patch("ypl.slack_agent_gateway.callbacks.AsyncWebClient", return_value=mock_client),
+            patch("ypl.slack_agent_gateway.callbacks.build_slack_client", return_value=mock_client),
             patch("ypl.slack_agent_gateway.callbacks.save_session", new_callable=AsyncMock),
             patch("ypl.slack_agent_gateway.callbacks.record_reply", new_callable=AsyncMock),
             patch("ypl.slack_agent_gateway.callbacks.store_reply_mapping", new_callable=AsyncMock),
@@ -451,7 +451,7 @@ class TestAddReply:
         with (
             patch("ypl.slack_agent_gateway.callbacks.get_session", return_value=session),
             patch("ypl.slack_agent_gateway.callbacks.get_agent_config_by_app_id", return_value=app_config),
-            patch("ypl.slack_agent_gateway.callbacks.AsyncWebClient", return_value=mock_client),
+            patch("ypl.slack_agent_gateway.callbacks.build_slack_client", return_value=mock_client),
         ):
             request = AddReplyRequest(session_id=session.session_id, text="Hi")
             result = await add_reply(request)
@@ -493,7 +493,7 @@ class TestUpdateReply:
         with (
             patch("ypl.slack_agent_gateway.callbacks.get_session", return_value=session),
             patch("ypl.slack_agent_gateway.callbacks.get_agent_config_by_app_id", return_value=app_config),
-            patch("ypl.slack_agent_gateway.callbacks.AsyncWebClient", return_value=mock_client),
+            patch("ypl.slack_agent_gateway.callbacks.build_slack_client", return_value=mock_client),
             patch("ypl.slack_agent_gateway.callbacks.discard_buffer", new_callable=AsyncMock),
             patch("ypl.slack_agent_gateway.callbacks.record_reply", new_callable=AsyncMock),
         ):
@@ -531,7 +531,7 @@ class TestSendMessage:
 
         with (
             patch("ypl.slack_agent_gateway.callbacks.get_agent_config_by_name", return_value=app_config),
-            patch("ypl.slack_agent_gateway.callbacks.AsyncWebClient", return_value=mock_client),
+            patch("ypl.slack_agent_gateway.callbacks.build_slack_client", return_value=mock_client),
         ):
             request = SendMessageRequest(agent_name="test-agent", channel="C999", text="Hello channel!")
             result = await send_message(request)
@@ -553,7 +553,7 @@ class TestSendMessage:
 
         with (
             patch("ypl.slack_agent_gateway.callbacks.get_agent_config_by_name", return_value=app_config),
-            patch("ypl.slack_agent_gateway.callbacks.AsyncWebClient", return_value=mock_client),
+            patch("ypl.slack_agent_gateway.callbacks.build_slack_client", return_value=mock_client),
             patch(
                 "ypl.slack_agent_gateway.callbacks.store_thread_session_mapping",
                 new_callable=AsyncMock,
@@ -583,7 +583,7 @@ class TestSendMessage:
 
         with (
             patch("ypl.slack_agent_gateway.callbacks.get_agent_config_by_name", return_value=app_config),
-            patch("ypl.slack_agent_gateway.callbacks.AsyncWebClient", return_value=mock_client),
+            patch("ypl.slack_agent_gateway.callbacks.build_slack_client", return_value=mock_client),
             patch(
                 "ypl.slack_agent_gateway.callbacks.store_thread_session_mapping",
                 new_callable=AsyncMock,
@@ -609,7 +609,7 @@ class TestSendMessage:
 
         with (
             patch("ypl.slack_agent_gateway.callbacks.get_agent_config_by_name", return_value=app_config),
-            patch("ypl.slack_agent_gateway.callbacks.AsyncWebClient", return_value=mock_client),
+            patch("ypl.slack_agent_gateway.callbacks.build_slack_client", return_value=mock_client),
         ):
             request = SendMessageRequest(agent_name="test-agent", channel="CBAD", text="Hi")
             result = await send_message(request)
@@ -631,7 +631,7 @@ class TestSendMessage:
                 "ypl.slack_agent_gateway.callbacks.get_agent_config_by_name",
                 side_effect=[None, app_config],
             ),
-            patch("ypl.slack_agent_gateway.callbacks.AsyncWebClient", return_value=mock_client),
+            patch("ypl.slack_agent_gateway.callbacks.build_slack_client", return_value=mock_client),
         ):
             request = SendMessageRequest(agent_name="test-agent-alice", channel="C1", text="Hi")
             result = await send_message(request)
@@ -675,7 +675,7 @@ class TestRequestFeedback:
             patch("ypl.slack_agent_gateway.callbacks.try_claim_feedback_request", return_value=True),
             patch("ypl.slack_agent_gateway.callbacks.get_session", return_value=session),
             patch("ypl.slack_agent_gateway.callbacks.get_agent_config_by_app_id", return_value=app_config),
-            patch("ypl.slack_agent_gateway.callbacks.AsyncWebClient", return_value=mock_client),
+            patch("ypl.slack_agent_gateway.callbacks.build_slack_client", return_value=mock_client),
             patch("ypl.slack_agent_gateway.callbacks.store_reply_mapping", new_callable=AsyncMock),
         ):
             result = await request_feedback(RequestFeedbackRequest(session_id=session.session_id))
@@ -718,7 +718,7 @@ class TestSendQuestionnaire:
         with (
             patch("ypl.slack_agent_gateway.callbacks.get_session", return_value=session),
             patch("ypl.slack_agent_gateway.callbacks.get_agent_config_by_app_id", return_value=app_config),
-            patch("ypl.slack_agent_gateway.callbacks.AsyncWebClient", return_value=mock_client),
+            patch("ypl.slack_agent_gateway.callbacks.build_slack_client", return_value=mock_client),
             patch("ypl.slack_agent_gateway.callbacks.store_reply_mapping", new_callable=AsyncMock),
         ):
             req = SendQuestionnaireRequest(
