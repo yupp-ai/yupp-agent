@@ -12,9 +12,11 @@ not here.
 """
 
 from __future__ import annotations
+import re
 import uuid
 from datetime import datetime
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
@@ -41,6 +43,51 @@ from ypl.db.agent_harness import AgentArtifact, AgentArtifactType
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
+
+# Extensions used when building the download filename from an artifact's
+# Content-Type. Kept narrow on purpose — the common textual types we actually
+# serve. Anything unrecognized falls back to the artifact UUID with no suffix.
+_CONTENT_TYPE_EXT: dict[str, str] = {
+    "text/markdown": ".md",
+    "text/html": ".html",
+    "text/plain": ".txt",
+    "application/json": ".json",
+    "text/csv": ".csv",
+}
+
+# Characters that are unsafe in filenames on common filesystems, plus control
+# chars. Replaced with a single space when sanitizing.
+_FILENAME_UNSAFE_RE = re.compile(r'[\x00-\x1f\x7f/\\:*?"<>|]')
+
+
+def _download_filename(title: str | None, content_type: str | None) -> tuple[str, str]:
+    """Build ``(ascii_fallback, utf8_percent_encoded)`` filenames for a download.
+
+    The ascii fallback replaces non-ASCII characters with ``_`` so very old
+    browsers still get something sensible; the UTF-8 variant preserves the
+    original title via RFC 5987 percent-encoding. Both include an extension
+    derived from ``content_type`` when we recognize it.
+    """
+    base = (title or "").strip()
+    # Collapse whitespace and strip unsafe chars. Keep the title readable — no
+    # aggressive slug conversion; a user's download should match what they saw.
+    base = _FILENAME_UNSAFE_RE.sub(" ", base)
+    base = re.sub(r"\s+", " ", base).strip(" .")
+    if not base:
+        base = "artifact"
+    # Keep the filename manageable for downstream tooling.
+    base = base[:180]
+
+    ext = ""
+    if content_type:
+        # Strip parameters like ``; charset=utf-8`` before matching.
+        primary = content_type.split(";", 1)[0].strip().lower()
+        ext = _CONTENT_TYPE_EXT.get(primary, "")
+
+    utf8_name = f"{base}{ext}"
+    ascii_name = utf8_name.encode("ascii", "replace").decode("ascii").replace("?", "_")
+    return ascii_name, quote(utf8_name, safe="")
+
 
 artifact_router = APIRouter(prefix="/artifacts", dependencies=[Depends(verify_api_key)], tags=["artifacts"])
 
@@ -246,7 +293,14 @@ async def search_artifacts_route(
 
 @artifact_router.get("/{artifact_id}", responses={200: {"content": {"*/*": {}}}})
 async def read_artifact_route(artifact_id: uuid.UUID) -> Response:
-    """Return the artifact's main content with its declared Content-Type."""
+    """Return the artifact's main content with its declared Content-Type.
+
+    Sets ``Content-Disposition`` so that when this URL is opened via the
+    viewer's "Raw content" link, the browser saves the file with the
+    artifact's title as the filename (plus a content-type-appropriate
+    extension). Programmatic API consumers read the response body directly
+    and are unaffected by the header.
+    """
     artifact = await get_artifact_by_id(artifact_id)
     if artifact is None:
         raise HTTPException(status_code=404, detail=f"Artifact {artifact_id} not found")
@@ -258,7 +312,9 @@ async def read_artifact_route(artifact_id: uuid.UUID) -> Response:
         raise HTTPException(
             status_code=404, detail=f"Artifact {artifact_id} metadata exists but content is missing"
         ) from exc
-    return Response(content=data, media_type=content_type)
+    ascii_name, utf8_name = _download_filename(artifact.title, content_type)
+    headers = {"Content-Disposition": f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{utf8_name}"}
+    return Response(content=data, media_type=content_type, headers=headers)
 
 
 @artifact_router.get("/{artifact_id}/meta", response_model=ArtifactResponse)
