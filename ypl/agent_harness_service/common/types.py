@@ -654,7 +654,7 @@ class ScheduleRunsResponse(BaseModel):
 class ResolveUserRequest(BaseModel):
     """POST /resolve_user — resolve a user email to a user ID."""
 
-    email: str = Field(..., description="User email address (domain must match ALLOWED_EMAIL_DOMAINS)")
+    email: str = Field(..., description="User email address; 404 if the ``users`` table has no row with it")
 
 
 class ResolveUserResponse(BaseModel):

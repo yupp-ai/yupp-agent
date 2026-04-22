@@ -4,9 +4,9 @@
 # Login is gated separately (see ypl/streamlit_server/auth.py); this file
 # controls *action-level* authorization on top of that login check.
 #
-# Deployers should populate the email lists below with addresses from their
-# ALLOWED_EMAIL_DOMAINS. The file ships empty so a fresh install does not
-# expose the Agent Harness Console to anyone by default.
+# Deployers should populate the email lists below with the addresses of the
+# operators who need console access. The file ships empty so a fresh
+# install does not expose the Agent Harness Console to anyone by default.
 
 permissions:
   # Required for viewing the Agent Harness Console and all agent sessions/projects/schedules.

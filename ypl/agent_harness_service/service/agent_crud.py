@@ -72,9 +72,8 @@ async def create_agent(request: AgentCreateRequest) -> AgentCreateResponse:
         # If either insert fails, neither is committed.
         # Use agent_id (not name) for uniqueness: names can collide or be
         # reused; agent_id is stable and UUID-unique. Use AGENT_USER_EMAIL_DOMAIN
-        # (distinct from ALLOWED_EMAIL_DOMAINS) to keep agent identities out of
-        # human employee flows (e.g. _resolve_personal_agent_for_user gates on
-        # the allowed human domain suffix).
+        # so agent identities stay in their own domain, visually distinct from
+        # human users in the directory.
         user = User(
             user_id=str(agent.agent_id),
             name=f"agent:{agent.name}",

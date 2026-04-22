@@ -93,3 +93,31 @@ async def get_artifact_content(artifact_id: str) -> tuple[bytes, str]:
 
 async def get_attachment(artifact_id: str, filename: str) -> tuple[bytes, str]:
     return await _get_bytes(f"/ahs/artifacts/{artifact_id}/attachments/{filename}")
+
+
+# ---------------------------------------------------------------------------
+# User resolution (membership check)
+# ---------------------------------------------------------------------------
+
+
+async def resolve_user(email: str) -> str | None:
+    """Ask AHS whether ``email`` is a known user.
+
+    Returns the ``user_id`` on success. Returns ``None`` for 404 (the
+    email isn't in the users table) so callers can convert it into an
+    access-denied page. Any other upstream error bubbles up as
+    :class:`AHSError`.
+    """
+    async with _client() as http:
+        resp = await http.post("/ahs/resolve_user", json={"email": email})
+    if resp.status_code == 404:
+        return None
+    if resp.status_code >= 400:
+        try:
+            detail = resp.json().get("detail", resp.text)
+        except Exception:
+            detail = resp.text
+        raise AHSError(resp.status_code, str(detail))
+    data = resp.json()
+    user_id = data.get("user_id")
+    return str(user_id) if user_id else None

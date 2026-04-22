@@ -7,6 +7,11 @@ SAG / MCP variables. The only exception is
 ``AGENT_HARNESS_SERVICE_API_KEY``, which is deliberately shared — the
 same secret the monolith uses to authenticate internal callers.
 
+Access control is **not configured here** — the viewer authenticates
+users via Google OAuth, then delegates membership checks to AHS
+(``POST /ahs/resolve_user``). If a user has a row in the ``users``
+table, they get in. Adding / removing users is an AHS responsibility.
+
 For local dev (run outside the monolith install), drop a ``.env`` in
 the current working directory and pydantic-settings will pick it up.
 """
@@ -34,13 +39,6 @@ class Settings(BaseSettings):
     # The absolute URL Google should redirect to after login.
     VIEWER_OAUTH_REDIRECT_URL: str = "https://artifacts.agcouch.com/auth/callback"
 
-    # --- Access control (viewer-only) ---
-    # Comma-separated list of allowed email domains (without @).
-    # Example: "agcouch.com,example.com". Empty string = refuse everyone.
-    VIEWER_ALLOWED_EMAIL_DOMAINS: str = "agcouch.com"
-    # Optional comma-separated per-email allowlist (takes precedence over domains).
-    VIEWER_ALLOWED_EMAILS: str = ""
-
     # --- Server ---
     VIEWER_HOST: str = "127.0.0.1"
     VIEWER_PORT: int = 8095
@@ -50,21 +48,6 @@ class Settings(BaseSettings):
     VIEWER_SESSION_MAX_AGE: int = 14 * 24 * 3600
     # Set to false for local HTTP dev; keep true in prod.
     VIEWER_SESSION_COOKIE_SECURE: bool = True
-
-    def allowed_domains(self) -> set[str]:
-        return {d.strip().lower() for d in self.VIEWER_ALLOWED_EMAIL_DOMAINS.split(",") if d.strip()}
-
-    def allowed_emails(self) -> set[str]:
-        return {e.strip().lower() for e in self.VIEWER_ALLOWED_EMAILS.split(",") if e.strip()}
-
-    def is_email_allowed(self, email: str | None) -> bool:
-        if not email:
-            return False
-        email_lower = email.lower()
-        if email_lower in self.allowed_emails():
-            return True
-        domain = email_lower.split("@", 1)[-1] if "@" in email_lower else ""
-        return domain in self.allowed_domains()
 
 
 settings = Settings()

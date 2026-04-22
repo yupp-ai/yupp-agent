@@ -10,9 +10,20 @@
 <body>
 <main class="main narrow">
 <h1>Access denied</h1>
-{% if reason == "forbidden" %}
-    <p>The account <code>{{ email }}</code> is not allowed.</p>
-    <p class="muted">Allowed domains: {{ allowed_domains|join(", ") }}</p>
+{% if reason == "not_a_user" %}
+    <p>The account <code>{{ email }}</code> is not authorized.</p>
+    <p class="muted">
+        Access to the artifact viewer is granted via the AHS user directory.
+        If you should have access, ask an admin to add <code>{{ email }}</code>
+        to the <code>users</code> table.
+    </p>
+{% elif reason == "ahs_unavailable" %}
+    <p>Could not verify your account — the upstream AHS service is
+       unreachable or returned an error.</p>
+    <p class="muted">Try again in a moment, or contact an admin if it persists.</p>
+{% elif reason == "no_email" %}
+    <p>Google didn't return an email address for your account. Please
+       <a href="/auth/login">try again</a>.</p>
 {% elif reason == "oauth_exchange_failed" %}
     <p>Google OAuth exchange failed. Please <a href="/auth/login">try again</a>.</p>
 {% else %}
