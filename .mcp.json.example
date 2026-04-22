@@ -1,0 +1,12 @@
+{
+  "_comment": "Copy this file to .mcp.json and tweak for your local setup. Claude Code reads .mcp.json at the project root to discover MCP servers. This file is gitignored; the AHS runtime builds its own server list from ypl/agent_harness_service/executors/mcp_config.py — do not rely on .mcp.json being loaded by AHS.",
+  "mcpServers": {
+    "agcouch-mcp-server": {
+      "type": "http",
+      "url": "http://localhost:8090/mcp/agcouch",
+      "headers": {
+        "Authorization": "Bearer ${AGCOUCH_MCP_TOKEN}"
+      }
+    }
+  }
+}
