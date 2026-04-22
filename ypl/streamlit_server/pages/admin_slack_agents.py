@@ -5,6 +5,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+import sqlalchemy as sa
 import streamlit as st
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import col, select
@@ -12,6 +13,7 @@ from ypl.backend.db import get_async_session, get_async_session_read_replica, re
 from ypl.backend.utils.streamlit_utils import run_coroutine_in_lit_worker
 from ypl.db.agent_harness import Agent
 from ypl.db.slack_agent import SlackAgent, SlackAgentStatus
+from ypl.db.users import User, UserStatus
 from ypl.streamlit_server.auth import require_admin_role, require_auth
 
 st.set_page_config(page_title="Slack Agents", page_icon="💬", layout="wide")
@@ -57,6 +59,24 @@ async def _fetch_agent_names_raw() -> list[str]:
         stmt = select(Agent.name).where(col(Agent.deleted_at).is_(None)).order_by(Agent.name)
         result = await session.exec(stmt)
         return list(result.all())
+
+
+@retry_db
+async def _lookup_user_id_by_email(email: str) -> str | None:
+    """Return the user_id of the ACTIVE user with the given email, case-insensitive."""
+    normalized = email.strip().lower()
+    if not normalized:
+        return None
+    async with get_async_session_read_replica() as session:
+        stmt = (
+            select(User.user_id)
+            .where(sa.func.lower(User.email) == normalized)
+            .where(col(User.status) == UserStatus.ACTIVE)
+            .where(col(User.deleted_at).is_(None))
+            .limit(1)
+        )
+        result = await session.exec(stmt)
+        return result.one_or_none()
 
 
 @retry_db
@@ -169,10 +189,29 @@ _STATUS_OPTIONS: list[SlackAgentStatus] = list(SlackAgentStatus)
 _STATUS_VALUES: list[str] = [s.value for s in _STATUS_OPTIONS]
 
 
+def _current_user_email() -> str | None:
+    """Best-effort lookup of the logged-in user's email for audit purposes."""
+    try:
+        if st.user is not None and st.user.is_logged_in:
+            email = st.user.email
+            return email if isinstance(email, str) else None
+    except Exception:
+        return None
+    return None
+
+
+def _current_user_id() -> str | None:
+    """Resolve the logged-in user's ``users.user_id`` by email, or None if not found."""
+    email = _current_user_email()
+    if not email:
+        return None
+    return run_coroutine_in_lit_worker(_lookup_user_id_by_email(email), timeout=10)
+
+
 def _render_list(rows: list[dict[str, Any]]) -> None:
     st.subheader(f"Registered Slack agents ({len(rows)})")
     if not rows:
-        st.info("No Slack agents registered yet. Use the form below to add one.")
+        st.info("No Slack agents registered yet. Use the *Add New Slack Agent* tab to add one.")
         return
     display_rows = [
         {
@@ -189,64 +228,59 @@ def _render_list(rows: list[dict[str, Any]]) -> None:
 
 
 def _render_add_form(agent_names: list[str]) -> None:
-    with st.expander("➕ Add new Slack agent", expanded=False):
-        if not agent_names:
-            st.warning("No agents found in the ``agents`` table — create an agent before registering a Slack bot.")
-            return
-        with st.form("add_slack_agent_form", clear_on_submit=True):
-            app_id = st.text_input("App ID", help="Slack app ID, e.g. 'A123CONFUCIUS'.").strip()
-            agent_name = st.selectbox("Agent name", options=agent_names, index=0)
-            bot_name = st.text_input("Bot name", help="Used for GCP secret lookup, e.g. 'giladovski'.").strip()
-            display_name = st.text_input("Display name", help="Human-readable name shown in the UI.").strip()
-            status_value = st.selectbox(
-                "Status",
-                options=_STATUS_VALUES,
-                index=_STATUS_VALUES.index(SlackAgentStatus.ACTIVE.value),
-            )
-            submitted = st.form_submit_button("Create", type="primary")
-        if not submitted:
-            return
-        missing = [
-            label
-            for label, value in (
-                ("App ID", app_id),
-                ("Agent name", agent_name),
-                ("Bot name", bot_name),
-                ("Display name", display_name),
-            )
-            if not value
-        ]
-        if missing:
-            st.error(f"Required field(s) missing: {', '.join(missing)}")
-            return
-        created_by = _current_user_email()
-        success, message = run_coroutine_in_lit_worker(
-            _insert_slack_agent(
-                app_id=app_id,
-                agent_name=agent_name,
-                bot_name=bot_name,
-                display_name=display_name,
-                status=SlackAgentStatus(status_value),
-                created_by_user_id=created_by,
-            ),
-            timeout=10,
+    st.subheader("Add new Slack agent")
+    if not agent_names:
+        st.warning("No agents found in the ``agents`` table — create an agent before registering a Slack bot.")
+        return
+    with st.form("add_slack_agent_form", clear_on_submit=True):
+        app_id = st.text_input("App ID", help="Slack app ID, e.g. 'A123CONFUCIUS'.").strip()
+        agent_name = st.selectbox("Agent name", options=agent_names, index=0)
+        bot_name = st.text_input("Bot name", help="Used for GCP secret lookup, e.g. 'giladovski'.").strip()
+        display_name = st.text_input("Display name", help="Human-readable name shown in the UI.").strip()
+        status_value = st.selectbox(
+            "Status",
+            options=_STATUS_VALUES,
+            index=_STATUS_VALUES.index(SlackAgentStatus.ACTIVE.value),
         )
-        if success:
-            st.toast(message, icon="✅")
-            _clear_caches_and_rerun()
-        else:
-            st.error(message)
-
-
-def _current_user_email() -> str | None:
-    """Best-effort lookup of the logged-in user's email for audit purposes."""
-    try:
-        if st.user is not None and st.user.is_logged_in:
-            email = st.user.email
-            return email if isinstance(email, str) else None
-    except Exception:
-        return None
-    return None
+        submitted = st.form_submit_button("Create", type="primary")
+    if not submitted:
+        return
+    missing = [
+        label
+        for label, value in (
+            ("App ID", app_id),
+            ("Agent name", agent_name),
+            ("Bot name", bot_name),
+            ("Display name", display_name),
+        )
+        if not value
+    ]
+    if missing:
+        st.error(f"Required field(s) missing: {', '.join(missing)}")
+        return
+    created_by_user_id = _current_user_id()
+    if created_by_user_id is None:
+        st.error(
+            "Could not resolve your user_id from the users table — ask an admin to create a user "
+            "record for your email, then retry."
+        )
+        return
+    success, message = run_coroutine_in_lit_worker(
+        _insert_slack_agent(
+            app_id=app_id,
+            agent_name=agent_name,
+            bot_name=bot_name,
+            display_name=display_name,
+            status=SlackAgentStatus(status_value),
+            created_by_user_id=created_by_user_id,
+        ),
+        timeout=10,
+    )
+    if success:
+        st.toast(message, icon="✅")
+        _clear_caches_and_rerun()
+    else:
+        st.error(message)
 
 
 def _render_edit_section(rows: list[dict[str, Any]], agent_names: list[str]) -> None:
@@ -330,8 +364,12 @@ def _render_edit_section(rows: list[dict[str, Any]], agent_names: list[str]) -> 
 _rows = _load_slack_agents()
 _agent_names = _load_agent_names()
 
-_render_list(_rows)
-st.divider()
-_render_add_form(_agent_names)
-st.divider()
-_render_edit_section(_rows, _agent_names)
+tab_browse, tab_add = st.tabs(["Browse", "Add New Slack Agent"])
+
+with tab_browse:
+    _render_list(_rows)
+    st.divider()
+    _render_edit_section(_rows, _agent_names)
+
+with tab_add:
+    _render_add_form(_agent_names)
