@@ -27,6 +27,11 @@ indent-width = 4
 [tool.ruff.lint.per-file-ignores]
 # ignore star and unused imports
 "__init__.py" = ["F403", "F405"]
+# mcp_tools.py imports tool modules purely for their @mcp_server.tool()
+# registration side effects; ruff incorrectly classifies the unreferenced
+# ones as unused. Regression coverage lives in
+# tests/mcp_server/test_tool_registration.py.
+"ypl/mcp_server/mcp_tools.py" = ["F401"]
 
 [tool.ruff.lint]
 select = [
