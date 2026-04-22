@@ -5,25 +5,24 @@ combined lifespan, enabling the entire agent platform to run as one process.
 
 Route layout:
   /ahs/*            — Agent Harness Service (router already carries /ahs prefix)
-  /mcp/*            — Unified MCP server (FastMCP, agents + developers, single mount)
+  /mcp/harness      — Harness MCP (agents; x-ahs-token or Bearer <secret>:<session>)
+  /mcp/agcouch      — Agcouch MCP (developers; Bearer yupp_dev_*)
   /gw/<name>/*      — Gateway plugins (e.g. /gw/slack/*, /gw/github/*)
   /health           — Liveness probe — always 200 OK
 
 Startup order:
   1. AHS (registers orchestration callbacks, warms process pool, etc.)
-  2. Unified MCP lifespan (via AHSState._mcp_lifespan_ctx)
-  3. register_unified_tools() — imports tools from both FastMCP instances
+  2. Harness MCP lifespan (via AHSState._mcp_lifespan_ctx)
+  3. Agcouch MCP lifespan
   4. Yuppster batch-system init (mcp_startup)
   5. Enabled gateway plugins in registration order (see ``discover_plugins``)
 
 Shutdown is in strict reverse order so in-flight AHS tasks can still use
 MCP tools while the scheduler drains.
 
-Auth at /mcp:
-  - ``x-ahs-token`` header (or ``Bearer <secret>:<session_id>``) -> agent
-  - ``Bearer yupp_dev_*`` -> developer (validated against yuppdb; 503 when
-    yuppdb is not configured, e.g. one-box mode)
-  - Any other request -> 401 Unauthorized
+The two MCP mounts expose *disjoint* tool sets — agent tools are reachable
+only via ``/mcp/harness`` and developer tools only via ``/mcp/agcouch``.
+Path is the enforcement boundary; there is no shared tool registry.
 
 All standalone server entrypoints (AHS, SAG, MCP) remain functional and
 unchanged -- the monolith is an *additive* composition, not a replacement.
@@ -59,7 +58,7 @@ from ypl.mono_server.config import MonoConfig
 from ypl.mono_server.gateway_plugin import GatewayPlugin
 from ypl.mono_server.plugins.github import GitHubGatewayPlugin
 from ypl.mono_server.plugins.slack import SlackGatewayPlugin
-from ypl.mono_server.unified_mcp import register_unified_tools, unified_mcp_http_app
+from ypl.mono_server.unified_mcp import agcouch_mcp_http_app, harness_mcp_http_app
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -138,80 +137,80 @@ async def combined_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     Startup order:
       1. AHS (wires orchestration callbacks, starts warm process pool,
-         launches scheduler, creates unified MCP lifespan context)
-      2. Enter unified MCP lifespan (via AHSState._mcp_lifespan_ctx)
-      3. register_unified_tools() -- copy all tools from harness + agcouch
-         FastMCP instances into the unified instance
+         launches scheduler, creates harness MCP lifespan context)
+      2. Enter harness MCP lifespan (via AHSState._mcp_lifespan_ctx)
+      3. Enter agcouch MCP lifespan (its own FastMCP session manager)
       4. Yuppster batch-system init (mcp_startup)
       5. Enabled gateway plugins in registration order (see discover_plugins)
 
-    Shutdown is the mirror image of startup.  AHS shutdown runs *inside* the
-    unified MCP lifespan context so that in-flight scheduler tasks can still
-    call MCP tools while the drain completes.
+    Shutdown is the mirror image of startup.  AHS shutdown runs *inside* both
+    MCP lifespan contexts so in-flight scheduler tasks can still call MCP
+    tools while the drain completes.
     """
     config = MonoConfig()
 
     # --- 1. AHS startup -------------------------------------------------------
     # ahs_startup() wires orchestration callbacks, starts the warm process pool,
-    # launches the scheduler, and returns a state object that carries the unified
+    # launches the scheduler, and returns a state object that carries the harness
     # MCP lifespan context manager (not yet entered).
-    ahs_state: AHSState = await ahs_startup(app, unified_mcp_http_app)
+    ahs_state: AHSState = await ahs_startup(app, harness_mcp_http_app)
 
-    # --- 2. Unified MCP lifespan (FastMCP session manager) --------------------
+    # --- 2. Harness MCP lifespan (FastMCP session manager) --------------------
     # Enter via the unentered context manager stored in ahs_state so real
     # exception info is forwarded to __aexit__ on a crash (same pattern as the
     # standalone AHS server).
     async with ahs_state._mcp_lifespan_ctx:
         try:
-            # --- 3. Tool registration ------------------------------------------
-            # Both harness and agcouch tool registrations have already fired at
-            # module load time via side-effect imports (local_mcp_server import +
-            # mcp_tools import at the top of this file).  register_unified_tools()
-            # copies the fully-populated tool registries into unified_mcp.
-            await register_unified_tools()
-
-            # --- 4. Yuppster batch-system init --------------------------------
-            await mcp_startup()
-            try:
-                # --- 5. Gateway plugins ---------------------------------------
-                # Start each enabled plugin in registration order; record
-                # (plugin, state) pairs so shutdown runs in reverse order.
-                # Startup is wrapped so a failure in plugin N cleanly tears down
-                # plugins 0..N-1 before re-raising -- no leaked subsystems.
-                plugins = discover_plugins(config)
-                gateway_states: list[tuple[GatewayPlugin, Any]] = []
+            # --- 3. Agcouch MCP lifespan --------------------------------
+            # Separate FastMCP instance with its own session manager. Built
+            # inline (not stored on ahs_state) because only the monolith
+            # runs both MCP apps in one process.
+            async with agcouch_mcp_http_app.lifespan(agcouch_mcp_http_app):
+                # --- 4. Yuppster batch-system init ---------------------
+                await mcp_startup()
                 try:
-                    for plugin in plugins:
-                        state = await plugin.startup()
-                        gateway_states.append((plugin, state))
-                except Exception:
-                    # Clean up already-started plugins before propagating.
-                    for p, s in reversed(gateway_states):
-                        try:
-                            await p.shutdown(s)
-                        except Exception:
-                            logger.exception("Plugin %s shutdown failed during startup cleanup", p.name)
-                    raise
+                    # --- 5. Gateway plugins ----------------------------
+                    # Start each enabled plugin in registration order;
+                    # record (plugin, state) pairs so shutdown runs in
+                    # reverse order. Startup is wrapped so a failure in
+                    # plugin N cleanly tears down plugins 0..N-1 before
+                    # re-raising -- no leaked subsystems.
+                    plugins = discover_plugins(config)
+                    gateway_states: list[tuple[GatewayPlugin, Any]] = []
+                    try:
+                        for plugin in plugins:
+                            state = await plugin.startup()
+                            gateway_states.append((plugin, state))
+                    except Exception:
+                        # Clean up already-started plugins before propagating.
+                        for p, s in reversed(gateway_states):
+                            try:
+                                await p.shutdown(s)
+                            except Exception:
+                                logger.exception("Plugin %s shutdown failed during startup cleanup", p.name)
+                        raise
 
-                try:
-                    yield
+                    try:
+                        yield
+                    finally:
+                        # Shutdown plugins in strict reverse startup order.
+                        # Each call is individually exception-isolated so a
+                        # failure in one plugin does not prevent others
+                        # from being torn down.
+                        for plugin, state in reversed(gateway_states):
+                            try:
+                                await plugin.shutdown(state)
+                            except Exception:
+                                logger.exception("Plugin %s shutdown failed", plugin.name)
                 finally:
-                    # Shutdown plugins in strict reverse startup order.
-                    # Each call is individually exception-isolated so a failure
-                    # in one plugin does not prevent others from being torn down.
-                    for plugin, state in reversed(gateway_states):
-                        try:
-                            await plugin.shutdown(state)
-                        except Exception:
-                            logger.exception("Plugin %s shutdown failed", plugin.name)
-            finally:
-                # Yuppster MCP teardown (batch-system flush, Sentry close, GCP
-                # log flush).  The finally block ensures mcp_shutdown runs even
-                # if a plugin startup raises or the yield block raises.
-                await mcp_shutdown()
+                    # Yuppster MCP teardown (batch-system flush, Sentry close,
+                    # GCP log flush). The finally block ensures mcp_shutdown
+                    # runs even if a plugin startup raises or the yield
+                    # block raises.
+                    await mcp_shutdown()
         finally:
-            # AHS teardown -- inside unified MCP lifespan so in-flight tasks
-            # that call MCP tools during scheduler drain can still complete.
+            # AHS teardown -- inside both MCP lifespans so in-flight tasks that
+            # call MCP tools during scheduler drain can still complete.
             await ahs_shutdown(ahs_state)
 
 
@@ -270,15 +269,15 @@ def create_app() -> FastAPI:
     _setup_ahs_router(config)
     application.include_router(ahs_router)
 
-    # --- Unified MCP (/mcp -- agents and developers share one endpoint) ------
-    # Auth is handled by UnifiedMcpAuthMiddleware (already attached to the app):
-    #   - x-ahs-token header -> agent context (process-local secret, no DB)
-    #   - Bearer yupp_dev_* -> developer context (validated against yuppdb)
-    # Mount /mcp/harness BEFORE /mcp — Starlette matches mounts by prefix,
-    # so /mcp would intercept /mcp/harness/ requests and pass "/harness/" as
-    # the path to the MCP app (which returns 404). The longer prefix must come first.
-    application.mount("/mcp/harness", unified_mcp_http_app)
-    application.mount("/mcp", unified_mcp_http_app)
+    # --- Split MCP mounts (disjoint tool sets; path is the enforcement) ------
+    # /mcp/harness: agent tools. Auth via HarnessMcpAuthMiddleware
+    #   (x-ahs-token or Bearer <secret>:<session_id>). Dev tokens rejected.
+    # /mcp/agcouch: developer tools. Auth via AgcouchMcpAuthMiddleware
+    #   (Bearer yupp_dev_*). Agent tokens rejected.
+    # There is intentionally no catch-all /mcp mount — each tool set is
+    # reachable only at its own path.
+    application.mount("/mcp/harness", harness_mcp_http_app)
+    application.mount("/mcp/agcouch", agcouch_mcp_http_app)
 
     # --- Gateway plugins (all enabled plugins, each at /gw/<name>/) ----------
     # Routers are registered here; lifespan (startup/shutdown) is handled by

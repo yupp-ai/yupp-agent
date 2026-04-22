@@ -84,20 +84,16 @@ class TestRouteRegistration:
         ahs_paths = [p for p in paths if p.startswith("/ahs")]
         assert ahs_paths, f"No /ahs routes found. All paths: {paths}"
 
-    def test_unified_mcp_mounted(self) -> None:
-        """Unified MCP (harness + agcouch) is mounted at /mcp."""
+    def test_mcp_split_mounts_present(self) -> None:
+        """Harness and agcouch MCP are mounted at their own disjoint paths."""
         from ypl.mono_server.server import app
 
         mounts = _mount_paths(app)
-        assert "/mcp" in mounts, f"Missing /mcp mount. Mounts: {mounts}"
-
-    def test_legacy_mcp_harness_mount_present(self) -> None:
-        """Legacy /mcp/harness mount is present for backward compat with AHS executor MCP client."""
-        from ypl.mono_server.server import app
-
-        mounts = _mount_paths(app)
-        assert "/mcp/harness" in mounts, f"Missing /mcp/harness legacy mount: {mounts}"
-        assert "/mcp/agcouch" not in mounts, f"Unexpected /mcp/agcouch mount: {mounts}"
+        assert "/mcp/harness" in mounts, f"Missing /mcp/harness mount: {mounts}"
+        assert "/mcp/agcouch" in mounts, f"Missing /mcp/agcouch mount: {mounts}"
+        # There must be no catch-all /mcp mount — each tool set is reachable
+        # only at its own path.
+        assert "/mcp" not in mounts, f"Unexpected catch-all /mcp mount: {mounts}"
 
     def test_slack_gateway_routes_present_by_default(self) -> None:
         """SAG routes are present when GATEWAY_SLACK_ENABLED=true (default)."""
