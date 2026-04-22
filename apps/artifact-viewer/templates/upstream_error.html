@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Upstream error · Artifact Viewer{% endblock %}
+{% block content %}
+<h1>Upstream error</h1>
+<p>AHS returned an error while serving this page.</p>
+<dl>
+    <dt>Status</dt><dd class="mono">{{ status }}</dd>
+    <dt>Detail</dt><dd class="mono">{{ detail }}</dd>
+</dl>
+<p><a href="/">← Back to home</a></p>
+{% endblock %}

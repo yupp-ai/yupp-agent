@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}{{ meta.title or 'Artifact' }} · Artifact Viewer{% endblock %}
+{% block content %}
+<article class="artifact">
+    <header class="artifact-header">
+        <h1>{{ meta.title or '(untitled)' }}</h1>
+        {% if meta.description %}<p class="description">{{ meta.description }}</p>{% endif %}
+        <dl class="artifact-meta">
+            <dt>ID</dt><dd class="mono"><a href="/artifacts/{{ meta.artifact_id }}">{{ meta.artifact_id }}</a></dd>
+            {% if meta.named_slug %}
+                <dt>Slug</dt>
+                <dd>
+                    <a href="/artifacts/by-slug/{{ meta.named_slug }}">{{ meta.named_slug }}</a>
+                    {% if meta.version is not none %}
+                        <span class="mono">v{{ meta.version }}</span>
+                        <a class="muted small" href="/artifacts/by-slug/{{ meta.named_slug }}/versions">(all versions)</a>
+                    {% endif %}
+                </dd>
+            {% endif %}
+            <dt>Type</dt><dd class="mono">{{ meta.content_type or meta.type }}</dd>
+            <dt>Created</dt><dd class="mono">{{ meta.created_at or '' }}</dd>
+            {% if meta.creator_user_id %}
+                <dt>Creator</dt><dd>{{ meta.creator_user_id }}</dd>
+            {% elif meta.creator_agent_id %}
+                <dt>Agent</dt><dd class="mono">{{ meta.creator_agent_id }}</dd>
+            {% endif %}
+            {% if meta.metadata and meta.metadata.is_archived %}
+                <dt>Status</dt><dd><span class="tag archived">archived</span></dd>
+            {% endif %}
+        </dl>
+    </header>
+
+    <section class="artifact-body artifact-body-{{ display_mode }}">
+        {{ body_html|safe }}
+    </section>
+
+    {% if attachments_html %}
+        {{ attachments_html|safe }}
+    {% endif %}
+
+    <footer class="artifact-footer muted small">
+        <a href="{{ ahs_base_url }}/ahs/artifacts/{{ meta.artifact_id }}" rel="nofollow">Raw content (requires API key)</a>
+        · <a href="{{ ahs_base_url }}/ahs/artifacts/{{ meta.artifact_id }}/meta" rel="nofollow">Raw metadata</a>
+    </footer>
+</article>
+{% endblock %}

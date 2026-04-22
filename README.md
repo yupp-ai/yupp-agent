@@ -198,7 +198,8 @@ yupp-agent/
 │   ├── backend/                 # Shared backend (DB, config, utils)
 │   └── db/                      # SQLModel database models + migrations
 ├── apps/
-│   └── war-room/                # Next.js 16 admin UI for AHS (Bun)
+│   ├── war-room/                # Next.js 16 admin UI for AHS (Bun)
+│   └── artifact-viewer/         # Starlette read-only viewer for artifacts (Python)
 ├── data/                        # Feature flags, config files
 ├── scripts/                     # Operational scripts
 └── .github/workflows/           # CI/CD
