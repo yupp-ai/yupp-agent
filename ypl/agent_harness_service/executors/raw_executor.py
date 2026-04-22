@@ -53,6 +53,7 @@ _COST_PER_M_TOKENS: dict[str, dict[str, float]] = {
     "MiniMax-M2.1": {"input": 0.3, "output": 1.2, "cache_read": 0.03, "cache_write": 0.375},
     # Moonshot — cache_read (cache hit) = $0.10/M, input (cache miss) = $0.60/M, output = $3.00/M
     "kimi-k2.5": {"input": 0.60, "output": 3.0, "cache_read": 0.10},
+    # Cerebras — pricing not published per-token on public docs; falls back to default rates.
 }
 
 # Context window limits (for overflow detection)
@@ -67,6 +68,10 @@ _CONTEXT_LIMITS: dict[str, int] = {
     "MiniMax-M2.5": 1_000_000,
     "MiniMax-M2.1": 1_000_000,
     "kimi-k2.5": 262_144,
+    # Cerebras
+    "gpt-oss-120b": 131_072,
+    "qwen-3-235b-a22b-instruct-2507": 131_072,
+    "zai-glm-4.7": 131_072,
 }
 
 _RESERVED_BUFFER = 4_000  # Tokens reserved for response
