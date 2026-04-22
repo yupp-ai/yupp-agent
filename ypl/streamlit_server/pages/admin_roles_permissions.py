@@ -1,4 +1,4 @@
-"""Admin User Permissions — browse and edit RBAC roles, role permissions, and user-role assignments."""
+"""Admin Roles & Permissions — view/edit RBAC roles, role permissions, and per-role membership."""
 
 from __future__ import annotations
 import uuid
@@ -15,15 +15,13 @@ from ypl.streamlit_server.auth import require_admin_role, require_auth
 from ypl.streamlit_server.permissions import get_current_user_email
 from ypl.structured_logger import get_logger
 
-st.set_page_config(page_title="User Permissions", page_icon="🔐", layout="wide")
+st.set_page_config(page_title="Roles & Permissions", page_icon="🔐", layout="wide")
 require_auth()
 require_admin_role()
 
-st.title("🔐 User Permissions")
+st.title("🔐 Roles & Permissions")
 
 logger = get_logger()
-
-_USERS_PAGE_SIZE = 50
 
 
 # ── DB queries ────────────────────────────────────────────────────────────────
@@ -128,122 +126,6 @@ async def fetch_active_user_emails() -> list[dict[str, str]]:
 
 
 @retry_db
-async def fetch_users_page(email_filter: str, offset: int, limit: int) -> tuple[list[dict[str, Any]], int]:
-    """Return a page of users with their roles + effective permissions, plus the total count."""
-    normalized = email_filter.strip().lower()
-    async with get_async_session_read_replica() as session:
-        base = select(User).where(col(User.deleted_at).is_(None))
-        if normalized:
-            base = base.where(func.lower(User.email).contains(normalized))
-
-        count_stmt = select(func.count()).select_from(base.subquery())
-        total = int((await session.exec(count_stmt)).one())
-
-        page_stmt = base.order_by(col(User.email)).offset(offset).limit(limit)
-        users = list((await session.exec(page_stmt)).all())
-
-        user_ids = [u.user_id for u in users]
-        roles_by_user: dict[str, list[RoleName]] = {uid: [] for uid in user_ids}
-        perms_by_user: dict[str, set[Permission]] = {uid: set() for uid in user_ids}
-
-        if user_ids:
-            role_rows = list(
-                (
-                    await session.exec(
-                        select(
-                            UserRoleAssociation.user_id,
-                            Role.role_id,
-                            Role.name,
-                        )
-                        .join(Role, col(Role.role_id) == col(UserRoleAssociation.role_id))
-                        .where(col(UserRoleAssociation.user_id).in_(user_ids))
-                        .where(col(Role.deleted_at).is_(None))
-                    )
-                ).all()
-            )
-            role_ids_for_users = {row[1] for row in role_rows}
-            perm_rows = (
-                list(
-                    (
-                        await session.exec(
-                            select(RolePermission.role_id, RolePermission.permission).where(
-                                col(RolePermission.role_id).in_(role_ids_for_users)
-                            )
-                        )
-                    ).all()
-                )
-                if role_ids_for_users
-                else []
-            )
-            perms_by_role: dict[uuid.UUID, list[Permission]] = {}
-            for rid, perm in perm_rows:
-                perms_by_role.setdefault(rid, []).append(Permission(perm))
-
-            for uid, rid, rname in role_rows:
-                roles_by_user[uid].append(RoleName(rname))
-                for p in perms_by_role.get(rid, []):
-                    perms_by_user[uid].add(p)
-
-    return (
-        [
-            {
-                "user_id": u.user_id,
-                "email": u.email,
-                "name": u.name,
-                "status": u.status,
-                "user_type": u.user_type,
-                "roles": sorted(roles_by_user.get(u.user_id, []), key=lambda r: r.value),
-                "permissions": sorted(perms_by_user.get(u.user_id, set()), key=lambda p: p.value),
-            }
-            for u in users
-        ],
-        total,
-    )
-
-
-@retry_db
-async def fetch_user_detail(user_id: str) -> dict[str, Any] | None:
-    async with get_async_session_read_replica() as session:
-        user = (await session.exec(select(User).where(col(User.user_id) == user_id))).one_or_none()
-        if user is None:
-            return None
-
-        role_rows = list(
-            (
-                await session.exec(
-                    select(Role.role_id, Role.name)
-                    .join(UserRoleAssociation, col(Role.role_id) == col(UserRoleAssociation.role_id))
-                    .where(col(UserRoleAssociation.user_id) == user_id)
-                    .where(col(Role.deleted_at).is_(None))
-                )
-            ).all()
-        )
-        current_role_ids = [row[0] for row in role_rows]
-        current_role_names: list[RoleName] = [RoleName(row[1]) for row in role_rows]
-
-        perms: set[Permission] = set()
-        if current_role_ids:
-            perm_rows = list(
-                (
-                    await session.exec(
-                        select(RolePermission.permission).where(col(RolePermission.role_id).in_(current_role_ids))
-                    )
-                ).all()
-            )
-            perms = {Permission(p) for p in perm_rows}
-
-    return {
-        "user_id": user.user_id,
-        "email": user.email,
-        "name": user.name,
-        "status": user.status,
-        "user_type": user.user_type,
-        "roles": sorted(current_role_names, key=lambda r: r.value),
-        "permissions": sorted(perms, key=lambda p: p.value),
-    }
-
-
-@retry_db
 async def count_admin_users() -> int:
     """Count ACTIVE users with the ADMIN role."""
     async with get_async_session_read_replica() as session:
@@ -298,41 +180,37 @@ async def remove_user_from_role(user_id: str, role_id: uuid.UUID) -> bool:
 
 
 @retry_db
-async def set_role_permissions(role_id: uuid.UUID, desired: set[Permission]) -> bool:
+async def add_role_permission(role_id: uuid.UUID, permission: Permission) -> bool:
+    """Idempotent: grant a single permission to a role."""
     async with get_async_session() as session:
-        existing = list(
-            (await session.exec(select(RolePermission).where(col(RolePermission.role_id) == role_id))).all()
-        )
-        existing_set = {rp.permission for rp in existing}
-
-        to_delete = [rp for rp in existing if rp.permission not in desired]
-        to_add = desired - existing_set
-
-        for rp in to_delete:
-            await session.delete(rp)
-        for perm in to_add:
-            session.add(RolePermission(role_id=role_id, permission=perm))
-
+        existing = (
+            await session.exec(
+                select(RolePermission)
+                .where(col(RolePermission.role_id) == role_id)
+                .where(col(RolePermission.permission) == permission)
+            )
+        ).one_or_none()
+        if existing is not None:
+            return True
+        session.add(RolePermission(role_id=role_id, permission=permission))
         await session.commit()
     return True
 
 
 @retry_db
-async def set_user_roles(user_id: str, desired_role_ids: set[uuid.UUID]) -> bool:
+async def remove_role_permission(role_id: uuid.UUID, permission: Permission) -> bool:
+    """Revoke a single permission from a role. Returns False if it was not granted."""
     async with get_async_session() as session:
-        existing = list(
-            (await session.exec(select(UserRoleAssociation).where(col(UserRoleAssociation.user_id) == user_id))).all()
-        )
-        existing_ids = {a.role_id for a in existing}
-
-        to_delete = [a for a in existing if a.role_id not in desired_role_ids]
-        to_add = desired_role_ids - existing_ids
-
-        for a in to_delete:
-            await session.delete(a)
-        for rid in to_add:
-            session.add(UserRoleAssociation(user_id=user_id, role_id=rid))
-
+        existing = (
+            await session.exec(
+                select(RolePermission)
+                .where(col(RolePermission.role_id) == role_id)
+                .where(col(RolePermission.permission) == permission)
+            )
+        ).one_or_none()
+        if existing is None:
+            return False
+        await session.delete(existing)
         await session.commit()
     return True
 
@@ -353,16 +231,6 @@ def _cached_role_detail(role_id_str: str) -> dict[str, Any] | None:
 @st.cache_data(ttl=30, show_spinner=False)
 def _cached_active_user_emails() -> list[dict[str, str]]:
     return run_coroutine_in_lit_worker(fetch_active_user_emails(), timeout=10)
-
-
-@st.cache_data(ttl=30, show_spinner=False)
-def _cached_users_page(email_filter: str, offset: int, limit: int) -> tuple[list[dict[str, Any]], int]:
-    return run_coroutine_in_lit_worker(fetch_users_page(email_filter, offset, limit), timeout=10)
-
-
-@st.cache_data(ttl=30, show_spinner=False)
-def _cached_user_detail(user_id: str) -> dict[str, Any] | None:
-    return run_coroutine_in_lit_worker(fetch_user_detail(user_id), timeout=10)
 
 
 @st.cache_data(ttl=30, show_spinner=False)
@@ -393,11 +261,11 @@ def _is_self(user_id: str) -> bool:
     return _current_user_id_lookup(get_current_user_email()) == user_id
 
 
-def _render_roles_tab() -> None:
-    st.subheader("Roles")
+def _render_roles() -> None:
     st.caption(
         "Roles are a fixed, seeded set. Edit role memberships and permissions here; "
-        "use `seed_roles` in `ypl/mono_server/db.py` to add new roles."
+        "use `seed_roles` in `ypl/mono_server/db.py` to add new roles. "
+        "User creation/editing lives in the Users app."
     )
 
     roles = _cached_roles_summary()
@@ -405,15 +273,16 @@ def _render_roles_tab() -> None:
         st.info("No roles found. Run `seed_roles` to populate the RBAC tables.")
         return
 
-    header = st.columns([1.4, 3, 0.8, 1])
+    _COL_WIDTHS = [1.2, 2.6, 2.0, 0.6]
+    header = st.columns(_COL_WIDTHS)
     with header[0]:
         st.markdown("**Role**")
     with header[1]:
         st.markdown("**Description**")
     with header[2]:
-        st.markdown("**Users**")
-    with header[3]:
         st.markdown("**Permissions**")
+    with header[3]:
+        st.markdown("**Users**")
     st.divider()
 
     active_users = _cached_active_user_emails()
@@ -423,19 +292,27 @@ def _render_roles_tab() -> None:
     for role in roles:
         role_id: uuid.UUID = role["role_id"]
         role_name: RoleName = role["name"]
+        detail = _cached_role_detail(str(role_id))
 
-        summary_cols = st.columns([1.4, 3, 0.8, 1])
+        summary_cols = st.columns(_COL_WIDTHS)
         with summary_cols[0]:
-            st.markdown(f"**{role_name.value}**")
+            st.markdown(
+                f"<div style='font-size: 1.25rem; font-weight: 700'>{role_name.value}</div>",
+                unsafe_allow_html=True,
+            )
         with summary_cols[1]:
             st.markdown(role["description"] or "—")
         with summary_cols[2]:
-            st.markdown(str(role["user_count"]))
+            st.markdown(f"**{role['perm_count']}**")
+            if detail and detail["permissions"]:
+                perm_lines = "  \n".join(f"`{p.value}`" for p in sorted(detail["permissions"], key=lambda p: p.value))
+                st.markdown(perm_lines)
+            else:
+                st.caption("—")
         with summary_cols[3]:
-            st.markdown(str(role["perm_count"]))
+            st.markdown(str(role["user_count"]))
 
         with st.expander(f"Edit {role_name.value}", expanded=False):
-            detail = _cached_role_detail(str(role_id))
             if detail is None:
                 st.warning("Role not found.")
                 continue
@@ -504,172 +381,53 @@ def _render_roles_tab() -> None:
 
             st.divider()
             st.markdown("#### Permissions for this role")
-            current_perms: list[Permission] = list(detail["permissions"])
-            selected_perms = st.multiselect(
-                "Permissions",
-                options=all_permissions,
-                default=current_perms,
-                format_func=lambda p: p.value,
-                key=f"perms_multi_{role_id}",
-            )
-            if st.button("Save permissions", key=f"save_perms_{role_id}"):
-                try:
-                    run_coroutine_in_lit_worker(set_role_permissions(role_id, set(selected_perms)), timeout=15)
-                    st.toast(f"Updated permissions for {role_name.value}", icon="✅")
-                    _refresh_and_rerun()
-                except Exception as exc:
-                    logger.exception("set_role_permissions_failed")
-                    st.error(f"Failed to update permissions: {exc}")
+            current_perms: list[Permission] = sorted(detail["permissions"], key=lambda p: p.value)
+            if not current_perms:
+                st.caption("No permissions granted.")
+            else:
+                for perm in current_perms:
+                    perm_cols = st.columns([4, 1])
+                    with perm_cols[0]:
+                        st.markdown(f"- `{perm.value}`")
+                    with perm_cols[1]:
+                        if st.button("Remove", key=f"remove_perm_{role_id}_{perm.value}"):
+                            try:
+                                run_coroutine_in_lit_worker(remove_role_permission(role_id, perm), timeout=10)
+                                st.toast(f"Revoked {perm.value} from {role_name.value}", icon="✅")
+                                _refresh_and_rerun()
+                            except Exception as exc:
+                                logger.exception("remove_role_permission_failed")
+                                st.error(f"Failed to revoke permission: {exc}")
+
+            current_perm_set = set(current_perms)
+            addable_perms = [p for p in all_permissions if p not in current_perm_set]
+            add_perm_cols = st.columns([4, 1])
+            with add_perm_cols[0]:
+                selected_perm_value = st.selectbox(
+                    "Add permission",
+                    options=["— select permission —", *(p.value for p in addable_perms)],
+                    key=f"add_perm_select_{role_id}",
+                    index=0,
+                )
+            with add_perm_cols[1]:
+                st.markdown("&nbsp;")
+                if st.button("Add", key=f"add_perm_btn_{role_id}"):
+                    if selected_perm_value == "— select permission —":
+                        st.toast("Pick a permission first.", icon="⚠️")
+                    else:
+                        try:
+                            run_coroutine_in_lit_worker(
+                                add_role_permission(role_id, Permission(selected_perm_value)), timeout=10
+                            )
+                            st.toast(f"Granted {selected_perm_value} to {role_name.value}", icon="✅")
+                            _refresh_and_rerun()
+                        except Exception as exc:
+                            logger.exception("add_role_permission_failed")
+                            st.error(f"Failed to grant permission: {exc}")
 
         st.divider()
 
 
-def _render_users_tab() -> None:
-    st.subheader("Users")
-
-    filter_cols = st.columns([4, 1])
-    with filter_cols[0]:
-        email_filter = st.text_input(
-            "Filter by email (substring match)",
-            key="user_email_filter",
-            value=st.session_state.get("user_email_filter", ""),
-        )
-    with filter_cols[1]:
-        st.markdown("&nbsp;")
-        if st.button("Refresh", key="users_refresh"):
-            _refresh_and_rerun()
-
-    if "users_page" not in st.session_state:
-        st.session_state["users_page"] = 0
-    page = int(st.session_state["users_page"])
-    offset = page * _USERS_PAGE_SIZE
-
-    with st.spinner("Loading users..."):
-        users, total = _cached_users_page(email_filter, offset, _USERS_PAGE_SIZE)
-
-    if total == 0:
-        st.info("No users match the current filter.")
-        return
-
-    total_pages = (total + _USERS_PAGE_SIZE - 1) // _USERS_PAGE_SIZE
-    st.caption(f"Showing page {page + 1} of {total_pages} — {total} user(s) total")
-
-    hdr = st.columns([3, 1, 2.5, 3.5, 0.8])
-    for i, label in enumerate(("Email", "Status", "Roles", "Effective permissions", "")):
-        with hdr[i]:
-            st.markdown(f"**{label}**")
-
-    selected_user_id: str | None = st.session_state.get("selected_user_id")
-
-    for user in users:
-        row = st.columns([3, 1, 2.5, 3.5, 0.8])
-        with row[0]:
-            st.markdown(f"`{user['email']}`")
-            if user["name"]:
-                st.caption(user["name"])
-        with row[1]:
-            st.markdown(user["status"].value)
-        with row[2]:
-            if user["roles"]:
-                st.markdown(", ".join(r.value for r in user["roles"]))
-            else:
-                st.caption("—")
-        with row[3]:
-            if user["permissions"]:
-                st.markdown(", ".join(p.value for p in user["permissions"]))
-            else:
-                st.caption("—")
-        with row[4]:
-            if st.button("Edit", key=f"edit_user_{user['user_id']}"):
-                st.session_state["selected_user_id"] = user["user_id"]
-                selected_user_id = user["user_id"]
-
-    nav_cols = st.columns([1, 1, 6])
-    with nav_cols[0]:
-        if st.button("◀ Prev", disabled=page <= 0, key="users_prev"):
-            st.session_state["users_page"] = page - 1
-            st.rerun()
-    with nav_cols[1]:
-        if st.button("Next ▶", disabled=page + 1 >= total_pages, key="users_next"):
-            st.session_state["users_page"] = page + 1
-            st.rerun()
-
-    if selected_user_id:
-        _render_user_detail(selected_user_id)
-
-
-def _render_user_detail(user_id: str) -> None:
-    st.divider()
-    st.subheader("User detail")
-
-    detail = _cached_user_detail(user_id)
-    if detail is None:
-        st.warning("User not found.")
-        if st.button("Close", key="close_user_detail"):
-            st.session_state.pop("selected_user_id", None)
-            st.rerun()
-        return
-
-    st.markdown(f"**Email:** `{detail['email']}`")
-    st.markdown(f"**User ID:** `{detail['user_id']}`")
-    st.markdown(f"**Status:** {detail['status'].value} · **Type:** {detail['user_type'].value}")
-
-    roles_summary = _cached_roles_summary()
-    role_name_to_id = {r["name"]: r["role_id"] for r in roles_summary}
-
-    all_role_names = [rn for rn in RoleName if rn in role_name_to_id]
-    current_names: list[RoleName] = list(detail["roles"])
-
-    is_self = _is_self(user_id)
-    disable_admin_removal = is_self and RoleName.ADMIN in current_names
-
-    selected_names: list[RoleName] = st.multiselect(
-        "Roles",
-        options=all_role_names,
-        default=current_names,
-        format_func=lambda r: r.value,
-        key=f"user_roles_multi_{user_id}",
-    )
-
-    if disable_admin_removal and RoleName.ADMIN not in selected_names:
-        st.warning("You cannot remove your own ADMIN role — it has been re-added.")
-        selected_names = [*selected_names, RoleName.ADMIN]
-
-    save_col, close_col = st.columns([1, 1])
-    with save_col:
-        if st.button("Save roles", key=f"save_user_roles_{user_id}"):
-            desired_ids = {role_name_to_id[n] for n in selected_names if n in role_name_to_id}
-            removing_admin = RoleName.ADMIN in current_names and RoleName.ADMIN not in selected_names
-            if removing_admin:
-                admin_count = _cached_admin_user_count()
-                if admin_count <= 1:
-                    st.toast("Cannot remove the last ADMIN user.", icon="⚠️")
-                    return
-            try:
-                run_coroutine_in_lit_worker(set_user_roles(user_id, desired_ids), timeout=15)
-                st.toast(f"Updated roles for {detail['email']}", icon="✅")
-                _refresh_and_rerun()
-            except Exception as exc:
-                logger.exception("set_user_roles_failed")
-                st.error(f"Failed to update roles: {exc}")
-    with close_col:
-        if st.button("Close", key=f"close_user_detail_{user_id}"):
-            st.session_state.pop("selected_user_id", None)
-            st.rerun()
-
-    st.markdown("#### Effective permissions (read-only)")
-    if detail["permissions"]:
-        st.markdown(", ".join(p.value for p in detail["permissions"]))
-    else:
-        st.caption("No permissions granted.")
-
-
 # ── Render ────────────────────────────────────────────────────────────────────
 
-tab_roles, tab_users = st.tabs(["Roles", "Users"])
-
-with tab_roles:
-    _render_roles_tab()
-
-with tab_users:
-    _render_users_tab()
+_render_roles()
