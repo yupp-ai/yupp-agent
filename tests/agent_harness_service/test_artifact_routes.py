@@ -39,6 +39,16 @@ def client(app: FastAPI) -> TestClient:
     return TestClient(app, raise_server_exceptions=False)
 
 
+@pytest.fixture(autouse=True)
+def _patch_resolve_attribution() -> Any:
+    """Stub out the DB-backed attribution resolver for all route tests."""
+    with patch(
+        "ypl.agent_harness_service.artifact_routes.resolve_attribution",
+        new=AsyncMock(return_value=({}, {})),
+    ) as mock_resolve:
+        yield mock_resolve
+
+
 def _mock_artifact(
     *,
     artifact_id: uuid.UUID = FAKE_ARTIFACT_ID,
