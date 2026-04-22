@@ -1,7 +1,7 @@
 ---
 name: debug-model-promotion
 description: Debug model promotion and cloaked testing issues. Use when investigating why a promoted model is or isn't appearing, traffic pacing issues, or cloaked testing behavior.
-allowed-tools: mcp__agcouch-mcp-server__search_gcp_logs, mcp__agcouch-mcp-server__query_yuppdb, mcp__agcouch-mcp-server__query_bigquery, mcp__agcouch-mcp-server__create_artifact, Bash, Read, Write
+allowed-tools: mcp__agcouch-mcp-server__search_gcp_logs, mcp__agcouch-mcp-server__query_yuppdb, mcp__agcouch-mcp-server__query_bigquery, mcp__agcouch-mcp-server__add_artifact, Bash, Read, Write
 ---
 
 # Model Promotion Debug Guide
@@ -293,7 +293,7 @@ WHERE ri.turn_id = '<turn_id>'
 
 ## Preserving Evidence with Artifact
 
-When investigating issues that may lead to a PR fix, **preserve critical evidence** using the `create_artifact` MCP tool. It's best to create a separate paste for each distinct piece of evidence (e.g., one for logs, another for database results). This creates shareable links that can be included in PR descriptions.
+When investigating issues that may lead to a PR fix, **preserve critical evidence** using the `add_artifact` MCP tool (set `artifact_type="TEXT"`). It's best to create a separate artifact for each distinct piece of evidence (e.g., one for logs, another for database results). This creates shareable links that can be included in PR descriptions.
 
 ### What to Preserve
 
@@ -305,9 +305,10 @@ When investigating issues that may lead to a PR fix, **preserve critical evidenc
 ### How to Use
 
 ```
-create_artifact(
+add_artifact(
+    artifact_type="TEXT",
+    title="Promotion Debug: <model_name or description>",
     content="<formatted logs or query results>",
-    name="Promotion Debug: <model_name or description>"
 )
 ```
 

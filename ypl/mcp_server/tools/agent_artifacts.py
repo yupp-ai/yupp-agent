@@ -1,14 +1,22 @@
 """MCP tools for managing agent artifacts.
 
-Two flavors of artifact creation live here:
+One artifact entity, three flavors:
 
-- ``add_artifact`` — records a *pointer* to an externally-hosted artifact
-  (PR link, doc URL, …). Metadata only; no content is stored by AHS.
-- ``create_artifact`` — creates a *textual* artifact (type ``TEXT`` by
-  default). Content + optional attachments are uploaded to the AHS
-  blob store and served back from ``/ahs/artifacts/{uuid}``.
+- **TEXT** — textual artifact whose content is uploaded to the AHS blob store
+  (markdown/plain/HTML). Use ``add_artifact`` with ``artifact_type="TEXT"``
+  and a ``content`` body; the viewer URL is generated automatically and
+  served from ``/ahs/artifacts/{uuid}``. Supports slug-based versioning,
+  attachments, and in-place new-version updates via ``update_artifact_content``.
+- **CODE_REVIEW** — pointer to a GitHub PR or code review. Use
+  ``add_artifact`` with ``artifact_type="CODE_REVIEW"`` and a ``url``.
+  No content is stored locally.
+- **OTHER** — pointer to any external resource (doc, dashboard, link).
+  Use ``add_artifact`` with ``artifact_type="OTHER"`` and a ``url``.
 
-Both attribute writes to the calling agent's session via AHS headers.
+Both pointer flavors accept ``artifact_metadata`` for type-specific data
+(e.g. ``{"pr_number": 123}`` for CODE_REVIEW).
+
+All writes are attributed to the calling agent's session via AHS headers.
 """
 
 import asyncio
@@ -24,10 +32,17 @@ from ypl.agent_harness_service.artifact_store import (
     ArtifactError,
     Attachment,
     archive_artifact,
+    archive_artifacts_by_slug,
     create_artifact,
     get_artifact_by_id,
     get_artifact_by_slug,
     read_artifact_content,
+)
+from ypl.agent_harness_service.artifact_store import (
+    list_artifact_versions as _list_artifact_versions,
+)
+from ypl.agent_harness_service.artifact_store import (
+    search_artifacts as _search_artifacts,
 )
 from ypl.backend.db import get_async_session, get_async_session_read_replica, retry_db
 from ypl.db.agent_harness import AgentArtifact, AgentArtifactType
@@ -61,7 +76,7 @@ def _parse_session_id(raw: str | None) -> uuid.UUID | None:
 
 
 @retry_db
-async def _create_artifact(
+async def _insert_pointer_artifact(
     *,
     artifact_type: AgentArtifactType,
     title: str,
@@ -73,6 +88,7 @@ async def _create_artifact(
     agent_task_id: uuid.UUID | None,
     artifact_metadata: dict[str, Any] | None,
 ) -> AgentArtifact:
+    """Insert a pointer-only artifact row (no blob upload)."""
     async with get_async_session() as session:
         artifact = AgentArtifact(
             artifact_type=artifact_type,
@@ -91,7 +107,7 @@ async def _create_artifact(
         return artifact
 
 
-async def _create_artifact_with_session_retry(
+async def _insert_pointer_with_session_retry(
     *,
     artifact_type: AgentArtifactType,
     title: str,
@@ -103,7 +119,7 @@ async def _create_artifact_with_session_retry(
     agent_task_id: uuid.UUID | None,
     artifact_metadata: dict[str, Any] | None,
 ) -> tuple[AgentArtifact, bool]:
-    """Create an artifact, retrying on session FK violations with backoff.
+    """Insert a pointer artifact, retrying on session FK violations.
 
     The session row may not be committed by the time this tool is called —
     there is a race condition between ``session.flush()`` (which inserts the
@@ -116,7 +132,7 @@ async def _create_artifact_with_session_retry(
         fallback path was used (artifact saved with ``agent_session_id=None``).
     """
     if agent_session_id is None:
-        return await _create_artifact(
+        return await _insert_pointer_artifact(
             artifact_type=artifact_type,
             title=title,
             url=url,
@@ -131,7 +147,7 @@ async def _create_artifact_with_session_retry(
     last_exc: IntegrityError | None = None
     for attempt in range(_SESSION_FK_MAX_RETRIES + 1):
         try:
-            artifact = await _create_artifact(
+            artifact = await _insert_pointer_artifact(
                 artifact_type=artifact_type,
                 title=title,
                 url=url,
@@ -173,7 +189,7 @@ async def _create_artifact_with_session_retry(
         title=title,
         exc_info=last_exc,
     )
-    artifact = await _create_artifact(
+    artifact = await _insert_pointer_artifact(
         artifact_type=artifact_type,
         title=title,
         url=url,
@@ -225,38 +241,123 @@ async def _update_artifact(
         return result
 
 
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+@retry_db
+async def _resolve_agent_id(agent_name: str) -> uuid.UUID | None:
+    """Resolve an agent name to its UUID. Returns None if not found."""
+    from sqlmodel import select
+
+    from ypl.db.agent_harness import Agent
+
+    async with get_async_session_read_replica() as session:
+        result = await session.execute(
+            select(Agent.agent_id).where(Agent.name == agent_name).where(Agent.deleted_at.is_(None))  # type: ignore[union-attr]
+        )
+        row = result.first()
+        return row.agent_id if row else None
+
+
+def _decode_attachments_arg(raw: str | None) -> list[Attachment]:
+    """Decode the MCP ``attachments`` JSON-string argument into Attachment objects.
+
+    Shape::
+
+        [{"filename": "image.png", "content_base64": "...", "content_type": "image/png"}, ...]
+    """
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ArtifactError(f"Invalid JSON for attachments: {exc}") from exc
+    if not isinstance(parsed, list):
+        raise ArtifactError("attachments must be a JSON array")
+    result: list[Attachment] = []
+    for i, item in enumerate(parsed):
+        if not isinstance(item, dict):
+            raise ArtifactError(f"attachments[{i}] must be an object")
+        try:
+            data = base64.b64decode(item["content_base64"])
+        except (KeyError, binascii.Error, ValueError) as exc:
+            raise ArtifactError(f"attachments[{i}]: invalid content_base64") from exc
+        result.append(
+            Attachment(
+                filename=str(item.get("filename", f"attachment-{i}")),
+                data=data,
+                content_type=str(item.get("content_type", "application/octet-stream")),
+            )
+        )
+    return result
+
+
+async def _resolve_caller_context() -> tuple[uuid.UUID | None, str | None, uuid.UUID | None]:
+    """Return (session_id, requesting_user_id, creator_agent_id) from MCP headers."""
+    session_id = _parse_session_id(get_ahs_session_id())
+    user_id = get_requesting_user_id()
+    agent_name = get_ahs_agent_name()
+    agent_id = await _resolve_agent_id(agent_name) if agent_name else None
+    return session_id, user_id, agent_id
+
+
+# ---------------------------------------------------------------------------
+# Unified add_artifact (TEXT with content, or CODE_REVIEW / OTHER as pointer)
+# ---------------------------------------------------------------------------
+
+
 @mcp_server.tool()
 async def add_artifact(
     artifact_type: str,
     title: str,
-    url: str,
+    content: str | None = None,
+    url: str | None = None,
     description: str | None = None,
+    content_type: str = "text/markdown",
+    named_slug: str | None = None,
+    create_new_slug: bool = False,
+    attachments: str | None = None,
     agent_task_id: str | None = None,
     artifact_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Register a new artifact in the agent artifact registry.
+    """Register a new artifact in the artifact registry.
 
-    Call this immediately after creating any trackable output — a artifact,
-    pull request, investigation report, or other resource. This creates a
-    persistent record tied to your current session so the artifact can be
-    found, referenced, and tracked across sessions.
+    One tool, three flavors — pick via ``artifact_type``:
+
+    - ``TEXT``         — a textual artifact (markdown / plain / HTML). Pass
+                         ``content``; a viewer URL is generated automatically.
+                         Supports versioning via ``named_slug``.
+    - ``CODE_REVIEW``  — pointer to a GitHub PR / code review. Pass ``url``.
+    - ``OTHER``        — pointer to any other external resource. Pass ``url``.
 
     Parameters:
-        artifact_type: Classification of the artifact. Valid values:
-            - TEXT        — text snippet, report, or investigation
-            - CODE_REVIEW — pull request or code review artifact (GitHub PR URL)
-            - OTHER       — anything else (describe in artifact_metadata)
-        title: Short human-readable name for the artifact (e.g. "Fix auth bug PR").
-        url: Canonical URL for the artifact (viewer URL, GitHub PR URL, etc.).
-        description: Optional one-line summary of what this artifact contains.
-        agent_task_id: If this artifact was created as part of a project task, pass
-            the task UUID here to link them.
+        artifact_type: TEXT, CODE_REVIEW, or OTHER.
+        title: Short human-readable name (e.g. "Fix auth bug PR").
+        content: TEXT only — the body of the artifact (markdown/plain/HTML).
+            Ignored for CODE_REVIEW / OTHER.
+        url: Pointer for CODE_REVIEW / OTHER (the PR URL, doc URL, etc.).
+            Ignored for TEXT (the viewer URL is generated).
+        description: Optional one-line summary of the artifact.
+        content_type: TEXT only. One of text/markdown (default), text/plain, text/html.
+        named_slug: TEXT only. URL-safe identifier for versioned artifacts.
+            If set, pair with ``create_new_slug`` to control whether this is a
+            brand-new slug or a new version of an existing one.
+        create_new_slug: TEXT only. True = start a new slug at version 1;
+            False (default) = append the next version onto an existing slug.
+            Ignored when ``named_slug`` is not set.
+        attachments: TEXT only. Optional JSON array of
+            ``{filename, content_base64, content_type}`` — reference inline
+            with ``![alt](attachment:<filename>)``.
+        agent_task_id: Optional UUID of the project task this artifact belongs to.
         artifact_metadata: Optional key-value bag for type-specific data, e.g.
-            {"pr_number": 123, "repo": "yupp-mind"} for CODE_REVIEW artifacts.
+            ``{"pr_number": 123, "repo": "yupp-agent"}`` for CODE_REVIEW.
 
     Returns:
-        { success, artifact_id, message } on success.
-        { success: false, error } on failure.
+        On success (TEXT):       { success, artifact_id, url, title, slug, version, content_type, message }
+        On success (pointer):    { success, artifact_id, url, title, message }
+        On failure:              { success: false, error }
     """
     if artifact_type not in _VALID_TYPES:
         return {
@@ -265,14 +366,6 @@ async def add_artifact(
         }
 
     parsed_type = AgentArtifactType(artifact_type)
-    agent_session_id = _parse_session_id(get_ahs_session_id())
-    requesting_user_id = get_requesting_user_id()
-
-    # Resolve creator_agent_id from the agent name.
-    agent_name = get_ahs_agent_name()
-    creator_agent_id: uuid.UUID | None = None
-    if agent_name:
-        creator_agent_id = await _resolve_agent_id(agent_name)
 
     parsed_task_id: uuid.UUID | None = None
     if agent_task_id:
@@ -281,29 +374,80 @@ async def add_artifact(
         except ValueError:
             return {"success": False, "error": f"Invalid agent_task_id '{agent_task_id}': not a valid UUID"}
 
+    session_id, user_id, agent_id = await _resolve_caller_context()
+
+    if parsed_type == AgentArtifactType.TEXT:
+        if content is None:
+            return {"success": False, "error": "TEXT artifacts require a 'content' body."}
+        try:
+            decoded_attachments = _decode_attachments_arg(attachments)
+        except ArtifactError as exc:
+            return {"success": False, "error": str(exc)}
+
+        try:
+            artifact = await create_artifact(
+                content=content.encode("utf-8"),
+                content_type=content_type,
+                title=title,
+                description=description,
+                creator_user_id=user_id,
+                creator_agent_id=agent_id,
+                agent_session_id=session_id,
+                agent_task_id=parsed_task_id,
+                named_slug=named_slug,
+                create_new_slug=create_new_slug,
+                attachments=decoded_attachments,
+                extra_metadata=artifact_metadata,
+            )
+        except ArtifactError as exc:
+            return {"success": False, "error": str(exc)}
+        except Exception:
+            logger.exception("Failed to store TEXT artifact", title=title)
+            return {"success": False, "error": "Internal error storing artifact."}
+
+        logger.info(
+            "Text artifact created",
+            artifact_id=str(artifact.agent_artifact_id),
+            title=title,
+            slug=artifact.named_slug,
+            version=artifact.version,
+        )
+        return {
+            "success": True,
+            "artifact_id": str(artifact.agent_artifact_id),
+            "url": artifact.url,
+            "title": artifact.title,
+            "slug": artifact.named_slug,
+            "version": artifact.version,
+            "content_type": artifact.content_type,
+            "message": f"Artifact '{title}' (TEXT) created at {artifact.url}.",
+        }
+
+    # CODE_REVIEW / OTHER: pointer-only flow.
+    if url is None:
+        return {"success": False, "error": f"{artifact_type} artifacts require a 'url'."}
+
     try:
-        artifact, session_linked = await _create_artifact_with_session_retry(
+        artifact, session_linked = await _insert_pointer_with_session_retry(
             artifact_type=parsed_type,
             title=title,
             url=url,
             description=description,
-            creator_user_id=requesting_user_id,
-            creator_agent_id=creator_agent_id,
-            agent_session_id=agent_session_id,
+            creator_user_id=user_id,
+            creator_agent_id=agent_id,
+            agent_session_id=session_id,
             agent_task_id=parsed_task_id,
             artifact_metadata=artifact_metadata,
         )
     except Exception:
-        logger.exception("Failed to store artifact", agent_name=agent_name, title=title)
+        logger.exception("Failed to store pointer artifact", title=title, artifact_type=artifact_type)
         return {"success": False, "error": "Internal error storing artifact — the artifact was not saved."}
 
     logger.info(
-        "Artifact registered",
+        "Pointer artifact registered",
         artifact_id=str(artifact.agent_artifact_id),
         artifact_type=artifact_type,
         title=title,
-        agent_name=agent_name,
-        session_id=str(agent_session_id),
         session_linked=session_linked,
     )
 
@@ -314,12 +458,14 @@ async def add_artifact(
     if not session_linked:
         message += (
             " Note: the artifact could not be linked to the current session "
-            f"(session {agent_session_id} was not found in the database after retries)."
+            f"(session {session_id} was not found in the database after retries)."
         )
 
     return {
         "success": True,
         "artifact_id": str(artifact.agent_artifact_id),
+        "url": artifact.url,
+        "title": artifact.title,
         "message": message,
     }
 
@@ -333,11 +479,16 @@ async def update_artifact(
     artifact_metadata: dict[str, Any] | None = None,
     merge_metadata: bool = True,
 ) -> dict[str, Any]:
-    """Update an existing artifact record.
+    """Update the metadata of an existing artifact.
 
-    Use this to revise the title, URL, description, or metadata of an artifact
-    that was previously registered via add_artifact — for example, when a draft
-    PR is promoted to ready-for-review, or when a artifact is superseded.
+    Revise the title / URL / description / metadata of an artifact that was
+    previously registered via ``add_artifact``. Does NOT change the content
+    body of TEXT artifacts — use ``update_artifact_content`` for that (which
+    creates a new version under the same slug).
+
+    Typical uses:
+    - Promote a CODE_REVIEW artifact from draft PR → ready-for-review (swap URL).
+    - Correct a title or append metadata fields.
 
     Parameters:
         artifact_id: UUID of the artifact to update (returned by add_artifact).
@@ -385,6 +536,79 @@ async def update_artifact(
         "success": True,
         "artifact_id": str(artifact.agent_artifact_id),
         "message": f"Artifact '{artifact.title}' updated successfully.",
+    }
+
+
+@mcp_server.tool()
+async def update_artifact_content(
+    slug: str,
+    content: str,
+    title: str | None = None,
+    description: str | None = None,
+    content_type: str = "text/markdown",
+    attachments: str | None = None,
+) -> dict[str, Any]:
+    """Save a new version of a TEXT artifact under an existing slug.
+
+    Thin wrapper over ``add_artifact(artifact_type="TEXT", named_slug=slug,
+    create_new_slug=False)``. Fails if ``slug`` has no prior versions — create
+    the slug with ``add_artifact`` first (passing ``create_new_slug=True``).
+
+    Parameters:
+        slug: Existing named_slug to append a new version onto.
+        content: New body of the artifact (markdown/plain/HTML).
+        title: Optional title (defaults to the previous version's title
+            shape if omitted — you almost always want to repeat it).
+        description: Optional one-line summary for the new version.
+        content_type: text/markdown (default), text/plain, or text/html.
+        attachments: Optional JSON array, same shape as ``add_artifact``.
+
+    Returns:
+        { success, artifact_id, url, slug, version, content_type, message } on success.
+        { success: false, error } on failure.
+    """
+    try:
+        decoded_attachments = _decode_attachments_arg(attachments)
+    except ArtifactError as exc:
+        return {"success": False, "error": str(exc)}
+
+    session_id, user_id, agent_id = await _resolve_caller_context()
+    resolved_title = title if title is not None else slug
+
+    try:
+        artifact = await create_artifact(
+            content=content.encode("utf-8"),
+            content_type=content_type,
+            title=resolved_title,
+            description=description,
+            creator_user_id=user_id,
+            creator_agent_id=agent_id,
+            agent_session_id=session_id,
+            named_slug=slug,
+            create_new_slug=False,
+            attachments=decoded_attachments,
+        )
+    except ArtifactError as exc:
+        return {"success": False, "error": str(exc)}
+    except Exception:
+        logger.exception("Failed to update artifact content", slug=slug)
+        return {"success": False, "error": "Internal error updating artifact content."}
+
+    logger.info(
+        "Text artifact new version saved",
+        artifact_id=str(artifact.agent_artifact_id),
+        slug=slug,
+        version=artifact.version,
+    )
+
+    return {
+        "success": True,
+        "artifact_id": str(artifact.agent_artifact_id),
+        "url": artifact.url,
+        "slug": artifact.named_slug,
+        "version": artifact.version,
+        "content_type": artifact.content_type,
+        "message": f"Artifact '{slug}' updated to version {artifact.version} at {artifact.url}.",
     }
 
 
@@ -450,6 +674,8 @@ async def list_artifacts(
             "title": a.title,
             "url": a.url,
             "description": a.description,
+            "slug": a.named_slug,
+            "version": a.version,
             "created_at": a.created_at.isoformat() if a.created_at else None,
             "artifact_metadata": a.artifact_metadata,
         }
@@ -459,143 +685,118 @@ async def list_artifacts(
     return {"success": True, "artifacts": rows, "count": len(rows)}
 
 
-# ============================================================================
-# Internal helpers
-# ============================================================================
+@mcp_server.tool()
+async def list_artifact_versions(slug: str) -> dict[str, Any]:
+    """List every version of a TEXT artifact slug, oldest first.
 
+    Archived versions are excluded. Returns an empty list if the slug has
+    no active versions.
 
-@retry_db
-async def _resolve_agent_id(agent_name: str) -> uuid.UUID | None:
-    """Resolve an agent name to its UUID. Returns None if not found."""
-    from sqlmodel import select
+    Parameters:
+        slug: The named_slug to enumerate versions for.
 
-    from ypl.db.agent_harness import Agent
-
-    async with get_async_session_read_replica() as session:
-        result = await session.execute(
-            select(Agent.agent_id).where(Agent.name == agent_name).where(Agent.deleted_at.is_(None))  # type: ignore[union-attr]
-        )
-        row = result.first()
-        return row.agent_id if row else None
-
-
-# ============================================================================
-# Textual-artifact tools (content-carrying)
-# ============================================================================
-
-
-def _decode_attachments_arg(raw: str | None) -> list[Attachment]:
-    """Decode the MCP ``attachments`` JSON-string argument into Attachment objects.
-
-    Shape::
-
-        [{"filename": "image.png", "content_base64": "...", "content_type": "image/png"}, ...]
+    Returns:
+        { success, slug, versions: [{version, artifact_id, title, url, created_at}], count }
     """
-    if not raw:
-        return []
     try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ArtifactError(f"Invalid JSON for attachments: {exc}") from exc
-    if not isinstance(parsed, list):
-        raise ArtifactError("attachments must be a JSON array")
-    result: list[Attachment] = []
-    for i, item in enumerate(parsed):
-        if not isinstance(item, dict):
-            raise ArtifactError(f"attachments[{i}] must be an object")
-        try:
-            data = base64.b64decode(item["content_base64"])
-        except (KeyError, binascii.Error, ValueError) as exc:
-            raise ArtifactError(f"attachments[{i}]: invalid content_base64") from exc
-        result.append(
-            Attachment(
-                filename=str(item.get("filename", f"attachment-{i}")),
-                data=data,
-                content_type=str(item.get("content_type", "application/octet-stream")),
-            )
-        )
-    return result
+        artifacts = await _list_artifact_versions(slug)
+    except Exception:
+        logger.exception("Failed to list artifact versions", slug=slug)
+        return {"success": False, "error": "Internal error listing versions."}
+
+    rows = [
+        {
+            "version": a.version,
+            "artifact_id": str(a.agent_artifact_id),
+            "title": a.title,
+            "url": a.url,
+            "content_type": a.content_type,
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+        }
+        for a in artifacts
+    ]
+    return {"success": True, "slug": slug, "versions": rows, "count": len(rows)}
 
 
-@mcp_server.tool(
-    name="create_artifact",
-    description=(
-        "Create a new textual artifact (default type TEXT — a shareable "
-        "markdown/text/html document). Content is stored in the AHS blob store; "
-        "metadata is written to the ``agent_artifacts`` DB table. Returns a URL "
-        "that points at /ahs/artifacts/{uuid}. "
-        "Optionally attach images or other files via ``attachments`` (JSON array "
-        "of {filename, content_base64, content_type}). Reference them inline with "
-        "``![alt](attachment:<filename>)`` in the content. "
-        "For named artifacts with versioning: set ``named_slug`` to a URL-safe "
-        "identifier and ``create_new_slug=True`` to start a new slug (version 1), "
-        "or ``False`` to append the next version onto an existing slug."
-    ),
-)
-async def mcp_create_artifact(
-    content: str,
-    title: str = "",
-    description: str | None = None,
-    content_type: str = "text/markdown",
-    named_slug: str | None = None,
-    create_new_slug: bool = False,
-    attachments: str | None = None,
+@mcp_server.tool()
+async def search_artifacts(
+    query: str,
+    artifact_type: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+    include_archived: bool = False,
 ) -> dict[str, Any]:
-    """Create a textual artifact. Attribution comes from the MCP session headers."""
+    """Case-insensitive substring search over artifact title, description, slug, and attachment filenames.
+
+    Parameters:
+        query: Substring to match (required, non-empty).
+        artifact_type: Optional filter. One of: TEXT, CODE_REVIEW, OTHER.
+        limit: Max results (default 20, cap 100).
+        offset: Pagination offset (default 0).
+        include_archived: Include archived artifacts (default False).
+
+    Returns:
+        { success, results: [...], count }
+    """
+    if not query or not query.strip():
+        return {"success": False, "error": "query must be non-empty."}
+
+    limit = min(max(limit, 1), 100)
+    offset = max(offset, 0)
+
+    parsed_type: AgentArtifactType | None = None
+    if artifact_type:
+        if artifact_type not in _VALID_TYPES:
+            return {
+                "success": False,
+                "error": f"Invalid artifact_type '{artifact_type}'. Must be one of: {_VALID_TYPES}",
+            }
+        parsed_type = AgentArtifactType(artifact_type)
+
     try:
-        decoded_attachments = _decode_attachments_arg(attachments)
-    except ArtifactError as exc:
-        return {"error": str(exc)}
-
-    session_id = _parse_session_id(get_ahs_session_id())
-    user_id = get_requesting_user_id()
-    agent_name = get_ahs_agent_name()
-    agent_id = await _resolve_agent_id(agent_name) if agent_name else None
-
-    resolved_title = title or (f"paste-{uuid.uuid4().hex[:8]}")
-
-    try:
-        artifact = await create_artifact(
-            content=content.encode("utf-8"),
-            content_type=content_type,
-            title=resolved_title,
-            description=description,
-            creator_user_id=user_id,
-            creator_agent_id=agent_id,
-            agent_session_id=session_id,
-            named_slug=named_slug,
-            create_new_slug=create_new_slug,
-            attachments=decoded_attachments,
+        artifacts = await _search_artifacts(
+            query,
+            artifact_type=parsed_type,
+            include_archived=include_archived,
+            limit=limit,
+            offset=offset,
         )
-    except ArtifactError as exc:
-        return {"error": str(exc)}
+    except Exception:
+        logger.exception("Failed to search artifacts", query=query)
+        return {"success": False, "error": "Internal error searching artifacts."}
 
-    return {
-        "artifact_id": str(artifact.agent_artifact_id),
-        "url": artifact.url,
-        "slug": artifact.named_slug,
-        "version": artifact.version,
-        "content_type": artifact.content_type,
-        "title": artifact.title,
-    }
+    rows = [
+        {
+            "artifact_id": str(a.agent_artifact_id),
+            "artifact_type": a.artifact_type.value,
+            "title": a.title,
+            "url": a.url,
+            "description": a.description,
+            "slug": a.named_slug,
+            "version": a.version,
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+        }
+        for a in artifacts
+    ]
+    return {"success": True, "results": rows, "count": len(rows)}
 
 
 @mcp_server.tool(
     name="read_artifact",
     description=(
-        "Read a textual artifact by ID or slug. Returns its content inline "
-        "along with metadata. Pass ``id_or_slug`` as either a UUID or a "
-        "named slug; when reading by slug, optionally pass ``version`` to "
-        "select a specific version (defaults to the latest non-archived)."
+        "Read a TEXT artifact's content + metadata. Pass ``id_or_slug`` as "
+        "either a UUID or a named slug; when reading by slug, optionally pass "
+        "``version`` to select a specific version (defaults to the latest "
+        "non-archived). Returns an error for pointer artifacts "
+        "(CODE_REVIEW / OTHER) — those have no stored body."
     ),
 )
 async def mcp_read_artifact(
     id_or_slug: str,
     version: int | None = None,
 ) -> dict[str, Any]:
-    """Fetch an artifact's content + metadata."""
+    """Fetch a TEXT artifact's content + metadata."""
     artifact: AgentArtifact | None = None
-    # Try UUID first, fall back to slug.
     try:
         artifact_uuid = uuid.UUID(id_or_slug)
         artifact = await get_artifact_by_id(artifact_uuid)
@@ -625,12 +826,46 @@ async def mcp_read_artifact(
     }
 
 
+@mcp_server.tool()
+async def artifact_url(id_or_slug: str) -> dict[str, Any]:
+    """Look up an artifact's canonical URL without fetching its content.
+
+    Cheap way to get a shareable link for an artifact you know by ID or slug.
+    Works for all artifact types — TEXT returns the viewer URL, CODE_REVIEW /
+    OTHER return the stored pointer URL.
+
+    Parameters:
+        id_or_slug: Artifact UUID or named_slug.
+
+    Returns:
+        { success, artifact_id, url, title, artifact_type } on success.
+        { success: false, error } if not found.
+    """
+    artifact: AgentArtifact | None = None
+    try:
+        artifact_uuid = uuid.UUID(id_or_slug)
+        artifact = await get_artifact_by_id(artifact_uuid)
+    except ValueError:
+        artifact = await get_artifact_by_slug(id_or_slug)
+
+    if artifact is None:
+        return {"success": False, "error": f"Artifact not found: {id_or_slug!r}"}
+
+    return {
+        "success": True,
+        "artifact_id": str(artifact.agent_artifact_id),
+        "url": artifact.url,
+        "title": artifact.title,
+        "artifact_type": artifact.artifact_type.value,
+    }
+
+
 @mcp_server.tool(
     name="archive_artifact",
     description=(
-        "Archive (soft-delete) a textual artifact by UUID. The row stays in the "
-        "DB with ``is_archived=true``; blobs are retained so the artifact can be "
-        "un-archived later by a migration/admin if needed."
+        "Archive (soft-delete) a single artifact by UUID. The row stays in the "
+        "DB with ``is_archived=true``; blobs are retained so the artifact can "
+        "be un-archived later by a migration/admin if needed."
     ),
 )
 async def mcp_archive_artifact(artifact_id: str) -> dict[str, Any]:
@@ -642,3 +877,28 @@ async def mcp_archive_artifact(artifact_id: str) -> dict[str, Any]:
     if not archived:
         return {"error": f"Artifact not found: {artifact_id}"}
     return {"artifact_id": artifact_id, "archived": True}
+
+
+@mcp_server.tool()
+async def archive_artifact_slug(slug: str) -> dict[str, Any]:
+    """Archive every active version of a TEXT artifact slug.
+
+    Already-archived versions are skipped silently.
+
+    Parameters:
+        slug: The named_slug whose versions should all be archived.
+
+    Returns:
+        { success, slug, archived_count, message }
+    """
+    try:
+        count = await archive_artifacts_by_slug(slug)
+    except Exception:
+        logger.exception("Failed to archive artifact slug", slug=slug)
+        return {"success": False, "error": "Internal error archiving artifact slug."}
+    return {
+        "success": True,
+        "slug": slug,
+        "archived_count": count,
+        "message": f"Archived {count} version(s) under slug '{slug}'.",
+    }

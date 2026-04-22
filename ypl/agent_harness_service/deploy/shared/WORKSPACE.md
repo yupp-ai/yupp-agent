@@ -48,32 +48,51 @@
 
 Every significant output you produce must be registered in the artifact registry using the `add_artifact` MCP tool. This ensures work is traceable and can be referenced by future sessions.
 
-### When to call `add_artifact`
+### Artifact types
 
-Valid `artifact_type` values: `YUPPASTE`, `CODE_REVIEW`, `OTHER`.
+Valid `artifact_type` values: `TEXT`, `CODE_REVIEW`, `OTHER`.
 
-- ✅ After creating a artifact → `artifact_type: "YUPPASTE"`, url = the `go_link`
-- ✅ After creating a pull request or code review → `artifact_type: "CODE_REVIEW"`, url = PR URL
-- ✅ Any other trackable output → `artifact_type: "OTHER"`
+- **`TEXT`** — a textual artifact (report, investigation, summary). Pass `content` (and optionally `content_type`, `named_slug`, `attachments`). A viewer URL is generated automatically.
+- **`CODE_REVIEW`** — pointer to a GitHub PR / code review. Pass `url` (the PR URL). No content is stored locally.
+- **`OTHER`** — pointer to any external resource (doc, dashboard, link). Pass `url`.
 
-### When to call `update_artifact`
+### When to call each tool
 
-- When a draft PR is promoted to ready-for-review (update title/description)
-- When a artifact is superseded by a newer version (update the URL)
-- When you add meaningful metadata to a previously registered artifact
+- `add_artifact` — whenever you produce a significant output (text report, PR, external link).
+- `update_artifact_content(slug, content, …)` — save a new version of a named TEXT artifact (same `slug`, auto-incremented version).
+- `update_artifact(artifact_id, …)` — revise the title/URL/description/metadata of any existing artifact.
+- `list_artifacts()` / `list_artifact_versions(slug)` / `search_artifacts(query)` — discover artifacts.
+- `read_artifact(id_or_slug)` — fetch a TEXT artifact's content.
+- `artifact_url(id_or_slug)` — quickly resolve an artifact to its shareable URL.
+- `archive_artifact(artifact_id)` / `archive_artifact_slug(slug)` — soft-delete.
 
 ### How to call the tools
 
 ```
-# Register a new artifact
+# Create a TEXT artifact (content body stored by AHS)
+add_artifact(
+    artifact_type="TEXT",
+    title="Investigation: backend KeyError",
+    content="<formatted investigation markdown>",
+    named_slug="investigation-backend-keyerror",
+    create_new_slug=True,
+)
+
+# Register a PR (pointer only, no content)
 add_artifact(
     artifact_type="CODE_REVIEW",
     title="[AHS] Add artifact MCP tools",
-    url="https://github.com/yupp-ai/yupp-mind/pull/12345",
+    url="https://github.com/yupp-ai/yupp-agent/pull/12345",
     description="Adds add_artifact, update_artifact, list_artifacts MCP tools",
 )
 
-# Update an existing artifact
+# Save a new version of a TEXT artifact
+update_artifact_content(
+    slug="investigation-backend-keyerror",
+    content="<updated investigation markdown with follow-up findings>",
+)
+
+# Update an existing artifact's metadata
 update_artifact(
     artifact_id="<uuid returned by add_artifact>",
     description="Updated description after PR review",

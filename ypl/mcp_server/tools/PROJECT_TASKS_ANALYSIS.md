@@ -550,7 +550,7 @@ MCP tools only accept flat/primitive parameters (str, int, bool). Complex object
 | `create_recurring_agent_schedule` | Periodic project executor (cron-driven) |
 | `cancel_agent_schedule` | Stop recurring execution when project completes |
 | `store_agent_memory` / `search_agent_memory` | Per-agent learnings (use `shared_state` for project-scoped data) |
-| `create_artifact` | Store large investigation results, link URL in task `result` |
+| `add_artifact` | Store large investigation results as TEXT artifacts, link URL in task `result` |
 | `search_slack` / `read_slack_thread` | Reference Slack context in task descriptions |
 | `query_bigquery` / `query_yuppdb` | Data tasks, store query results in task `result` |
 | `search_gcp_logs` / `get_sentry_issue_details` | Investigation tasks, store findings in task `result` |

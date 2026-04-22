@@ -1,7 +1,7 @@
 ---
 name: investigate-backend-alert
 description: Investigate backend errors from #alert_backend Slack channel using GCP logs. Use when debugging production errors, analyzing error patterns, or tracing issues from alert notifications.
-allowed-tools: mcp__agcouch-mcp-server__search_gcp_logs, mcp__agcouch-mcp-server__create_artifact, mcp__agcouch-mcp-server__get_gcp_alert_details, mcp__agcouch-mcp-server__get_agent_memory, mcp__agcouch-mcp-server__store_agent_memory, Bash, Read, Write, Skill
+allowed-tools: mcp__agcouch-mcp-server__search_gcp_logs, mcp__agcouch-mcp-server__add_artifact, mcp__agcouch-mcp-server__get_gcp_alert_details, mcp__agcouch-mcp-server__get_agent_memory, mcp__agcouch-mcp-server__store_agent_memory, Bash, Read, Write, Skill
 ---
 
 # Backend Alert Investigation Guide
@@ -376,7 +376,7 @@ Search the codebase for:
 
 ## Preserving Evidence with Artifact
 
-When investigating issues that may lead to a PR fix, **preserve critical evidence** using the `create_artifact` MCP tool. It's best to create a separate paste for each distinct piece of evidence (e.g., one for logs, another for database results). This creates shareable links that can be included in PR descriptions.
+When investigating issues that may lead to a PR fix, **preserve critical evidence** using the `add_artifact` MCP tool (set `artifact_type="TEXT"`). It's best to create a separate artifact for each distinct piece of evidence (e.g., one for logs, another for database results). This creates shareable links that can be included in PR descriptions.
 
 ### What to Preserve
 
@@ -388,9 +388,10 @@ When investigating issues that may lead to a PR fix, **preserve critical evidenc
 ### How to Use
 
 ```
-create_artifact(
+add_artifact(
+    artifact_type="TEXT",
+    title="Investigation: <brief description>",
     content="<formatted logs or data>",
-    name="Investigation: <brief description>"
 )
 ```
 

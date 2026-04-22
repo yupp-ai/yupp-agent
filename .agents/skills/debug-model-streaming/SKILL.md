@@ -1,7 +1,7 @@
 ---
 name: debug-model-streaming
 description: Debug model streaming issues by analyzing completion status, error types, and GCP logs. Use when investigating streaming failures, timeouts, provider errors, or any model response issues for a specific model.
-allowed-tools: mcp__agcouch-mcp-server__search_gcp_logs, mcp__agcouch-mcp-server__query_yuppdb, mcp__agcouch-mcp-server__query_bigquery, mcp__agcouch-mcp-server__create_artifact, mcp__agcouch-mcp-server__search_slack, mcp__agcouch-mcp-server__read_slack_thread, Bash, Read, Write
+allowed-tools: mcp__agcouch-mcp-server__search_gcp_logs, mcp__agcouch-mcp-server__query_yuppdb, mcp__agcouch-mcp-server__query_bigquery, mcp__agcouch-mcp-server__add_artifact, mcp__agcouch-mcp-server__search_slack, mcp__agcouch-mcp-server__read_slack_thread, Bash, Read, Write
 ---
 
 # Model Streaming Debug Guide
@@ -397,7 +397,7 @@ This helps determine if the issue has been seen before, if someone is already in
 
 ## Preserving Evidence with Artifact
 
-When investigating issues that may lead to a PR fix, **preserve critical evidence** using the `create_artifact` MCP tool. It's best to create a separate paste for each distinct piece of evidence (e.g., one for logs, another for database results). This creates shareable links that can be included in PR descriptions.
+When investigating issues that may lead to a PR fix, **preserve critical evidence** using the `add_artifact` MCP tool (set `artifact_type="TEXT"`). It's best to create a separate artifact for each distinct piece of evidence (e.g., one for logs, another for database results). This creates shareable links that can be included in PR descriptions.
 
 ### What to Preserve
 
@@ -409,9 +409,10 @@ When investigating issues that may lead to a PR fix, **preserve critical evidenc
 ### How to Use
 
 ```
-create_artifact(
+add_artifact(
+    artifact_type="TEXT",
+    title="Streaming Debug: <model_name or description>",
     content="<formatted logs or query results>",
-    name="Streaming Debug: <model_name or description>"
 )
 ```
 

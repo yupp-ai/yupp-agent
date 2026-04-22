@@ -82,7 +82,7 @@ Context links — include whichever are known, omit the rest:
 
 Why this change is needed. What's broken, missing, or suboptimal.
 Include evidence: error messages, metrics, user reports, screenshots.
-Link to investigation paste if from an oncall alert.
+Link to the investigation artifact if this PR originated from an oncall alert.
 ```
 
 ### Solution Section

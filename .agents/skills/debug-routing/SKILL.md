@@ -1,7 +1,7 @@
 ---
 name: debug-routing
 description: Debug model routing issues using GCP logs and database queries. Use when investigating why specific models were chosen, routing failures, or unexpected routing behavior, such as a model appearing or not showing up unexpectedly, or seeing duplicate models or similar models that are not fit the context or following the user request or frontend instructions.
-allowed-tools: mcp__agcouch-mcp-server__search_gcp_logs, mcp__agcouch-mcp-server__query_yuppdb, mcp__agcouch-mcp-server__query_bigquery, mcp__agcouch-mcp-server__create_artifact, Bash, Read, Write
+allowed-tools: mcp__agcouch-mcp-server__search_gcp_logs, mcp__agcouch-mcp-server__query_yuppdb, mcp__agcouch-mcp-server__query_bigquery, mcp__agcouch-mcp-server__add_artifact, Bash, Read, Write
 ---
 
 # Model Routing Debug Guide
@@ -462,7 +462,7 @@ Key files for understanding routing logic:
 
 ## Preserving Evidence with Artifact
 
-When investigating issues that may lead to a PR fix, **preserve critical evidence** using the `create_artifact` MCP tool. It's best to create a separate paste for each distinct piece of evidence (e.g., one for logs, another for database results). This creates shareable links that can be included in PR descriptions.
+When investigating issues that may lead to a PR fix, **preserve critical evidence** using the `add_artifact` MCP tool (set `artifact_type="TEXT"`). It's best to create a separate artifact for each distinct piece of evidence (e.g., one for logs, another for database results). This creates shareable links that can be included in PR descriptions.
 
 ### What to Preserve
 
@@ -474,9 +474,10 @@ When investigating issues that may lead to a PR fix, **preserve critical evidenc
 ### How to Use
 
 ```
-create_artifact(
+add_artifact(
+    artifact_type="TEXT",
+    title="Routing Debug: <turn_id or description>",
     content="<formatted logs or query results>",
-    name="Routing Debug: <turn_id or description>"
 )
 ```
 

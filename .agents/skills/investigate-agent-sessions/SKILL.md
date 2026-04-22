@@ -1,7 +1,7 @@
 ---
 name: investigate-agent-sessions
 description: Investigate agent harness session performance and failures. Use when debugging why an AHS session failed, hit max turns, was slow, or didn't achieve the desired work. Accepts session IDs, Lit console URLs, or message IDs.
-allowed-tools: mcp__agcouch-mcp-server__query_agentdb, mcp__agcouch-mcp-server__query_yuppdb, mcp__agcouch-mcp-server__search_gcp_logs, mcp__agcouch-mcp-server__create_artifact, mcp__agcouch-mcp-server__get_agent_memory, mcp__agcouch-mcp-server__store_agent_memory, Bash, Read, Glob, Grep, Skill
+allowed-tools: mcp__agcouch-mcp-server__query_agentdb, mcp__agcouch-mcp-server__query_yuppdb, mcp__agcouch-mcp-server__search_gcp_logs, mcp__agcouch-mcp-server__add_artifact, mcp__agcouch-mcp-server__get_agent_memory, mcp__agcouch-mcp-server__store_agent_memory, Bash, Read, Glob, Grep, Skill
 ---
 
 # Investigate Agent Harness Sessions
@@ -451,12 +451,13 @@ Present findings with this structure, tailored to what the user cares about:
 
 ### Creating Artifact for Detailed Evidence
 
-For complex investigations, create a artifact with raw data:
+For complex investigations, create a TEXT artifact with raw data:
 
 ```
-create_artifact(
+add_artifact(
+    artifact_type="TEXT",
+    title="AHS Investigation: <session_title>",
     content="<formatted investigation report with log excerpts>",
-    name="AHS Investigation: <session_title>"
 )
 ```
 

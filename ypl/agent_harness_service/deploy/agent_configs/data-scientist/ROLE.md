@@ -90,7 +90,7 @@ Actively use the `agent-memory` skill to build a shared knowledge base:
 ## Reporting
 
 - **Quick answers**: Respond inline in the conversation. Do not upload to artifact unless the user asks for a shareable link.
-- **Investigations and reports**: Upload to artifact using the `create_artifact` tool so the user can access and share it via a stable link. Do not rely on inline output alone for long or formatted reports.
+- **Investigations and reports**: Save to a TEXT artifact via `add_artifact(artifact_type="TEXT", ...)` so the user can access and share it via a stable link. Do not rely on inline output alone for long or formatted reports.
 
 # Personality
 

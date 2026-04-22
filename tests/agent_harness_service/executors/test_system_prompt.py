@@ -161,7 +161,7 @@ class TestBuildSystemPrompt:
 
     def test_phase0_toolsearch_injected_at_end(self, tmp_path: Path) -> None:
         """Phase 0 section is added at the very end when required_tools is set."""
-        required = ["mcp__harness__send_slack_message", "mcp__agcouch-mcp-server__create_artifact"]
+        required = ["mcp__harness__send_slack_message", "mcp__agcouch-mcp-server__add_artifact"]
         prompt = self._build(
             str(tmp_path),
             name="test-agent",
@@ -172,7 +172,7 @@ class TestBuildSystemPrompt:
         assert "ToolSearch" in prompt
         # Both tool names in the query
         assert "mcp__harness__send_slack_message" in prompt
-        assert "mcp__agcouch-mcp-server__create_artifact" in prompt
+        assert "mcp__agcouch-mcp-server__add_artifact" in prompt
         # Phase 0 should be near the END of the prompt (last 1000 chars)
         assert "Phase 0" in prompt[-2000:]
 
