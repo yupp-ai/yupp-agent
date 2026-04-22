@@ -1038,7 +1038,7 @@ _CHAT_CSS = """
 
 
 _ARTIFACT_TYPE_ICON: dict[AgentArtifactType, str] = {
-    AgentArtifactType.YUPPASTE: "📝",
+    AgentArtifactType.TEXT: "📝",
     AgentArtifactType.CODE_REVIEW: "🔍",
     AgentArtifactType.OTHER: "📦",
 }

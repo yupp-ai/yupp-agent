@@ -4,7 +4,7 @@ Two flavors of artifact creation live here:
 
 - ``add_artifact`` — records a *pointer* to an externally-hosted artifact
   (PR link, doc URL, …). Metadata only; no content is stored by AHS.
-- ``create_artifact`` — creates a *textual* artifact (type ``YUPPASTE`` by
+- ``create_artifact`` — creates a *textual* artifact (type ``TEXT`` by
   default). Content + optional attachments are uploaded to the AHS
   blob store and served back from ``/ahs/artifacts/{uuid}``.
 
@@ -243,11 +243,11 @@ async def add_artifact(
 
     Parameters:
         artifact_type: Classification of the artifact. Valid values:
-            - YUPPASTE    — text snippet, report, or investigation paste (http://go/p/...)
+            - TEXT        — text snippet, report, or investigation
             - CODE_REVIEW — pull request or code review artifact (GitHub PR URL)
             - OTHER       — anything else (describe in artifact_metadata)
         title: Short human-readable name for the artifact (e.g. "Fix auth bug PR").
-        url: Canonical URL for the artifact (yuppaste go-link, GitHub PR URL, etc.).
+        url: Canonical URL for the artifact (viewer URL, GitHub PR URL, etc.).
         description: Optional one-line summary of what this artifact contains.
         agent_task_id: If this artifact was created as part of a project task, pass
             the task UUID here to link them.
@@ -400,7 +400,7 @@ async def list_artifacts(
     Use artifact_type to filter to a specific kind.
 
     Parameters:
-        artifact_type: Optional filter. One of: YUPPASTE, CODE_REVIEW, OTHER.
+        artifact_type: Optional filter. One of: TEXT, CODE_REVIEW, OTHER.
         limit: Maximum number of artifacts to return (default 20, max 100).
 
     Returns:
@@ -520,7 +520,7 @@ def _decode_attachments_arg(raw: str | None) -> list[Attachment]:
 @mcp_server.tool(
     name="create_artifact",
     description=(
-        "Create a new textual artifact (default type YUPPASTE — a shareable "
+        "Create a new textual artifact (default type TEXT — a shareable "
         "markdown/text/html document). Content is stored in the AHS blob store; "
         "metadata is written to the ``agent_artifacts`` DB table. Returns a URL "
         "that points at /ahs/artifacts/{uuid}. "

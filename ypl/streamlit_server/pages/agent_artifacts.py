@@ -58,7 +58,7 @@ def _time_ago(dt: datetime | None) -> str:
 # ── Artifact type metadata ────────────────────────────────────────────────────
 
 _ARTIFACT_TYPE_ICON: dict[AgentArtifactType, str] = {
-    AgentArtifactType.YUPPASTE: "📝",
+    AgentArtifactType.TEXT: "📝",
     AgentArtifactType.CODE_REVIEW: "🔍",
     AgentArtifactType.OTHER: "📦",
 }

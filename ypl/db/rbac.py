@@ -21,7 +21,7 @@ class RoleName(str, enum.Enum):
     READONLY = "READONLY"
     ADMIN_AGENT = "ADMIN_AGENT"
     ENGINEER = "ENGINEER"
-    YUPPASTE_USER = "YUPPASTE_USER"
+    ARTIFACT_USER = "ARTIFACT_USER"
     MCP_USER = "MCP_USER"
 
 
@@ -33,9 +33,9 @@ class Permission(str, enum.Enum):
     # RBAC management
     MANAGE_RBAC = "manage_rbac"
 
-    # Yuppaste
-    READ_YUPPASTE = "READ_YUPPASTE"
-    WRITE_YUPPASTE = "WRITE_YUPPASTE"
+    # Artifacts (any type)
+    READ_ARTIFACT = "READ_ARTIFACT"
+    WRITE_ARTIFACT = "WRITE_ARTIFACT"
 
     # MCP
     USE_MCP = "USE_MCP"

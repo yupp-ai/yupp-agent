@@ -2,11 +2,9 @@
 
 Writes artifact content to the configured ``BlobStore`` and metadata to
 the ``agent_artifacts`` Postgres table. Loads go through the same two
-stores. The ``YUPPASTE`` enum value is kept for schema stability, but
-semantically these are just "textual artifacts" — content is stored
-inline in the blob store, siblings are attachments, and metadata
-(title, slug, version, creator, session/task linkage) lives in
-``agent_artifacts``.
+stores. Default artifact type is ``TEXT`` — content stored inline in
+the blob store, siblings are attachments, and metadata (title, slug,
+version, creator, session/task linkage) lives in ``agent_artifacts``.
 
 Path convention (passed to the BlobStore):
 
@@ -202,7 +200,7 @@ async def create_artifact(
     create_new_slug: bool = False,
     attachments: list[Attachment] | None = None,
     extra_metadata: dict[str, Any] | None = None,
-    artifact_type: AgentArtifactType = AgentArtifactType.YUPPASTE,
+    artifact_type: AgentArtifactType = AgentArtifactType.TEXT,
     blob_store: BlobStore | None = None,
 ) -> AgentArtifact:
     """Create a textual artifact: upload content + attachments, insert row.
@@ -279,7 +277,7 @@ async def get_artifact_by_id(artifact_id: uuid.UUID) -> AgentArtifact | None:
 async def get_artifact_by_slug(
     slug: str,
     version: int | None = None,
-    artifact_type: AgentArtifactType = AgentArtifactType.YUPPASTE,
+    artifact_type: AgentArtifactType = AgentArtifactType.TEXT,
 ) -> AgentArtifact | None:
     """Resolve ``slug`` to an artifact row.
 
@@ -305,7 +303,7 @@ async def get_artifact_by_slug(
 @retry_db
 async def list_artifact_versions(
     slug: str,
-    artifact_type: AgentArtifactType = AgentArtifactType.YUPPASTE,
+    artifact_type: AgentArtifactType = AgentArtifactType.TEXT,
 ) -> list[AgentArtifact]:
     async with get_async_session_read_replica() as session:
         stmt = (
@@ -379,7 +377,7 @@ async def archive_artifact(artifact_id: uuid.UUID) -> bool:
 @retry_db
 async def archive_artifacts_by_slug(
     slug: str,
-    artifact_type: AgentArtifactType = AgentArtifactType.YUPPASTE,
+    artifact_type: AgentArtifactType = AgentArtifactType.TEXT,
 ) -> int:
     """Archive every non-archived version under ``slug``.
 
