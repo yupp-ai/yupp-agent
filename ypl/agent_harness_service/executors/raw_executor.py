@@ -29,7 +29,7 @@ from ypl.agent_harness_service.common.constants import (
     get_session_dir,
 )
 from ypl.agent_harness_service.common.models import AgentSpec, ExecutorResult
-from ypl.agent_harness_service.executors.providers import get_provider_config, is_openai_compatible, parse_model_string
+from ypl.agent_harness_service.common.providers import get_provider_config, is_openai_compatible, parse_model_string
 from ypl.structured_logger import get_logger
 
 logger = get_logger()

@@ -4,7 +4,7 @@ Covers pure-logic aspects only (no DB or LLM API calls):
 - TITLE_GENERATE_TURNS constant
 - _TRIGGER_PREFIX mapping
 - maybe_generate_session_title: skips on wrong turns, skips when no API key
-- _generate_title_text: skips when ANTHROPIC_API_KEY is absent
+- _generate_title_text: skips when CEREBRAS_API_KEY is absent
 """
 
 from __future__ import annotations
@@ -82,33 +82,44 @@ class TestTriggerPrefix:
 # ===========================================================================
 
 
+def _make_mock_response(text: str | None, *, no_choices: bool = False) -> MagicMock:
+    """Build a mock OpenAI ChatCompletion response with the given message content."""
+    mock_response = MagicMock()
+    if no_choices:
+        mock_response.choices = []
+    else:
+        choice = MagicMock()
+        choice.message.content = text
+        mock_response.choices = [choice]
+    return mock_response
+
+
 class TestGenerateTitleText:
     @pytest.mark.asyncio
     async def test_returns_none_when_no_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("CEREBRAS_API_KEY", raising=False)
         result = await _generate_title_text(["Fix the login bug"])
         assert result is None
 
     @pytest.mark.asyncio
     async def test_returns_none_for_empty_messages(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Empty messages list should not crash; no title generated."""
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("CEREBRAS_API_KEY", raising=False)
         result = await _generate_title_text([])
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_calls_anthropic_api_when_key_present(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """When API key is set, the Anthropic client is called."""
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-123")
+    async def test_calls_llm_api_when_key_present(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """When API key is set, the OpenAI-compatible client is called."""
+        monkeypatch.setenv("CEREBRAS_API_KEY", "test-key-123")
 
-        mock_response = MagicMock()
-        mock_response.content = [MagicMock(text="Fix Login Bug")]
+        mock_response = _make_mock_response("Fix Login Bug")
 
         mock_client = MagicMock()
-        mock_client.messages.create = AsyncMock(return_value=mock_response)
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
 
         with patch(
-            "ypl.agent_harness_service.core.session_title.anthropic.AsyncAnthropic",
+            "ypl.agent_harness_service.core.session_title.openai.AsyncOpenAI",
             return_value=mock_client,
         ):
             result = await _generate_title_text(["Fix the login bug in auth service"])
@@ -118,16 +129,15 @@ class TestGenerateTitleText:
     @pytest.mark.asyncio
     async def test_returns_none_for_no_title_response(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """When LLM returns [NO TITLE], result should be None."""
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-123")
+        monkeypatch.setenv("CEREBRAS_API_KEY", "test-key-123")
 
-        mock_response = MagicMock()
-        mock_response.content = [MagicMock(text="[NO TITLE]")]
+        mock_response = _make_mock_response("[NO TITLE]")
 
         mock_client = MagicMock()
-        mock_client.messages.create = AsyncMock(return_value=mock_response)
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
 
         with patch(
-            "ypl.agent_harness_service.core.session_title.anthropic.AsyncAnthropic",
+            "ypl.agent_harness_service.core.session_title.openai.AsyncOpenAI",
             return_value=mock_client,
         ):
             result = await _generate_title_text([""])
@@ -136,17 +146,16 @@ class TestGenerateTitleText:
 
     @pytest.mark.asyncio
     async def test_returns_none_for_empty_response(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """When LLM returns empty response, result should be None."""
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-123")
+        """When LLM returns no choices, result should be None."""
+        monkeypatch.setenv("CEREBRAS_API_KEY", "test-key-123")
 
-        mock_response = MagicMock()
-        mock_response.content = []
+        mock_response = _make_mock_response(None, no_choices=True)
 
         mock_client = MagicMock()
-        mock_client.messages.create = AsyncMock(return_value=mock_response)
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
 
         with patch(
-            "ypl.agent_harness_service.core.session_title.anthropic.AsyncAnthropic",
+            "ypl.agent_harness_service.core.session_title.openai.AsyncOpenAI",
             return_value=mock_client,
         ):
             result = await _generate_title_text(["Hello"])
@@ -155,16 +164,15 @@ class TestGenerateTitleText:
 
     @pytest.mark.asyncio
     async def test_strips_whitespace_from_title(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-123")
+        monkeypatch.setenv("CEREBRAS_API_KEY", "test-key-123")
 
-        mock_response = MagicMock()
-        mock_response.content = [MagicMock(text="  Fix Auth Bug  ")]
+        mock_response = _make_mock_response("  Fix Auth Bug  ")
 
         mock_client = MagicMock()
-        mock_client.messages.create = AsyncMock(return_value=mock_response)
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
 
         with patch(
-            "ypl.agent_harness_service.core.session_title.anthropic.AsyncAnthropic",
+            "ypl.agent_harness_service.core.session_title.openai.AsyncOpenAI",
             return_value=mock_client,
         ):
             result = await _generate_title_text(["Fix the auth bug"])

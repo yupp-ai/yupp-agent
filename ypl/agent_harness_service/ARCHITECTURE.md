@@ -32,7 +32,8 @@ ypl/agent_harness_service/
 |   |-- models.py           AgentSpec, ExecutorConfig, ExecutorResult
 |   |-- types.py            StreamEvent, SessionCreateRequest, SessionPermissions, etc.
 |   |-- exceptions.py       Exception types
-|   +-- agent_registry.py   Agent config loading from disk (no DB deps)
+|   |-- agent_registry.py   Agent config loading from disk (no DB deps)
+|   +-- providers.py        Model provider registry (shared by executors, title gen, guardrails, etc.)
 |
 |-- core/                 Layer 1 -- depends on common/ only
 |   |-- streaming.py        Event bus, WebSocket, PubSub
@@ -53,8 +54,7 @@ ypl/agent_harness_service/
 |   |-- codex_runner.py     Codex CLI runner
 |   |-- context.py          Context mgmt (truncation, pruning, compaction)
 |   |-- system_prompt.py    System prompt assembly
-|   |-- sandbox.py          Permissions, bwrap, env filtering
-|   +-- providers.py        Provider definitions
+|   +-- sandbox.py          Permissions, bwrap, env filtering
 |
 |-- tools/                Layer 1 -- depends on common/ only
 |   |-- local_mcp_server.py In-process MCP server + all tool defs (uses DI for orchestration)

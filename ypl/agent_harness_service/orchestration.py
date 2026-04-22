@@ -35,10 +35,10 @@ from ypl.agent_harness_service.common.constants import (
     PERM_DENY,
 )
 from ypl.agent_harness_service.common.models import AgentSpec, ExecutorConfig, ExecutorResult, SubagentSession
+from ypl.agent_harness_service.common.providers import KNOWN_MODELS, parse_model_string, resolve_model
 from ypl.agent_harness_service.common.types import SessionPermissions
 from ypl.agent_harness_service.core.subagent_queue import MAX_SUBAGENT_DEPTH, SubagentResult, put_result
 from ypl.agent_harness_service.executors.codex_app_server_runner import CodexAppServerRunner
-from ypl.agent_harness_service.executors.providers import KNOWN_MODELS, parse_model_string, resolve_model
 from ypl.agent_harness_service.executors.raw_executor import run_raw_executor
 from ypl.agent_harness_service.executors.runner import ClaudeCodeRunner, RunContext
 from ypl.agent_harness_service.service.state import (

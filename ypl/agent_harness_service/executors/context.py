@@ -203,7 +203,7 @@ async def compact_messages(
         conversation_text = conversation_text[:max_compaction_input] + "\n...[conversation truncated for compaction]"
 
     # Call the compaction model (currently Anthropic-only)
-    from ypl.agent_harness_service.executors.providers import parse_model_string
+    from ypl.agent_harness_service.common.providers import parse_model_string
     from ypl.agent_harness_service.executors.raw_executor import _estimate_cost
 
     compaction_input_tokens = 0
