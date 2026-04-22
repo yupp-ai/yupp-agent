@@ -24,6 +24,8 @@ st.title("🔑 MCP Tokens")
 
 logger = get_logger()
 
+_SELECTED_KEY = "mcp_token_selected_id"
+
 
 def _fmt_dt(dt: datetime | None, *, empty: str = "never") -> str:
     if dt is None:
@@ -31,6 +33,9 @@ def _fmt_dt(dt: datetime | None, *, empty: str = "never") -> str:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
     return dt.strftime("%Y-%m-%d %H:%M:%S %Z")
+
+
+# ── DB queries ───────────────────────────────────────────────────────────────
 
 
 @retry_db
@@ -106,6 +111,9 @@ async def reactivate_token(token_id: uuid.UUID) -> bool:
         return True
 
 
+# ── Cached wrappers ──────────────────────────────────────────────────────────
+
+
 @st.cache_data(ttl=15, show_spinner=False)
 def _cached_tokens(email_filter: str | None, status_filter_value: str | None) -> list[dict[str, Any]]:
     status_filter = MCPTokenStatus(status_filter_value) if status_filter_value else None
@@ -137,108 +145,60 @@ def _invalidate_and_rerun() -> None:
     st.rerun()
 
 
-# ── Section 1: Token list ────────────────────────────────────────────────────
+# ── UI ───────────────────────────────────────────────────────────────────────
 
-st.subheader("Tokens")
-
-filter_cols = st.columns([2, 1, 2])
-with filter_cols[0]:
-    email_filter = st.text_input("Email contains", value="", key="mcp_token_email_filter").strip()
-with filter_cols[1]:
-    status_options = ["All", *(s.value for s in MCPTokenStatus)]
-    status_choice = st.selectbox(
-        "Status",
-        status_options,
-        index=status_options.index(MCPTokenStatus.ACTIVE.value),
-        key="mcp_token_status_filter",
-    )
-status_filter_value: str | None = None if status_choice == "All" else status_choice
-
-try:
-    rows = _cached_tokens(email_filter or None, status_filter_value)
-except Exception as exc:
-    st.error(f"Failed to load tokens: {exc}")
-    rows = []
-
-st.caption(f"{len(rows)} token(s)")
-
-if rows:
-    display_rows = [
-        {
-            "email": r["email"],
-            "description": r["description"],
-            "status": r["status"],
-            "created_at": _fmt_dt(r["created_at"], empty="—"),
-            "last_used_at": _fmt_dt(r["last_used_at"]),
-            "expires_at": _fmt_dt(r["expires_at"]),
-            "revoked_at": _fmt_dt(r["revoked_at"], empty="—"),
-            "revoked_by": r["revoked_by"] or "—",
-        }
-        for r in rows
-    ]
-    st.dataframe(display_rows, width="stretch", hide_index=True)
-else:
-    st.info("No tokens match the current filters.")
+_COL_WIDTHS = [2.8, 3.2, 0.9, 2.0, 2.0, 0.7]
 
 
-# ── Section 2: Issue new token ───────────────────────────────────────────────
+def _render_token_list(rows: list[dict[str, Any]]) -> None:
+    st.caption(f"{len(rows)} token(s)")
+    if not rows:
+        st.info("No tokens match the current filters.")
+        return
 
-with st.expander("🔑 Issue new token", expanded=False):
-    with st.form("mcp_issue_token_form", clear_on_submit=False):
-        new_email = st.text_input("Email", key="mcp_issue_email")
-        new_description = st.text_input(
-            "Description",
-            value="Issued via Lit admin",
-            key="mcp_issue_description",
-        )
-        new_expires_date: date | None = st.date_input(
-            "Expires at (optional)",
-            value=None,
-            key="mcp_issue_expires",
-        )
-        submitted = st.form_submit_button("Issue token")
+    hdr = st.columns(_COL_WIDTHS)
+    for i, label in enumerate(("Email", "Description", "Status", "Created", "Last used", "")):
+        with hdr[i]:
+            st.markdown(f"**{label}**")
+    st.divider()
 
-    if submitted:
-        email_clean = (new_email or "").strip().lower()
-        if not email_clean:
-            st.error("Email is required.")
-        else:
-            expires_at: datetime | None = None
-            if new_expires_date is not None:
-                expires_at = datetime.combine(new_expires_date, time(23, 59, 59), tzinfo=UTC)
-
-            try:
-                plaintext_token = run_coroutine_in_lit_worker(
-                    _issue_token(email_clean, new_description or "Issued via Lit admin", expires_at),
-                    timeout=30,
-                )
-            except ValueError as exc:
-                st.error(str(exc))
-            except Exception as exc:
-                logger.exception("admin_mcp_tokens_issue_failed", email=email_clean)
-                st.error(f"Failed to issue token: {exc}")
-            else:
-                st.success(f"Token issued for {email_clean}.")
-                st.code(plaintext_token, language="text")
-                st.warning("⚠️ Copy this token now — it will never be shown again.")
-                st.info("Share this token with the user over a secure channel (e.g. 1Password, encrypted DM).")
-                st.cache_data.clear()
+    for r in rows:
+        row = st.columns(_COL_WIDTHS)
+        with row[0]:
+            st.markdown(f"`{r['email']}`")
+        with row[1]:
+            st.markdown(r["description"] or "—")
+        with row[2]:
+            st.markdown(r["status"])
+        with row[3]:
+            st.markdown(_fmt_dt(r["created_at"], empty="—"))
+        with row[4]:
+            st.markdown(_fmt_dt(r["last_used_at"]))
+        with row[5]:
+            if st.button("Manage", key=f"select_token_{r['mcp_dev_token_id']}"):
+                st.session_state[_SELECTED_KEY] = r["mcp_dev_token_id"]
+                st.rerun()
 
 
-# ── Section 3: Row-level actions ─────────────────────────────────────────────
+def _render_manage_section(rows: list[dict[str, Any]]) -> None:
+    selected_id = st.session_state.get(_SELECTED_KEY)
+    if not selected_id:
+        return
 
-st.subheader("Manage a token")
+    selected: dict[str, Any] | None = next((r for r in rows if r["mcp_dev_token_id"] == selected_id), None)
+    if selected is None:
+        # Selection doesn't match the current filter; clear it.
+        st.session_state.pop(_SELECTED_KEY, None)
+        return
 
-if not rows:
-    st.caption("No tokens to manage with the current filters.")
-else:
-    label_to_row = {f"{r['email']} — {r['description'] or '(no description)'} [{r['status']}]": r for r in rows}
-    selected_label = st.selectbox(
-        "Select a token",
-        list(label_to_row.keys()),
-        key="mcp_manage_token_select",
-    )
-    selected = label_to_row[selected_label]
+    st.divider()
+    header_cols = st.columns([6, 1])
+    with header_cols[0]:
+        st.subheader(f"Manage token — {selected['email']}")
+    with header_cols[1]:
+        if st.button("Close", key="mcp_manage_close"):
+            st.session_state.pop(_SELECTED_KEY, None)
+            st.rerun()
 
     meta_cols = st.columns(2)
     with meta_cols[0]:
@@ -294,3 +254,86 @@ else:
                     _invalidate_and_rerun()
                 else:
                     st.error("Token not found.")
+
+
+def _render_browse() -> None:
+    filter_cols = st.columns([2, 1, 2])
+    with filter_cols[0]:
+        email_filter = st.text_input("Email contains", value="", key="mcp_token_email_filter").strip()
+    with filter_cols[1]:
+        status_options = ["All", *(s.value for s in MCPTokenStatus)]
+        status_choice = st.selectbox(
+            "Status",
+            status_options,
+            index=status_options.index(MCPTokenStatus.ACTIVE.value),
+            key="mcp_token_status_filter",
+        )
+    status_filter_value: str | None = None if status_choice == "All" else status_choice
+
+    try:
+        rows = _cached_tokens(email_filter or None, status_filter_value)
+    except Exception as exc:
+        st.error(f"Failed to load tokens: {exc}")
+        rows = []
+
+    _render_token_list(rows)
+    _render_manage_section(rows)
+
+
+def _render_issue_form() -> None:
+    st.subheader("Issue new token")
+    with st.form("mcp_issue_token_form", clear_on_submit=False):
+        new_email = st.text_input("Email", key="mcp_issue_email")
+        new_description = st.text_input(
+            "Description",
+            value="Issued via Lit admin",
+            key="mcp_issue_description",
+        )
+        new_expires_date: date | None = st.date_input(
+            "Expires at (optional)",
+            value=None,
+            key="mcp_issue_expires",
+        )
+        submitted = st.form_submit_button("Issue token", type="primary")
+
+    if not submitted:
+        return
+
+    email_clean = (new_email or "").strip().lower()
+    if not email_clean:
+        st.error("Email is required.")
+        return
+
+    expires_at: datetime | None = None
+    if new_expires_date is not None:
+        expires_at = datetime.combine(new_expires_date, time(23, 59, 59), tzinfo=UTC)
+
+    try:
+        plaintext_token = run_coroutine_in_lit_worker(
+            _issue_token(email_clean, new_description or "Issued via Lit admin", expires_at),
+            timeout=30,
+        )
+    except ValueError as exc:
+        st.error(str(exc))
+        return
+    except Exception as exc:
+        logger.exception("admin_mcp_tokens_issue_failed", email=email_clean)
+        st.error(f"Failed to issue token: {exc}")
+        return
+
+    st.success(f"Token issued for {email_clean}.")
+    st.code(plaintext_token, language="text")
+    st.warning("⚠️ Copy this token now — it will never be shown again.")
+    st.info("Share this token with the user over a secure channel (e.g. 1Password, encrypted DM).")
+    st.cache_data.clear()
+
+
+# ── Render ───────────────────────────────────────────────────────────────────
+
+tab_browse, tab_issue = st.tabs(["Browse", "Issue New Token"])
+
+with tab_browse:
+    _render_browse()
+
+with tab_issue:
+    _render_issue_form()
