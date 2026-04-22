@@ -59,7 +59,13 @@ for subapp in "${SUBAPPS[@]}"; do
         warn "Sub-app ${subapp} not present in repo — skipping."
         continue
     fi
-    if [[ ! -x "${app_venv}/bin/python" ]]; then
+    # Key the "venv exists" check on bin/pip (not bin/python) so a
+    # half-created venv from a prior failed run is auto-repaired.
+    if [[ ! -x "${app_venv}/bin/pip" ]]; then
+        if [[ -d "$app_venv" ]]; then
+            warn "Sub-app venv at ${app_venv} is incomplete (no pip) — recreating."
+            rm -rf "$app_venv"
+        fi
         info "Creating sub-app venv at ${app_venv}… (install.sh should have done this)"
         sudo -u "$APP_USER" python3.12 -m venv "$app_venv"
     fi

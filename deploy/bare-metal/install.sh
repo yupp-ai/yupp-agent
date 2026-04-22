@@ -191,6 +191,14 @@ if ! command -v "python${PYTHON_VERSION}" &>/dev/null; then
     apt-get install -y --no-install-recommends \
         "python${PYTHON_VERSION}" "python${PYTHON_VERSION}-venv" "python${PYTHON_VERSION}-dev"
 fi
+# python${PYTHON_VERSION}-venv can be missing even when the interpreter itself
+# is present (e.g., some base images ship python3.12 but not the -venv split
+# package). ``python -m venv`` then fails with "ensurepip is not available".
+# Idempotently ensure it's installed regardless of the path above.
+if ! dpkg -s "python${PYTHON_VERSION}-venv" &>/dev/null; then
+    info "Installing python${PYTHON_VERSION}-venv (needed for sub-app venvs)…"
+    apt-get install -y --no-install-recommends "python${PYTHON_VERSION}-venv"
+fi
 info "Python: $(python${PYTHON_VERSION} --version)"
 
 if ! command -v psql &>/dev/null; then
@@ -722,7 +730,15 @@ VIEWER_VENV="${VIEWER_DIR}/.venv"
 if [[ ! -d "$VIEWER_DIR" ]]; then
     warn "Expected ${VIEWER_DIR} to exist after clone — skipping viewer setup."
 else
-    if [[ ! -x "${VIEWER_VENV}/bin/python" ]]; then
+    # We key the "venv already exists" check on bin/pip (not bin/python) so
+    # a half-created venv from a prior failed run (e.g., python-venv package
+    # was missing, ensurepip never ran) is detected and rebuilt instead of
+    # reused. bin/python can exist as a symlink created before ensurepip fails.
+    if [[ ! -x "${VIEWER_VENV}/bin/pip" ]]; then
+        if [[ -d "$VIEWER_VENV" ]]; then
+            warn "Viewer venv at ${VIEWER_VENV} is incomplete (no pip) — recreating."
+            rm -rf "$VIEWER_VENV"
+        fi
         info "Creating viewer venv at ${VIEWER_VENV}…"
         sudo -u "$APP_USER" "python${PYTHON_VERSION}" -m venv "$VIEWER_VENV"
     else
