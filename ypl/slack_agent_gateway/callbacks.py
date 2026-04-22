@@ -581,6 +581,8 @@ async def send_message(request: SendMessageRequest) -> SendMessageResponse:
             "channel": request.channel,
             "text": request.text,
             "thread_ts": thread_ts,
+            "unfurl_links": request.unfurl_links,
+            "unfurl_media": request.unfurl_media,
         }
         if request.username:
             post_msg_kwargs["username"] = request.username

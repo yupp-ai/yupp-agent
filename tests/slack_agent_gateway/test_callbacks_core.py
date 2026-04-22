@@ -617,6 +617,57 @@ class TestSendMessage:
         assert result.success is False
 
     @pytest.mark.asyncio
+    async def test_forwards_unfurl_flags_to_slack(self) -> None:
+        """unfurl_links / unfurl_media on the request should be forwarded to chat.postMessage."""
+        app_config = _make_app_config()
+        mock_client = AsyncMock()
+        post_resp = MagicMock()
+        post_resp.get = lambda key, default=None: (
+            "8888.000" if key == "ts" else ("C999" if key == "channel" else default)
+        )
+        mock_client.chat_postMessage.return_value = post_resp
+
+        with (
+            patch("ypl.slack_agent_gateway.callbacks.get_agent_config_by_name", return_value=app_config),
+            patch("ypl.slack_agent_gateway.callbacks.build_slack_client", return_value=mock_client),
+        ):
+            request = SendMessageRequest(
+                agent_name="test-agent",
+                channel="C999",
+                text="digest",
+                unfurl_links=False,
+                unfurl_media=False,
+            )
+            result = await send_message(request)
+
+        assert result.success is True
+        call_kwargs = mock_client.chat_postMessage.call_args.kwargs
+        assert call_kwargs["unfurl_links"] is False
+        assert call_kwargs["unfurl_media"] is False
+
+    @pytest.mark.asyncio
+    async def test_unfurl_flags_default_to_true_on_chat_postmessage(self) -> None:
+        """Omitting unfurl_* on the request should pass True (Slack default) to chat.postMessage."""
+        app_config = _make_app_config()
+        mock_client = AsyncMock()
+        post_resp = MagicMock()
+        post_resp.get = lambda key, default=None: (
+            "8889.000" if key == "ts" else ("C999" if key == "channel" else default)
+        )
+        mock_client.chat_postMessage.return_value = post_resp
+
+        with (
+            patch("ypl.slack_agent_gateway.callbacks.get_agent_config_by_name", return_value=app_config),
+            patch("ypl.slack_agent_gateway.callbacks.build_slack_client", return_value=mock_client),
+        ):
+            request = SendMessageRequest(agent_name="test-agent", channel="C999", text="hi")
+            await send_message(request)
+
+        call_kwargs = mock_client.chat_postMessage.call_args.kwargs
+        assert call_kwargs["unfurl_links"] is True
+        assert call_kwargs["unfurl_media"] is True
+
+    @pytest.mark.asyncio
     async def test_base_name_fallback_for_personal_agent(self) -> None:
         """Personal agents like 'yuppclaw-alice' should fall back to 'yuppclaw' config."""
         app_config = _make_app_config()
