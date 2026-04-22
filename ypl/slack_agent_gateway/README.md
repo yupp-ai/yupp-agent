@@ -14,36 +14,27 @@ For architecture and design details, see [DESIGN.md](./DESIGN.md).
 
 ### Service URLs
 
-| Environment | URL |
-|-------------|-----|
-| Staging | `https://slack-agent-gateway-staging.example.com` |
-| Production | `https://slack-agent-gateway-production.example.com` |
+The gateway is fronted by an ingress that exposes Slack endpoints under a
+`/gw/slack/...` path prefix. The exact host depends on your deployment.
+
+> **Example only — do not use directly.** Examples in this doc use
+> `sag.example.com` as a placeholder host. Substitute your actual ingress
+> hostname (and prefix, if different) when configuring Slack apps.
+
+| Environment | URL (example) |
+|-------------|---------------|
+| Staging | `https://sag.example.com` |
+| Production | `https://sag.example.com` |
 
 ## How to Add a New Agent
 
-Adding a new agent is simple - no service code changes or deploys required!
-
-### Recommended: Use the `/add-slack-agent` Skill
-
-The easiest way to add a new agent is to use the Claude Code skill:
-
-```
-/add-slack-agent
-```
-
-This skill walks through the full bot provisioning process. The actual
-persistence layer — app_id + encrypted `bot_token` / `signing_secret` — lands
-in the `slack_agents` DB table. See [Manual Setup Reference](#manual-setup-reference)
-below for the step-by-step.
-
-See [`.agents/skills/add-slack-agent/SKILL.md`](../../.agents/skills/add-slack-agent/SKILL.md) for the full skill documentation.
-
-### Manual Setup Reference
-
-If you prefer to set up manually, here's the process:
+Adding a new agent is simple — no service code changes or deploys required.
+The actual persistence layer — `app_id` + encrypted `bot_token` /
+`signing_secret` — lands in the `slack_agents` DB table; the steps below
+walk through everything from Slack app creation to DB row.
 
 <details>
-<summary>Click to expand manual setup steps</summary>
+<summary>Click to expand setup steps</summary>
 
 #### 1. Create a Slack App
 
@@ -94,13 +85,13 @@ leave those two columns NULL and set the matching env vars instead — see
 1. Deploy to staging: `/deploy-to-staging slack-agent-gateway`
 2. In Slack app settings, configure **Interactivity & Shortcuts**:
    - Toggle **Interactivity** to **ON**
-   - Set **Request URL** to the appropriate endpoint:
-     - **Staging**: `https://slack-agent-gateway-staging.example.com/api/v1/slack/interactions`
-     - **Production**: `https://slack-agent-gateway-production.example.com/api/v1/slack/interactions`
+   - Set **Request URL** to your gateway's interactivity endpoint, e.g.
+     `https://sag.example.com/gw/slack/slack/interactive`
+     (replace `sag.example.com` with your real ingress host)
 3. Configure **Event Subscriptions**:
-   - Set **Request URL** to the appropriate endpoint:
-     - **Staging**: `https://slack-agent-gateway-staging.example.com/api/v1/slack/events`
-     - **Production**: `https://slack-agent-gateway-production.example.com/api/v1/slack/events`
+   - Set **Request URL** to your gateway's events endpoint, e.g.
+     `https://sag.example.com/gw/slack/slack/events`
+     (replace `sag.example.com` with your real ingress host)
 4. Subscribe to bot events: `app_mention`, `reaction_added`
 
 </details>
