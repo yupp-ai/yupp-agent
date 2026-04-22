@@ -11,13 +11,12 @@ import asyncio
 import time
 from typing import Any
 
-from slack_sdk.web.async_client import AsyncWebClient
-
 from ypl.slack_agent_gateway.callbacks_rendering import render_reply_blocks
 from ypl.slack_agent_gateway.constants import (
     DEFAULT_FLUSH_INTERVAL_SECONDS,
     MAX_BUFFER_SIZE_CHARS,
     SLACK_MAX_MESSAGE_LENGTH,
+    SLACK_RATELIMIT_INTERVAL_SECONDS,
     STATUS_RATELIMIT_SECONDS,
     get_agent_config_by_app_id,
 )
@@ -37,9 +36,11 @@ from ypl.slack_agent_gateway.redis_client import (
     schedule_flush,
     schedule_status_flush,
     set_buffer_type,
+    try_acquire_slack_ratelimit,
     try_acquire_status_ratelimit,
 )
 from ypl.slack_agent_gateway.sessions import record_reply
+from ypl.slack_agent_gateway.slack_client import RateLimitDeferred, build_slack_client
 from ypl.slack_agent_gateway.types import AppendToReplyRequest, AppendToReplyResponse
 from ypl.structured_logger import get_logger
 
@@ -177,25 +178,50 @@ async def flush_buffer(session_id: str) -> bool:
         await remove_from_flush_schedule(session_id)
         return False
 
-    # Read buffer type before clearing content — avoids a race where new content
-    # with a different type arrives between clear_buffer and get_buffer_type.
-    buffer_type = await get_buffer_type(session_id)
-
-    # Get and clear buffer atomically
-    buffer_content = await clear_buffer(session_id)
-    if not buffer_content:
-        # Nothing to flush
+    # Fast-path: if nothing buffered, drop from the schedule and return.
+    # Done before acquiring the rate-limit gate so empty flushes don't burn a slot.
+    if await get_buffer_size(session_id) == 0:
         await remove_from_flush_schedule(session_id)
         await clear_buffer_type(session_id)
         return True
 
-    # Get Slack client
+    # Get Slack app config up-front — needed for the gate key and the client.
     app_config = await get_agent_config_by_app_id(session.app_id)
     if not app_config:
         logger.error("No app config found for flush", session_id=session_id, app_id=session.app_id)
         return False
 
-    client = AsyncWebClient(token=app_config.bot_token)
+    # Acquire the rate-limit gate BEFORE clearing the buffer.
+    # If denied, reschedule and return — the buffer keeps accumulating, and the
+    # next flush will grab OLD + NEW content in a single chat.update instead of
+    # producing two back-to-back updates.
+    if not await try_acquire_slack_ratelimit(session.app_id, "chat_update"):
+        next_flush_at = time.time() + SLACK_RATELIMIT_INTERVAL_SECONDS + 0.1
+        await schedule_flush(session_id, next_flush_at)
+        logger.debug(
+            "Slack rate limit gate denied, deferring flush to accumulate more content",
+            session_id=session_id,
+            next_flush_in=round(SLACK_RATELIMIT_INTERVAL_SECONDS + 0.1, 2),
+        )
+        return False
+
+    # Read buffer type before clearing content — avoids a race where new content
+    # with a different type arrives between clear_buffer and get_buffer_type.
+    buffer_type = await get_buffer_type(session_id)
+
+    # Get and clear buffer atomically. Anything appended between the gate grab
+    # above and this call is included here — that's the intended behavior.
+    buffer_content = await clear_buffer(session_id)
+    if not buffer_content:
+        # Racer beat us to the flush; release the schedule.
+        await remove_from_flush_schedule(session_id)
+        await clear_buffer_type(session_id)
+        return True
+
+    # Use reenqueue mode so a 429 that slipped past the preventive gate defers
+    # instead of retrying with stale content. The overflow loop uses add_reply()
+    # which builds its own client (inflight mode — each chunk is a fixed payload).
+    client = build_slack_client(app_config.app_id, app_config.bot_token, retry_mode="reenqueue")
 
     # Build new content by appending buffer to existing content
     existing_content = session.last_reply_content or ""
@@ -323,6 +349,20 @@ async def flush_buffer(session_id: str) -> bool:
         # Return False if overflow posting failed - this prevents type switches from
         # proceeding while overflow content is still buffered.
         return not overflow_failed
+
+    except RateLimitDeferred as rl:
+        # Slack 429'd despite the preventive gate — respect Retry-After and
+        # re-queue the content so it accumulates with anything that arrived
+        # during the wait. The next flush sends one merged chat.update.
+        logger.warning(
+            "Slack rate limit hit on chat.update, re-queuing buffer",
+            session_id=session_id,
+            retry_after=rl.retry_after,
+            buffer_chars=len(buffer_content),
+        )
+        await append_to_buffer(session_id, buffer_content)
+        await schedule_flush(session_id, time.time() + rl.retry_after + 0.1)
+        return False
 
     except Exception as e:
         logger.error(

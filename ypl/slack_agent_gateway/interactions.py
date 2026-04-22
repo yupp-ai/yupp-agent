@@ -12,7 +12,6 @@ from urllib.parse import unquote_plus
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 from slack_sdk.errors import SlackApiError
-from slack_sdk.web.async_client import AsyncWebClient
 
 from ypl.backend.utils.slack_utils import resolve_slack_user_to_yupp_user_id
 from ypl.slack_agent_gateway.agent_client import send_feedback, send_questionnaire_answer_to_agent
@@ -22,6 +21,7 @@ from ypl.slack_agent_gateway.commands import CREATE_AGENT_MODAL_CALLBACK_ID
 from ypl.slack_agent_gateway.constants import get_agent_config_by_app_id, get_all_signing_secrets
 from ypl.slack_agent_gateway.events import verify_slack_signature_multi
 from ypl.slack_agent_gateway.redis_client import release_survey_response_claim, try_claim_survey_response
+from ypl.slack_agent_gateway.slack_client import build_slack_client
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -152,7 +152,7 @@ async def _handle_survey_action(payload: dict[str, Any]) -> JSONResponse:
             api_app_id = payload.get("api_app_id", "")
             app_config = await get_agent_config_by_app_id(api_app_id)
             if app_config:
-                client = AsyncWebClient(token=app_config.bot_token)
+                client = build_slack_client(app_config.app_id, app_config.bot_token)
                 rating_label = action_id.replace("survey_", "").capitalize()
                 thank_you_text = f"_Thank you for your feedback! ({rating_label})_"
                 await client.chat_update(
@@ -388,7 +388,7 @@ async def _handle_questionnaire_action(payload: dict[str, Any]) -> JSONResponse:
             api_app_id = payload.get("api_app_id", "")
             app_config = await get_agent_config_by_app_id(api_app_id)
             if app_config:
-                client = AsyncWebClient(token=app_config.bot_token)
+                client = build_slack_client(app_config.app_id, app_config.bot_token)
                 confirmation_text = f"_You selected: {choice_label}_"
                 await client.chat_update(
                     channel=message_channel,

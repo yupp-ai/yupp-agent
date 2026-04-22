@@ -14,7 +14,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 from slack_sdk.errors import SlackApiError
-from slack_sdk.web.async_client import AsyncWebClient
 from sqlmodel import select
 
 from ypl.backend.db import get_async_session, retry_db
@@ -40,6 +39,7 @@ from ypl.slack_agent_gateway.slack_app_manifests import (
     delete_slack_app,
     exchange_oauth_code,
 )
+from ypl.slack_agent_gateway.slack_client import build_slack_client
 from ypl.slack_agent_gateway.token_storage import get_bot_father_refresh_token
 from ypl.structured_logger import get_logger
 
@@ -237,7 +237,7 @@ async def request_bot_creation(request: BotCreationRequest) -> BotCreationRespon
 
         if bot_father_token and approval_channel:
             blocks = build_approval_blocks(record)
-            client = AsyncWebClient(token=bot_father_token)
+            client = build_slack_client("bot_father", bot_father_token)
             resp = await client.chat_postMessage(
                 channel=approval_channel,
                 text=f"Bot creation request for agent '{agent_name}' (request_id={request_id})",
@@ -914,7 +914,7 @@ async def _update_approval_message(record: BotCreationRecord, text: str) -> None
         return
 
     try:
-        client = AsyncWebClient(token=bot_father_token)
+        client = build_slack_client("bot_father", bot_father_token)
         await client.chat_update(
             channel=record.approval_message_channel,
             ts=record.approval_message_ts,

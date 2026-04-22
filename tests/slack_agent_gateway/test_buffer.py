@@ -221,8 +221,8 @@ class TestFlushBuffer:
 
         with (
             patch("ypl.slack_agent_gateway.buffer.get_session", AsyncMock(return_value=mock_session)),
-            patch("ypl.slack_agent_gateway.buffer.get_buffer_type", AsyncMock(return_value="text")),
-            patch("ypl.slack_agent_gateway.buffer.clear_buffer", AsyncMock(return_value="")),
+            # Fast-path: empty buffer returns True before any Slack / rate-limit machinery runs.
+            patch("ypl.slack_agent_gateway.buffer.get_buffer_size", AsyncMock(return_value=0)),
             patch("ypl.slack_agent_gateway.buffer.remove_from_flush_schedule", AsyncMock()),
             patch("ypl.slack_agent_gateway.buffer.clear_buffer_type", AsyncMock()),
         ):
@@ -238,6 +238,7 @@ class TestFlushBuffer:
 
         with (
             patch("ypl.slack_agent_gateway.buffer.get_session", AsyncMock(return_value=mock_session)),
+            patch("ypl.slack_agent_gateway.buffer.get_buffer_size", AsyncMock(return_value=5)),
             patch("ypl.slack_agent_gateway.buffer.get_buffer_type", AsyncMock(return_value="text")),
             patch("ypl.slack_agent_gateway.buffer.clear_buffer", AsyncMock(return_value="new content")),
             patch("ypl.slack_agent_gateway.buffer.get_agent_config_by_app_id", AsyncMock(return_value=None)),
@@ -268,7 +269,7 @@ class TestFlushBuffer:
                 AsyncMock(return_value=mock_app_config),
             ),
             patch(
-                "ypl.slack_agent_gateway.buffer.AsyncWebClient",
+                "ypl.slack_agent_gateway.buffer.build_slack_client",
                 return_value=mock_slack_client,
             ),
             patch(
@@ -276,7 +277,9 @@ class TestFlushBuffer:
                 return_value=None,
             ),
             patch("ypl.slack_agent_gateway.buffer.record_reply", AsyncMock()),
-            patch("ypl.slack_agent_gateway.buffer.get_buffer_size", AsyncMock(return_value=0)),
+            # First call (fast-path check) sees content; second (post-flush cleanup) sees empty.
+            patch("ypl.slack_agent_gateway.buffer.get_buffer_size", AsyncMock(side_effect=[5, 0])),
+            patch("ypl.slack_agent_gateway.buffer.try_acquire_slack_ratelimit", AsyncMock(return_value=True)),
             patch("ypl.slack_agent_gateway.buffer.remove_from_flush_schedule", AsyncMock()),
             patch("ypl.slack_agent_gateway.buffer.clear_buffer_type", AsyncMock()),
         ):
@@ -307,7 +310,7 @@ class TestFlushBuffer:
                 AsyncMock(return_value=mock_app_config),
             ),
             patch(
-                "ypl.slack_agent_gateway.buffer.AsyncWebClient",
+                "ypl.slack_agent_gateway.buffer.build_slack_client",
                 return_value=mock_slack_client,
             ),
             patch(
@@ -315,10 +318,93 @@ class TestFlushBuffer:
                 return_value=None,
             ),
             patch("ypl.slack_agent_gateway.buffer.append_to_buffer", AsyncMock(return_value=10)),
+            patch("ypl.slack_agent_gateway.buffer.get_buffer_size", AsyncMock(return_value=5)),
+            patch("ypl.slack_agent_gateway.buffer.try_acquire_slack_ratelimit", AsyncMock(return_value=True)),
         ):
             result = await flush_buffer("sess-1")
 
         assert result is False
+
+    async def test_rate_limit_gate_denied_reschedules_without_clearing_buffer(self) -> None:
+        """When the gate denies, the buffer must NOT be cleared — text keeps
+        accumulating so the next flush sends a single bigger chat.update."""
+        mock_session = MagicMock()
+        mock_session.last_reply_ts = "12345.0"
+        mock_session.app_id = "A123"
+
+        mock_app_config = MagicMock()
+        mock_app_config.app_id = "A123"
+        mock_app_config.bot_token = "bot-token-123"
+
+        clear = AsyncMock(return_value="should-not-be-called")
+        schedule = AsyncMock()
+
+        with (
+            patch("ypl.slack_agent_gateway.buffer.get_session", AsyncMock(return_value=mock_session)),
+            patch("ypl.slack_agent_gateway.buffer.get_buffer_size", AsyncMock(return_value=5)),
+            patch(
+                "ypl.slack_agent_gateway.buffer.get_agent_config_by_app_id",
+                AsyncMock(return_value=mock_app_config),
+            ),
+            patch(
+                "ypl.slack_agent_gateway.buffer.try_acquire_slack_ratelimit",
+                AsyncMock(return_value=False),
+            ),
+            patch("ypl.slack_agent_gateway.buffer.clear_buffer", clear),
+            patch("ypl.slack_agent_gateway.buffer.schedule_flush", schedule),
+        ):
+            result = await flush_buffer("sess-1")
+
+        assert result is False
+        # Critical: buffer was NOT cleared — content stays for the next flush.
+        clear.assert_not_called()
+        # And the flush was rescheduled, not dropped.
+        schedule.assert_awaited_once()
+
+    async def test_rate_limit_deferred_on_429_rebufffers_and_honors_retry_after(self) -> None:
+        """When chat.update returns 429 despite the gate, the buffer content
+        is re-added and the next flush is scheduled at now + Retry-After."""
+        from ypl.slack_agent_gateway.slack_client import RateLimitDeferred
+
+        mock_session = MagicMock()
+        mock_session.last_reply_ts = "12345.0"
+        mock_session.channel_id = "C123"
+        mock_session.app_id = "A123"
+        mock_session.last_reply_content = ""
+
+        mock_app_config = MagicMock()
+        mock_app_config.app_id = "A123"
+        mock_app_config.bot_token = "bot-token-123"
+
+        mock_slack_client = AsyncMock()
+        mock_slack_client.chat_update = AsyncMock(side_effect=RateLimitDeferred(method="chat_update", retry_after=7.0))
+
+        append = AsyncMock(return_value=10)
+        schedule = AsyncMock()
+
+        with (
+            patch("ypl.slack_agent_gateway.buffer.get_session", AsyncMock(return_value=mock_session)),
+            patch("ypl.slack_agent_gateway.buffer.get_buffer_size", AsyncMock(return_value=5)),
+            patch("ypl.slack_agent_gateway.buffer.get_buffer_type", AsyncMock(return_value="text")),
+            patch("ypl.slack_agent_gateway.buffer.clear_buffer", AsyncMock(return_value="content")),
+            patch(
+                "ypl.slack_agent_gateway.buffer.get_agent_config_by_app_id",
+                AsyncMock(return_value=mock_app_config),
+            ),
+            patch("ypl.slack_agent_gateway.buffer.try_acquire_slack_ratelimit", AsyncMock(return_value=True)),
+            patch("ypl.slack_agent_gateway.buffer.build_slack_client", return_value=mock_slack_client),
+            patch("ypl.slack_agent_gateway.buffer.render_reply_blocks", return_value=None),
+            patch("ypl.slack_agent_gateway.buffer.append_to_buffer", append),
+            patch("ypl.slack_agent_gateway.buffer.schedule_flush", schedule),
+        ):
+            result = await flush_buffer("sess-1")
+
+        assert result is False
+        # Re-added the exact content we had cleared — so new appends merge with it.
+        append.assert_awaited_once_with("sess-1", "content")
+        # Rescheduled (Retry-After honored; exact timestamp is time-dependent so
+        # we just check that schedule was called once).
+        schedule.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
