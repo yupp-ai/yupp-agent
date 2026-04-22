@@ -1,0 +1,21 @@
+[Unit]
+Description=AHS — pull latest main for all agent-workspace repos
+# Give the service a chance to fail gracefully if the network is down.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ahs
+Group=ahs
+WorkingDirectory=/opt/yupp-agent
+# Runs pull_all_repos() which git-pulls every repo under /data/ahs/repos/.
+# Uses the ahs user's SSH identity (~/.ssh/id_ed25519) that install.sh
+# registered as a deploy key at setup time — no extra auth needed.
+ExecStart=/opt/yupp-agent/.venv/bin/python -m ypl.agent_harness_service.scripts.pull_repos
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=false
+ReadWritePaths=/data/ahs/repos
