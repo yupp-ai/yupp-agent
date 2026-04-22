@@ -149,7 +149,7 @@ class TestProcessSlackCommand:
         with (
             patch(f"{MODULE}.get_bot_father_config", return_value=mock_config),
             patch(f"{MODULE}.verify_slack_signature_multi"),
-            patch(f"{MODULE}.AsyncWebClient", return_value=mock_client),
+            patch(f"{MODULE}.build_slack_client", return_value=mock_client),
         ):
             response = await process_slack_command(request)
 
@@ -216,7 +216,7 @@ class TestHandleCreateAgentCommand:
 
         with (
             patch(f"{MODULE}.get_bot_father_config", return_value=mock_config),
-            patch(f"{MODULE}.AsyncWebClient", return_value=mock_client),
+            patch(f"{MODULE}.build_slack_client", return_value=mock_client),
         ):
             response = await _handle_create_agent_command("trigger-abc", "U123")
 
@@ -233,7 +233,7 @@ class TestHandleCreateAgentCommand:
 
         with (
             patch(f"{MODULE}.get_bot_father_config", return_value=mock_config),
-            patch(f"{MODULE}.AsyncWebClient", return_value=mock_client),
+            patch(f"{MODULE}.build_slack_client", return_value=mock_client),
         ):
             response = await _handle_create_agent_command("tid", "U001")
 
@@ -250,7 +250,7 @@ class TestHandleCreateAgentCommand:
 
         with (
             patch(f"{MODULE}.get_bot_father_config", return_value=mock_config),
-            patch(f"{MODULE}.AsyncWebClient", return_value=mock_client),
+            patch(f"{MODULE}.build_slack_client", return_value=mock_client),
         ):
             await _handle_create_agent_command("my-trigger", "U555")
 

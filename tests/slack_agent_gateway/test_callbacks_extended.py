@@ -116,7 +116,7 @@ class TestAddReplyWithPlaceholder:
         with (
             patch(f"{_CALLBACKS_MODULE}.get_session", new_callable=AsyncMock, return_value=session),
             patch(f"{_CALLBACKS_MODULE}.get_agent_config_by_app_id", new_callable=AsyncMock, return_value=app_config),
-            patch(f"{_CALLBACKS_MODULE}.AsyncWebClient", return_value=mock_client),
+            patch(f"{_CALLBACKS_MODULE}.build_slack_client", return_value=mock_client),
             patch(f"{_CALLBACKS_MODULE}.save_session", new_callable=AsyncMock),
             patch(f"{_CALLBACKS_MODULE}.record_reply", new_callable=AsyncMock),
             patch(f"{_CALLBACKS_MODULE}.store_reply_mapping", new_callable=AsyncMock),
@@ -143,7 +143,7 @@ class TestAddReplyWithPlaceholder:
         with (
             patch(f"{_CALLBACKS_MODULE}.get_session", new_callable=AsyncMock, return_value=session),
             patch(f"{_CALLBACKS_MODULE}.get_agent_config_by_app_id", new_callable=AsyncMock, return_value=app_config),
-            patch(f"{_CALLBACKS_MODULE}.AsyncWebClient", return_value=mock_client),
+            patch(f"{_CALLBACKS_MODULE}.build_slack_client", return_value=mock_client),
             patch(f"{_CALLBACKS_MODULE}.save_session", new_callable=AsyncMock),
             patch(f"{_CALLBACKS_MODULE}.record_reply", new_callable=AsyncMock),
             patch(f"{_CALLBACKS_MODULE}.store_reply_mapping", new_callable=AsyncMock),
@@ -172,7 +172,7 @@ class TestAddReplyWithPlaceholder:
         with (
             patch(f"{_CALLBACKS_MODULE}.get_session", new_callable=AsyncMock, return_value=session),
             patch(f"{_CALLBACKS_MODULE}.get_agent_config_by_app_id", new_callable=AsyncMock, return_value=app_config),
-            patch(f"{_CALLBACKS_MODULE}.AsyncWebClient", return_value=mock_client),
+            patch(f"{_CALLBACKS_MODULE}.build_slack_client", return_value=mock_client),
             patch(f"{_CALLBACKS_MODULE}.save_session", new_callable=AsyncMock),
         ):
             req = AddReplyRequest(session_id="C123:1234567890.000:A001", text="Hello!")
@@ -190,7 +190,7 @@ class TestAddReplyWithPlaceholder:
         with (
             patch(f"{_CALLBACKS_MODULE}.get_session", new_callable=AsyncMock, return_value=session),
             patch(f"{_CALLBACKS_MODULE}.get_agent_config_by_app_id", new_callable=AsyncMock, return_value=app_config),
-            patch(f"{_CALLBACKS_MODULE}.AsyncWebClient", return_value=mock_client),
+            patch(f"{_CALLBACKS_MODULE}.build_slack_client", return_value=mock_client),
             patch(f"{_CALLBACKS_MODULE}.record_reply", new_callable=AsyncMock),
             patch(
                 f"{_CALLBACKS_MODULE}.store_reply_mapping",
@@ -218,7 +218,7 @@ class TestAddReplyWithPlaceholder:
         with (
             patch(f"{_CALLBACKS_MODULE}.get_session", new_callable=AsyncMock, return_value=session),
             patch(f"{_CALLBACKS_MODULE}.get_agent_config_by_app_id", new_callable=AsyncMock, return_value=app_config),
-            patch(f"{_CALLBACKS_MODULE}.AsyncWebClient", return_value=mock_client),
+            patch(f"{_CALLBACKS_MODULE}.build_slack_client", return_value=mock_client),
             patch(f"{_CALLBACKS_MODULE}.record_reply", new_callable=AsyncMock),
             patch(f"{_CALLBACKS_MODULE}.store_reply_mapping", new_callable=AsyncMock),
             patch(f"{_CALLBACKS_MODULE}.clear_tool_entries", clear_entries_mock),
@@ -272,7 +272,7 @@ class TestUpdateReply:
         with (
             patch(f"{_CALLBACKS_MODULE}.get_session", new_callable=AsyncMock, return_value=session),
             patch(f"{_CALLBACKS_MODULE}.get_agent_config_by_app_id", new_callable=AsyncMock, return_value=app_config),
-            patch(f"{_CALLBACKS_MODULE}.AsyncWebClient", return_value=mock_client),
+            patch(f"{_CALLBACKS_MODULE}.build_slack_client", return_value=mock_client),
             patch(f"{_CALLBACKS_MODULE}.discard_buffer", new_callable=AsyncMock),
             patch(f"{_CALLBACKS_MODULE}.record_reply", new_callable=AsyncMock),
         ):
@@ -291,7 +291,7 @@ class TestUpdateReply:
         with (
             patch(f"{_CALLBACKS_MODULE}.get_session", new_callable=AsyncMock, return_value=session),
             patch(f"{_CALLBACKS_MODULE}.get_agent_config_by_app_id", new_callable=AsyncMock, return_value=app_config),
-            patch(f"{_CALLBACKS_MODULE}.AsyncWebClient", return_value=mock_client),
+            patch(f"{_CALLBACKS_MODULE}.build_slack_client", return_value=mock_client),
             patch(f"{_CALLBACKS_MODULE}.discard_buffer", new_callable=AsyncMock),
         ):
             req = UpdateReplyRequest(session_id="C123:1234567890.000:A001", text="Updated")
@@ -314,7 +314,7 @@ class TestSendMessage:
 
         with (
             patch(f"{_CALLBACKS_MODULE}.get_agent_config_by_name", new_callable=AsyncMock, return_value=app_config),
-            patch(f"{_CALLBACKS_MODULE}.AsyncWebClient", return_value=mock_client),
+            patch(f"{_CALLBACKS_MODULE}.build_slack_client", return_value=mock_client),
         ):
             req = SendMessageRequest(agent_name="test-agent", channel="C456", text="Hello from agent!")
             resp = await send_message(req)
@@ -335,7 +335,7 @@ class TestSendMessage:
                 new_callable=AsyncMock,
                 side_effect=[None, app_config],
             ),
-            patch(f"{_CALLBACKS_MODULE}.AsyncWebClient", return_value=mock_client),
+            patch(f"{_CALLBACKS_MODULE}.build_slack_client", return_value=mock_client),
         ):
             req = SendMessageRequest(agent_name="test-agent-alice", channel="C456", text="Hi!")
             resp = await send_message(req)
@@ -357,7 +357,7 @@ class TestSendMessage:
 
         with (
             patch(f"{_CALLBACKS_MODULE}.get_agent_config_by_name", new_callable=AsyncMock, return_value=app_config),
-            patch(f"{_CALLBACKS_MODULE}.AsyncWebClient", return_value=mock_client),
+            patch(f"{_CALLBACKS_MODULE}.build_slack_client", return_value=mock_client),
             patch(f"{_CALLBACKS_MODULE}.store_thread_session_mapping", store_mock),
         ):
             req = SendMessageRequest(
@@ -380,7 +380,7 @@ class TestSendMessage:
 
         with (
             patch(f"{_CALLBACKS_MODULE}.get_agent_config_by_name", new_callable=AsyncMock, return_value=app_config),
-            patch(f"{_CALLBACKS_MODULE}.AsyncWebClient", return_value=mock_client),
+            patch(f"{_CALLBACKS_MODULE}.build_slack_client", return_value=mock_client),
             patch(f"{_CALLBACKS_MODULE}.store_thread_session_mapping", store_mock),
         ):
             req = SendMessageRequest(
@@ -403,7 +403,7 @@ class TestSendMessage:
 
         with (
             patch(f"{_CALLBACKS_MODULE}.get_agent_config_by_name", new_callable=AsyncMock, return_value=app_config),
-            patch(f"{_CALLBACKS_MODULE}.AsyncWebClient", return_value=mock_client),
+            patch(f"{_CALLBACKS_MODULE}.build_slack_client", return_value=mock_client),
             patch(f"{_CALLBACKS_MODULE}.store_thread_session_mapping", store_mock),
         ):
             req = SendMessageRequest(
@@ -425,7 +425,7 @@ class TestSendMessage:
 
         with (
             patch(f"{_CALLBACKS_MODULE}.get_agent_config_by_name", new_callable=AsyncMock, return_value=app_config),
-            patch(f"{_CALLBACKS_MODULE}.AsyncWebClient", return_value=mock_client),
+            patch(f"{_CALLBACKS_MODULE}.build_slack_client", return_value=mock_client),
         ):
             req = SendMessageRequest(agent_name="test-agent", channel="CBAD", text="Hi!")
             resp = await send_message(req)
@@ -490,7 +490,7 @@ class TestRequestFeedback:
             patch(f"{_CALLBACKS_MODULE}.try_claim_feedback_request", new_callable=AsyncMock, return_value=True),
             patch(f"{_CALLBACKS_MODULE}.get_session", new_callable=AsyncMock, return_value=session),
             patch(f"{_CALLBACKS_MODULE}.get_agent_config_by_app_id", new_callable=AsyncMock, return_value=app_config),
-            patch(f"{_CALLBACKS_MODULE}.AsyncWebClient", return_value=mock_client),
+            patch(f"{_CALLBACKS_MODULE}.build_slack_client", return_value=mock_client),
             patch(f"{_CALLBACKS_MODULE}.store_reply_mapping", new_callable=AsyncMock),
         ):
             req = RequestFeedbackRequest(session_id="C123:1234567890.000:A001")
@@ -510,7 +510,7 @@ class TestRequestFeedback:
             patch(f"{_CALLBACKS_MODULE}.try_claim_feedback_request", new_callable=AsyncMock, return_value=True),
             patch(f"{_CALLBACKS_MODULE}.get_session", new_callable=AsyncMock, return_value=session),
             patch(f"{_CALLBACKS_MODULE}.get_agent_config_by_app_id", new_callable=AsyncMock, return_value=app_config),
-            patch(f"{_CALLBACKS_MODULE}.AsyncWebClient", return_value=mock_client),
+            patch(f"{_CALLBACKS_MODULE}.build_slack_client", return_value=mock_client),
             patch(f"{_CALLBACKS_MODULE}.release_feedback_claim", release_mock),
         ):
             req = RequestFeedbackRequest(session_id="C123:1234567890.000:A001")
@@ -532,7 +532,7 @@ class TestRequestFeedback:
             patch(f"{_CALLBACKS_MODULE}.try_claim_feedback_request", new_callable=AsyncMock, return_value=True),
             patch(f"{_CALLBACKS_MODULE}.get_session", new_callable=AsyncMock, return_value=session),
             patch(f"{_CALLBACKS_MODULE}.get_agent_config_by_app_id", new_callable=AsyncMock, return_value=app_config),
-            patch(f"{_CALLBACKS_MODULE}.AsyncWebClient", return_value=mock_client),
+            patch(f"{_CALLBACKS_MODULE}.build_slack_client", return_value=mock_client),
             patch(f"{_CALLBACKS_MODULE}.release_feedback_claim", release_mock),
         ):
             req = RequestFeedbackRequest(session_id="C123:1234567890.000:A001")
@@ -579,7 +579,7 @@ class TestSendQuestionnaire:
         with (
             patch(f"{_CALLBACKS_MODULE}.get_session", new_callable=AsyncMock, return_value=session),
             patch(f"{_CALLBACKS_MODULE}.get_agent_config_by_app_id", new_callable=AsyncMock, return_value=app_config),
-            patch(f"{_CALLBACKS_MODULE}.AsyncWebClient", return_value=mock_client),
+            patch(f"{_CALLBACKS_MODULE}.build_slack_client", return_value=mock_client),
             patch(f"{_CALLBACKS_MODULE}.store_reply_mapping", new_callable=AsyncMock),
         ):
             resp = await send_questionnaire(self._make_req())
@@ -596,7 +596,7 @@ class TestSendQuestionnaire:
         with (
             patch(f"{_CALLBACKS_MODULE}.get_session", new_callable=AsyncMock, return_value=session),
             patch(f"{_CALLBACKS_MODULE}.get_agent_config_by_app_id", new_callable=AsyncMock, return_value=app_config),
-            patch(f"{_CALLBACKS_MODULE}.AsyncWebClient", return_value=mock_client),
+            patch(f"{_CALLBACKS_MODULE}.build_slack_client", return_value=mock_client),
         ):
             resp = await send_questionnaire(self._make_req())
 
@@ -652,7 +652,7 @@ class TestFlushStatusUpdate:
                 return_value=True,
             ),
             patch(f"{_CALLBACKS_MODULE}.get_agent_config_by_app_id", new_callable=AsyncMock, return_value=app_config),
-            patch(f"{_CALLBACKS_MODULE}.AsyncWebClient", return_value=mock_client),
+            patch(f"{_CALLBACKS_MODULE}.build_slack_client", return_value=mock_client),
             patch(
                 f"{_CALLBACKS_MODULE}.get_tool_entries",
                 new_callable=AsyncMock,
@@ -680,7 +680,7 @@ class TestFlushStatusUpdate:
                 return_value=True,
             ),
             patch(f"{_CALLBACKS_MODULE}.get_agent_config_by_app_id", new_callable=AsyncMock, return_value=app_config),
-            patch(f"{_CALLBACKS_MODULE}.AsyncWebClient", return_value=mock_client),
+            patch(f"{_CALLBACKS_MODULE}.build_slack_client", return_value=mock_client),
             patch(
                 f"{_CALLBACKS_MODULE}.get_tool_entries",
                 new_callable=AsyncMock,
@@ -711,7 +711,7 @@ class TestFlushStatusUpdate:
                 return_value=True,
             ),
             patch(f"{_CALLBACKS_MODULE}.get_agent_config_by_app_id", new_callable=AsyncMock, return_value=app_config),
-            patch(f"{_CALLBACKS_MODULE}.AsyncWebClient", return_value=mock_client),
+            patch(f"{_CALLBACKS_MODULE}.build_slack_client", return_value=mock_client),
             patch(
                 f"{_CALLBACKS_MODULE}.get_tool_entries",
                 new_callable=AsyncMock,
@@ -746,7 +746,7 @@ class TestFlushStatusUpdate:
                 return_value=True,
             ),
             patch(f"{_CALLBACKS_MODULE}.get_agent_config_by_app_id", new_callable=AsyncMock, return_value=app_config),
-            patch(f"{_CALLBACKS_MODULE}.AsyncWebClient", return_value=mock_client),
+            patch(f"{_CALLBACKS_MODULE}.build_slack_client", return_value=mock_client),
             patch(f"{_CALLBACKS_MODULE}.get_tool_entries", new_callable=AsyncMock, return_value=[]),
             patch(f"{_CALLBACKS_MODULE}.remove_from_status_flush_schedule", new_callable=AsyncMock),
         ):

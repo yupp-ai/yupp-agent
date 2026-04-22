@@ -21,7 +21,6 @@ from typing import Any
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 from slack_sdk.errors import SlackApiError
-from slack_sdk.web.async_client import AsyncWebClient
 from starlette.status import HTTP_401_UNAUTHORIZED
 
 from ypl.agent_harness_service.common.constants import AHS_LIT_BASE_URL
@@ -58,6 +57,7 @@ from ypl.slack_agent_gateway.sessions import (
 from ypl.slack_agent_gateway.sessions import (
     create_session as create_sag_session,
 )
+from ypl.slack_agent_gateway.slack_client import build_slack_client
 from ypl.slack_agent_gateway.types import AgentAppConfig, AgentSession
 from ypl.structured_logger import get_logger
 from ypl.utils import async_timed_cache
@@ -162,7 +162,7 @@ async def _add_ack_reaction(app_config: AgentAppConfig, channel_id: str, ts: str
     This is best-effort — failures are logged but never block the main flow.
     """
     try:
-        client = AsyncWebClient(token=app_config.bot_token)
+        client = build_slack_client(app_config.app_id, app_config.bot_token)
         emoji = random.choice(_ACK_REACTIONS)
         await client.reactions_add(channel=channel_id, name=emoji, timestamp=ts)
     except SlackApiError as e:
@@ -222,7 +222,7 @@ async def _post_placeholder(
     Best-effort — failures are logged but never block the main flow.
     """
     try:
-        client = AsyncWebClient(token=app_config.bot_token)
+        client = build_slack_client(app_config.app_id, app_config.bot_token)
         response = await client.chat_postMessage(
             channel=channel_id,
             thread_ts=thread_ts,
@@ -393,7 +393,7 @@ async def _post_channel_denied_message(
         message = "I'm not allowed to chat in this channel. Please move to other channels I'm allowed to talk."
 
     try:
-        client = AsyncWebClient(token=app_config.bot_token)
+        client = build_slack_client(app_config.app_id, app_config.bot_token)
         await client.chat_postMessage(
             channel=channel_id,
             thread_ts=thread_ts,
@@ -432,7 +432,7 @@ async def _handle_stop_command(
             agent_name=app_config.agent_name,
         )
         try:
-            client = AsyncWebClient(token=app_config.bot_token)
+            client = build_slack_client(app_config.app_id, app_config.bot_token)
             await client.chat_postMessage(
                 channel=channel_id,
                 thread_ts=thread_ts,
@@ -445,7 +445,7 @@ async def _handle_stop_command(
     # Clean up any placeholder message from the current turn
     if session.placeholder_ts:
         try:
-            client = AsyncWebClient(token=app_config.bot_token)
+            client = build_slack_client(app_config.app_id, app_config.bot_token)
             await client.chat_delete(channel=channel_id, ts=session.placeholder_ts)
         except Exception:
             pass
@@ -476,7 +476,7 @@ async def _handle_stop_command(
         slack_text = "_Failed to stop the agent. Please try again._"
 
     try:
-        client = AsyncWebClient(token=app_config.bot_token)
+        client = build_slack_client(app_config.app_id, app_config.bot_token)
         await client.chat_postMessage(
             channel=channel_id,
             thread_ts=thread_ts,
@@ -506,7 +506,7 @@ async def _handle_attach_command(
     Only works as the first message in a thread (top-level message).
     Stores the thread→session mapping and calls AHS to attach Slack context.
     """
-    client = AsyncWebClient(token=app_config.bot_token)
+    client = build_slack_client(app_config.app_id, app_config.bot_token)
 
     # Validate: must be a top-level message (first message in a new thread)
     is_top_level = thread_ts == ts
@@ -750,7 +750,7 @@ async def handle_app_mention(
             all_valid = set(available.get("harnessed", [])) | set(available.get("raw", []))
             if model_directive not in all_valid:
                 # Invalid model — post an error listing valid choices and bail out.
-                client = AsyncWebClient(token=app_config.bot_token)
+                client = build_slack_client(app_config.app_id, app_config.bot_token)
                 models_text = _format_models_list(available)
                 error_msg = f":x: Model `{model_directive}` not found.\n\n{models_text}"
                 try:
@@ -788,7 +788,7 @@ async def handle_app_mention(
     # Post model-override confirmation for new sessions so the user knows it took effect.
     if force_model and is_new and not existing_ahs_session_id:
         try:
-            client = AsyncWebClient(token=app_config.bot_token)
+            client = build_slack_client(app_config.app_id, app_config.bot_token)
             await client.chat_postMessage(
                 channel=channel_id,
                 thread_ts=thread_ts,
@@ -874,7 +874,7 @@ async def handle_app_mention(
     # If forwarding failed, clean up stale placeholder so it doesn't linger.
     if result is None and session.placeholder_ts:
         try:
-            client = AsyncWebClient(token=app_config.bot_token)
+            client = build_slack_client(app_config.app_id, app_config.bot_token)
             await client.chat_delete(channel=channel_id, ts=session.placeholder_ts)
         except Exception:
             pass
@@ -885,7 +885,7 @@ async def handle_app_mention(
     # notice so the user knows their message was received but not yet processed.
     if result and result.get("status") == "queued" and session.placeholder_ts:
         try:
-            client = AsyncWebClient(token=app_config.bot_token)
+            client = build_slack_client(app_config.app_id, app_config.bot_token)
             await client.chat_update(
                 channel=channel_id,
                 ts=session.placeholder_ts,

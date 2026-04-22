@@ -413,7 +413,7 @@ class TestHandleSurveyAction:
                 return_value=app_config,
             ),
             patch(
-                "ypl.slack_agent_gateway.interactions.AsyncWebClient",
+                "ypl.slack_agent_gateway.interactions.build_slack_client",
                 return_value=mock_client,
             ),
         ):
@@ -622,7 +622,7 @@ class TestHandleQuestionnaireAction:
                 return_value=app_config,
             ),
             patch(
-                "ypl.slack_agent_gateway.interactions.AsyncWebClient",
+                "ypl.slack_agent_gateway.interactions.build_slack_client",
                 return_value=mock_client,
             ),
         ):

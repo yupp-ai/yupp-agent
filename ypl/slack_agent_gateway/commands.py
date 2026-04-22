@@ -8,10 +8,10 @@ from urllib.parse import parse_qs
 
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
-from slack_sdk.web.async_client import AsyncWebClient
 
 from ypl.slack_agent_gateway.constants import get_bot_father_config
 from ypl.slack_agent_gateway.events import verify_slack_signature_multi
+from ypl.slack_agent_gateway.slack_client import build_slack_client
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -179,7 +179,8 @@ async def _handle_create_agent_command(trigger_id: str, user_id: str) -> JSONRes
         )
 
     try:
-        client = AsyncWebClient(token=bot_token)
+        # Bot Father is a singleton app — a stable pseudo-id keys the gate correctly.
+        client = build_slack_client("bot_father", bot_token)
         modal_payload = _build_create_agent_modal(trigger_id)
 
         await client.views_open(
