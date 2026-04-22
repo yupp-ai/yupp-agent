@@ -36,24 +36,43 @@ walk through everything from Slack app creation to DB row.
 <details>
 <summary>Click to expand setup steps</summary>
 
+### Two flavors of agent app
+
+Before you start, decide which kind of app you're setting up — the required
+scopes and Slack-side configuration differ:
+
+- **Mention-driven agent** — users start a session by `@mention`-ing the bot.
+  Needs Event Subscriptions and `app_mentions:read` so Slack delivers the
+  trigger to the gateway.
+- **Outbound / interactive-only app** — the backend posts messages
+  unprompted (alerts, surveys, status updates) and optionally receives
+  interactive component callbacks (buttons, menus). Does **not** need Event
+  Subscriptions at all; events delivered to such an app would be dropped by
+  the gateway because no agent in the backend is wired to handle them.
+
+The steps below call out which pieces are mention-driven-only.
+
 #### 1. Create a Slack App
 
 1. Go to [api.slack.com/apps](https://api.slack.com/apps) → **Create New App**
 2. Choose "From scratch"
 3. Select your workspace
-4. Set the app name (this is how users will @mention the agent)
+4. Set the app name (for mention-driven agents this is how users `@mention`
+   the agent; for outbound-only apps it's just the display name)
 
 #### 2. Configure OAuth & Permissions
 
-Add these Bot Token Scopes:
-- `app_mentions:read` - Receive mention events
-- `channels:read` - Read channel info (required for channel allowlist filtering)
-- `channels:history` - Read public channel messages
-- `chat:write` - Post messages and interactive components (buttons, menus)
-- `groups:read` - Read private channel info (required for channel allowlist filtering)
-- `groups:history` - Read private channel messages
-- `reactions:read` - Read emoji reactions
-- `reactions:write` - Add emoji reactions
+**Always needed** (both flavors):
+- `chat:write` — post messages and interactive components (buttons, menus)
+- `channels:read` — read channel info (required for channel allowlist filtering)
+- `groups:read` — read private channel info (required for channel allowlist filtering)
+
+**Only for mention-driven agents** (skip for outbound-only apps):
+- `app_mentions:read` — receive mention events
+- `channels:history` — read public channel messages
+- `groups:history` — read private channel messages
+- `reactions:read` — read emoji reactions
+- `reactions:write` — add emoji reactions
 
 > **Note**: No additional scopes are required for receiving button clicks. Button click events are delivered via the Interactivity URL (not Event Subscriptions). The `chat:write` scope is sufficient to post messages with buttons and update them after clicks.
 
@@ -80,19 +99,23 @@ where `$1` / `$2` are the Fernet-encrypted values (key =
 leave those two columns NULL and set the matching env vars instead — see
 [`docs/secrets.md`](../../docs/secrets.md).
 
-#### 6. Deploy and Configure Event Subscriptions
+#### 4. Deploy and Configure Slack URLs
 
 1. Deploy to staging: `/deploy-to-staging slack-agent-gateway`
-2. In Slack app settings, configure **Interactivity & Shortcuts**:
+2. **Interactivity & Shortcuts** (needed if your app has buttons, menus,
+   modals, or any interactive components — e.g. the Quick Survey):
    - Toggle **Interactivity** to **ON**
    - Set **Request URL** to your gateway's interactivity endpoint, e.g.
      `https://sag.example.com/gw/slack/slack/interactive`
      (replace `sag.example.com` with your real ingress host)
-3. Configure **Event Subscriptions**:
+3. **Event Subscriptions** — *only* for mention-driven agents. Skip this
+   entire step for outbound-only / interactive-only apps; the gateway will
+   drop events for any `api_app_id` not wired to a backend agent, so
+   subscribing has no effect:
    - Set **Request URL** to your gateway's events endpoint, e.g.
      `https://sag.example.com/gw/slack/slack/events`
      (replace `sag.example.com` with your real ingress host)
-4. Subscribe to bot events: `app_mention`, `reaction_added`
+   - Subscribe to bot events: `app_mention`, `reaction_added`
 
 </details>
 
