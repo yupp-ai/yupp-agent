@@ -1,0 +1,24 @@
+[Unit]
+Description=Artifact Viewer (read-only web UI for AHS artifacts)
+After=network.target
+Requires=network.target
+
+[Service]
+Type=simple
+User=ahs
+Group=ahs
+WorkingDirectory=/opt/artifact-viewer
+EnvironmentFile=/opt/artifact-viewer/.env
+# ``artifact-viewer`` is installed as a console script by pyproject.toml.
+ExecStart=/opt/artifact-viewer/.venv/bin/artifact-viewer
+Restart=on-failure
+RestartSec=5
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,56 @@
+[project]
+name = "artifact-viewer"
+version = "0.1.0"
+description = "Read-only web viewer for AHS textual artifacts (artifacts.agcouch.com)"
+requires-python = ">=3.12"
+dependencies = [
+    "starlette>=0.47",
+    "uvicorn[standard]>=0.33",
+    "httpx>=0.27",
+    "authlib>=1.6",
+    "itsdangerous>=2.2",
+    "jinja2>=3.1",
+    "markdown-it-py>=3.0",
+    "bleach>=6.2",
+    "pydantic-settings>=2.6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "mypy>=1.13",
+    "ruff>=0.9",
+    "types-bleach",
+]
+
+[project.scripts]
+artifact-viewer = "artifact_viewer.app:main"
+
+[tool.ruff]
+line-length = 120
+src = ["artifact_viewer", "tests"]
+
+[tool.ruff.lint]
+select = ["B", "C4", "E", "F", "FURB", "I", "PERF", "PIE", "RET", "SIM", "TID", "UP", "W", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+explicit_package_bases = true
+packages = ["artifact_viewer"]
+
+[[tool.mypy.overrides]]
+module = ["authlib.*", "markdown_it.*", "bleach.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["artifact_viewer*"]

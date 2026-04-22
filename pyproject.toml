@@ -17,6 +17,8 @@ exclude = [
     ".git/",
     "ypl/db/alembic/versions/*",
     "tmp/",
+    # Self-contained sub-apps with their own pyproject/tests/deps.
+    "apps/",
 ]
 
 line-length = 120
@@ -216,7 +218,7 @@ warn_no_return = true
 strict_equality = true
 ignore_missing_imports = true
 plugins = ["pydantic.mypy"]
-exclude = ["ypl/db/alembic/", "tmp/", "scripts/"]
+exclude = ["ypl/db/alembic/", "tmp/", "scripts/", "apps/"]
 cache_dir = ".mypy_cache"
 incremental = true
 

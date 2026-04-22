@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% from "_artifact_table.html" import artifact_table %}
+{% block title %}Recent artifacts · Artifact Viewer{% endblock %}
+{% block content %}
+<h1>Recent artifacts</h1>
+<p class="muted">Showing the 20 most recent non-archived artifacts. Use search above to find by title, slug, or attachment filename.</p>
+{{ artifact_table(artifacts) }}
+{% endblock %}

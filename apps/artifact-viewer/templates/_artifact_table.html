@@ -1,0 +1,40 @@
+{% macro artifact_table(artifacts) %}
+{% if artifacts %}
+<table class="artifacts">
+    <thead>
+        <tr>
+            <th>Created (UTC)</th>
+            <th>Title</th>
+            <th>Slug / Version</th>
+            <th>Creator</th>
+            <th>Type</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for a in artifacts %}
+        <tr>
+            <td class="mono">{{ (a.created_at or '')[:19]|replace('T', ' ') }}</td>
+            <td>
+                <a href="/artifacts/{{ a.artifact_id }}">
+                    {{ a.title or '(untitled)' }}
+                </a>
+                {% if a.metadata and a.metadata.is_archived %}<span class="tag archived">archived</span>{% endif %}
+            </td>
+            <td>
+                {% if a.named_slug %}
+                    <a href="/artifacts/by-slug/{{ a.named_slug }}">{{ a.named_slug }}</a>
+                    {% if a.version is not none %}<span class="mono">v{{ a.version }}</span>{% endif %}
+                {% else %}
+                    <span class="muted">—</span>
+                {% endif %}
+            </td>
+            <td class="muted">{{ a.creator_user_id or a.creator_agent_id or '—' }}</td>
+            <td class="mono muted">{{ a.content_type or a.type or '' }}</td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="muted">No artifacts found.</p>
+{% endif %}
+{% endmacro %}
