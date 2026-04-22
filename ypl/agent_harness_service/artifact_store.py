@@ -28,7 +28,8 @@ from sqlmodel import col, select
 from ypl.backend.config import settings
 from ypl.backend.db import get_async_session, get_async_session_read_replica, retry_db
 from ypl.backend.utils.blob_store import BlobStore, get_blob_store
-from ypl.db.agent_harness import AgentArtifact, AgentArtifactType
+from ypl.db.agent_harness import Agent, AgentArtifact, AgentArtifactType
+from ypl.db.users import User
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -489,3 +490,44 @@ async def search_artifacts(
         stmt = stmt.order_by(col(AgentArtifact.created_at).desc()).limit(limit).offset(offset)
         result = await session.execute(stmt)
         return list(result.scalars().all())
+
+
+# ---------------------------------------------------------------------------
+# Attribution resolution
+# ---------------------------------------------------------------------------
+
+
+@retry_db
+async def resolve_attribution(
+    artifacts: list[AgentArtifact],
+) -> tuple[dict[str, str], dict[uuid.UUID, str]]:
+    """Bulk-resolve creator display names for a batch of artifacts.
+
+    Returns ``(user_id → user.name, agent_id → agent.display_name)``.
+    Missing IDs and NULL names are simply absent from the returned maps —
+    callers fall back to the raw ID / a dash.
+
+    Single round-trip for each table; safe to call with an empty list.
+    """
+    user_ids = {a.creator_user_id for a in artifacts if a.creator_user_id}
+    agent_ids = {a.creator_agent_id for a in artifacts if a.creator_agent_id}
+    if not user_ids and not agent_ids:
+        return {}, {}
+
+    user_names: dict[str, str] = {}
+    agent_names: dict[uuid.UUID, str] = {}
+
+    async with get_async_session_read_replica() as session:
+        if user_ids:
+            rows = (await session.execute(select(User.user_id, User.name).where(col(User.user_id).in_(user_ids)))).all()
+            user_names = {uid: name for uid, name in rows if name}
+        if agent_ids:
+            rows = (
+                await session.execute(
+                    select(Agent.agent_id, Agent.display_name, Agent.name).where(col(Agent.agent_id).in_(agent_ids))
+                )
+            ).all()
+            # Prefer display_name; fall back to unique `name`.
+            agent_names = {aid: (display or name) for aid, display, name in rows if (display or name)}
+
+    return user_names, agent_names

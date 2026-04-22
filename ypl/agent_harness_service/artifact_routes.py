@@ -35,6 +35,7 @@ from ypl.agent_harness_service.artifact_store import (
     list_artifacts,
     read_artifact_attachment,
     read_artifact_content,
+    resolve_attribution,
     search_artifacts,
     validate_named_slug,
 )
@@ -146,7 +147,9 @@ class ArtifactResponse(BaseModel):
     named_slug: str | None
     version: int | None
     creator_user_id: str | None
+    creator_user_name: str | None = None
     creator_agent_id: uuid.UUID | None
+    creator_agent_name: str | None = None
     agent_session_id: uuid.UUID | None
     agent_task_id: uuid.UUID | None
     created_at: datetime
@@ -176,7 +179,18 @@ class ArchiveBySlugResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _artifact_to_response(artifact: AgentArtifact) -> ArtifactResponse:
+def _artifact_to_response(
+    artifact: AgentArtifact,
+    *,
+    user_names: dict[str, str] | None = None,
+    agent_names: dict[uuid.UUID, str] | None = None,
+) -> ArtifactResponse:
+    user_name = None
+    if artifact.creator_user_id and user_names:
+        user_name = user_names.get(artifact.creator_user_id)
+    agent_name = None
+    if artifact.creator_agent_id and agent_names:
+        agent_name = agent_names.get(artifact.creator_agent_id)
     return ArtifactResponse(
         artifact_id=artifact.agent_artifact_id,
         type=artifact.artifact_type,
@@ -187,12 +201,20 @@ def _artifact_to_response(artifact: AgentArtifact) -> ArtifactResponse:
         named_slug=artifact.named_slug,
         version=artifact.version,
         creator_user_id=artifact.creator_user_id,
+        creator_user_name=user_name,
         creator_agent_id=artifact.creator_agent_id,
+        creator_agent_name=agent_name,
         agent_session_id=artifact.agent_session_id,
         agent_task_id=artifact.agent_task_id,
         created_at=artifact.created_at,
         metadata=artifact.artifact_metadata,
     )
+
+
+async def _artifacts_to_response_list(artifacts: list[AgentArtifact]) -> list[ArtifactResponse]:
+    """Resolve attribution names in bulk and build the response list."""
+    user_names, agent_names = await resolve_attribution(artifacts)
+    return [_artifact_to_response(a, user_names=user_names, agent_names=agent_names) for a in artifacts]
 
 
 def _decode_attachments(payload: list[AttachmentPayload] | None) -> list[Attachment]:
@@ -239,7 +261,8 @@ async def create_artifact_route(request: CreateArtifactRequest) -> CreateArtifac
         )
     except ArtifactError as exc:
         raise _error_for(exc) from exc
-    base = _artifact_to_response(artifact)
+    user_names, agent_names = await resolve_attribution([artifact])
+    base = _artifact_to_response(artifact, user_names=user_names, agent_names=agent_names)
     slug_url = f"/ahs/artifacts/by-slug/{artifact.named_slug}" if artifact.named_slug else None
     return CreateArtifactResponse(**base.model_dump(), slug_url=slug_url)
 
@@ -266,7 +289,7 @@ async def list_artifacts_route(
         limit=limit,
         offset=offset,
     )
-    return ArtifactListResponse(artifacts=[_artifact_to_response(a) for a in rows])
+    return ArtifactListResponse(artifacts=await _artifacts_to_response_list(rows))
 
 
 # IMPORTANT: ``/search`` must be declared before the ``/{artifact_id}``
@@ -288,7 +311,7 @@ async def search_artifacts_route(
         limit=limit,
         offset=offset,
     )
-    return ArtifactListResponse(artifacts=[_artifact_to_response(a) for a in rows])
+    return ArtifactListResponse(artifacts=await _artifacts_to_response_list(rows))
 
 
 @artifact_router.get("/{artifact_id}", responses={200: {"content": {"*/*": {}}}})
@@ -322,7 +345,8 @@ async def read_artifact_meta_route(artifact_id: uuid.UUID) -> ArtifactResponse:
     artifact = await get_artifact_by_id(artifact_id)
     if artifact is None:
         raise HTTPException(status_code=404, detail=f"Artifact {artifact_id} not found")
-    return _artifact_to_response(artifact)
+    user_names, agent_names = await resolve_attribution([artifact])
+    return _artifact_to_response(artifact, user_names=user_names, agent_names=agent_names)
 
 
 @artifact_router.get("/{artifact_id}/attachments/{filename}")
@@ -356,7 +380,8 @@ async def read_artifact_by_slug_route(
             detail=f"No {artifact_type.value} artifact for slug {slug!r}"
             + (f" at version {version}" if version is not None else ""),
         )
-    return _artifact_to_response(artifact)
+    user_names, agent_names = await resolve_attribution([artifact])
+    return _artifact_to_response(artifact, user_names=user_names, agent_names=agent_names)
 
 
 @artifact_router.get("/by-slug/{slug}/versions", response_model=ArtifactVersionsResponse)
@@ -367,7 +392,7 @@ async def list_versions_route(
     rows = await list_artifact_versions(slug, artifact_type=artifact_type)
     return ArtifactVersionsResponse(
         named_slug=slug,
-        versions=[_artifact_to_response(a) for a in rows],
+        versions=await _artifacts_to_response_list(rows),
     )
 
 

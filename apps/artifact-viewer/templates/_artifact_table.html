@@ -1,24 +1,121 @@
+{#-
+  Artifact table macro.
+
+  Column order (left → right):
+    1. Type        — emoji + label (📝 text, 🔍 code review, 📦 other)
+    2. Created     — ISO timestamp in a <time> tag; the toggle below the table
+                     flips the rendered value between local time (default) and UTC.
+    3. Title       — viewer link. For CODE_REVIEW the title is auto-prefixed
+                     with "PR {pr_number} - " when the PR number is extractable
+                     from the artifact URL.
+    4. Link        — PR link for CODE_REVIEW, external URL for OTHER, dash otherwise.
+    5. Creator     — creator_user_name when available, falls back to creator_user_id.
+    6. Agent       — creator_agent_name when available, falls back to a short agent id.
+    7. Slug / Ver
+    8. Status
+
+  Emojis / labels live in `_type_meta` so they stay consistent across pages.
+-#}
+
+{% set _type_meta = {
+    'TEXT':        {'emoji': '📝', 'label': 'text'},
+    'CODE_REVIEW': {'emoji': '🔍', 'label': 'code review'},
+    'OTHER':       {'emoji': '📦', 'label': 'other'},
+} %}
+
+{%- macro _type_key(artifact) -%}
+    {%- set raw = artifact.type if artifact.type is defined else '' -%}
+    {%- if raw is string -%}
+        {%- set cand = raw.rsplit('.', 1)[-1]|upper -%}
+    {%- elif raw -%}
+        {%- set cand = (raw.name if raw.name is defined else raw|string)|upper -%}
+    {%- else -%}
+        {%- set cand = '' -%}
+    {%- endif -%}
+    {{- cand if cand in _type_meta else 'TEXT' -}}
+{%- endmacro %}
+
+{%- macro _pr_number(url) -%}
+    {#- Extract trailing numeric segment from a GitHub PR URL. Returns empty
+        string if the URL isn't a PR link or the tail isn't a number. -#}
+    {%- if url and '/pull' in url -%}
+        {%- set cleaned = url.split('?')[0].split('#')[0].rstrip('/') -%}
+        {%- set tail = cleaned.rsplit('/', 1)[-1] -%}
+        {%- if tail.isdigit() -%}{{ tail }}{%- endif -%}
+    {%- endif -%}
+{%- endmacro %}
+
 {% macro artifact_table(artifacts) %}
 {% if artifacts %}
 <table class="artifacts">
     <thead>
         <tr>
-            <th>Created (UTC)</th>
+            <th>Type</th>
+            <th>
+                Created <span class="time-mode-label muted">(local)</span>
+            </th>
             <th>Title</th>
+            <th>Link</th>
+            <th>Creator</th>
+            <th>Agent</th>
             <th>Slug / Version</th>
             <th>Status</th>
-            <th>Creator</th>
-            <th>Type</th>
         </tr>
     </thead>
     <tbody>
     {% for a in artifacts %}
+        {% set tkey = _type_key(a)|trim %}
+        {% set tmeta = _type_meta.get(tkey, _type_meta['TEXT']) %}
+        {% set pr_num = _pr_number(a.url)|trim %}
+        {% set display_title = a.title or '(untitled)' %}
+        {% if tkey == 'CODE_REVIEW' and pr_num %}
+            {% set display_title = 'PR ' ~ pr_num ~ ' - ' ~ display_title %}
+        {% endif %}
         <tr>
-            <td class="mono">{{ (a.created_at or '')[:19]|replace('T', ' ') }}</td>
+            <td class="type-cell">
+                <span class="type-emoji" aria-hidden="true">{{ tmeta.emoji }}</span>
+                <span class="type-label">{{ tmeta.label }}</span>
+            </td>
+            <td>
+                {% if a.created_at %}
+                    <time class="timestamp" datetime="{{ a.created_at }}" data-utc="{{ a.created_at }}">{{ (a.created_at or '')[:19]|replace('T', ' ') }}</time>
+                {% else %}
+                    <span class="muted">—</span>
+                {% endif %}
+            </td>
             <td>
                 <a href="/artifacts/{{ a.artifact_id }}">
-                    {{ a.title or '(untitled)' }}
+                    {{ display_title }}
                 </a>
+            </td>
+            <td>
+                {% if tkey == 'CODE_REVIEW' and a.url %}
+                    <a href="{{ a.url }}" target="_blank" rel="noopener noreferrer">
+                        {% if pr_num %}PR #{{ pr_num }}{% else %}view PR ↗{% endif %}
+                    </a>
+                {% elif tkey == 'OTHER' and a.url %}
+                    <a href="{{ a.url }}" target="_blank" rel="noopener noreferrer">open ↗</a>
+                {% else %}
+                    <span class="muted">—</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if a.creator_user_name %}
+                    {{ a.creator_user_name }}
+                {% elif a.creator_user_id %}
+                    <span class="mono muted">{{ a.creator_user_id }}</span>
+                {% else %}
+                    <span class="muted">—</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if a.creator_agent_name %}
+                    {{ a.creator_agent_name }}
+                {% elif a.creator_agent_id %}
+                    <span class="mono muted">{{ a.creator_agent_id|string|truncate(8, true, '') }}</span>
+                {% else %}
+                    <span class="muted">—</span>
+                {% endif %}
             </td>
             <td>
                 {% if a.named_slug %}
@@ -35,12 +132,70 @@
                     <span class="tag active">active</span>
                 {% endif %}
             </td>
-            <td class="muted">{{ a.creator_user_id or a.creator_agent_id or '—' }}</td>
-            <td class="mono muted">{{ a.content_type or a.type or '' }}</td>
         </tr>
     {% endfor %}
     </tbody>
 </table>
+
+<div class="time-toggle" role="group" aria-label="Time zone display mode">
+    <span class="muted small">Show times in:</span>
+    <button type="button" class="time-toggle-btn is-active" data-mode="local" aria-pressed="true">Local</button>
+    <button type="button" class="time-toggle-btn" data-mode="utc" aria-pressed="false">UTC</button>
+</div>
+<script>
+(function () {
+    var STORAGE_KEY = 'artifactTimeMode';
+    function pad(n) { return n < 10 ? '0' + n : '' + n; }
+    function formatLocal(d) {
+        return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+               ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+    }
+    function formatUTC(d) {
+        return d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate()) +
+               ' ' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ':' + pad(d.getUTCSeconds()) + 'Z';
+    }
+    function apply(mode) {
+        var times = document.querySelectorAll('time.timestamp');
+        for (var i = 0; i < times.length; i++) {
+            var iso = times[i].getAttribute('data-utc');
+            if (!iso) continue;
+            var d = new Date(iso);
+            if (isNaN(d.getTime())) continue;
+            times[i].textContent = mode === 'utc' ? formatUTC(d) : formatLocal(d);
+        }
+        var btns = document.querySelectorAll('.time-toggle-btn');
+        for (var j = 0; j < btns.length; j++) {
+            var pressed = btns[j].getAttribute('data-mode') === mode;
+            btns[j].setAttribute('aria-pressed', pressed ? 'true' : 'false');
+            btns[j].classList.toggle('is-active', pressed);
+        }
+        var labels = document.querySelectorAll('.time-mode-label');
+        var text = mode === 'utc' ? '(UTC)' : '(local)';
+        for (var k = 0; k < labels.length; k++) {
+            labels[k].textContent = text;
+        }
+    }
+    function init() {
+        var saved = null;
+        try { saved = window.localStorage.getItem(STORAGE_KEY); } catch (_) { /* ignore */ }
+        var mode = saved === 'utc' ? 'utc' : 'local';
+        apply(mode);
+        var btns = document.querySelectorAll('.time-toggle-btn');
+        for (var i = 0; i < btns.length; i++) {
+            btns[i].addEventListener('click', function (ev) {
+                var next = ev.currentTarget.getAttribute('data-mode');
+                apply(next);
+                try { window.localStorage.setItem(STORAGE_KEY, next); } catch (_) { /* ignore */ }
+            });
+        }
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
+</script>
 {% else %}
 <p class="muted">No artifacts found.</p>
 {% endif %}

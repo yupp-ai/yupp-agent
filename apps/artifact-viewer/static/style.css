@@ -139,6 +139,36 @@ table.artifacts th {
 
 table.artifacts tbody tr:hover { background: var(--bg-alt); }
 
+.type-cell { white-space: nowrap; }
+.type-cell .type-emoji { font-size: 1.05em; margin-right: 4px; }
+.type-cell .type-label { color: var(--fg-muted); text-transform: lowercase; font-size: 0.9em; }
+time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap; }
+
+/* --- Time toggle --- */
+
+.time-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+    font-size: 12px;
+}
+.time-toggle-btn {
+    padding: 2px 10px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--bg);
+    color: var(--fg);
+    font: inherit;
+    cursor: pointer;
+}
+.time-toggle-btn:hover { background: var(--bg-alt); }
+.time-toggle-btn.is-active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
 .tag {
     display: inline-block;
     padding: 1px 6px;
