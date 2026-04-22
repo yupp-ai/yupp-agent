@@ -250,6 +250,16 @@ class SendMessageRequest(BaseModel):
         None,
         description="Override bot display name for this message (requires chat:write.customize scope).",
     )
+    unfurl_links: bool = Field(
+        True,
+        description="Whether Slack should auto-unfurl plain-text / HTML links in the message. "
+        "Default True (Slack's own default for user messages). Set False to suppress link previews.",
+    )
+    unfurl_media: bool = Field(
+        True,
+        description="Whether Slack should auto-unfurl media links (images, videos). "
+        "Default True. Set False to suppress media previews.",
+    )
 
 
 class SendMessageResponse(BaseModel):

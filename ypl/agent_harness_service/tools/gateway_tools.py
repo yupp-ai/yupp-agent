@@ -62,6 +62,9 @@ async def _post_as_opsbot(
     channel: str,
     text: str,
     thread_ts: str | None,
+    *,
+    unfurl_links: bool = True,
+    unfurl_media: bool = True,
 ) -> _SendResult:
     """Post directly as OpsBot (fallback when agent has no Slack presence).
 
@@ -76,6 +79,8 @@ async def _post_as_opsbot(
             channel=channel,
             text=text,
             thread_ts=thread_ts,
+            unfurl_links=unfurl_links,
+            unfurl_media=unfurl_media,
         )
         if not response.get("ok"):
             return _SendResult(
@@ -251,6 +256,8 @@ async def ask_question(
         "If channel is also omitted, the project's slack_channel is used automatically. "
         "If you provide channel alongside project_id, the message is a new top-level post "
         "in that channel (project_id never auto-fills thread_ts when channel is explicit). "
+        "Pass unfurl_links=False and/or unfurl_media=False to suppress Slack's link / media "
+        "previews for link-heavy messages (e.g. news digests). Both default to True. "
         "NOTE: In Slack sessions, your text output is automatically relayed to Slack by the harness — "
         "only call this tool when explicitly instructed to post to a specific channel or thread. "
         "If you do use it, do not also produce text output with the same content — the harness will relay both, "
@@ -263,6 +270,8 @@ async def send_slack_message(
     thread_ts: str | None = None,
     project_id: str | None = None,
     session_id: str | None = None,
+    unfurl_links: bool = True,
+    unfurl_media: bool = True,
 ) -> dict[str, str]:
     """Send a message to a Slack channel.
 
@@ -281,6 +290,11 @@ async def send_slack_message(
             - project_id + thread_ts: posts to project's channel (if channel omitted)
               in the given thread.
         session_id: The calling agent's harness session ID, used to resolve the agent name.
+        unfurl_links: If False, Slack will not auto-unfurl plain HTTP(S) links in the message.
+            Default True (Slack's default for user messages). Useful for link-heavy posts
+            (e.g. daily news digests) where preview cards clutter the thread.
+        unfurl_media: If False, Slack will not auto-unfurl media links (images, videos).
+            Default True.
 
     Returns:
         Dict with status, message_ts, channel, and optional error message.
@@ -364,6 +378,8 @@ async def send_slack_message(
             text=text,
             thread_id=effective_thread_ts,
             ahs_session_id=effective_session_id,
+            unfurl_links=unfurl_links,
+            unfurl_media=unfurl_media,
         )
     else:
         # Loud log so OpsBot-as-fallback usage is visible in ops dashboards.
@@ -381,6 +397,8 @@ async def send_slack_message(
             channel=effective_channel,
             text=text,
             thread_ts=effective_thread_ts,
+            unfurl_links=unfurl_links,
+            unfurl_media=unfurl_media,
         )
 
     if not result.success:

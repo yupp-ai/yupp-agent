@@ -373,6 +373,71 @@ class TestSendSlackMessage:
         assert result["status"] == "error"
         assert "Slack API error" in result["error"]
 
+    async def test_unfurl_flags_forwarded_to_gateway(self) -> None:
+        """unfurl_links=False / unfurl_media=False should be forwarded to gateway.send_message."""
+        gateway = _make_slack_gateway(success=True)
+        registry_class = _make_gateway_registry(gateway)
+        mock_db = AsyncMock()
+        mock_db_cm = AsyncMock()
+        mock_db_cm.__aenter__.return_value = mock_db
+
+        mock_var = MagicMock()
+        mock_var.get.return_value = VALID_SESSION
+        with (
+            patch("ypl.agent_harness_service.tools.gateway_tools.mcp_session_id_var", mock_var),
+            patch(
+                "ypl.agent_harness_service.tools.gateway_tools._resolve_parent_session",
+                new=AsyncMock(return_value={"agent_name": "sre"}),
+            ),
+            patch(
+                "ypl.agent_harness_service.tools.gateway_tools.agent_has_slack_presence",
+                new=AsyncMock(return_value=True),
+            ),
+            patch("ypl.agent_harness_service.gateway.GatewayRegistry", registry_class),
+            patch("ypl.agent_harness_service.tools.gateway_tools.get_async_session", return_value=mock_db_cm),
+        ):
+            result = await send_slack_message(
+                text="link-heavy digest",
+                channel="C_NEWS",
+                unfurl_links=False,
+                unfurl_media=False,
+            )
+
+        assert result["status"] == "ok"
+        gateway.send_message.assert_awaited_once()
+        call_kwargs = gateway.send_message.await_args.kwargs
+        assert call_kwargs["unfurl_links"] is False
+        assert call_kwargs["unfurl_media"] is False
+
+    async def test_unfurl_flags_default_to_true(self) -> None:
+        """Omitting unfurl flags should preserve Slack's default (both True)."""
+        gateway = _make_slack_gateway(success=True)
+        registry_class = _make_gateway_registry(gateway)
+        mock_db = AsyncMock()
+        mock_db_cm = AsyncMock()
+        mock_db_cm.__aenter__.return_value = mock_db
+
+        mock_var = MagicMock()
+        mock_var.get.return_value = VALID_SESSION
+        with (
+            patch("ypl.agent_harness_service.tools.gateway_tools.mcp_session_id_var", mock_var),
+            patch(
+                "ypl.agent_harness_service.tools.gateway_tools._resolve_parent_session",
+                new=AsyncMock(return_value={"agent_name": "sre"}),
+            ),
+            patch(
+                "ypl.agent_harness_service.tools.gateway_tools.agent_has_slack_presence",
+                new=AsyncMock(return_value=True),
+            ),
+            patch("ypl.agent_harness_service.gateway.GatewayRegistry", registry_class),
+            patch("ypl.agent_harness_service.tools.gateway_tools.get_async_session", return_value=mock_db_cm),
+        ):
+            await send_slack_message(text="Hello!", channel="alert-backend")
+
+        call_kwargs = gateway.send_message.await_args.kwargs
+        assert call_kwargs["unfurl_links"] is True
+        assert call_kwargs["unfurl_media"] is True
+
     async def test_session_id_from_tool_parameter_as_fallback(self) -> None:
         """Falls back to session_id parameter when context var not set."""
         gateway = _make_slack_gateway(success=True)
@@ -450,7 +515,13 @@ class TestSendSlackMessageOpsBotFallback:
         assert result["status"] == "ok"
         assert result["channel"] == "C_OPS"
         assert result["message_ts"] == "9999.0001"
-        mock_ops.chat_postMessage.assert_awaited_once_with(channel="C_OPS", text="status ping", thread_ts=None)
+        mock_ops.chat_postMessage.assert_awaited_once_with(
+            channel="C_OPS",
+            text="status ping",
+            thread_ts=None,
+            unfurl_links=True,
+            unfurl_media=True,
+        )
         # Fallback must be loudly logged — operators rely on this to notice
         # when a triggering agent is missing its Slack bot.
         warning_calls = [call.args for call in mock_logger.warning.call_args_list]
@@ -487,7 +558,56 @@ class TestSendSlackMessageOpsBotFallback:
             result = await send_slack_message(text="reply", channel="C_OPS", thread_ts="1700000000.0001")
 
         assert result["status"] == "ok"
-        mock_ops.chat_postMessage.assert_awaited_once_with(channel="C_OPS", text="reply", thread_ts="1700000000.0001")
+        mock_ops.chat_postMessage.assert_awaited_once_with(
+            channel="C_OPS",
+            text="reply",
+            thread_ts="1700000000.0001",
+            unfurl_links=True,
+            unfurl_media=True,
+        )
+
+    async def test_fallback_forwards_unfurl_flags(self) -> None:
+        """OpsBot fallback path should also forward unfurl_links / unfurl_media."""
+        mock_db_cm = AsyncMock()
+        mock_db_cm.__aenter__.return_value = AsyncMock()
+
+        mock_var = MagicMock()
+        mock_var.get.return_value = VALID_SESSION
+
+        mock_ops = AsyncMock()
+        mock_ops.chat_postMessage = AsyncMock(return_value={"ok": True, "ts": "1.1", "channel": "C_OPS"})
+
+        with (
+            patch("ypl.agent_harness_service.tools.gateway_tools.mcp_session_id_var", mock_var),
+            patch(
+                "ypl.agent_harness_service.tools.gateway_tools._resolve_parent_session",
+                new=AsyncMock(return_value={"agent_name": "x"}),
+            ),
+            patch(
+                "ypl.agent_harness_service.tools.gateway_tools.agent_has_slack_presence",
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
+                "ypl.agent_harness_service.tools.gateway_tools.get_ops_bot_write_client",
+                return_value=mock_ops,
+            ),
+            patch("ypl.agent_harness_service.tools.gateway_tools.get_async_session", return_value=mock_db_cm),
+        ):
+            result = await send_slack_message(
+                text="digest",
+                channel="C_OPS",
+                unfurl_links=False,
+                unfurl_media=False,
+            )
+
+        assert result["status"] == "ok"
+        mock_ops.chat_postMessage.assert_awaited_once_with(
+            channel="C_OPS",
+            text="digest",
+            thread_ts=None,
+            unfurl_links=False,
+            unfurl_media=False,
+        )
 
     async def test_fallback_reports_slack_error(self) -> None:
         mock_db_cm = AsyncMock()

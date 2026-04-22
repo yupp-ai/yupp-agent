@@ -927,6 +927,8 @@ class ConcreteGateway(Gateway):
         thread_id: str | None = None,
         ahs_session_id: str | None = None,
         username: str | None = None,
+        unfurl_links: bool = True,
+        unfurl_media: bool = True,
     ) -> GatewaySendResult:
         return GatewaySendResult(success=True)
 
