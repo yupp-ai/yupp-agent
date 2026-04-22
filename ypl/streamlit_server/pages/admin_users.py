@@ -320,32 +320,37 @@ def _render_browse() -> None:
     total_pages = (total + _USERS_PAGE_SIZE - 1) // _USERS_PAGE_SIZE
     st.caption(f"Showing page {page + 1} of {total_pages} — {total} user(s) total")
 
-    hdr = st.columns([3, 1, 2.5, 3.5, 0.8])
-    for i, label in enumerate(("Email", "Status", "Roles", "Effective permissions", "")):
+    _COL_WIDTHS = [2.2, 3.0, 0.9, 2.2, 3.2, 0.7]
+    hdr = st.columns(_COL_WIDTHS)
+    for i, label in enumerate(("Name", "Email", "Status", "Roles", "Effective permissions", "")):
         with hdr[i]:
             st.markdown(f"**{label}**")
 
     selected_user_id: str | None = st.session_state.get("selected_user_id")
 
     for user in users:
-        row = st.columns([3, 1, 2.5, 3.5, 0.8])
+        row = st.columns(_COL_WIDTHS)
         with row[0]:
-            st.markdown(f"`{user['email']}`")
-            if user["name"]:
-                st.caption(user["name"])
+            name = user["name"] or "—"
+            st.markdown(
+                f"<div style='font-size: 1.15rem; font-weight: 600'>{name}</div>",
+                unsafe_allow_html=True,
+            )
         with row[1]:
-            st.markdown(user["status"].value)
+            st.markdown(f"`{user['email']}`")
         with row[2]:
+            st.markdown(user["status"].value)
+        with row[3]:
             if user["roles"]:
                 st.markdown(", ".join(r.value for r in user["roles"]))
             else:
                 st.caption("—")
-        with row[3]:
+        with row[4]:
             if user["permissions"]:
                 st.markdown(", ".join(p.value for p in user["permissions"]))
             else:
                 st.caption("—")
-        with row[4]:
+        with row[5]:
             if st.button("Edit", key=f"edit_user_{user['user_id']}"):
                 st.session_state["selected_user_id"] = user["user_id"]
                 selected_user_id = user["user_id"]

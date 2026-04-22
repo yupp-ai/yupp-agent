@@ -20,11 +20,16 @@ def login_screen() -> None:
         css_content = f.read()
     st.markdown(f"<style>{css_content}</style>", unsafe_allow_html=True)
 
-    logo_path = Path(__file__).parent / "lit_logo.png"
-    if logo_path.exists():
-        st.image(str(logo_path))
-    st.markdown("<div style='margin-bottom: 40px;'></div>", unsafe_allow_html=True)
-    st.button("Log in with Google", on_click=st.login, type="primary")
+    st.markdown(
+        "<div style='font-size: 8rem; text-align: center; line-height: 1'>🛋️</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<div style='font-size: 2rem; font-weight: 700; text-align: center; "
+        "margin: 1rem 0 2rem 0'>Agentic Couch Hub</div>",
+        unsafe_allow_html=True,
+    )
+    st.button("Sign in with Google", on_click=st.login, type="primary")
 
 
 def access_denied_screen() -> None:
