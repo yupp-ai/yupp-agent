@@ -4,6 +4,13 @@ Resolves the set of MCP servers a session should have access to, then writes
 the result in the format each CLI expects:
   - Claude Code: .mcp.json (custom headers)
   - Codex CLI:   -c flags  (bearer_token_env_var)
+
+The server list is built programmatically from ``settings`` — there is no
+base ``.mcp.json`` template in the repo. Per-session decisions (which
+servers to include, which headers to attach) happen here based on
+:class:`SessionPermissions` + session context. For local ``claude`` sessions
+in the repo, create your own ``.mcp.json`` in the project root (gitignored);
+see ``.mcp.json.example``.
 """
 
 import json
@@ -13,10 +20,10 @@ from typing import Any
 from ypl.agent_harness_service.common.constants import (
     AHS_MCP_BASE_URL,
     AHS_MCP_SECRET,
-    AHS_REPOS_DIR,
     ALL_MCP_SERVERS,
 )
 from ypl.agent_harness_service.common.types import SessionPermissions
+from ypl.backend.config import settings
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -24,6 +31,31 @@ logger = get_logger()
 # Env var name injected into the Codex subprocess carrying "<secret>:<session_id>".
 # The MCP auth middleware accepts this as a Bearer token fallback.
 CODEX_HARNESS_BEARER_ENV = "AHS_MCP_BEARER"
+
+
+def _build_base_servers() -> dict[str, Any]:
+    """Return the baseline set of MCP servers available to any session.
+
+    Today this is just ``agcouch-mcp-server`` — the AHS monolith's own MCP
+    endpoint served in-process at ``/mcp/agcouch``. When we add more
+    first-party servers (or a DB-backed registry of external ones), they
+    plug in here.
+
+    The ``harness`` server is injected later in :func:`resolve_mcp_servers`
+    because it needs per-session headers (``X-AHS-Session-ID``).
+    """
+    servers: dict[str, Any] = {}
+
+    if settings.AGCOUCH_MCP_SERVER_NAME and settings.AGCOUCH_MCP_SERVER_URL:
+        servers[settings.AGCOUCH_MCP_SERVER_NAME] = {
+            "type": "http",
+            "url": settings.AGCOUCH_MCP_SERVER_URL,
+            "headers": {
+                "Authorization": f"Bearer {settings.AGCOUCH_MCP_TOKEN}",
+            },
+        }
+
+    return servers
 
 
 def resolve_mcp_servers(
@@ -34,17 +66,10 @@ def resolve_mcp_servers(
 ) -> dict[str, Any]:
     """Resolve the set of MCP servers a session should have access to.
 
-    Reads the base .mcp.json from the repo, applies permission filtering,
-    injects the harness MCP server, and returns the final server dict.
+    Builds the baseline set, applies permission filtering, injects the
+    harness MCP server, and returns the final server dict.
     """
-    # Read the base config from the repo (contains agcouch-mcp-server, etc.)
-    base_mcp_path = os.path.join(AHS_REPOS_DIR, "yupp-agent", ".mcp.json")
-    base_servers: dict[str, Any] = {}
-    try:
-        with open(base_mcp_path) as f:
-            base_servers = json.load(f).get("mcpServers", {})
-    except (FileNotFoundError, json.JSONDecodeError):
-        logger.warning("Base .mcp.json not found or invalid", path=base_mcp_path)
+    base_servers = _build_base_servers()
 
     # Resolve permissions from context (with fail-secure defaults).
     ctx = session_context or {}
