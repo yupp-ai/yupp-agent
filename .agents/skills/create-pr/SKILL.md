@@ -71,8 +71,8 @@ Context links — include whichever are known, omit the rest:
 - Design doc / artifact: `[Design doc](http://go/p/...)`
 - Agent project: `[Project](https://agcouch.com/projects/...)`
 - Agent task: `[Task](https://agcouch.com/tasks/...)`
-- Slack thread: `[Slack thread](https://yupp-ai.slack.com/...)`
-- Lit session: `[Session](https://lit.yupp.ai/agent_harness_console?session_id=...)`
+- Slack thread: `[Slack thread](https://agentic-couch.slack.com/...)`
+- Lit session: `[Session](https://lit.agcouch.com/agent_harness_console?session_id=...)`
 - Related PR: `#1234`
 
 ### Problem Section
