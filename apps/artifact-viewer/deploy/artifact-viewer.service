@@ -1,16 +1,19 @@
 [Unit]
 Description=Artifact Viewer (read-only web UI for AHS artifacts)
-After=network.target
+After=network.target ahs-mono.service
 Requires=network.target
 
 [Service]
 Type=simple
 User=ahs
 Group=ahs
-WorkingDirectory=/opt/artifact-viewer
-EnvironmentFile=/opt/artifact-viewer/.env
-# ``artifact-viewer`` is installed as a console script by pyproject.toml.
-ExecStart=/opt/artifact-viewer/.venv/bin/artifact-viewer
+# Installed as part of the monolith tree by install.sh. The sub-app has its
+# own venv at apps/artifact-viewer/.venv (kept out of the main poetry env so
+# Starlette/authlib/etc. don't leak into the monolith's dependency graph).
+WorkingDirectory=/opt/yupp-agent/apps/artifact-viewer
+# Reads the same .env as ahs-mono; viewer-specific vars are prefixed VIEWER_.
+EnvironmentFile=/opt/yupp-agent/.env
+ExecStart=/opt/yupp-agent/apps/artifact-viewer/.venv/bin/artifact-viewer
 Restart=on-failure
 RestartSec=5
 # Hardening

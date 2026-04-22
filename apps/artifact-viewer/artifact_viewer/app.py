@@ -172,7 +172,7 @@ async def _render_artifact(request: Request, artifact_id: str, *, meta: dict[str
             "body_html": body_html,
             "display_mode": display_mode,
             "attachments_html": attach_html,
-            "ahs_base_url": settings.AHS_BASE_URL,
+            "ahs_base_url": settings.VIEWER_AHS_BASE_URL,
         },
     )
 
@@ -239,10 +239,10 @@ def build_app() -> Starlette:
     middleware = [
         Middleware(
             SessionMiddleware,
-            secret_key=settings.SESSION_SECRET_KEY,
-            max_age=settings.SESSION_MAX_AGE,
+            secret_key=settings.VIEWER_SESSION_SECRET_KEY,
+            max_age=settings.VIEWER_SESSION_MAX_AGE,
             same_site="lax",
-            https_only=settings.SESSION_COOKIE_SECURE,
+            https_only=settings.VIEWER_SESSION_COOKIE_SECURE,
         ),
         Middleware(RequireLoginMiddleware),
     ]

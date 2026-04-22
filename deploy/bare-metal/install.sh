@@ -95,7 +95,7 @@ repo_slug_from_url() {
 
 [[ $EUID -ne 0 ]] && error "Run this script as root (or with sudo)."
 
-TOTAL_STEPS=8
+TOTAL_STEPS=9
 
 # ---------------------------------------------------------------------------
 # Plan + confirm
@@ -118,11 +118,12 @@ It will do ${TOTAL_STEPS} steps:
   2. Create system user        — '${APP_USER}' and ${INSTALL_DIR}
   3. Clone the repo            — walks you through SSH deploy key setup if needed
   4. Install Python deps       — poetry install (production, no dev extras)
-  5. Install systemd units     — yupp-agent, yupp-streamlit (enabled, not started)
+  5. Install systemd units     — ahs-mono, ahs-streamlit, artifact-viewer (enabled, not started)
   6. Create data directories   — for logs, cache, etc.
   7. Install agent CLIs        — Claude Code + Codex (optional, prompted)
   8. Postgres DB + roles       — 'yadb' + schema_manager (DDL) + be_app_user (runtime)
                                  passwords saved to /opt/yupp-agent/.pg-creds
+  9. Artifact Viewer sub-app   — isolated venv at apps/artifact-viewer/.venv
 
 After that, you'll still need to:
 
@@ -130,7 +131,8 @@ After that, you'll still need to:
        sudo -u ${APP_USER} bash -c 'cd ${INSTALL_DIR} && .venv/bin/python -m ypl.mono_server.setup'
   b. Add LLM API keys to ${INSTALL_DIR}/.env
   c. Authenticate the agent CLIs (claude login, codex login)
-  d. Start the services:     sudo systemctl start ahs-mono ahs-streamlit
+  d. (Optional) Fill in VIEWER_* entries in ${INSTALL_DIR}/.env for the artifact viewer
+  e. Start the services:     sudo systemctl start ahs-mono ahs-streamlit artifact-viewer
 
 The script is safe to re-run — it skips steps that are already done.
 
@@ -449,11 +451,12 @@ fi
 # ---------------------------------------------------------------------------
 step 5 "$TOTAL_STEPS" "systemd service units"
 
-info "Installing ahs-mono.service and ahs-streamlit.service…"
+info "Installing ahs-mono.service, ahs-streamlit.service, and artifact-viewer.service…"
 cp "${INSTALL_DIR}/deploy/systemd/ahs-mono.service"     /etc/systemd/system/
 cp "${INSTALL_DIR}/deploy/systemd/ahs-streamlit.service" /etc/systemd/system/
+cp "${INSTALL_DIR}/apps/artifact-viewer/deploy/artifact-viewer.service" /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable ahs-mono ahs-streamlit
+systemctl enable ahs-mono ahs-streamlit artifact-viewer
 info "Units enabled (will auto-start on boot). Not started yet — need setup wizard first."
 
 # ---------------------------------------------------------------------------
@@ -704,6 +707,36 @@ sudo chmod 600 "$CREDS_FILE"
 info "Role creds written to ${CREDS_FILE} (mode 0600, owner ${APP_USER})."
 
 # ---------------------------------------------------------------------------
+# Step 9. Artifact Viewer sub-app
+# ---------------------------------------------------------------------------
+step 9 "$TOTAL_STEPS" "Artifact Viewer sub-app (apps/artifact-viewer/)"
+
+# The viewer is a small standalone Starlette app with its own pyproject.toml
+# (Starlette / authlib / markdown-it / bleach — deps we deliberately keep
+# out of the main monolith venv). Install it in its own venv alongside the
+# monolith's. It reuses /opt/yupp-agent/.env; the systemd unit was already
+# copied + enabled in Step 5.
+VIEWER_DIR="${INSTALL_DIR}/apps/artifact-viewer"
+VIEWER_VENV="${VIEWER_DIR}/.venv"
+
+if [[ ! -d "$VIEWER_DIR" ]]; then
+    warn "Expected ${VIEWER_DIR} to exist after clone — skipping viewer setup."
+else
+    if [[ ! -x "${VIEWER_VENV}/bin/python" ]]; then
+        info "Creating viewer venv at ${VIEWER_VENV}…"
+        sudo -u "$APP_USER" "python${PYTHON_VERSION}" -m venv "$VIEWER_VENV"
+    else
+        info "Viewer venv already exists at ${VIEWER_VENV}."
+    fi
+    info "Installing viewer deps (pip install -e)…"
+    sudo -u "$APP_USER" "${VIEWER_VENV}/bin/pip" install --quiet --upgrade pip
+    sudo -u "$APP_USER" "${VIEWER_VENV}/bin/pip" install --quiet -e "$VIEWER_DIR"
+    info "Viewer binary: ${VIEWER_VENV}/bin/artifact-viewer"
+    info "Service will read ${INSTALL_DIR}/.env — add VIEWER_* entries there."
+    info "  See ${VIEWER_DIR}/.env.example for the full list."
+fi
+
+# ---------------------------------------------------------------------------
 # Done — comprehensive next-steps checklist
 # ---------------------------------------------------------------------------
 
@@ -722,22 +755,24 @@ Everything below is now installed and ready:
   ✓ System user      — ${APP_USER} (home: ${INSTALL_DIR})
   ✓ Repo             — ${INSTALL_DIR}
   ✓ Python venv      — ${VENV_DIR}
-  ✓ systemd units    — yupp-agent, yupp-streamlit (enabled, not started)
+  ✓ systemd units    — ahs-mono, ahs-streamlit, artifact-viewer (enabled, not started)
   ✓ Runtime dirs     — /var/log/ahs-mono, ${INSTALL_DIR}/data, ${INSTALL_DIR}/.cache
   ✓ Database         — PostgreSQL '${DB_NAME}' (empty — Alembic migrations run in setup wizard)
   ✓ Postgres roles   — schema_manager (DDL/Alembic), be_app_user (runtime)
                        creds → /opt/yupp-agent/.pg-creds (mode 0600, owned by ${APP_USER})
+  ✓ Artifact Viewer  — apps/artifact-viewer/.venv (needs VIEWER_* entries in .env)
 $( [[ "$CLAUDE_CHOICE" == "yes" ]] && echo "  ✓ Agent CLI        — Claude Code (needs 'claude login')" || echo "  ✗ Agent CLI        — Claude Code (skipped)" )
 $( [[ "$CODEX_CHOICE"  == "yes" ]] && echo "  ✓ Agent CLI        — Codex (needs 'codex login')"       || echo "  ✗ Agent CLI        — Codex (skipped)" )
 
 
 ${B}Services that will run on this box once started:${N}
 
-  ${D}Service         Port   Bound to         Purpose${N}
-  ahs-mono        8090   0.0.0.0          AHS + MCP + Slack/GitHub gateways (HTTP API)
-  ahs-streamlit   8501   0.0.0.0          Operational dashboards (UI)
-  postgresql      5432   localhost        Agent DB (${DB_NAME})
-  redis           6379   localhost        Session state / pub-sub
+  ${D}Service           Port   Bound to         Purpose${N}
+  ahs-mono          8090   0.0.0.0          AHS + MCP + Slack/GitHub gateways (HTTP API)
+  ahs-streamlit     8501   0.0.0.0          Operational dashboards (UI)
+  artifact-viewer   8095   127.0.0.1        Read-only Google-OAuth'd viewer for artifacts
+  postgresql        5432   localhost        Agent DB (${DB_NAME})
+  redis             6379   localhost        Session state / pub-sub
 
   Internal-only by default. Don't open 5432 or 6379 to the internet.
   Only 8090 (AHS API) needs to be publicly reachable, and only if you wire up
@@ -785,10 +820,20 @@ EOF
 n=$((n+1))
 fi
 cat <<EOF
+ ${n}. ${B}(Optional) Add VIEWER_* entries to .env for the artifact viewer.${N}
+    Required keys (see apps/artifact-viewer/.env.example for the full list):
+      VIEWER_GOOGLE_CLIENT_ID, VIEWER_GOOGLE_CLIENT_SECRET,
+      VIEWER_OAUTH_REDIRECT_URL, VIEWER_ALLOWED_EMAIL_DOMAINS,
+      VIEWER_SESSION_SECRET_KEY.
+    Skip if you don't plan to expose ``artifacts.<your-domain>``.
+
+EOF
+n=$((n+1))
+cat <<EOF
  ${n}. ${B}Start the services.${N}
 
-      sudo systemctl start ahs-mono ahs-streamlit
-      sudo systemctl status ahs-mono ahs-streamlit
+      sudo systemctl start ahs-mono ahs-streamlit artifact-viewer
+      sudo systemctl status ahs-mono ahs-streamlit artifact-viewer
 
 EOF
 n=$((n+1))
@@ -797,6 +842,8 @@ cat <<EOF
 
       curl http://localhost:8090/health
       # → {"status":"ok"}
+      curl http://localhost:8095/healthz
+      # → {"ok": true}
 
 EOF
 n=$((n+1))
@@ -811,8 +858,9 @@ cat <<EOF
 
 ${B}Live logs:${N}
 
-      journalctl -u ahs-mono     -f
-      journalctl -u ahs-streamlit -f
+      journalctl -u ahs-mono        -f
+      journalctl -u ahs-streamlit   -f
+      journalctl -u artifact-viewer -f
 
 Re-run this script anytime — it's idempotent and safe to upgrade/reconfigure.
 
