@@ -3,8 +3,10 @@
 {% block content %}
 <article class="artifact">
     <header class="artifact-header">
-        <h1>{{ meta.title or '(untitled)' }}</h1>
-        {% if meta.description %}<p class="description">{{ meta.description }}</p>{% endif %}
+        <div class="artifact-header-main">
+            <h1>{{ meta.title or '(untitled)' }}</h1>
+            {% if meta.description %}<p class="description">{{ meta.description }}</p>{% endif %}
+        </div>
         <dl class="artifact-meta">
             <dt>ID</dt><dd class="mono"><a href="/artifacts/{{ meta.artifact_id }}">{{ meta.artifact_id }}</a></dd>
             {% if meta.named_slug %}
@@ -44,8 +46,7 @@
     {% endif %}
 
     <footer class="artifact-footer muted small">
-        <a href="{{ ahs_base_url }}/ahs/artifacts/{{ meta.artifact_id }}" rel="nofollow">Raw content (requires API key)</a>
-        · <a href="{{ ahs_base_url }}/ahs/artifacts/{{ meta.artifact_id }}/meta" rel="nofollow">Raw metadata</a>
+        <a href="/artifacts/{{ meta.artifact_id }}/download" rel="nofollow">Download</a>
     </footer>
 </article>
 {% endblock %}
