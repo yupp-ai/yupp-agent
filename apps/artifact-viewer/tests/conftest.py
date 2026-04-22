@@ -2,6 +2,8 @@
 
 Every test runs with a minimal set of ``VIEWER_*`` env vars so the
 viewer's ``Settings`` loads without hitting the real OAuth / AHS.
+Membership allowlisting happens server-side via AHS ``resolve_user``;
+tests mock that call directly.
 """
 
 from __future__ import annotations
@@ -10,8 +12,6 @@ import os
 
 
 def _set_test_env() -> None:
-    os.environ.setdefault("VIEWER_ALLOWED_EMAIL_DOMAINS", "agcouch.com")
-    os.environ.setdefault("VIEWER_ALLOWED_EMAILS", "")
     os.environ.setdefault("VIEWER_SESSION_SECRET_KEY", "test-secret-key")
     os.environ.setdefault("VIEWER_SESSION_COOKIE_SECURE", "false")
     os.environ.setdefault("AGENT_HARNESS_SERVICE_API_KEY", "test-key")

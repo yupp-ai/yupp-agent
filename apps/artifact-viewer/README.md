@@ -7,7 +7,9 @@ deployment: `artifacts.agcouch.com`.
 
 ## What it does
 
-- Google OAuth (domain + email allowlist)
+- Google OAuth login, with membership delegated to AHS: after Google
+  confirms the email, the viewer calls `POST /ahs/resolve_user`. A row
+  in the AHS `users` table ⇒ allowed in. No separate allowlist config.
 - Routes that mirror AHS's REST layout:
   - `/` — recent artifacts + search box
   - `/search?q=…` — substring match over title / description / slug / attachment filenames
@@ -57,9 +59,12 @@ Required keys:
 | `VIEWER_GOOGLE_CLIENT_SECRET` | ✓ | Paired secret |
 | `VIEWER_OAUTH_REDIRECT_URL` | ✓ | Must match the Cloud Console authorized URI exactly |
 | `VIEWER_SESSION_SECRET_KEY` | ✓ | 32+ random bytes; rotate to invalidate all sessions |
-| `VIEWER_ALLOWED_EMAIL_DOMAINS` | optional | Default `agcouch.com` |
 | `VIEWER_AHS_BASE_URL` | optional | Default `https://ahs.agcouch.com` |
 | `VIEWER_HOST`, `VIEWER_PORT` | optional | Default `127.0.0.1:8095` |
+
+There is **no allowlist config**. Access is decided by whether the
+signing-in email has a row in the AHS `users` table. Adding a person
+to that table grants them viewer access; removing them revokes it.
 
 ## Run locally (dev)
 
@@ -137,4 +142,6 @@ The viewer is fully wired into the repo's install/deploy scripts:
 - Full-text search over artifact body (the AHS endpoint doesn't expose it).
 - Admin operations (archive, unarchive).
 - Version diffing.
-- Multi-tenant access control — it's a single org allowlist for now.
+- Signed sharing links for people not in the `users` table (planned as a
+  follow-up — lets a teammate share a specific artifact with an outsider
+  via a one-off token, without adding them to the directory).

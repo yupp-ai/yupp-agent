@@ -2,11 +2,16 @@
 
 Flow:
     /auth/login     → redirect to Google with a CSRF state
-    /auth/callback  → exchange code, check email allowlist, set session
+    /auth/callback  → exchange code, check AHS ``resolve_user``, set session
     /auth/logout    → clear session
     (anything else) → ``require_login`` middleware redirects to /auth/login
 
-Session shape (signed, HttpOnly cookie via :class:`starlette.middleware.sessions.SessionMiddleware`)::
+Membership is not decided here. After Google confirms the email, we
+ask AHS ``POST /ahs/resolve_user`` — if it returns a user_id, the user
+is allowed; 404 means "not in the users table" and we deny access.
+Managing who's in the users table is an AHS responsibility.
+
+Session shape (signed, HttpOnly cookie via Starlette SessionMiddleware)::
 
     {"email": "alice@agcouch.com", "name": "Alice", "picture": "https://..."}
 """
@@ -14,6 +19,7 @@ Session shape (signed, HttpOnly cookie via :class:`starlette.middleware.sessions
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
 from authlib.integrations.starlette_client import OAuth
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -21,6 +27,8 @@ from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
 from starlette.routing import Route
 
+from artifact_viewer import ahs_client
+from artifact_viewer.ahs_client import AHSError
 from artifact_viewer.config import settings
 
 _oauth: OAuth | None = None
@@ -56,7 +64,7 @@ async def login(request: Request) -> Response:
 
 
 async def callback(request: Request) -> Response:
-    """Exchange the OAuth code for a user profile + set session cookie."""
+    """Exchange the OAuth code, check AHS membership, set session cookie."""
     oauth = get_oauth()
     try:
         token = await oauth.google.authorize_access_token(request)
@@ -69,11 +77,25 @@ async def callback(request: Request) -> Response:
         userinfo = await oauth.google.userinfo(token=token)
 
     email = (userinfo or {}).get("email")
-    if not settings.is_email_allowed(email):
+    if not email:
         request.session.clear()
-        return RedirectResponse(f"/auth/error?reason=forbidden&email={email or ''}")
+        return RedirectResponse("/auth/error?reason=no_email")
+
+    # Delegate membership to AHS: is there a row in the users table?
+    email_q = quote(email, safe="")
+    try:
+        user_id = await ahs_client.resolve_user(email)
+    except AHSError:
+        # Upstream unreachable / unexpected error — deny access but tell
+        # the operator what went wrong via the error page.
+        return RedirectResponse(f"/auth/error?reason=ahs_unavailable&email={email_q}")
+
+    if user_id is None:
+        request.session.clear()
+        return RedirectResponse(f"/auth/error?reason=not_a_user&email={email_q}")
 
     request.session["email"] = email
+    request.session["user_id"] = user_id
     request.session["name"] = userinfo.get("name", "")
     request.session["picture"] = userinfo.get("picture", "")
     next_url = request.session.pop("next_url", "/")
@@ -93,7 +115,7 @@ async def error(request: Request) -> Response:
     return templates.TemplateResponse(
         request,
         "error.html",
-        {"reason": reason, "email": email, "allowed_domains": sorted(settings.allowed_domains())},
+        {"reason": reason, "email": email},
         status_code=403,
     )
 
@@ -128,13 +150,18 @@ def _is_public(path: str) -> bool:
 
 
 class RequireLoginMiddleware(BaseHTTPMiddleware):
-    """Redirect unauthenticated users to Google login, preserving ``next``."""
+    """Redirect unauthenticated users to Google login, preserving ``next``.
+
+    The actual membership check happens once in ``/auth/callback`` and
+    the verdict is baked into the signed session cookie, so we only
+    check here that ``email`` is present.
+    """
 
     async def dispatch(self, request: Request, call_next: Any) -> Response:
         if _is_public(request.url.path):
             return await call_next(request)  # type: ignore[no-any-return]
         email = request.session.get("email")
-        if not settings.is_email_allowed(email):
+        if not email:
             # Preserve where they were trying to go.
             next_qp = request.url.path
             if request.url.query:
