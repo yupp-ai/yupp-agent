@@ -30,6 +30,7 @@ class AgentArtifactType(str, enum.Enum):
     TEXT = "TEXT"  # Text content (investigations, reports, summaries)
     CODE_REVIEW = "CODE_REVIEW"  # GitHub PR review
     OTHER = "OTHER"  # Catch-all for future types
+    MEMORY = "MEMORY"  # Agent memory (inline content + scope/subject)
 
 
 class AgentSessionTrigger(str, enum.Enum):
@@ -654,8 +655,23 @@ class AgentArtifact(BaseModel, table=True):
     artifact_type: AgentArtifactType = Field(sa_column=Column(sa.Enum(AgentArtifactType), nullable=False))
     title: str = Field(nullable=False, sa_type=sa.Text)
     description: str | None = Field(default=None, sa_type=sa.Text)
-    # The canonical pointer to the artifact (artifact URL, PR link, etc.)
-    url: str = Field(nullable=False, sa_type=sa.Text)
+    # The canonical pointer to the artifact (artifact URL, PR link, etc.).
+    # Nullable for MEMORY artifacts, which store their body in ``inline_content``
+    # instead of pointing at an external blob. Every non-MEMORY artifact still
+    # sets this — enforced by ck_agent_artifacts_content_location.
+    url: str | None = Field(default=None, nullable=True, sa_type=sa.Text)
+
+    # Inline content body — used by MEMORY artifacts (markdown notes). Exactly
+    # one of (inline_content, url) is non-NULL per row.
+    inline_content: str | None = Field(default=None, nullable=True, sa_type=sa.Text)
+
+    # Memory scoping. Only populated when artifact_type = 'MEMORY'.
+    #   memory_scope         ∈ {'user', 'agent', 'topic'}
+    #   memory_scope_subject = users.user_id (scope=user)
+    #                        | agents.name    (scope=agent)
+    #                        | NULL           (scope=topic)
+    memory_scope: str | None = Field(default=None, nullable=True, sa_type=sa.Text)
+    memory_scope_subject: str | None = Field(default=None, nullable=True, sa_type=sa.Text)
 
     # Attribution: who/what created this artifact (no FK constraint — user may not exist in this DB)
     creator_user_id: str | None = Field(default=None, nullable=True, sa_type=sa.Text, index=True)
@@ -681,15 +697,55 @@ class AgentArtifact(BaseModel, table=True):
         Index("ix_agent_artifacts_type", "artifact_type"),
         Index("ix_agent_artifacts_session_type", "agent_session_id", "artifact_type"),
         # Partial unique index mirrors the migration: only enforces uniqueness when both are non-NULL.
+        # MEMORY artifacts are excluded — their uniqueness is scope-qualified
+        # via uix_memory_scope_slug_version below, so the same slug can live in
+        # both a user scope and an agent scope.
         Index(
             "uix_agent_artifacts_slug_version",
             "named_slug",
             "version",
             unique=True,
-            postgresql_where=text("named_slug IS NOT NULL AND version IS NOT NULL"),
+            postgresql_where=text("named_slug IS NOT NULL AND version IS NOT NULL AND artifact_type <> 'MEMORY'"),
+        ),
+        # Per-scope slug/version uniqueness for MEMORY artifacts. Parallel MEMORY
+        # saves across different (scope, subject) tuples don't collide, while
+        # each (scope, subject, slug) sequence stays monotonic.
+        Index(
+            "uix_memory_scope_slug_version",
+            "memory_scope",
+            "memory_scope_subject",
+            "named_slug",
+            "version",
+            unique=True,
+            postgresql_where=text("artifact_type = 'MEMORY' AND named_slug IS NOT NULL AND version IS NOT NULL"),
+        ),
+        # Fast scope-filtered reads (e.g. "all memory for user X").
+        Index(
+            "ix_memory_scope_subject",
+            "memory_scope",
+            "memory_scope_subject",
+            postgresql_where=text("artifact_type = 'MEMORY'"),
         ),
         CheckConstraint(
             "content_type IN ('text/plain', 'text/markdown', 'text/html')",
             name="ck_agent_artifacts_content_type",
+        ),
+        # Exactly one of (inline_content, url) must be populated on any row.
+        CheckConstraint(
+            "(inline_content IS NOT NULL) <> (url IS NOT NULL)",
+            name="ck_agent_artifacts_content_location",
+        ),
+        # MEMORY <=> scope is set. Non-MEMORY rows must have both scope columns NULL.
+        CheckConstraint(
+            "(artifact_type = 'MEMORY' AND memory_scope IN ('user', 'agent', 'topic')) "
+            "OR (artifact_type <> 'MEMORY' AND memory_scope IS NULL AND memory_scope_subject IS NULL)",
+            name="ck_agent_artifacts_memory_scope_matches_type",
+        ),
+        # topic scope has no subject; user/agent scopes require one.
+        CheckConstraint(
+            "memory_scope IS NULL "
+            "OR (memory_scope = 'topic' AND memory_scope_subject IS NULL) "
+            "OR (memory_scope IN ('user', 'agent') AND memory_scope_subject IS NOT NULL)",
+            name="ck_agent_artifacts_memory_subject_presence",
         ),
     )
