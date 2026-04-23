@@ -390,7 +390,7 @@ class TestBuildSubprocessEnvVenvBin:
     """Cover the venv bin prepending branch."""
 
     def test_venv_bin_prepended_when_directory_exists(self, tmp_path: Any) -> None:
-        """When /opt/yupp-mind/.venv/bin exists, it is prepended to PATH."""
+        """When /opt/yupp-agent/.venv/bin exists, it is prepended to PATH."""
         venv_bin = str(tmp_path / "venv_bin")
         os.makedirs(venv_bin)
 
@@ -406,13 +406,13 @@ class TestBuildSubprocessEnvVenvBin:
         ):
             result = build_subprocess_env()
         # When isdir returns True, the venv bin should be prepended to PATH
-        venv_bin_path = "/opt/yupp-mind/.venv/bin"
+        venv_bin_path = "/opt/yupp-agent/.venv/bin"
         assert "PATH" in result
         assert venv_bin_path in result["PATH"].split(":")
 
     def test_venv_bin_not_duplicated(self) -> None:
         """If venv/bin is already in PATH, it is not added a second time."""
-        venv_bin = "/opt/yupp-mind/.venv/bin"
+        venv_bin = "/opt/yupp-agent/.venv/bin"
         env = {"HOME": "/home/agent", "PATH": f"{venv_bin}:/usr/bin"}
 
         with (

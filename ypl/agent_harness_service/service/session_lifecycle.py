@@ -1149,9 +1149,9 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
         os.makedirs(workspace, exist_ok=True)
 
         # Symlink .claude/ so Claude CLI detects this dir as the project root.
-        # Uses yupp-mind's .claude/ which has settings.json and hooks.
+        # Uses yupp-agent's .claude/ which has settings.json and hooks.
         claude_link = os.path.join(workspace, ".claude")
-        claude_target = os.path.join(AHS_REPOS_DIR, "yupp-mind", ".claude")
+        claude_target = os.path.join(AHS_REPOS_DIR, "yupp-agent", ".claude")
         try:
             os.symlink(claude_target, claude_link)
         except FileExistsError:

@@ -69,7 +69,7 @@ function createDefaultFormState(): AgentFormState {
     executorModel: '',
     toolPermissions: stringifyJsonValue({ '*': 'allow' }),
     allowedSubagents: '',
-    defaultRepo: 'yupp-mind',
+    defaultRepo: 'yupp-agent',
     sandboxEnabled: true,
     maxTurns: '20',
     maxBudgetUsd: '2',
