@@ -13,14 +13,14 @@ Automated end-to-end review-fix loop that triggers AI review, addresses comments
 ## Usage
 
 ```
-/trigger-review-loop https://github.com/yupp-ai/yupp-mind/pull/10572
+/trigger-review-loop https://github.com/yupp-ai/yupp-agent/pull/10572
 /trigger-review-loop 10572
 ```
 
 ## Input Parsing
 
 Extract the PR number from the argument. Accept either:
-- A full URL: `https://github.com/yupp-ai/yupp-mind/pull/<NUMBER>`
+- A full URL: `https://github.com/yupp-ai/yupp-agent/pull/<NUMBER>`
 - A bare number: `<NUMBER>`
 
 Store as `<PR_NUMBER>` for use throughout.
@@ -156,7 +156,7 @@ Inform the user:
 ```bash
 gh api graphql -f query='
 query {
-  repository(owner: "yupp-ai", name: "yupp-mind") {
+  repository(owner: "yupp-ai", name: "yupp-agent") {
     pullRequest(number: <PR_NUMBER>) {
       reviewThreads(first: 100) {
         nodes {
@@ -299,7 +299,7 @@ Log to user:
 ```bash
 gh api graphql -f query='
 query {
-  repository(owner: "yupp-ai", name: "yupp-mind") {
+  repository(owner: "yupp-ai", name: "yupp-agent") {
     pullRequest(number: <PR_NUMBER>) {
       reviewThreads(first: 100) {
         nodes {

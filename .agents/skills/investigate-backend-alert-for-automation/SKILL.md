@@ -108,7 +108,7 @@ Investigation complete for <service> <error type>.
 
 **Full analysis**: [https://artifacts.agcouch.com/artifacts/<uuid>](https://artifacts.agcouch.com/artifacts/by-slug/<uuid>)
 
-**Draft PR**: https://github.com/yupp-ai/yupp-mind/pull/<number>
+**Draft PR**: https://github.com/yupp-ai/yupp-agent/pull/<number>
 ```
 
 ### Step 6: Store Learnings (If Applicable)
@@ -117,7 +117,7 @@ If the investigation uncovered a reusable insight (recurring pattern, non-obviou
 
 ## Important Notes
 
-- Always use the `yupp-ai/yupp-mind` repository for any code investigation or PR creation.
+- Always use the `yupp-ai/yupp-agent` repository for any code investigation or PR creation.
 - The go-link `https://artifacts.agcouch.com/artifacts/<uuid>` resolves to `https://artifacts.agcouch.com/artifacts/by-slug/<uuid>`. Always use the resolved URL as the hyperlink target and the go-link as display text.
 - Draft PRs should have branch names prefixed with `claude/` so they are not accidentally marked as ready for review.
 - Keep the response message concise - all detailed evidence belongs in the artifact.

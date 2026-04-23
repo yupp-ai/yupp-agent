@@ -80,14 +80,14 @@ SELECT
   m.agent_session_id,
   -- GitHub PR links
   array_agg(DISTINCT pr_match[1]) FILTER (WHERE pr_match IS NOT NULL)  AS pr_links,
-  -- Artifact links (yupp-soul.vercel.app or go/p/)
+  -- Artifact links (artifacts.agcouch.com or go/p/)
   array_agg(DISTINCT artifact_match[1]) FILTER (WHERE artifact_match IS NOT NULL) AS artifact_links
 FROM agent_session_messages m
 LEFT JOIN LATERAL (
   SELECT regexp_matches(m.content, 'https://github\.com/yupp-ai/[^/]+/pull/\d+', 'g') AS pr_match
 ) pr ON true
 LEFT JOIN LATERAL (
-  SELECT regexp_matches(m.content, '(?:https://yupp-soul\.vercel\.app/artifacts/|http://go/p/)[a-z0-9_-]+', 'g') AS artifact_match
+  SELECT regexp_matches(m.content, '(?:https://artifacts\.agcouch\.com/artifacts/|http://go/p/)[a-z0-9_-]+', 'g') AS artifact_match
 ) yp ON true
 WHERE m.agent_session_id IN (
   SELECT agent_session_id FROM agent_sessions
@@ -233,14 +233,14 @@ _(past 7 days · 18 sessions)_
 
 *Security & Safety*
 :raised_hand: *Security Incident Tracking* — Raccoon · today
-  <https://war-room.agcouch.com/session/7a365f80-...|WR> · <https://lit.agcouch.com/agent_harness_console?session_id=7a365f80-...|Lit> · <https://github.com/yupp-ai/yupp-mind/pull/11216|PR #11216> · <https://artifacts.agcouch.com/artifacts/by-slug/agent-security-plan|artifact> · :card_index: <https://war-room.agcouch.com/project/abc123-...|Agent Security Hardening> / Audit prompt injection vectors
+  <https://war-room.agcouch.com/session/7a365f80-...|WR> · <https://lit.agcouch.com/agent_harness_console?session_id=7a365f80-...|Lit> · <https://github.com/yupp-ai/yupp-agent/pull/11216|PR #11216> · <https://artifacts.agcouch.com/artifacts/by-slug/agent-security-plan|artifact> · :card_index: <https://war-room.agcouch.com/project/abc123-...|Agent Security Hardening> / Audit prompt injection vectors
 
 :white_check_mark: *Agent Security Plan* — Raccoon · yesterday
   <https://war-room.agcouch.com/session/c4f1f939-...|WR> · <https://lit.agcouch.com/agent_harness_console?session_id=c4f1f939-...|Lit>
 
 *AHS Performance*
 :white_check_mark: *Latency Metrics Breakdown* — SRE · today
-  <https://war-room.agcouch.com/session/47c64873-...|WR> · <https://lit.agcouch.com/agent_harness_console?session_id=47c64873-...|Lit> · <https://github.com/yupp-ai/yupp-mind/pull/11209|PR #11209>
+  <https://war-room.agcouch.com/session/47c64873-...|WR> · <https://lit.agcouch.com/agent_harness_console?session_id=47c64873-...|Lit> · <https://github.com/yupp-ai/yupp-agent/pull/11209|PR #11209>
 
 *Agent Infrastructure*
 :raised_hand: :eyes: *Tool Use Messages in SAG* — Raccoon · today
