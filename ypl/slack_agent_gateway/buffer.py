@@ -198,7 +198,11 @@ async def flush_buffer(session_id: str) -> bool:
     if not await try_acquire_slack_ratelimit(session.app_id, "chat_update"):
         next_flush_at = time.time() + SLACK_RATELIMIT_INTERVAL_SECONDS + 0.1
         await schedule_flush(session_id, next_flush_at)
-        logger.debug(
+        # Logged at info (not debug) because this is the most common reason a
+        # force-flush returns False and surfaces as "Gateway rejected append /
+        # Flush failed" on the AHS side. Keeping it visible helps operators
+        # distinguish benign backpressure from real flush failures.
+        logger.info(
             "Slack rate limit gate denied, deferring flush to accumulate more content",
             session_id=session_id,
             next_flush_in=round(SLACK_RATELIMIT_INTERVAL_SECONDS + 0.1, 2),
