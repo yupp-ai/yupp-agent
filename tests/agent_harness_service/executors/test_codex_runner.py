@@ -22,7 +22,7 @@ def _make_config(**overrides: Any) -> AgentConfig:
         "name": "codex-test",
         "config_dir": "/data/ahs/agents/codex-test",
         "executor_config": ExecutorConfig(type="harnessed", model="codex-cli"),
-        "default_repo": "yupp-mind",
+        "default_repo": "yupp-agent",
         "tool_permissions": {"*": "allow"},
         "sandbox": SandboxConfig(enabled=True, auto_allow_bash_if_sandboxed=True),
         "max_turns": 20,

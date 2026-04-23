@@ -269,11 +269,11 @@ def build_subprocess_env() -> dict[str, str]:
 
     # Prepend the poetry venv bin so `python`, `mypy`, `ruff`, etc. resolve to
     # the venv-installed versions that have access to all project packages.
-    # On VM deployments (setup_vm.sh) packages live in /opt/yupp-mind/.venv/,
-    # not in the system Python — without this, mypy can't find any third-party
-    # imports. The existence check makes this a no-op in Docker (where
+    # On VM deployments packages live in /opt/yupp-agent/.venv/, not in the
+    # system Python — without this, mypy can't find any third-party imports.
+    # The existence check makes this a no-op in Docker (where
     # `virtualenvs.create false` puts packages directly under /usr/local/).
-    venv_bin = "/opt/yupp-mind/.venv/bin"
+    venv_bin = "/opt/yupp-agent/.venv/bin"
     if os.path.isdir(venv_bin) and venv_bin not in env["PATH"].split(":"):
         env["PATH"] = f"{venv_bin}:{env['PATH']}"
 

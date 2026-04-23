@@ -1878,7 +1878,7 @@
             "type": "string",
             "title": "Default Repo",
             "description": "Default git repo to clone",
-            "default": "yupp-mind"
+            "default": "yupp-agent"
           },
           "sandbox": {
             "$ref": "#/components/schemas/SandboxConfigRequest",

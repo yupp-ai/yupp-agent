@@ -338,7 +338,7 @@ class TestLoadAgentConfig:
         agent_dir.mkdir()
         self._write_config(
             agent_dir,
-            {"default_repo": "yupp-mind", "tool_permissions": {"*": "allow"}},
+            {"default_repo": "yupp-agent", "tool_permissions": {"*": "allow"}},
         )
         import ypl.agent_harness_service.common.config as _config
 
@@ -347,7 +347,7 @@ class TestLoadAgentConfig:
 
         result = load_agent_config("repo-agent")
         assert result is not None
-        assert result.default_repo == "yupp-mind"
+        assert result.default_repo == "yupp-agent"
 
     def test_tool_permissions_default_when_absent(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         agent_dir = tmp_path / "default-perms"

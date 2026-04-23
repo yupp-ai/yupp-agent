@@ -97,9 +97,6 @@ _SKILL_GENERAL = _load_skill("review-pr")
 
 _REPO_SKILLS: dict[str, str] = {
     "yupp-agent": _load_skill("review-pr-yupp-agent"),
-    "yupp-mind": _load_skill("review-pr-yupp-mind"),
-    "yupp-head": _load_skill("review-pr-yupp-head"),
-    "yupp-soul": _load_skill("review-pr-yupp-soul"),
 }
 
 

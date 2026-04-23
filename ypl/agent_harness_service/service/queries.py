@@ -191,7 +191,7 @@ def _build_agent_info_from_db(agent: Agent) -> AgentInfo:
         llm_model=executor_cfg.get("model") if executor_cfg.get("type") == "raw" else None,
         tool_permissions=cfg.get("tool_permissions", {"*": "allow"}),
         allowed_subagents=cfg.get("allowed_subagents", []),
-        default_repo=cfg.get("default_repo", "yupp-mind"),
+        default_repo=cfg.get("default_repo", "yupp-agent"),
         max_turns=cfg.get("max_turns", 20),
         max_budget_usd=cfg.get("max_budget_usd", 2.0),
         timeout_s=cfg.get("timeout_s", 300),

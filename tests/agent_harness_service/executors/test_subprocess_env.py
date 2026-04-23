@@ -9,8 +9,17 @@ class TestBuildSubprocessEnv:
     """Verify that the subprocess env allowlist/blocklist works correctly."""
 
     def _build_with_env(self, env: dict[str, str]) -> dict[str, str]:
-        """Helper: call build_subprocess_env with a controlled os.environ."""
-        with patch("ypl.agent_harness_service.executors.runner.os.environ", env):
+        """Helper: call build_subprocess_env with a controlled os.environ.
+
+        Patches ``os.path.isdir`` to False so the optional venv-bin prepend in
+        ``build_subprocess_env`` (which triggers when /opt/yupp-agent/.venv/bin
+        exists on the test host) doesn't pollute PATH assertions. The venv-bin
+        prepend is covered separately in test_runner_extended.
+        """
+        with (
+            patch("ypl.agent_harness_service.executors.runner.os.environ", env),
+            patch("ypl.agent_harness_service.executors.runner.os.path.isdir", return_value=False),
+        ):
             return build_subprocess_env()
 
     # -- Allowed exact vars pass through -----------------------------------
