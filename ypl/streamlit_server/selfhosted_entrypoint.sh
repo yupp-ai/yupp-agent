@@ -1,7 +1,7 @@
 #!/bin/bash
 # Streamlit entrypoint for the selfhosted (one-box) deployment.
 #
-# Reads OAuth settings from env vars (loaded from /opt/yupp-agent/.env by the
+# Reads OAuth settings from env vars (loaded from /data/ahs/.env by the
 # systemd unit) and generates ${HOME}/.streamlit/secrets.toml, then execs
 # streamlit. When ENVIRONMENT=selfhosted the Streamlit app refuses to serve
 # anything until these secrets are present, so this script fails fast with a
@@ -19,7 +19,7 @@ if [[ "${ENVIRONMENT:-}" == "selfhosted" ]]; then
     [[ -z "${GOOGLE_AUTH_COOKIE_SECRET:-}" ]] && missing+=("GOOGLE_AUTH_COOKIE_SECRET")
     if (( ${#missing[@]} > 0 )); then
         echo "ERROR: selfhosted Streamlit requires these env vars: ${missing[*]}" >&2
-        echo "Add them to /opt/yupp-agent/.env and restart ahs-streamlit." >&2
+        echo "Add them to /data/ahs/.env and restart ahs-streamlit." >&2
         exit 1
     fi
 fi

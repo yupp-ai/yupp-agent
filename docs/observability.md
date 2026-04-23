@@ -82,7 +82,7 @@ After=network.target
 [Service]
 User=ahs
 WorkingDirectory=/opt/yupp-agent
-EnvironmentFile=/opt/yupp-agent/.env
+EnvironmentFile=/data/ahs/.env
 Environment="SERVICE_NAME=mono_server"
 Environment="LOG_FORMAT=json"
 ExecStart=/opt/yupp-agent/.venv/bin/uvicorn \

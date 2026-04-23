@@ -43,13 +43,20 @@ _MEMORY_SYMLINK_NAME = "agent_memories"
 
 # System paths to mount read-only inside bwrap sandbox.
 # Whitelist approach: only these paths are visible to the sandboxed command.
+#
+# /opt is mounted because the service repo (/opt/yupp-agent) ships the
+# code, skills under .agents/, and the poetry venv at .venv/ — all of
+# which the CLI and agent-authored bash commands legitimately need.
+#
+# Secrets must NOT live under /opt. The ``.env`` file belongs at
+# /data/ahs/.env (outside the sandbox mount set). Having it at
+# /opt/yupp-agent/.env was the root cause of the 2026-04-22 prod-DB
+# orphan-revision incident — an agent read the file and then ran alembic
+# against prod Postgres. See
+# docs/plans/2026-04-22-single-box-agent-sandbox-hardening.md.
 _BWRAP_RO_BINDS: list[str] = [
     "/usr",
-    # /opt is intentionally mounted in full. In our VM setup, /opt contains ONLY
-    # Python/dependency artifacts: the source-built Python interpreter
-    # (/opt/python3.12.12/) and the poetry venvs (/opt/yupp-mind/.venv,
-    # /opt/yupp-agent/.venv). There is no sensitive or unrelated data under /opt.
-    "/opt",
+    "/opt",  # service repo + dependency artifacts; no secrets allowed under /opt
     "/etc/ssl",  # TLS certificates
     "/etc/ca-certificates",
     "/etc/alternatives",
@@ -143,15 +150,54 @@ def _bwrap_system_mounts() -> list[str]:
 
 @lru_cache(maxsize=1)
 def bwrap_available() -> bool:
-    """Check if bwrap is installed and usable."""
+    """Check if bwrap is installed AND a minimal sandbox actually works.
+
+    Previously this only ran ``bwrap --version``. That's insufficient on
+    Ubuntu 24.04+ where ``kernel.apparmor_restrict_unprivileged_userns=1``
+    lets ``bwrap --version`` succeed (no namespace needed) while any real
+    sandbox invocation fails with ``setting up uid map: Permission denied``.
+
+    The symptom was that runner.py saw ``bwrap_available() == True``, built a
+    bwrap wrapper, and then the CLI subprocess died at spawn time — or, worse,
+    the ``use_bwrap`` logic silently skipped the wrap and ran the agent
+    completely unsandboxed. Both paths have been observed on ahs-mono-prod.
+
+    This tightened check exec's ``/usr/bin/true`` inside a minimal namespace.
+    If that fails, bwrap is effectively unusable and callers must treat this
+    as "no sandbox available."
+    """
     try:
+        # Smallest possible sandbox that still needs the dynamic linker.
+        # ``/lib`` and ``/lib64`` are symlinks into ``/usr`` on merged-usr
+        # distros, so we recreate them with ``--symlink``.
         result = subprocess.run(
-            ["bwrap", "--version"],
+            [
+                "bwrap",
+                "--ro-bind",
+                "/usr",
+                "/usr",
+                "--symlink",
+                "usr/lib",
+                "/lib",
+                "--symlink",
+                "usr/lib64",
+                "/lib64",
+                "--",
+                "/usr/bin/true",
+            ],
             capture_output=True,
             text=True,
             timeout=5,
         )
-        return result.returncode == 0
+        if result.returncode == 0:
+            return True
+        logger.warning(
+            "bwrap binary present but minimal sandbox invocation failed — "
+            "check kernel.apparmor_restrict_unprivileged_userns (Ubuntu 24+).",
+            stderr=result.stderr.strip(),
+            returncode=result.returncode,
+        )
+        return False
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
 
