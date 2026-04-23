@@ -35,7 +35,7 @@ from ypl.agent_harness_service.executors.runner import RunContext
 def _make_config(**overrides: Any) -> AgentConfig:
     defaults: dict[str, Any] = {
         "name": "sdk-test-agent",
-        "config_dir": "/data/agents/sdk-test-agent",
+        "config_dir": "/data/ahs/agents/sdk-test-agent",
         "executor_config": ExecutorConfig(type="harnessed", model=HARNESS_CLAUDE_SDK),
         "llm_model": "claude-opus-4-5",
         "default_repo": "yupp-agent",
@@ -52,7 +52,7 @@ def _make_config(**overrides: Any) -> AgentConfig:
 def _make_context(**overrides: Any) -> RunContext:
     defaults: dict[str, Any] = {
         "session_id": "test-session-abc123",
-        "workspace": "/data/sessions/test-session-abc123",
+        "workspace": "/data/ahs/sessions/test-session-abc123",
         "llm_session_id": None,
         "session_context": {
             "permissions": {

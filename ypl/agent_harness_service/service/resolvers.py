@@ -196,7 +196,7 @@ async def _download_attachments_to_workspace(
         workspace: Session workspace root directory.
 
     Returns:
-        List of absolute paths (e.g., ``/data/sessions/{id}/attachments/screenshot.png``) for
+        List of absolute paths (e.g., ``${AHS_SESSIONS_DIR}/{id}/attachments/screenshot.png``) for
         successfully downloaded files. Absolute paths are used so the agent can pass them
         directly to the Read tool without guessing the workspace root.
     """

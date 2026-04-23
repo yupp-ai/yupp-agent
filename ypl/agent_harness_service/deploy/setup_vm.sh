@@ -46,8 +46,11 @@ if [ -f /data/ahs/.env ]; then
     source /data/ahs/.env
     set +o allexport
 fi
-AHS_DATA_DIR="${AHS_DATA_DIR:-/data}"
+AHS_DATA_DIR="${AHS_DATA_DIR:-/data/ahs}"
 AHS_REPOS_DIR="${AHS_REPOS_DIR:-${AHS_DATA_DIR}/repos}"
+AHS_AGENTS_DIR="${AHS_AGENTS_DIR:-${AHS_DATA_DIR}/agents}"
+AHS_SHARED_DIR="${AHS_SHARED_DIR:-${AHS_DATA_DIR}/shared}"
+AHS_SESSION_LOGS_DIR="${AHS_SESSION_LOGS_DIR:-${AHS_DATA_DIR}/session_logs}"
 echo "  AHS_DATA_DIR=${AHS_DATA_DIR}"
 echo "  AHS_REPOS_DIR=${AHS_REPOS_DIR}"
 echo ""
@@ -236,12 +239,9 @@ echo ""
 echo "--------------------------------------------"
 echo "  Step 5/13: Creating directory structure"
 echo "--------------------------------------------"
-mkdir -p /data/{shared,agents,repos,sessions,session_logs}
-mkdir -p /data/ahs
-mkdir -p /data/ahs/artifacts
-mkdir -p /data/ahs/attachments
-chown -R ahs:ahs /data
-echo "  /data/ directory structure ready"
+mkdir -p "${AHS_DATA_DIR}"/{shared,agents,repos,sessions,session_logs,artifacts,attachments,memories}
+chown -R ahs:ahs "${AHS_DATA_DIR}"
+echo "  ${AHS_DATA_DIR}/ directory structure ready"
 
 # Seed git identity for the ahs user. The sandbox mounts ~ahs/.gitconfig
 # read-only into the bwrap namespace; without [user] set here, sandboxed
@@ -327,10 +327,11 @@ echo ""
 echo "--------------------------------------------"
 echo "  Step 9/13: Copying agent configs"
 echo "--------------------------------------------"
-if [ ! -d /data/agents/sre ]; then
-    cp -r /opt/yupp-mind/ypl/agent_harness_service/deploy/agent_configs/* /data/agents/
-    chown -R ahs:ahs /data/agents
-    echo "  Copied agent configs to /data/agents/"
+if [ ! -d "${AHS_AGENTS_DIR}/sre" ]; then
+    mkdir -p "${AHS_AGENTS_DIR}"
+    cp -r /opt/yupp-mind/ypl/agent_harness_service/deploy/agent_configs/* "${AHS_AGENTS_DIR}/"
+    chown -R ahs:ahs "${AHS_AGENTS_DIR}"
+    echo "  Copied agent configs to ${AHS_AGENTS_DIR}/"
 else
     echo "  Agent configs already exist, skipping"
 fi
@@ -342,14 +343,15 @@ echo ""
 echo "--------------------------------------------"
 echo "  Step 10/13: Setting up shared identity files"
 echo "--------------------------------------------"
-cp -n /opt/yupp-mind/ypl/agent_harness_service/deploy/shared/SOUL.md /data/shared/ 2>/dev/null || true
-cp -n /opt/yupp-mind/ypl/agent_harness_service/deploy/shared/WORKSPACE.md /data/shared/ 2>/dev/null || true
-mkdir -p /data/shared/raw_executor
-cp -n /opt/yupp-mind/ypl/agent_harness_service/deploy/shared/raw_executor/RAW_EXECUTOR.md /data/shared/raw_executor/ 2>/dev/null || true
-mkdir -p /data/shared/tasks
-cp -n /opt/yupp-mind/ypl/agent_harness_service/deploy/shared/tasks/TASK_EXECUTION.md /data/shared/tasks/ 2>/dev/null || true
-chown -R ahs:ahs /data/shared
-echo "  Shared identity files ready in /data/shared/"
+mkdir -p "${AHS_SHARED_DIR}"
+cp -n /opt/yupp-mind/ypl/agent_harness_service/deploy/shared/SOUL.md "${AHS_SHARED_DIR}/" 2>/dev/null || true
+cp -n /opt/yupp-mind/ypl/agent_harness_service/deploy/shared/WORKSPACE.md "${AHS_SHARED_DIR}/" 2>/dev/null || true
+mkdir -p "${AHS_SHARED_DIR}/raw_executor"
+cp -n /opt/yupp-mind/ypl/agent_harness_service/deploy/shared/raw_executor/RAW_EXECUTOR.md "${AHS_SHARED_DIR}/raw_executor/" 2>/dev/null || true
+mkdir -p "${AHS_SHARED_DIR}/tasks"
+cp -n /opt/yupp-mind/ypl/agent_harness_service/deploy/shared/tasks/TASK_EXECUTION.md "${AHS_SHARED_DIR}/tasks/" 2>/dev/null || true
+chown -R ahs:ahs "${AHS_SHARED_DIR}"
+echo "  Shared identity files ready in ${AHS_SHARED_DIR}/"
 fi
 
 # --- Step 11: Clone code repos for agent access ---
@@ -397,7 +399,9 @@ echo "--------------------------------------------"
 echo "  Step 13/13: Setting up cron jobs"
 echo "--------------------------------------------"
 DEPLOY_DIR="/opt/yupp-mind/ypl/agent_harness_service/deploy"
-LOG_DIR="/data/session_logs"
+LOG_DIR="${AHS_SESSION_LOGS_DIR}"
+mkdir -p "${LOG_DIR}"
+chown ahs:ahs "${LOG_DIR}"
 
 # Validate the GitHub App private key is in place. gh_app_auth.sh mints an
 # installation token from this key every 50 min; without it, the HTTPS
@@ -409,19 +413,18 @@ if [ ! -f /data/ahs/github-app-key.pem ]; then
     echo "      before the first cron run, or the 50-min refresh will fail silently."
 fi
 
-# Install cron jobs in root's crontab (all run as ahs user via sudo -u)
+# Install cron jobs in root's crontab (all run as ahs user via sudo -u).
+# Note: service-code + agent-repo pulls are handled by deploy-latest.sh and
+# the ahs-pull-agent-repos.timer systemd unit respectively — no cron entries
+# needed for those. Only the gh_app_auth token refresh runs out of cron.
 ({ crontab -l 2>/dev/null || true; } | grep -v -e gh_app_auth -e sync_configs -e pull_agent_repos || true
 cat <<CRON
 # --- Agent Harness Service cron jobs ---
 # Refresh GitHub App token every 50 min (tokens expire after 1 hour)
 */50 * * * * sudo -u ahs bash ${DEPLOY_DIR}/gh_app_auth.sh >> ${LOG_DIR}/gh_auth.log 2>&1
-# Pull agent repos every 5 min (read-only checkouts in ${AHS_REPOS_DIR}/)
-*/5 * * * * sudo -u ahs bash ${DEPLOY_DIR}/pull_agent_repos.sh >> ${LOG_DIR}/pull_agent_repos.log 2>&1
-# Sync service code + configs every 30 min (git pull /opt/yupp-mind, copy to /data/)
-*/30 * * * * sudo -u ahs bash ${DEPLOY_DIR}/sync_configs.sh >> ${LOG_DIR}/sync_configs.log 2>&1
 CRON
 ) | crontab -
-echo "  Cron jobs installed (gh_app_auth, pull_agent_repos, sync_configs)"
+echo "  Cron jobs installed (gh_app_auth)"
 fi
 
 echo ""
@@ -435,7 +438,7 @@ echo "  2. Place the GitHub App private key at /data/ahs/github-app-key.pem"
 echo "     (chown ahs:ahs, chmod 600), then run:"
 echo "       sudo -u ahs bash /opt/yupp-mind/ypl/agent_harness_service/deploy/gh_app_auth.sh"
 echo "     This authenticates the gh CLI; the 50-min cron refresh keeps it fresh."
-echo "  3. (Optional) Edit agent configs in /data/agents/"
+echo "  3. (Optional) Edit agent configs in ${AHS_AGENTS_DIR}/"
 echo "  4. Start the service: sudo systemctl start ahs"
 echo "  5. Check status: sudo systemctl status ahs / journalctl -u ahs -f"
 echo ""

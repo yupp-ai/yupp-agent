@@ -1,8 +1,9 @@
 """Repo management for Agent Harness Service.
 
 Handles:
-- Shared read-only checkouts of main in /data/repos/
-- Git worktrees for write sessions in /data/sessions/{session_id}/
+- Shared read-only checkouts of main in AHS_REPOS_DIR (default /data/ahs/repos/)
+- Git worktrees for write sessions in AHS_SESSIONS_DIR/{session_id}/
+  (default /data/ahs/sessions/{session_id}/)
 - PR creation via `gh` CLI
 - Auto-pulling repos on a schedule
 - Workspace setup for new sessions

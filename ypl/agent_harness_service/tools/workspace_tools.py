@@ -184,7 +184,7 @@ def resolve_workspace(session_id: str, repo: str | None = None, require_write: b
     """Resolve workspace root for a session.
 
     The session workspace at ``AHS_SESSIONS_DIR/{session_id}/`` contains:
-    - Symlinks to read-only repos (e.g., ``yupp-mind/`` → ``/data/repos/yupp-mind``)
+    - Symlinks to read-only repos (e.g., ``yupp-mind/`` → ``${AHS_REPOS_DIR}/yupp-mind``)
     - Real directories for writable worktrees (e.g., ``yupp-mind-fix-auth-bug/``)
     - ``history/``, ``.claude/``, ``.mcp.json`` (infrastructure, skipped)
 
@@ -255,7 +255,7 @@ def safe_path(workspace_root: str, relative_path: str) -> str:
 
     Also allows paths that resolve to repos under ``AHS_REPOS_DIR`` — this
     handles session workspaces where repos are symlinked in (e.g.,
-    ``yupp-mind/ → /data/repos/yupp-mind``). Without this, ``read_file("yupp-mind/README.md")``
+    ``yupp-mind/ → ${AHS_REPOS_DIR}/yupp-mind``). Without this, ``read_file("yupp-mind/README.md")``
     would be rejected because the real path lands outside the session directory.
 
     Raises ValueError if resolved path is outside workspace_root and AHS_REPOS_DIR.

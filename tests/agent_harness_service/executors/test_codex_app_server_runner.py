@@ -43,7 +43,7 @@ from ypl.agent_harness_service.executors.runner import AgentRunner, RunContext
 def _make_config(**overrides: Any) -> AgentConfig:
     defaults: dict[str, Any] = {
         "name": "codex-app-test",
-        "config_dir": "/data/agents/codex-app-test",
+        "config_dir": "/data/ahs/agents/codex-app-test",
         "executor_config": ExecutorConfig(type="harnessed", model=HARNESS_CODEX_CLI),
         "llm_model": "o3-mini",
         "default_repo": "yupp-agent",
@@ -60,7 +60,7 @@ def _make_config(**overrides: Any) -> AgentConfig:
 def _make_context(**overrides: Any) -> RunContext:
     defaults: dict[str, Any] = {
         "session_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-        "workspace": "/data/sessions/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        "workspace": "/data/ahs/sessions/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
         "llm_session_id": None,
         "session_context": {
             "permissions": {
@@ -374,10 +374,10 @@ class TestBuildArgs:
 
     def test_build_thread_params_includes_cwd(self) -> None:
         runner = CodexAppServerRunner(_make_config())
-        ctx = _make_context(workspace="/data/sessions/my-session")
+        ctx = _make_context(workspace="/data/ahs/sessions/my-session")
         with _patch_system_prompt("test system prompt"):
             params = runner._build_thread_params(ctx)
-        assert params["cwd"] == "/data/sessions/my-session"
+        assert params["cwd"] == "/data/ahs/sessions/my-session"
 
     def test_build_thread_params_includes_model(self) -> None:
         runner = CodexAppServerRunner(_make_config(llm_model="o3"))

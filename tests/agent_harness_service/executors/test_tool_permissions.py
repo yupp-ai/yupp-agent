@@ -166,7 +166,7 @@ class TestToolPermissionsToCliFlags:
 def _make_config(**overrides: Any) -> AgentConfig:
     defaults: dict[str, Any] = {
         "name": "test-agent",
-        "config_dir": "/data/agents/test-agent",
+        "config_dir": "/data/ahs/agents/test-agent",
         "executor_config": ExecutorConfig(type="harnessed"),
         "default_repo": "yupp-mind",
         "tool_permissions": {"*": "allow"},

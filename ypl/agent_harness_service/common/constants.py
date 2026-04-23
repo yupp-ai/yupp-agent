@@ -9,9 +9,9 @@ from typing import Any
 from ypl.backend.config import settings
 
 # Filesystem paths (configurable via env vars for local dev)
-# In production: AHS_DATA_DIR=/data (mounted volume).
-# In local dev: falls back to /tmp/ahs when /data doesn't exist.
-_DEFAULT_DATA_DIR = "/data"
+# In production: AHS_DATA_DIR=/data/ahs (mounted volume; ahs user's HOME).
+# In local dev: falls back to /tmp/ahs when /data/ahs doesn't exist.
+_DEFAULT_DATA_DIR = "/data/ahs"
 _LOCAL_DATA_DIR = os.path.join("/tmp", "ahs")
 AHS_DATA_DIR = os.environ.get(
     "AHS_DATA_DIR",

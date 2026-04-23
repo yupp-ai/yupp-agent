@@ -728,7 +728,7 @@ class TestPrependAttachmentPaths:
     def test_single_path_prepended(self) -> None:
         from ypl.agent_harness_service.service.resolvers import _prepend_attachment_paths
 
-        result = _prepend_attachment_paths("check this", ["/data/sessions/x/attachments/file.pdf"])
+        result = _prepend_attachment_paths("check this", ["/data/ahs/sessions/x/attachments/file.pdf"])
         assert result.startswith("[Attached files:")
         assert "file.pdf" in result
         assert "check this" in result
@@ -1559,7 +1559,7 @@ class TestDeliverSubagentResultToParent:
         trigger_mock.value = "API"  # interactive trigger → eligible for re-injection
         fake_session.trigger = trigger_mock
         fake_session.creator_user_id = "user1"
-        fake_session.workspace = "/data/sessions/x"
+        fake_session.workspace = "/data/ahs/sessions/x"
         fake_session.extra_dirs = []
         fake_session.slack_session_id = None
         fake_session.llm_session_id = None
@@ -1605,7 +1605,7 @@ class TestDeliverSubagentResultToParent:
         trigger_mock.value = "SLACK"
         fake_session.trigger = trigger_mock
         fake_session.creator_user_id = "user1"
-        fake_session.workspace = "/data/sessions/x"
+        fake_session.workspace = "/data/ahs/sessions/x"
         fake_session.extra_dirs = []
         fake_session.slack_session_id = "slack-123"
         fake_session.llm_session_id = None
