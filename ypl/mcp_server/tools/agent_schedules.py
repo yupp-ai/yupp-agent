@@ -463,10 +463,6 @@ async def list_agent_schedules(
         if not await has_permission_cached(auth_email, Permission.USE_MCP):
             return {"success": False, "error": "You do not have permission to use MCP tools"}
 
-        # Default to caller's schedules if no created_by filter provided
-        if not created_by:
-            created_by = auth_email
-
         # Validate status if provided
         if status:
             try:
@@ -490,12 +486,25 @@ async def list_agent_schedules(
         else:
             schedule_type_enum = None
 
-        # Resolve created_by email to user_id
+        # Resolve the created_by filter to a user_id. If an explicit email was
+        # passed, look it up; otherwise default to "the caller's own schedules"
+        # and prefer the X-User-ID header injected by AHS (the user on whose
+        # behalf the agent is acting). Schedules created by AHS agents are
+        # stamped with ``created_by_user`` from that same header (see
+        # create_agent_schedule_tool); falling back to ``auth_email`` in the
+        # default case would resolve to the shared service-account user and
+        # return zero rows for legitimate users.
         created_by_user_id: str | None = None
         if created_by:
             created_by_user_id, resolve_error = await resolve_user_id_from_email(created_by)
             if resolve_error:
                 return {"success": False, "error": f"Invalid created_by filter: {resolve_error}"}
+        else:
+            created_by_user_id = get_requesting_user_id()
+            if not created_by_user_id:
+                created_by_user_id, resolve_error = await resolve_user_id_from_email(auth_email)
+                if resolve_error:
+                    return {"success": False, "error": f"Invalid created_by filter: {resolve_error}"}
 
         async with get_async_session_read_replica() as session:
             # Build query

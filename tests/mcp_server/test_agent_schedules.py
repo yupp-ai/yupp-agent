@@ -846,3 +846,103 @@ class TestListAgentSchedules:
 
         assert result["success"] is False
         assert "Invalid created_by filter" in result["error"]
+
+    async def test_default_uses_requesting_user_id_over_auth_email(self) -> None:
+        """When AHS injects X-User-ID and no created_by is passed, the list
+        query must filter by that user_id — not by the shared MCP-auth email.
+
+        Regression fix: agents created schedules with ``created_by_user`` stamped
+        from X-User-ID (the actual user). Previously the list tool defaulted
+        ``created_by`` to ``auth_email`` (the service-account token email),
+        then resolved that to a different user_id, so agents saw an empty
+        list and got stuck looking for schedules they had just created.
+        """
+        caller_id = str(uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"))
+        rows = [_make_schedule_row(), _make_schedule_row(agent_name="bookkeeper")]
+
+        exec_result = MagicMock()
+        exec_result.all = MagicMock(return_value=rows)
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=exec_result)
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=session)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+
+        email_resolver = AsyncMock(return_value=(None, "should not be called"))
+
+        with (
+            patch(
+                "ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email",
+                return_value="agcouch-service@example.com",
+            ),
+            patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
+            patch("ypl.mcp_server.tools.agent_schedules.get_requesting_user_id", return_value=caller_id),
+            patch("ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email", new=email_resolver),
+            patch("ypl.mcp_server.tools.agent_schedules.get_async_session_read_replica", return_value=ctx),
+        ):
+            result = await list_agent_schedules()
+
+        assert result["success"] is True
+        assert result["count"] == 2
+        # Header-preferred path: email resolver must not be consulted.
+        email_resolver.assert_not_awaited()
+
+    async def test_explicit_created_by_overrides_requesting_user_id(self) -> None:
+        """When the caller passes an explicit created_by email, that email is
+        resolved and used — even if X-User-ID is present. This preserves the
+        ability to list another user's schedules by email (e.g. admin flows).
+        """
+        caller_id = str(uuid.UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"))
+        other_user_id = str(uuid.UUID("dddddddd-dddd-dddd-dddd-dddddddddddd"))
+        rows = [_make_schedule_row()]
+
+        exec_result = MagicMock()
+        exec_result.all = MagicMock(return_value=rows)
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=exec_result)
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=session)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+
+        email_resolver = AsyncMock(return_value=(other_user_id, None))
+
+        with (
+            patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@example.com"),
+            patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
+            patch("ypl.mcp_server.tools.agent_schedules.get_requesting_user_id", return_value=caller_id),
+            patch("ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email", new=email_resolver),
+            patch("ypl.mcp_server.tools.agent_schedules.get_async_session_read_replica", return_value=ctx),
+        ):
+            result = await list_agent_schedules(created_by="other@example.com")
+
+        assert result["success"] is True
+        email_resolver.assert_awaited_once_with("other@example.com")
+
+    async def test_default_falls_back_to_auth_email_when_no_header(self) -> None:
+        """Without an X-User-ID header, the list tool defaults to the
+        authenticated email — matching the pre-fix behavior for non-AHS
+        DevToken callers (e.g. a local dev with a personal token)."""
+        caller_id = str(uuid.UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"))
+        rows = [_make_schedule_row()]
+
+        exec_result = MagicMock()
+        exec_result.all = MagicMock(return_value=rows)
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=exec_result)
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=session)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+
+        email_resolver = AsyncMock(return_value=(caller_id, None))
+
+        with (
+            patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@example.com"),
+            patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
+            patch("ypl.mcp_server.tools.agent_schedules.get_requesting_user_id", return_value=None),
+            patch("ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email", new=email_resolver),
+            patch("ypl.mcp_server.tools.agent_schedules.get_async_session_read_replica", return_value=ctx),
+        ):
+            result = await list_agent_schedules()
+
+        assert result["success"] is True
+        email_resolver.assert_awaited_once_with("dev@example.com")
