@@ -3,7 +3,7 @@
 # Pull all repos in $AHS_REPOS_DIR (default /data/ahs/repos/, agent read-only checkouts).
 #
 # Runs the Python pull_repos script which does `git pull` on each repo
-# directory (yupp-mind, yupp-soul, yupp-head, etc.).
+# directory (yupp-agent, etc.).
 #
 # Run as: sudo -u ahs bash pull_agent_repos.sh
 #

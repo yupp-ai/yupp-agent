@@ -168,7 +168,7 @@ def _make_config(**overrides: Any) -> AgentConfig:
         "name": "test-agent",
         "config_dir": "/data/ahs/agents/test-agent",
         "executor_config": ExecutorConfig(type="harnessed"),
-        "default_repo": "yupp-mind",
+        "default_repo": "yupp-agent",
         "tool_permissions": {"*": "allow"},
         "sandbox": SandboxConfig(enabled=True, auto_allow_bash_if_sandboxed=True),
         "max_turns": 20,

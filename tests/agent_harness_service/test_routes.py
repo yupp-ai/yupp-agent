@@ -101,7 +101,7 @@ def _make_agent_detail_response() -> object:
         executor_type="harnessed",
         tool_permissions={},
         allowed_subagents=[],
-        default_repo="yupp-mind",
+        default_repo="yupp-agent",
         max_turns=20,
         max_budget_usd=2.0,
         timeout_s=300,

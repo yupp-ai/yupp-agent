@@ -111,7 +111,7 @@ function createAgentDetail(overrides?: {
       llm_model: null,
       tool_permissions: {},
       allowed_subagents: [],
-      default_repo: 'yupp-head',
+      default_repo: 'yupp-agent',
       max_turns: 5,
       max_budget_usd: 5,
       timeout_s: 60,
