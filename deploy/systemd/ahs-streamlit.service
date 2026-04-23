@@ -12,7 +12,7 @@ User=ahs
 Group=ahs
 WorkingDirectory=/opt/yupp-agent
 
-EnvironmentFile=/opt/yupp-agent/.env
+EnvironmentFile=/data/ahs/.env
 Environment=SERVICE_NAME_FOR_LOGGING=ahs-streamlit
 Environment=PORT=8501
 Environment=USE_GOOGLE_CLOUD_LOGGING=false

@@ -214,7 +214,7 @@ The units expect:
 | Path | Description |
 |------|-------------|
 | `/opt/yupp-agent/` | Application root (owned by `ahs` user) |
-| `/opt/yupp-agent/.env` | Secrets file — `chmod 600` |
+| `/data/ahs/.env` | Secrets file — `chmod 600` |
 | `/opt/yupp-agent/.venv/` | Python virtual environment symlink |
 
 ---

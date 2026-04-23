@@ -34,14 +34,14 @@ Vault/SSM/k8s-secret flow and don't want to copy the token into the DB.
 ### Plain `.env` on a VM
 
 ```bash
-# /opt/yupp-agent/.env — maintained by hand, chmod 600, owned by the service user.
+# /data/ahs/.env — maintained by hand, chmod 600, owned by the service user.
 ANTHROPIC_API_KEY=sk-ant-...
 POSTGRES_CONNECTION_AGENTDB={"user":"yupp","password":"...","host":"127.0.0.1:5432","database":"yadb"}
 SLACK_AGENT_GW_ENCRYPTION_KEY=...
 ...
 ```
 
-systemd picks it up automatically via `EnvironmentFile=/opt/yupp-agent/.env`
+systemd picks it up automatically via `EnvironmentFile=/data/ahs/.env`
 in `deploy/systemd/ahs-mono.service`.
 
 ### GCP Secret Manager → `.env`
@@ -53,11 +53,11 @@ in `deploy/systemd/ahs-mono.service`.
 # Assumes each GCP secret is named the same as its env var
 # (use `gcloud secrets list` to confirm).
 
-: > /opt/yupp-agent/.env
-chmod 600 /opt/yupp-agent/.env
+: > /data/ahs/.env
+chmod 600 /data/ahs/.env
 for key in ANTHROPIC_API_KEY POSTGRES_CONNECTION_AGENTDB SLACK_AGENT_GW_ENCRYPTION_KEY ...; do
   value=$(gcloud secrets versions access latest --secret="$key")
-  printf '%s=%s\n' "$key" "$value" >> /opt/yupp-agent/.env
+  printf '%s=%s\n' "$key" "$value" >> /data/ahs/.env
 done
 ```
 
@@ -70,8 +70,8 @@ aws ssm get-parameters-by-path \
     --with-decryption \
     --recursive \
   | jq -r '.Parameters[] | "\(.Name | sub("^/yupp-agent/"; ""))=\(.Value)"' \
-  > /opt/yupp-agent/.env
-chmod 600 /opt/yupp-agent/.env
+  > /data/ahs/.env
+chmod 600 /data/ahs/.env
 ```
 
 ### HashiCorp Vault KV v2 → `.env`
@@ -80,8 +80,8 @@ chmod 600 /opt/yupp-agent/.env
 # Assumes secret/yupp-agent is a KV v2 map of env var names to values.
 vault kv get -format=json secret/yupp-agent \
   | jq -r '.data.data | to_entries[] | "\(.key)=\(.value)"' \
-  > /opt/yupp-agent/.env
-chmod 600 /opt/yupp-agent/.env
+  > /data/ahs/.env
+chmod 600 /data/ahs/.env
 ```
 
 Or use the [Vault Agent](https://developer.hashicorp.com/vault/docs/agent-and-proxy/agent/template)

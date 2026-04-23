@@ -757,6 +757,19 @@ class ClaudeCodeRunner(AgentRunner):
             assert cwd is not None
             args = build_bwrap_cli_command(args, cwd)
             log_bwrap_details(args, context.session_id, "Pre-spawning CLI in bwrap sandbox")
+        elif self.config.sandbox.bwrap_enabled and not bwrap_available():
+            # Loud signal: config wants the sandbox on, but the host can't
+            # provide it. Previous behaviour was to silently run unsandboxed,
+            # which hid exactly the failure mode that caused the prod-DB
+            # orphan-revision incident.
+            logger.error(
+                "Sandbox requested but bwrap is not functional — agent "
+                "will run WITHOUT filesystem / PID / namespace isolation. "
+                "Fix the host (kernel.apparmor_restrict_unprivileged_userns "
+                "on Ubuntu 24+) to restore sandboxing.",
+                session_id=context.session_id,
+                agent_name=self.config.name,
+            )
 
         logger.info(
             "Pre-spawning Claude Code CLI",
@@ -852,6 +865,13 @@ class ClaudeCodeRunner(AgentRunner):
                 args = build_bwrap_cli_command(args, cwd)
                 log_bwrap_details(args, context.session_id, "Wrapping CLI in bwrap sandbox")
                 cmd_str = shlex.join(args)
+            elif self.config.sandbox.bwrap_enabled and not bwrap_available():
+                logger.error(
+                    "Sandbox requested but bwrap is not functional — agent "
+                    "will run WITHOUT filesystem / PID / namespace isolation.",
+                    session_id=context.session_id,
+                    agent_name=self.config.name,
+                )
 
             logger.info(
                 "Launching Claude Code CLI",

@@ -130,9 +130,9 @@ After that, you'll still need to:
 
   a. Run the setup wizard:
        sudo -u ${APP_USER} bash -c 'cd ${INSTALL_DIR} && .venv/bin/python -m ypl.mono_server.setup'
-  b. Add LLM API keys to ${INSTALL_DIR}/.env
+  b. Add LLM API keys to ${DATA_DIR}/.env
   c. Authenticate the agent CLIs (claude login, codex login)
-  d. (Optional) Fill in VIEWER_* entries in ${INSTALL_DIR}/.env for the artifact viewer
+  d. (Optional) Fill in VIEWER_* entries in ${DATA_DIR}/.env for the artifact viewer
   e. Start the services:     sudo systemctl start ahs-mono ahs-streamlit artifact-viewer
 
 The script is safe to re-run — it skips steps that are already done.
@@ -184,6 +184,10 @@ fi
 if command -v bwrap &>/dev/null; then
     info "bwrap: $(bwrap --version 2>&1 | head -1)"
 fi
+
+# Deferred: can't run the functional bwrap check until the $APP_USER exists
+# (Step 2). We re-verify there. The sysctl toggle above should be sufficient
+# on fresh installs; the post-user-creation check is a hard gate.
 
 if ! command -v "python${PYTHON_VERSION}" &>/dev/null; then
     info "Installing Python ${PYTHON_VERSION} via deadsnakes PPA…"
@@ -275,6 +279,25 @@ if [[ ! -d "$DATA_DIR" ]]; then
     mkdir -p "$DATA_DIR"
 fi
 chown "${APP_USER}:${APP_USER}" "$DATA_DIR"
+
+# Hard gate: now that $APP_USER exists, verify bwrap actually works for it.
+# On Ubuntu 24.04+ the sysctl toggle above is usually all that's needed, but
+# the only way to be sure is to run a real sandbox invocation. If this fails,
+# agents would silently run unsandboxed (or crash at CLI spawn) — better to
+# fail the install now than ship a VM that can't isolate agent subprocesses.
+info "Verifying bwrap sandbox is functional for ${APP_USER}…"
+if ! sudo -u "$APP_USER" bwrap \
+        --ro-bind /usr /usr \
+        --symlink usr/lib /lib \
+        --symlink usr/lib64 /lib64 \
+        -- /usr/bin/true 2>/dev/null; then
+    warn "bwrap sandbox invocation failed for ${APP_USER}."
+    warn "This usually means kernel.apparmor_restrict_unprivileged_userns is still enforced."
+    warn "Current value: $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo 'not present')"
+    warn "A reboot may be required for the sysctl drop-in at ${SYSCTL_FILE} to take effect."
+    error "Refusing to continue: agent sandboxing would be silently disabled."
+fi
+info "bwrap sandbox is functional for ${APP_USER}."
 
 # ---------------------------------------------------------------------------
 # Step 3. Clone / update repo (with guided deploy-key setup if needed)
@@ -495,6 +518,22 @@ mkdir -p "${DATA_DIR}/sessions" "${DATA_DIR}/repos" "${DATA_DIR}/memories" "${DA
 chown -R "${APP_USER}:${APP_USER}" "${DATA_DIR}"
 
 info "Created /var/log/ahs-mono and ${DATA_DIR}/{sessions,repos,memories,.cache}"
+
+# One-time migration: older installs wrote .env to ${INSTALL_DIR}/.env.
+# That placed prod secrets inside the service repo mounted into the bwrap
+# sandbox, letting any agent read them. Move it to ${DATA_DIR}/.env if the
+# new location is empty. See
+# docs/plans/2026-04-22-single-box-agent-sandbox-hardening.md.
+OLD_ENV="${INSTALL_DIR}/.env"
+NEW_ENV="${DATA_DIR}/.env"
+if [[ -f "$OLD_ENV" && ! -f "$NEW_ENV" ]]; then
+    info "Migrating .env: ${OLD_ENV} → ${NEW_ENV}"
+    mv "$OLD_ENV" "$NEW_ENV"
+    chown "${APP_USER}:${APP_USER}" "$NEW_ENV"
+    chmod 600 "$NEW_ENV"
+elif [[ -f "$OLD_ENV" && -f "$NEW_ENV" ]]; then
+    warn "Both ${OLD_ENV} and ${NEW_ENV} exist. Keeping ${NEW_ENV}; please review and delete ${OLD_ENV} manually."
+fi
 
 # Clone the default agent repos into ${DATA_DIR}/repos. Every agent config has
 # default_repo="yupp-agent", so without this clone agents fall back to the
@@ -736,7 +775,7 @@ step 9 "$TOTAL_STEPS" "Artifact Viewer sub-app (apps/artifact-viewer/)"
 # The viewer is a small standalone Starlette app with its own pyproject.toml
 # (Starlette / authlib / markdown-it / bleach — deps we deliberately keep
 # out of the main monolith venv). Install it in its own venv alongside the
-# monolith's. It reuses /opt/yupp-agent/.env; the systemd unit was already
+# monolith's. It reuses /data/ahs/.env; the systemd unit was already
 # copied + enabled in Step 5.
 VIEWER_DIR="${INSTALL_DIR}/apps/artifact-viewer"
 VIEWER_VENV="${VIEWER_DIR}/.venv"
@@ -762,7 +801,7 @@ else
     sudo -u "$APP_USER" "${VIEWER_VENV}/bin/pip" install --quiet --upgrade pip
     sudo -u "$APP_USER" "${VIEWER_VENV}/bin/pip" install --quiet -e "$VIEWER_DIR"
     info "Viewer binary: ${VIEWER_VENV}/bin/artifact-viewer"
-    info "Service will read ${INSTALL_DIR}/.env — add VIEWER_* entries there."
+    info "Service will read ${DATA_DIR}/.env — add VIEWER_* entries there."
     info "  See ${VIEWER_DIR}/.env.example for the full list."
 fi
 
@@ -816,7 +855,7 @@ ${B}What's still left for you to do — in this order:${N}
 
  1. ${B}Run the interactive setup wizard.${N}
     Auto-detects ${INSTALL_DIR}/.pg-creds and skips password prompts.
-    Asks for admin email, auto-generates secrets, writes ${INSTALL_DIR}/.env
+    Asks for admin email, auto-generates secrets, writes ${DATA_DIR}/.env
     (mode 0600) with both runtime (be_app_user) and admin (schema_manager)
     connection strings, runs Alembic migrations as schema_manager, seeds
     roles and your admin user.
@@ -826,7 +865,7 @@ ${B}What's still left for you to do — in this order:${N}
  2. ${B}Add at least one LLM provider API key to the .env.${N}
     At least one of ANTHROPIC_API_KEY / OPENAI_API_KEY / GOOGLE_API_KEY.
 
-      sudo -u ${APP_USER} nano ${INSTALL_DIR}/.env
+      sudo -u ${APP_USER} nano ${DATA_DIR}/.env
 
 EOF
 

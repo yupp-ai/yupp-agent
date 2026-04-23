@@ -13,7 +13,10 @@ Group=ahs
 WorkingDirectory=/opt/yupp-agent
 
 # .env file holds all secrets — chmod 600, owned by the ahs user.
-EnvironmentFile=/opt/yupp-agent/.env
+# Stored under DATA_DIR (NOT under /opt/yupp-agent) so the service repo
+# stays free of secrets and can be safely mounted read-only into agent
+# bwrap sandboxes. See docs/plans/2026-04-22-single-box-agent-sandbox-hardening.md.
+EnvironmentFile=/data/ahs/.env
 Environment=SERVICE_NAME_FOR_LOGGING=ahs-mono
 Environment=AHS_PORT=8090
 Environment=USE_GOOGLE_CLOUD_LOGGING=false
