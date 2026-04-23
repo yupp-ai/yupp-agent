@@ -1,4 +1,7 @@
-"""Unit tests for ypl/mcp_server/tools/agent_artifacts.py (unified surface)."""
+"""Unit tests for ypl/mcp_server/tools/agent_artifacts.py (unified surface)
+and ypl/mcp_server/tools/memory_artifacts.py (memory tools split from the
+same surface).
+"""
 
 from __future__ import annotations
 import uuid
@@ -13,13 +16,15 @@ from ypl.mcp_server.tools.agent_artifacts import (
     artifact_url,
     list_artifact_versions,
     list_artifacts,
+    search_artifacts,
+    update_artifact,
+    update_artifact_content,
+)
+from ypl.mcp_server.tools.memory_artifacts import (
     list_memory,
     load_memory,
     save_memory,
-    search_artifacts,
     search_memory,
-    update_artifact,
-    update_artifact_content,
 )
 
 FAKE_SESSION_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -509,16 +514,22 @@ def _memory_artifact(
 
 
 def _caller_ctx(stack: ExitStack, *, user_id: str | None = "USR_X", agent_name: str | None = "eng-raccoon") -> None:
-    """Install MCP caller-context patches inside ``stack``."""
-    stack.enter_context(
-        patch(
-            "ypl.mcp_server.tools.agent_artifacts.get_ahs_session_id",
-            return_value=FAKE_SESSION_ID if user_id or agent_name else None,
-        )
-    )
+    """Install MCP caller-context patches inside ``stack``.
+
+    Memory tools live in ``memory_artifacts``; they call ``get_*`` directly
+    for ``_memory_caller_from_context`` *and* call ``_resolve_caller_context``
+    in ``agent_artifacts`` (which has its own bound ``get_ahs_session_id`` /
+    ``_resolve_agent_id``). Patch both module namespaces.
+    """
+    session_id_value = FAKE_SESSION_ID if user_id or agent_name else None
+    # agent_artifacts namespace (used inside _resolve_caller_context).
+    stack.enter_context(patch("ypl.mcp_server.tools.agent_artifacts.get_ahs_session_id", return_value=session_id_value))
     stack.enter_context(patch("ypl.mcp_server.tools.agent_artifacts.get_ahs_agent_name", return_value=agent_name))
     stack.enter_context(patch("ypl.mcp_server.tools.agent_artifacts.get_requesting_user_id", return_value=user_id))
     stack.enter_context(patch("ypl.mcp_server.tools.agent_artifacts._resolve_agent_id", AsyncMock(return_value=None)))
+    # memory_artifacts namespace (used by _memory_caller_from_context).
+    stack.enter_context(patch("ypl.mcp_server.tools.memory_artifacts.get_ahs_agent_name", return_value=agent_name))
+    stack.enter_context(patch("ypl.mcp_server.tools.memory_artifacts.get_requesting_user_id", return_value=user_id))
 
 
 class TestSaveMemory:
@@ -528,13 +539,13 @@ class TestSaveMemory:
             _caller_ctx(stack)
             stack.enter_context(
                 patch(
-                    "ypl.mcp_server.tools.agent_artifacts.get_artifact_by_slug",
+                    "ypl.mcp_server.tools.memory_artifacts.get_artifact_by_slug",
                     AsyncMock(return_value=None),
                 )
             )
             mock_create = stack.enter_context(
                 patch(
-                    "ypl.mcp_server.tools.agent_artifacts.create_artifact",
+                    "ypl.mcp_server.tools.memory_artifacts.create_artifact",
                     AsyncMock(return_value=art),
                 )
             )
@@ -557,13 +568,13 @@ class TestSaveMemory:
             _caller_ctx(stack)
             stack.enter_context(
                 patch(
-                    "ypl.mcp_server.tools.agent_artifacts.get_artifact_by_slug",
+                    "ypl.mcp_server.tools.memory_artifacts.get_artifact_by_slug",
                     AsyncMock(return_value=existing),
                 )
             )
             mock_create = stack.enter_context(
                 patch(
-                    "ypl.mcp_server.tools.agent_artifacts.create_artifact",
+                    "ypl.mcp_server.tools.memory_artifacts.create_artifact",
                     AsyncMock(return_value=new_version),
                 )
             )
@@ -579,13 +590,13 @@ class TestSaveMemory:
             _caller_ctx(stack, user_id="USR_X", agent_name="eng-raccoon")
             stack.enter_context(
                 patch(
-                    "ypl.mcp_server.tools.agent_artifacts.get_artifact_by_slug",
+                    "ypl.mcp_server.tools.memory_artifacts.get_artifact_by_slug",
                     AsyncMock(return_value=None),
                 )
             )
             mock_create = stack.enter_context(
                 patch(
-                    "ypl.mcp_server.tools.agent_artifacts.create_artifact",
+                    "ypl.mcp_server.tools.memory_artifacts.create_artifact",
                     AsyncMock(return_value=art),
                 )
             )
@@ -632,13 +643,13 @@ class TestSaveMemory:
             _caller_ctx(stack, user_id="USR_X", agent_name="alice")
             stack.enter_context(
                 patch(
-                    "ypl.mcp_server.tools.agent_artifacts.get_artifact_by_slug",
+                    "ypl.mcp_server.tools.memory_artifacts.get_artifact_by_slug",
                     AsyncMock(return_value=None),
                 )
             )
             stack.enter_context(
                 patch(
-                    "ypl.mcp_server.tools.agent_artifacts.create_artifact",
+                    "ypl.mcp_server.tools.memory_artifacts.create_artifact",
                     AsyncMock(return_value=art),
                 )
             )
@@ -661,13 +672,13 @@ class TestLoadMemory:
             _caller_ctx(stack, user_id="USR_X", agent_name="alice")
             stack.enter_context(
                 patch(
-                    "ypl.mcp_server.tools.agent_artifacts.get_artifact_by_slug",
+                    "ypl.mcp_server.tools.memory_artifacts.get_artifact_by_slug",
                     AsyncMock(return_value=art),
                 )
             )
             stack.enter_context(
                 patch(
-                    "ypl.mcp_server.tools.agent_artifacts.read_artifact_content",
+                    "ypl.mcp_server.tools.memory_artifacts.read_artifact_content",
                     AsyncMock(return_value=(b"# Feedback", "text/markdown")),
                 )
             )
@@ -696,13 +707,13 @@ class TestLoadMemory:
             _caller_ctx(stack, user_id="USR_X", agent_name="alice")
             stack.enter_context(
                 patch(
-                    "ypl.mcp_server.tools.agent_artifacts.get_artifact_by_slug",
+                    "ypl.mcp_server.tools.memory_artifacts.get_artifact_by_slug",
                     AsyncMock(return_value=art),
                 )
             )
             stack.enter_context(
                 patch(
-                    "ypl.mcp_server.tools.agent_artifacts.read_artifact_content",
+                    "ypl.mcp_server.tools.memory_artifacts.read_artifact_content",
                     AsyncMock(return_value=(b"# Tips", "text/markdown")),
                 )
             )
@@ -715,7 +726,7 @@ class TestLoadMemory:
             _caller_ctx(stack)
             stack.enter_context(
                 patch(
-                    "ypl.mcp_server.tools.agent_artifacts.get_artifact_by_slug",
+                    "ypl.mcp_server.tools.memory_artifacts.get_artifact_by_slug",
                     AsyncMock(return_value=None),
                 )
             )
@@ -731,7 +742,7 @@ class TestSearchMemory:
             _caller_ctx(stack, user_id="USR_X", agent_name="alice")
             mock_search = stack.enter_context(
                 patch(
-                    "ypl.mcp_server.tools.agent_artifacts._search_artifacts",
+                    "ypl.mcp_server.tools.memory_artifacts._search_artifacts",
                     AsyncMock(return_value=[art]),
                 )
             )
@@ -756,7 +767,7 @@ class TestSearchMemory:
             _caller_ctx(stack, user_id=None, agent_name="alice")
             stack.enter_context(
                 patch(
-                    "ypl.mcp_server.tools.agent_artifacts._search_artifacts",
+                    "ypl.mcp_server.tools.memory_artifacts._search_artifacts",
                     AsyncMock(return_value=[art_topic]),
                 )
             )
@@ -778,7 +789,7 @@ class TestListMemory:
             _caller_ctx(stack, user_id="USR_X", agent_name="alice")
             mock_list = stack.enter_context(
                 patch(
-                    "ypl.mcp_server.tools.agent_artifacts._list_artifacts",
+                    "ypl.mcp_server.tools.memory_artifacts._list_artifacts",
                     AsyncMock(return_value=[mine, topic]),
                 )
             )
@@ -794,7 +805,7 @@ class TestListMemory:
             _caller_ctx(stack, user_id="USR_X", agent_name="alice")
             mock_list = stack.enter_context(
                 patch(
-                    "ypl.mcp_server.tools.agent_artifacts._list_artifacts",
+                    "ypl.mcp_server.tools.memory_artifacts._list_artifacts",
                     AsyncMock(return_value=[]),
                 )
             )
