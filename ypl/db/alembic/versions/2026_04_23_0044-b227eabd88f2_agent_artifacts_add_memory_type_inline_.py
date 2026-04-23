@@ -78,11 +78,7 @@ def upgrade() -> None:
     # Narrow the pre-existing global slug/version unique index to exclude MEMORY
     # artifacts — their uniqueness is scope-qualified (see next index) so the
     # same slug can live in both a user scope and an agent scope.
-    op.drop_index(
-        "uix_agent_artifacts_slug_version",
-        table_name="agent_artifacts",
-        postgresql_where=sa.text("named_slug IS NOT NULL AND version IS NOT NULL"),
-    )
+    op.drop_index("uix_agent_artifacts_slug_version", table_name="agent_artifacts")
     op.create_index(
         "uix_agent_artifacts_slug_version",
         "agent_artifacts",
@@ -94,12 +90,18 @@ def upgrade() -> None:
     # Per-scope slug/version uniqueness for MEMORY artifacts. Parallel MEMORY
     # saves across different (scope, subject) tuples don't collide, while
     # each (scope, subject, slug) sequence stays monotonic.
+    #
+    # NULLS NOT DISTINCT (PG 15+): topic-scope rows have
+    # ``memory_scope_subject IS NULL``; without this flag Postgres would treat
+    # each NULL as distinct and let duplicate ``(topic, NULL, slug, version)``
+    # rows through, breaking topic-scope uniqueness.
     op.create_index(
         "uix_memory_scope_slug_version",
         "agent_artifacts",
         ["memory_scope", "memory_scope_subject", "named_slug", "version"],
         unique=True,
         postgresql_where=sa.text("artifact_type = 'MEMORY' AND named_slug IS NOT NULL AND version IS NOT NULL"),
+        postgresql_nulls_not_distinct=True,
     )
 
     # Fast scope-filtered reads (e.g. "all memory for user X").
@@ -113,23 +115,25 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index(
-        "ix_memory_scope_subject",
-        table_name="agent_artifacts",
-        postgresql_where=sa.text("artifact_type = 'MEMORY'"),
-    )
-    op.drop_index(
-        "uix_memory_scope_slug_version",
-        table_name="agent_artifacts",
-        postgresql_where=sa.text("artifact_type = 'MEMORY' AND named_slug IS NOT NULL AND version IS NOT NULL"),
-    )
+    # Refuse to downgrade if any MEMORY rows still exist. The enum rebuild at
+    # the end of this function casts every ``artifact_type`` value back into a
+    # new enum that doesn't include ``MEMORY``; a leftover MEMORY row would
+    # fail that cast mid-migration and leave the schema in a half-downgraded
+    # state. Callers must migrate or delete MEMORY artifacts first.
+    bind = op.get_bind()
+    n_memory = bind.execute(sa.text("SELECT COUNT(*) FROM agent_artifacts WHERE artifact_type = 'MEMORY'")).scalar_one()
+    if n_memory:
+        raise RuntimeError(
+            f"Refusing to downgrade b227eabd88f2: {n_memory} MEMORY artifact row(s) still "
+            "exist. Delete or migrate them, then retry — the enum rebuild in this "
+            "downgrade cannot cast 'MEMORY' back to a type that doesn't include it."
+        )
+
+    op.drop_index("ix_memory_scope_subject", table_name="agent_artifacts")
+    op.drop_index("uix_memory_scope_slug_version", table_name="agent_artifacts")
 
     # Restore the original global slug/version unique index.
-    op.drop_index(
-        "uix_agent_artifacts_slug_version",
-        table_name="agent_artifacts",
-        postgresql_where=sa.text("named_slug IS NOT NULL AND version IS NOT NULL AND artifact_type <> 'MEMORY'"),
-    )
+    op.drop_index("uix_agent_artifacts_slug_version", table_name="agent_artifacts")
     op.create_index(
         "uix_agent_artifacts_slug_version",
         "agent_artifacts",

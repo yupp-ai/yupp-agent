@@ -710,6 +710,12 @@ class AgentArtifact(BaseModel, table=True):
         # Per-scope slug/version uniqueness for MEMORY artifacts. Parallel MEMORY
         # saves across different (scope, subject) tuples don't collide, while
         # each (scope, subject, slug) sequence stays monotonic.
+        #
+        # NULLS NOT DISTINCT (PG 15+): topic-scope rows have
+        # ``memory_scope_subject IS NULL``; without this flag Postgres would
+        # treat each NULL as distinct and let duplicate
+        # ``(topic, NULL, slug, version)`` rows through, breaking topic-scope
+        # uniqueness.
         Index(
             "uix_memory_scope_slug_version",
             "memory_scope",
@@ -718,6 +724,7 @@ class AgentArtifact(BaseModel, table=True):
             "version",
             unique=True,
             postgresql_where=text("artifact_type = 'MEMORY' AND named_slug IS NOT NULL AND version IS NOT NULL"),
+            postgresql_nulls_not_distinct=True,
         ),
         # Fast scope-filtered reads (e.g. "all memory for user X").
         Index(
