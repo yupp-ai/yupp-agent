@@ -3,8 +3,9 @@
 # PRs must be created via the `create_pr` MCP tool so that the PR is attributed
 # to the requesting user (via device-flow GitHub token), not the bot.
 #
-# Deployed to /data/repos/yupp-agent/.claude/hooks/ on AHS VMs by sync_configs.sh.
-# NOT installed locally — local Claude Code sessions are unaffected.
+# VM-only hook: deployed to ${AHS_REPOS_DIR}/yupp-agent/.claude/hooks/ on AHS
+# VMs (default ${AHS_REPOS_DIR}=/data/ahs/repos). NOT installed locally — local
+# Claude Code sessions are unaffected.
 
 INPUT=$(cat)
 COMMAND=$(jq -r '.tool_input.command // empty' <<< "$INPUT")

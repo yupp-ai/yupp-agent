@@ -20,7 +20,7 @@ You should see JSON events streaming. If it hangs or prompts for login, fix that
 ## 1. Set up data directories
 
 The server auto-detects agent configs from the in-tree `deploy/agent_configs/`
-directory when no `/data/agents` or `$AHS_DATA_DIR/agents` directory exists.
+directory when no `/data/ahs/agents` or `$AHS_DATA_DIR/agents` directory exists.
 You only need to create the repos and shared directories:
 
 ```bash

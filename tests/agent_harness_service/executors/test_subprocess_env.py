@@ -26,7 +26,7 @@ class TestBuildSubprocessEnv:
             "GITHUB_TOKEN": "ghp_abc",
             "SSH_AUTH_SOCK": "/tmp/ssh.sock",
             "AHS_DATA_DIR": "/data",
-            "AHS_REPOS_DIR": "/data/repos",
+            "AHS_REPOS_DIR": "/data/ahs/repos",
         }
         result = self._build_with_env(env)
         # PATH gets ~/.local/bin prepended by build_subprocess_env

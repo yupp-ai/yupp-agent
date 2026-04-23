@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Pull all repos in /data/repos/ (agent read-only checkouts).
+# Pull all repos in $AHS_REPOS_DIR (default /data/ahs/repos/, agent read-only checkouts).
 #
 # Runs the Python pull_repos script which does `git pull` on each repo
 # directory (yupp-mind, yupp-soul, yupp-head, etc.).

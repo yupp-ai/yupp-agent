@@ -20,7 +20,7 @@ from ypl.agent_harness_service.executors.runner import AgentRunner, ClaudeCodeRu
 def _make_config(**overrides: Any) -> AgentConfig:
     defaults: dict[str, Any] = {
         "name": "codex-test",
-        "config_dir": "/data/agents/codex-test",
+        "config_dir": "/data/ahs/agents/codex-test",
         "executor_config": ExecutorConfig(type="harnessed", model="codex-cli"),
         "default_repo": "yupp-mind",
         "tool_permissions": {"*": "allow"},
@@ -36,7 +36,7 @@ def _make_config(**overrides: Any) -> AgentConfig:
 def _make_context(**overrides: Any) -> RunContext:
     defaults: dict[str, Any] = {
         "session_id": "aaa-bbb-ccc",
-        "workspace": "/data/repos",
+        "workspace": "/data/ahs/repos",
         "llm_session_id": None,
     }
     defaults.update(overrides)

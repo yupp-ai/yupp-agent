@@ -71,8 +71,8 @@ class TestRequestWriteAccess:
 class TestListAvailableRepos:
     def test_returns_repos_list(self) -> None:
         repos = [
-            {"name": "yupp-agent", "path": "/data/repos/yupp-agent"},
-            {"name": "yupp-mind", "path": "/data/repos/yupp-mind"},
+            {"name": "yupp-agent", "path": "/data/ahs/repos/yupp-agent"},
+            {"name": "yupp-mind", "path": "/data/ahs/repos/yupp-mind"},
         ]
         with patch("ypl.agent_harness_service.tools.workspace._list_repos", return_value=repos):
             result = list_available_repos()

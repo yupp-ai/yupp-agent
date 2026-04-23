@@ -35,29 +35,29 @@ and stores results in the shared PostgreSQL database.
        │
        ▼
 ┌──────────┐
-│ Git repos│ ← /data/repos/ (read-only)
-│ Worktrees│ ← /data/workspaces/ (write, per-session)
+│ Git repos│ ← /data/ahs/repos/ (read-only)
+│ Worktrees│ ← /data/ahs/sessions/ (write, per-session)
 └──────────┘
 ```
 
 ## Filesystem Layout
 
-All data lives under `/data/` (configurable via `AHS_DATA_DIR`).
+All data lives under `/data/ahs/` (configurable via `AHS_DATA_DIR`).
 
 | Path | Purpose | Owner |
 |------|---------|-------|
 | `/opt/yupp-agent/` | Service code (git clone) | `ahs` |
 | `/data/ahs/.env` | Environment variables (secrets) | `ahs` (mode 600) |
-| `/data/agents/` | Agent config directories | `ahs` |
-| `/data/agents/{name}/config.json` | Agent settings (model, tools, limits) | `ahs` |
-| `/data/agents/{name}/ROLE.md` | Agent role, expertise & personality | `ahs` |
-| `/data/shared/SOUL.md` | Shared identity/values (all agents) | `ahs` |
-| `/data/shared/WORKSPACE.md` | Repository guide for agents | `ahs` |
-| `/data/repos/` | Shared read-only repo checkouts | `ahs` |
-| `/data/repos/<your-repo>/` | Example repo clone (auto-pulled every 5m by `pull_agent_repos.sh`) | `ahs` |
-| `/data/workspaces/` | Per-session git worktrees (write access) | `ahs` |
-| `/data/session_logs/` | Per-session debug logs | `ahs` |
-| `/data/session_logs/pull_repos.log` | Cron job output | `ahs` |
+| `/data/ahs/agents/` | Agent config directories | `ahs` |
+| `/data/ahs/agents/{name}/config.json` | Agent settings (model, tools, limits) | `ahs` |
+| `/data/ahs/agents/{name}/ROLE.md` | Agent role, expertise & personality | `ahs` |
+| `/data/ahs/shared/SOUL.md` | Shared identity/values (all agents) | `ahs` |
+| `/data/ahs/shared/WORKSPACE.md` | Repository guide for agents | `ahs` |
+| `/data/ahs/repos/` | Shared read-only repo checkouts | `ahs` |
+| `/data/ahs/repos/<your-repo>/` | Example repo clone (auto-pulled every 5m by `pull_agent_repos.sh`) | `ahs` |
+| `/data/ahs/sessions/` | Per-session git worktrees (write access) | `ahs` |
+| `/data/ahs/session_logs/` | Per-session debug logs | `ahs` |
+| `/data/ahs/session_logs/pull_repos.log` | Cron job output | `ahs` |
 | `/data/ahs/github-app-key.pem` | GitHub App private key (if using App auth) | `ahs` (mode 600) |
 | `/data/ahs/gh_app_auth.sh` | GitHub App token refresh script | `ahs` (mode 700) |
 
@@ -92,11 +92,11 @@ What it does:
 2. Installs GitHub CLI
 3. Creates `ahs` service user
 4. Installs Claude Code CLI as the `ahs` user (user-scoped)
-5. Creates `/data/` directory structure
+5. Creates `/data/ahs/` directory structure
 6. Clones the repo to `/opt/yupp-agent/` (requires GitHub auth — see Step 3)
 7. Creates Python venv and installs dependencies via Poetry
 8. Copies env template, agent configs, and shared identity files
-9. Clones repos into `/data/repos/`
+9. Clones repos into `/data/ahs/repos/`
 10. Installs and enables systemd service
 11. Sets up cron job for auto-pulling repos
 
@@ -231,7 +231,7 @@ You should see `Logged in to github.com account ...` on success.
 > periodically. A cron job can automate this:
 > ```bash
 > # Re-authenticate every 50 minutes (tokens last 1 hour)
-> */50 * * * * /data/ahs/gh_app_auth.sh >> /data/session_logs/gh_auth.log 2>&1
+> */50 * * * * /data/ahs/gh_app_auth.sh >> /data/ahs/session_logs/gh_auth.log 2>&1
 > ```
 
 #### Option B: Personal Access Token (simpler, for staging)
@@ -324,13 +324,13 @@ Each agent session writes a detailed event log:
 
 ```bash
 # List session logs
-ls -lt /data/session_logs/
+ls -lt /data/ahs/session_logs/
 
 # Tail a specific session log (filename = Claude LLM session ID)
-tail -f /data/session_logs/<llm-session-id>.log
+tail -f /data/ahs/session_logs/<llm-session-id>.log
 
 # Search across session logs
-grep -r "error" /data/session_logs/
+grep -r "error" /data/ahs/session_logs/
 ```
 
 ### Deploy Scripts
@@ -340,29 +340,14 @@ All scripts live in `deploy/` and run as the `ahs` user (`sudo -u ahs bash <scri
 | Script | What it does | Cron frequency |
 |--------|-------------|----------------|
 | `gh_app_auth.sh` | Refreshes GitHub App token (expires every 1 hour) | Every 50 min |
-| `pull_agent_repos.sh` | Pulls all repos in `/data/repos/` (agent read-only checkouts) | Every 5 min |
-| `sync_configs.sh` | Pulls `/opt/yupp-agent`, copies changed configs to `/data/` | Every 30 min |
+| `pull_agent_repos.sh` | Pulls all repos in `/data/ahs/repos/` (agent read-only checkouts) | Handled by `ahs-pull-agent-repos.timer` (every 5 min) |
 
-**`sync_configs.sh`** — pulls the service repo and syncs config files:
+> Service-code deploys go through `deploy/bare-metal/deploy-latest.sh` (run on
+> demand), not a cron job. Agent-repo pulls are handled by the
+> `ahs-pull-agent-repos.timer` systemd unit, installed by
+> `deploy/bare-metal/install.sh`.
 
-```bash
-# Pull repo + sync all configs to /data/
-sudo -u ahs bash /opt/yupp-agent/ypl/agent_harness_service/deploy/sync_configs.sh
-
-# Skip git pull (already pulled manually)
-sudo -u ahs bash /opt/yupp-agent/ypl/agent_harness_service/deploy/sync_configs.sh --no-pull
-
-# Sync only shared identity files
-sudo -u ahs bash /opt/yupp-agent/ypl/agent_harness_service/deploy/sync_configs.sh --no-pull --shared
-
-# Sync only agent configs
-sudo -u ahs bash /opt/yupp-agent/ypl/agent_harness_service/deploy/sync_configs.sh --no-pull --agents
-
-# Preview what would change
-sudo -u ahs bash /opt/yupp-agent/ypl/agent_harness_service/deploy/sync_configs.sh --dry-run
-```
-
-**`pull_agent_repos.sh`** — pulls every entry under `/data/repos/*` (add the repos you want mirrored):
+**`pull_agent_repos.sh`** — pulls every entry under `/data/ahs/repos/*` (add the repos you want mirrored):
 
 ```bash
 sudo -u ahs bash /opt/yupp-agent/ypl/agent_harness_service/deploy/pull_agent_repos.sh
@@ -382,17 +367,12 @@ Run `sudo crontab -e` and add:
 
 # Refresh GitHub App token every 50 min (tokens expire after 1 hour).
 # Without this, git pull and gh CLI commands will fail with auth errors.
-*/50 * * * * sudo -u ahs bash /data/ahs/gh_app_auth.sh >> /data/session_logs/gh_auth.log 2>&1
-
-# Pull agent repos every 5 min (read-only checkouts in /data/repos/).
-# Agents read from these repos; keeping them fresh means agents see latest code.
-*/5 * * * * sudo -u ahs bash /opt/yupp-agent/ypl/agent_harness_service/deploy/pull_agent_repos.sh >> /data/session_logs/pull_agent_repos.log 2>&1
-
-# Sync service code + configs every 30 min.
-# Pulls /opt/yupp-agent, then copies changed .md and config.json to /data/.
-# Agent/shared config changes take effect on the next session creation.
-*/30 * * * * sudo -u ahs bash /opt/yupp-agent/ypl/agent_harness_service/deploy/sync_configs.sh >> /data/session_logs/sync_configs.log 2>&1
+*/50 * * * * sudo -u ahs bash /opt/yupp-agent/ypl/agent_harness_service/deploy/gh_app_auth.sh >> /data/ahs/session_logs/gh_auth.log 2>&1
 ```
+
+> Agent-repo pulls (every 5 min) are handled by the
+> `ahs-pull-agent-repos.timer` systemd unit, not cron. Service-code deploys
+> run on demand via `deploy/bare-metal/deploy-latest.sh`.
 
 **Verify:**
 
@@ -403,9 +383,9 @@ sudo crontab -l
 **Viewing logs:**
 
 ```bash
-tail -f /data/session_logs/gh_auth.log          # token refresh
-tail -f /data/session_logs/pull_agent_repos.log  # agent repo pulls
-tail -f /data/session_logs/sync_configs.log      # service pull + config sync
+tail -f /data/ahs/session_logs/gh_auth.log          # token refresh
+tail -f /data/ahs/session_logs/pull_agent_repos.log  # agent repo pulls
+tail -f /data/ahs/session_logs/sync_configs.log      # service pull + config sync
 ```
 
 ### Disk Space
@@ -415,52 +395,42 @@ tail -f /data/session_logs/sync_configs.log      # service pull + config sync
 df -h /data
 
 # Check workspaces (git worktrees accumulate over time)
-du -sh /data/workspaces/*
+du -sh /data/ahs/sessions/*
 
 # Check session logs
-du -sh /data/session_logs/
+du -sh /data/ahs/session_logs/
 
 # Clean up old worktrees (careful — active sessions use these)
 # Only clean worktrees for sessions that are COMPLETED or STALE:
-ls /data/workspaces/
+ls /data/ahs/sessions/
 ```
 
 ### Updating the Service Code
 
+Use `deploy-latest.sh` — it pulls, syncs systemd units, runs `alembic upgrade head`,
+and restarts every service in one step:
+
 ```bash
-# Pull latest code + sync configs in one step
-sudo -u ahs bash /opt/yupp-agent/ypl/agent_harness_service/deploy/sync_configs.sh
-
-# Update Python dependencies (if pyproject.toml changed)
-cd /opt/yupp-agent
-sudo -u ahs .venv/bin/poetry install --no-interaction
-
-# Restart service
-sudo systemctl restart ahs
-
-# Re-copy systemd unit if it changed
-sudo cp ypl/agent_harness_service/deploy/ahs.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl restart ahs
+sudo bash /opt/yupp-agent/deploy/bare-metal/deploy-latest.sh
 ```
 
 ### Updating Agent Configs
 
-Agent configs live in `/data/agents/`. Changes checked into the repo are applied
-automatically by the `sync_configs.sh` cron job every 30 min.
+Agent configs live in `/data/ahs/agents/`. Changes checked into the repo are
+applied by the next run of `deploy-latest.sh` (which pulls `/opt/yupp-agent`).
 To edit configs directly on the VM:
 
 ```bash
 # Edit an agent's config
-sudo -u ahs emacs /data/agents/sre/config.json
+sudo -u ahs emacs /data/ahs/agents/sre/config.json
 
 # Edit an agent's role
-sudo -u ahs emacs /data/agents/sre/ROLE.md
+sudo -u ahs emacs /data/ahs/agents/sre/ROLE.md
 
 # Add a new agent
-sudo -u ahs mkdir -p /data/agents/my-agent
-sudo -u ahs emacs /data/agents/my-agent/config.json
-sudo -u ahs emacs /data/agents/my-agent/ROLE.md
+sudo -u ahs mkdir -p /data/ahs/agents/my-agent
+sudo -u ahs emacs /data/ahs/agents/my-agent/config.json
+sudo -u ahs emacs /data/ahs/agents/my-agent/ROLE.md
 
 # Restart to pick up new agents
 sudo systemctl restart ahs
@@ -468,13 +438,13 @@ sudo systemctl restart ahs
 
 ### Updating Shared Identity
 
-Changes checked into the repo are applied automatically by the `sync_configs.sh`
-cron job every 30 min. To copy manually:
+Changes checked into the repo are applied by the next run of `deploy-latest.sh`.
+To copy manually:
 
 ```bash
 # Copy latest shared files from repo
-sudo -u ahs cp /opt/yupp-agent/ypl/agent_harness_service/deploy/shared/SOUL.md /data/shared/
-sudo -u ahs cp /opt/yupp-agent/ypl/agent_harness_service/deploy/shared/WORKSPACE.md /data/shared/
+sudo -u ahs cp /opt/yupp-agent/ypl/agent_harness_service/deploy/shared/SOUL.md /data/ahs/shared/
+sudo -u ahs cp /opt/yupp-agent/ypl/agent_harness_service/deploy/shared/WORKSPACE.md /data/ahs/shared/
 ```
 
 ---
@@ -563,13 +533,13 @@ curl -X POST http://localhost:8090/ahs/session/create \
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | `AHS_API_KEY not configured` | Missing env var | Set `AGENT_HARNESS_SERVICE_API_KEY` in `/data/ahs/.env` |
-| `Agent config not found` | Agent dir missing | Check `/data/agents/{name}/config.json` exists |
-| `CLI exited with code 1` | Claude CLI error | Check session logs in `/data/session_logs/`, verify `ANTHROPIC_API_KEY` |
+| `Agent config not found` | Agent dir missing | Check `/data/ahs/agents/{name}/config.json` exists |
+| `CLI exited with code 1` | Claude CLI error | Check session logs in `/data/ahs/session_logs/`, verify `ANTHROPIC_API_KEY` |
 | No gateway callbacks | Expected if no Slack | Agent still runs, replies just aren't pushed |
 | DB connection errors | Wrong POSTGRES_* vars | Verify DB vars match the main backend `.env` |
 | `claude: command not found` | CLI not in PATH | Re-run `curl -fsSL https://claude.ai/install.sh \| bash` as `ahs` user |
-| Stale repo code | Cron not running | Check `sudo crontab -l` and `/data/session_logs/pull_agent_repos.log` |
-| Disk full | Worktree accumulation | Clean up `/data/workspaces/` for completed sessions |
+| Stale repo code | Cron not running | Check `sudo crontab -l` and `/data/ahs/session_logs/pull_agent_repos.log` |
+| Disk full | Worktree accumulation | Clean up `/data/ahs/sessions/` for completed sessions |
 | Service won't start | Missing .env vars | Check `journalctl -u ahs -n 50` for the specific error |
 | Raw executor fails | Missing API key | Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` for the model's provider |
 | Scheduler not running | Disabled | Check `AHS_SCHEDULER_ENABLED` is not set to `false` |
