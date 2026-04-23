@@ -20,10 +20,11 @@ from __future__ import annotations
 import os
 import re
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
-from sqlalchemy import func, or_, text
+from sqlalchemy import and_, func, or_, text
 from sqlmodel import col, select
 
 from ypl.backend.config import settings
@@ -34,6 +35,97 @@ from ypl.db.users import User
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
+
+# ---------------------------------------------------------------------------
+# Memory scoping (MEMORY artifacts only)
+# ---------------------------------------------------------------------------
+
+# The three valid values of ``memory_scope`` on a MEMORY artifact row.
+MemoryScope = Literal["user", "agent", "topic"]
+VALID_MEMORY_SCOPES: frozenset[str] = frozenset({"user", "agent", "topic"})
+
+
+@dataclass(frozen=True)
+class MemoryCallerContext:
+    """Caller identity used to filter MEMORY reads / authorize MEMORY writes.
+
+    ``user_id`` is the ``users.user_id`` the caller is acting on behalf of
+    (usually from the session's ``requesting_user_id`` / ``X-User-ID`` header).
+    ``agent_name`` is the ``agents.name`` the caller is executing as (usually
+    from the AHS runner's ``X-AHS-Agent-Name`` header, which is tamper-proof).
+
+    Either may be ``None`` when the caller lacks that identity (e.g. an
+    operator script only sets ``X-User-ID``). A caller with neither identity
+    set has no MEMORY read access — the read filter returns no rows — which
+    makes it impossible to leak cross-user/cross-agent data to an
+    unauthenticated caller.
+    """
+
+    user_id: str | None = None
+    agent_name: str | None = None
+
+    @property
+    def has_identity(self) -> bool:
+        return self.user_id is not None or self.agent_name is not None
+
+
+def memory_read_clause(caller: MemoryCallerContext) -> Any:
+    """Return a SQLAlchemy clause selecting MEMORY rows readable by ``caller``.
+
+    The resulting clause is ``topic`` ∪ (``user`` ∧ subject = caller.user_id) ∪
+    (``agent`` ∧ subject = caller.agent_name). A caller with neither identity
+    set matches no rows (conservative default; admin routes should bypass the
+    filter instead).
+    """
+    # Wrap column references in ``col()`` so SQLAlchemy's / mypy's typing
+    # treats the comparisons as ``ColumnElement[bool]`` rather than plain
+    # ``bool`` — matches how the rest of this module uses ``col()``.
+    scope_col = col(AgentArtifact.memory_scope)
+    subject_col = col(AgentArtifact.memory_scope_subject)
+    branches: list[Any] = [scope_col == "topic"]
+    if caller.user_id is not None:
+        branches.append(and_(scope_col == "user", subject_col == caller.user_id))
+    if caller.agent_name is not None:
+        branches.append(and_(scope_col == "agent", subject_col == caller.agent_name))
+    return or_(*branches) if len(branches) > 1 else branches[0]
+
+
+def caller_can_write_memory(
+    caller: MemoryCallerContext,
+    scope: str,
+    subject: str | None,
+) -> bool:
+    """Return True if ``caller`` is allowed to write to (scope, subject).
+
+    Rules (see design doc §'Access control'):
+
+    - scope=topic     → any authenticated caller.
+    - scope=user, X   → caller.user_id must equal X.
+    - scope=agent, Y  → caller.agent_name must equal Y.
+    """
+    if scope == "topic":
+        return True
+    if scope == "user":
+        return caller.user_id is not None and subject == caller.user_id
+    if scope == "agent":
+        return caller.agent_name is not None and subject == caller.agent_name
+    return False
+
+
+def validate_memory_scope_shape(scope: str, subject: str | None) -> None:
+    """Raise :class:`ArtifactError` if (scope, subject) is not a legal pair.
+
+    Mirrors the DB ``ck_agent_artifacts_memory_subject_presence`` check so we
+    fail fast in the service layer before we ever hit Postgres.
+    """
+    if scope not in VALID_MEMORY_SCOPES:
+        raise ArtifactError(f"Invalid memory_scope {scope!r}; allowed: {sorted(VALID_MEMORY_SCOPES)}")
+    if scope == "topic":
+        if subject is not None:
+            raise ArtifactError("memory_scope='topic' forbids memory_scope_subject")
+    elif not subject:
+        raise ArtifactError(f"memory_scope={scope!r} requires memory_scope_subject")
+
 
 # Supported textual content types + their file extensions.
 CONTENT_TYPE_EXTENSIONS: dict[str, str] = {
@@ -116,31 +208,85 @@ class Attachment:
 # ---------------------------------------------------------------------------
 
 
-async def _max_version_for_slug(slug: str, artifact_type: AgentArtifactType) -> int | None:
-    """Return the highest existing version for ``slug`` (including archived)."""
+def _scope_slug_filter(
+    *,
+    slug: str,
+    artifact_type: AgentArtifactType,
+    memory_scope: str | None,
+    memory_scope_subject: str | None,
+) -> list[Any]:
+    """Build the WHERE clauses that locate a slug's versions.
+
+    For MEMORY artifacts uniqueness is (scope, subject, slug, version) — the
+    same slug can live under multiple scopes/subjects. Non-MEMORY artifacts
+    fall back to global slug uniqueness.
+    """
+    clauses: list[Any] = [
+        AgentArtifact.named_slug == slug,
+        AgentArtifact.artifact_type == artifact_type,
+    ]
+    if artifact_type == AgentArtifactType.MEMORY:
+        if memory_scope is None:
+            raise ArtifactError("MEMORY slug lookups require memory_scope (and memory_scope_subject for user/agent).")
+        clauses.append(AgentArtifact.memory_scope == memory_scope)
+        if memory_scope == "topic":
+            clauses.append(col(AgentArtifact.memory_scope_subject).is_(None))
+        else:
+            if not memory_scope_subject:
+                raise ArtifactError(
+                    f"MEMORY slug lookups with memory_scope={memory_scope!r} require memory_scope_subject."
+                )
+            clauses.append(AgentArtifact.memory_scope_subject == memory_scope_subject)
+    return clauses
+
+
+async def _max_version_for_slug(
+    slug: str,
+    artifact_type: AgentArtifactType,
+    *,
+    memory_scope: str | None = None,
+    memory_scope_subject: str | None = None,
+) -> int | None:
+    """Return the highest existing version for ``slug`` (including archived).
+
+    For MEMORY artifacts the lookup is narrowed to the (scope, subject) tuple
+    so different scopes can carry identically-named slugs.
+    """
+    clauses = _scope_slug_filter(
+        slug=slug,
+        artifact_type=artifact_type,
+        memory_scope=memory_scope,
+        memory_scope_subject=memory_scope_subject,
+    )
     async with get_async_session_read_replica() as session:
-        stmt = select(func.max(AgentArtifact.version)).where(
-            AgentArtifact.named_slug == slug,
-            AgentArtifact.artifact_type == artifact_type,
-        )
+        stmt = select(func.max(AgentArtifact.version)).where(*clauses)
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
 
 
-async def _slug_has_active_version(slug: str, artifact_type: AgentArtifactType) -> bool:
-    """True if any non-archived version of ``slug`` exists for ``artifact_type``."""
+async def _slug_has_active_version(
+    slug: str,
+    artifact_type: AgentArtifactType,
+    *,
+    memory_scope: str | None = None,
+    memory_scope_subject: str | None = None,
+) -> bool:
+    """True if any non-archived version of ``slug`` exists for the scope tuple."""
+    clauses = _scope_slug_filter(
+        slug=slug,
+        artifact_type=artifact_type,
+        memory_scope=memory_scope,
+        memory_scope_subject=memory_scope_subject,
+    )
+    clauses.extend(
+        [
+            col(AgentArtifact.deleted_at).is_(None),
+            # is_archived stored in artifact_metadata JSONB.
+            text("(agent_artifacts.artifact_metadata->>'is_archived') IS DISTINCT FROM 'true'"),
+        ]
+    )
     async with get_async_session_read_replica() as session:
-        stmt = (
-            select(AgentArtifact.agent_artifact_id)
-            .where(
-                AgentArtifact.named_slug == slug,
-                AgentArtifact.artifact_type == artifact_type,
-                col(AgentArtifact.deleted_at).is_(None),
-                # is_archived stored in artifact_metadata JSONB.
-                text("(agent_artifacts.artifact_metadata->>'is_archived') IS DISTINCT FROM 'true'"),
-            )
-            .limit(1)
-        )
+        stmt = select(AgentArtifact.agent_artifact_id).where(*clauses).limit(1)
         result = await session.execute(stmt)
         return result.first() is not None
 
@@ -150,6 +296,8 @@ async def _resolve_next_version(
     slug: str | None,
     create_new_slug: bool,
     artifact_type: AgentArtifactType,
+    memory_scope: str | None = None,
+    memory_scope_subject: str | None = None,
 ) -> int | None:
     """Return the ``version`` to assign to a new artifact, or ``None`` if slug is unset."""
     if slug is None:
@@ -158,8 +306,18 @@ async def _resolve_next_version(
         return None
 
     validate_named_slug(slug)
-    existing_max = await _max_version_for_slug(slug, artifact_type)
-    has_active = await _slug_has_active_version(slug, artifact_type)
+    existing_max = await _max_version_for_slug(
+        slug,
+        artifact_type,
+        memory_scope=memory_scope,
+        memory_scope_subject=memory_scope_subject,
+    )
+    has_active = await _slug_has_active_version(
+        slug,
+        artifact_type,
+        memory_scope=memory_scope,
+        memory_scope_subject=memory_scope_subject,
+    )
 
     if create_new_slug:
         if has_active:
@@ -191,7 +349,8 @@ async def _insert_artifact_row(artifact: AgentArtifact) -> AgentArtifact:
 
 async def create_artifact(
     *,
-    content: bytes,
+    content: bytes | None = None,
+    inline_content: str | None = None,
     content_type: str,
     title: str,
     description: str | None = None,
@@ -204,40 +363,93 @@ async def create_artifact(
     attachments: list[Attachment] | None = None,
     extra_metadata: dict[str, Any] | None = None,
     artifact_type: AgentArtifactType = AgentArtifactType.TEXT,
+    memory_scope: str | None = None,
+    memory_scope_subject: str | None = None,
     blob_store: BlobStore | None = None,
 ) -> AgentArtifact:
-    """Create a textual artifact: upload content + attachments, insert row.
+    """Create an artifact: upload content + attachments (blob) OR store inline, then insert row.
 
-    Returns the inserted :class:`AgentArtifact`. On failure any partially
-    uploaded blobs are left in place (operator can reap later — keeps the
-    hot path simple and idempotent-enough for a retry).
+    For ``artifact_type=MEMORY`` pass ``inline_content`` (a str) and the
+    ``memory_scope`` + ``memory_scope_subject`` pair — the body is written
+    directly to the ``agent_artifacts.inline_content`` column, the blob
+    store is skipped entirely, and no canonical ``url`` is generated
+    (viewers resolve the row by ID / scope+slug).
+
+    For every other type pass ``content`` bytes — the main blob is uploaded
+    to the configured ``BlobStore`` and a canonical viewer URL is stored.
+
+    On failure any partially uploaded blobs are left in place (operator can
+    reap later — keeps the hot path simple and idempotent-enough for a retry).
     """
-    if len(content) > MAX_CONTENT_SIZE_BYTES:
-        raise ArtifactError(f"Content exceeds {MAX_CONTENT_SIZE_BYTES} bytes")
     attachments = attachments or []
     if len(attachments) > MAX_ATTACHMENTS_PER_ARTIFACT:
         raise ArtifactError(f"Too many attachments (>{MAX_ATTACHMENTS_PER_ARTIFACT})")
 
-    # 1. Resolve version (may raise).
-    version = await _resolve_next_version(slug=named_slug, create_new_slug=create_new_slug, artifact_type=artifact_type)
+    is_memory = artifact_type == AgentArtifactType.MEMORY
 
-    # 2. Generate ID + upload blobs.
+    if is_memory:
+        # MEMORY: inline body; no blobs, no attachments.
+        if inline_content is None:
+            raise ArtifactError("MEMORY artifacts require inline_content")
+        if content is not None:
+            raise ArtifactError("MEMORY artifacts must not carry 'content' bytes — use inline_content")
+        if attachments:
+            raise ArtifactError("MEMORY artifacts do not support attachments")
+        if memory_scope is None:
+            raise ArtifactError("MEMORY artifacts require memory_scope")
+        validate_memory_scope_shape(memory_scope, memory_scope_subject)
+        if len(inline_content.encode("utf-8")) > MAX_CONTENT_SIZE_BYTES:
+            raise ArtifactError(f"inline_content exceeds {MAX_CONTENT_SIZE_BYTES} bytes")
+    else:
+        # Non-MEMORY: blob-backed body.
+        if inline_content is not None:
+            raise ArtifactError(f"inline_content is only valid for MEMORY artifacts (got type={artifact_type.value})")
+        if memory_scope is not None or memory_scope_subject is not None:
+            raise ArtifactError(
+                f"memory_scope / memory_scope_subject only apply to MEMORY artifacts (got type={artifact_type.value})"
+            )
+        if content is None:
+            raise ArtifactError(f"{artifact_type.value} artifacts require 'content' bytes")
+        if len(content) > MAX_CONTENT_SIZE_BYTES:
+            raise ArtifactError(f"Content exceeds {MAX_CONTENT_SIZE_BYTES} bytes")
+
+    # 1. Resolve version (may raise). For MEMORY the (scope, subject) tuple is
+    # part of the slug-uniqueness key; other types use global slug uniqueness.
+    version = await _resolve_next_version(
+        slug=named_slug,
+        create_new_slug=create_new_slug,
+        artifact_type=artifact_type,
+        memory_scope=memory_scope if is_memory else None,
+        memory_scope_subject=memory_scope_subject if is_memory else None,
+    )
+
+    # 2. Generate ID + upload blobs (non-MEMORY only).
     artifact_id = uuid.uuid4()
-    store = blob_store or get_blob_store()
-    main_path = content_path_for(artifact_id, content_type)
-    await store.upload(main_path, content, content_type)
-
     attachment_infos: list[dict[str, Any]] = []
-    for att in attachments:
-        att_path = attachment_path_for(artifact_id, att.filename)
-        await store.upload(att_path, att.data, att.content_type)
-        attachment_infos.append(
-            {
-                "filename": att.filename,
-                "content_type": att.content_type,
-                "size_bytes": len(att.data),
-            }
-        )
+    url: str | None = None
+
+    if not is_memory:
+        assert content is not None  # narrowed above
+        store = blob_store or get_blob_store()
+        main_path = content_path_for(artifact_id, content_type)
+        await store.upload(main_path, content, content_type)
+
+        for att in attachments:
+            att_path = attachment_path_for(artifact_id, att.filename)
+            await store.upload(att_path, att.data, att.content_type)
+            attachment_infos.append(
+                {
+                    "filename": att.filename,
+                    "content_type": att.content_type,
+                    "size_bytes": len(att.data),
+                }
+            )
+
+        # Canonical shareable URL. Uses the configured viewer base so callers /
+        # Slack messages / agents get a human-readable link; falls back to the
+        # raw AHS path when no viewer is deployed.
+        viewer_base = settings.VIEWER_BASE_URL.rstrip("/")
+        url = f"{viewer_base}/artifacts/{artifact_id}" if viewer_base else f"/ahs/artifacts/{artifact_id}"
 
     # 3. Insert metadata row.
     metadata: dict[str, Any] = {
@@ -247,18 +459,15 @@ async def create_artifact(
     if extra_metadata:
         metadata.update(extra_metadata)
 
-    # Canonical shareable URL. Uses the configured viewer base so callers /
-    # Slack messages / agents get a human-readable link; falls back to the
-    # raw AHS path when no viewer is deployed.
-    viewer_base = settings.VIEWER_BASE_URL.rstrip("/")
-    url = f"{viewer_base}/artifacts/{artifact_id}" if viewer_base else f"/ahs/artifacts/{artifact_id}"
-
     artifact = AgentArtifact(
         agent_artifact_id=artifact_id,
         artifact_type=artifact_type,
         title=title,
         description=description,
         url=url,
+        inline_content=inline_content,
+        memory_scope=memory_scope,
+        memory_scope_subject=memory_scope_subject,
         creator_user_id=creator_user_id,
         creator_agent_id=creator_agent_id,
         agent_session_id=agent_session_id,
@@ -287,17 +496,27 @@ async def get_artifact_by_slug(
     slug: str,
     version: int | None = None,
     artifact_type: AgentArtifactType = AgentArtifactType.TEXT,
+    *,
+    memory_scope: str | None = None,
+    memory_scope_subject: str | None = None,
 ) -> AgentArtifact | None:
     """Resolve ``slug`` to an artifact row.
 
     When ``version`` is None, returns the latest non-archived version.
+
+    For ``artifact_type=MEMORY`` the (scope, subject) tuple is required and
+    the lookup is narrowed accordingly — the same slug can live under
+    multiple scopes without collision.
     """
+    clauses = _scope_slug_filter(
+        slug=slug,
+        artifact_type=artifact_type,
+        memory_scope=memory_scope,
+        memory_scope_subject=memory_scope_subject,
+    )
+    clauses.append(col(AgentArtifact.deleted_at).is_(None))
     async with get_async_session_read_replica() as session:
-        stmt = select(AgentArtifact).where(
-            AgentArtifact.named_slug == slug,
-            AgentArtifact.artifact_type == artifact_type,
-            col(AgentArtifact.deleted_at).is_(None),
-        )
+        stmt = select(AgentArtifact).where(*clauses)
         if version is not None:
             stmt = stmt.where(AgentArtifact.version == version)
         else:
@@ -313,17 +532,24 @@ async def get_artifact_by_slug(
 async def list_artifact_versions(
     slug: str,
     artifact_type: AgentArtifactType = AgentArtifactType.TEXT,
+    *,
+    memory_scope: str | None = None,
+    memory_scope_subject: str | None = None,
 ) -> list[AgentArtifact]:
+    """Enumerate non-archived versions of ``slug`` in chronological order.
+
+    For ``artifact_type=MEMORY`` scope/subject are required (see
+    :func:`get_artifact_by_slug`).
+    """
+    clauses = _scope_slug_filter(
+        slug=slug,
+        artifact_type=artifact_type,
+        memory_scope=memory_scope,
+        memory_scope_subject=memory_scope_subject,
+    )
+    clauses.append(col(AgentArtifact.deleted_at).is_(None))
     async with get_async_session_read_replica() as session:
-        stmt = (
-            select(AgentArtifact)
-            .where(
-                AgentArtifact.named_slug == slug,
-                AgentArtifact.artifact_type == artifact_type,
-                col(AgentArtifact.deleted_at).is_(None),
-            )
-            .order_by(col(AgentArtifact.version).asc())
-        )
+        stmt = select(AgentArtifact).where(*clauses).order_by(col(AgentArtifact.version).asc())
         result = await session.execute(stmt)
         return list(result.scalars().all())
 
@@ -332,7 +558,20 @@ async def read_artifact_content(
     artifact: AgentArtifact,
     blob_store: BlobStore | None = None,
 ) -> tuple[bytes, str]:
-    """Return ``(content_bytes, content_type)`` for an artifact's main file."""
+    """Return ``(content_bytes, content_type)`` for an artifact's main body.
+
+    MEMORY artifacts with ``inline_content`` resolve directly from the row
+    — no blob store round-trip. Any artifact (MEMORY or otherwise) with
+    ``inline_content`` set takes the inline path; otherwise the main file
+    is fetched from the blob store using the canonical ``content_path_for``
+    layout.
+    """
+    if artifact.inline_content is not None:
+        # Inline-content path (MEMORY). content_type may still be NULL in weird
+        # rows — default to text/markdown to keep downstream consumers happy.
+        content_type = artifact.content_type or "text/markdown"
+        return artifact.inline_content.encode("utf-8"), content_type
+
     if artifact.content_type is None:
         raise ArtifactError(
             f"Artifact {artifact.agent_artifact_id} has no content_type set — "
@@ -387,19 +626,31 @@ async def archive_artifact(artifact_id: uuid.UUID) -> bool:
 async def archive_artifacts_by_slug(
     slug: str,
     artifact_type: AgentArtifactType = AgentArtifactType.TEXT,
+    *,
+    memory_scope: str | None = None,
+    memory_scope_subject: str | None = None,
 ) -> int:
     """Archive every non-archived version under ``slug``.
 
     Returns the number of versions that were newly flipped to archived
-    (already-archived versions are skipped silently).
+    (already-archived versions are skipped silently). For MEMORY artifacts
+    the scope/subject tuple is required — it disambiguates slugs that exist
+    in multiple scopes.
     """
-    async with get_async_session() as session:
-        stmt = select(AgentArtifact).where(
-            AgentArtifact.named_slug == slug,
-            AgentArtifact.artifact_type == artifact_type,
+    clauses = _scope_slug_filter(
+        slug=slug,
+        artifact_type=artifact_type,
+        memory_scope=memory_scope,
+        memory_scope_subject=memory_scope_subject,
+    )
+    clauses.extend(
+        [
             col(AgentArtifact.deleted_at).is_(None),
             text("(agent_artifacts.artifact_metadata->>'is_archived') IS DISTINCT FROM 'true'"),
-        )
+        ]
+    )
+    async with get_async_session() as session:
+        stmt = select(AgentArtifact).where(*clauses)
         result = await session.execute(stmt)
         artifacts = list(result.scalars().all())
         for artifact in artifacts:
@@ -432,7 +683,23 @@ async def list_artifacts(
     include_archived: bool = False,
     limit: int = 50,
     offset: int = 0,
+    memory_caller: MemoryCallerContext | None = None,
+    memory_scope: str | None = None,
+    memory_scope_subject: str | None = None,
 ) -> list[AgentArtifact]:
+    """List artifacts matching the given filters.
+
+    MEMORY-scoped filtering:
+
+    - ``memory_caller`` — if set, non-NULL MEMORY rows are additionally
+      constrained to the caller's visibility (``topic`` + own user + own
+      agent). Non-MEMORY rows are unaffected. When unset, no MEMORY
+      filtering is applied (admin / viewer access).
+    - ``memory_scope`` / ``memory_scope_subject`` — if set, narrow the
+      MEMORY rows to a specific scope/subject. Non-MEMORY rows are excluded
+      from the response when either is set because scope columns are NULL
+      for those rows.
+    """
     async with get_async_session_read_replica() as session:
         stmt = select(AgentArtifact).where(col(AgentArtifact.deleted_at).is_(None))
         if artifact_type is not None:
@@ -451,9 +718,45 @@ async def list_artifacts(
             stmt = stmt.where(col(AgentArtifact.created_at) < created_before)
         if not include_archived:
             stmt = stmt.where(text("(agent_artifacts.artifact_metadata->>'is_archived') IS DISTINCT FROM 'true'"))
+        stmt = _apply_memory_filters(
+            stmt,
+            memory_caller=memory_caller,
+            memory_scope=memory_scope,
+            memory_scope_subject=memory_scope_subject,
+        )
         stmt = stmt.order_by(col(AgentArtifact.created_at).desc()).limit(limit).offset(offset)
         result = await session.execute(stmt)
         return list(result.scalars().all())
+
+
+def _apply_memory_filters(
+    stmt: Any,
+    *,
+    memory_caller: MemoryCallerContext | None,
+    memory_scope: str | None,
+    memory_scope_subject: str | None,
+) -> Any:
+    """Apply the MEMORY visibility + scope/subject narrowing to ``stmt``.
+
+    Non-MEMORY rows are preserved when ``memory_scope`` / ``subject`` are
+    unset (they just don't take part in the MEMORY filter); narrowing to a
+    specific scope or subject implicitly excludes non-MEMORY rows because
+    their scope columns are NULL.
+    """
+    if memory_caller is not None:
+        # Let non-MEMORY rows through unconditionally; constrain MEMORY rows
+        # to the caller's visibility.
+        stmt = stmt.where(
+            or_(
+                col(AgentArtifact.artifact_type) != AgentArtifactType.MEMORY,
+                memory_read_clause(memory_caller),
+            )
+        )
+    if memory_scope is not None:
+        stmt = stmt.where(col(AgentArtifact.memory_scope) == memory_scope)
+    if memory_scope_subject is not None:
+        stmt = stmt.where(col(AgentArtifact.memory_scope_subject) == memory_scope_subject)
+    return stmt
 
 
 @retry_db
@@ -467,11 +770,17 @@ async def count_artifacts(
     created_after: datetime | None = None,
     created_before: datetime | None = None,
     include_archived: bool = False,
+    memory_caller: MemoryCallerContext | None = None,
+    memory_scope: str | None = None,
+    memory_scope_subject: str | None = None,
 ) -> int:
     """Count artifacts matching the same filters as :func:`list_artifacts`.
 
     Used by the listing UI to decide whether a "Next" page link should be
-    shown without paying the cost of fetching beyond the current page.
+    shown without paying the cost of fetching beyond the current page. The
+    MEMORY filtering parameters mirror :func:`list_artifacts` so a paginated
+    response's ``total`` matches the number of rows the caller can actually
+    see.
     """
     async with get_async_session_read_replica() as session:
         stmt = select(func.count(col(AgentArtifact.agent_artifact_id))).where(col(AgentArtifact.deleted_at).is_(None))
@@ -491,6 +800,12 @@ async def count_artifacts(
             stmt = stmt.where(col(AgentArtifact.created_at) < created_before)
         if not include_archived:
             stmt = stmt.where(text("(agent_artifacts.artifact_metadata->>'is_archived') IS DISTINCT FROM 'true'"))
+        stmt = _apply_memory_filters(
+            stmt,
+            memory_caller=memory_caller,
+            memory_scope=memory_scope,
+            memory_scope_subject=memory_scope_subject,
+        )
         result = await session.execute(stmt)
         return int(result.scalar_one() or 0)
 
@@ -503,11 +818,18 @@ async def search_artifacts(
     include_archived: bool = False,
     limit: int = 50,
     offset: int = 0,
+    memory_caller: MemoryCallerContext | None = None,
+    memory_scope: str | None = None,
+    memory_scope_subject: str | None = None,
 ) -> list[AgentArtifact]:
-    """Case-insensitive match over title, description, named_slug, and attachment filenames.
+    """Case-insensitive match over title, description, named_slug, inline_content,
+    and attachment filenames.
 
     Matching is substring (``ILIKE '%query%'``) — no tsvector/full-text over
     the content body yet. Results are reverse-chronological.
+
+    MEMORY filtering follows :func:`list_artifacts` — see that docstring for
+    the semantics of ``memory_caller`` / ``memory_scope`` / subject.
     """
     q = query.strip()
     if not q:
@@ -533,8 +855,15 @@ async def search_artifacts(
                 col(AgentArtifact.title).ilike(like_pattern),
                 col(AgentArtifact.description).ilike(like_pattern),
                 col(AgentArtifact.named_slug).ilike(like_pattern),
+                col(AgentArtifact.inline_content).ilike(like_pattern),
                 attachment_filename_match,
             )
+        )
+        stmt = _apply_memory_filters(
+            stmt,
+            memory_caller=memory_caller,
+            memory_scope=memory_scope,
+            memory_scope_subject=memory_scope_subject,
         )
         stmt = stmt.order_by(col(AgentArtifact.created_at).desc()).limit(limit).offset(offset)
         result = await session.execute(stmt)
