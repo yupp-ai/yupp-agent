@@ -121,6 +121,35 @@ async def get_available_models() -> dict | None:
         return None
 
 
+async def get_available_agents() -> list[dict] | None:
+    """Fetch the list of available agents from AHS GET /ahs/agents.
+
+    Returns a list of agent summary dicts (see ``AgentInfo``), or None on failure.
+
+    Each agent dict includes ``name``, ``display_name``, ``description``, plus
+    executor / model / capability metadata.  Used by the ``/agents`` and
+    ``/agent NAME`` slash commands to enumerate and validate agent names.
+    """
+    base_url = get_agent_service_url()
+    if not base_url:
+        logger.error("Agent Harness Service URL not configured")
+        return None
+
+    # include_all=true so we see all agents defined on the filesystem as well as
+    # any DB-registered ones — `/agents` is a discovery command, not user-scoped.
+    url = f"{base_url}/ahs/agents"
+    try:
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            response = await client.get(url, headers=_get_ahs_headers(), params={"include_all": "true"})
+            response.raise_for_status()
+            payload: dict = response.json()
+            agents: list[dict] = payload.get("agents", [])
+            return agents
+    except Exception as e:
+        logger.error("Failed to fetch available agents from AHS", error=str(e))
+        return None
+
+
 async def create_agent_session(
     agent_name: str,
     session_id: str,

@@ -15,7 +15,7 @@ import random
 import re
 import time
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import HTTPException, Request
@@ -31,6 +31,7 @@ from ypl.backend.utils.slack_utils import get_channel_name_by_id, resolve_slack_
 from ypl.slack_agent_gateway.agent_client import (
     attach_slack_to_session,
     create_agent_session,
+    get_available_agents,
     get_available_models,
     get_session_info,
     send_feedback,
@@ -245,49 +246,182 @@ async def _post_placeholder(
 # Pattern to strip Slack bot mentions (e.g., "<@U12345>")
 _MENTION_PATTERN = re.compile(r"<@\w+>\s*")
 
+# Bare slash commands — where the @mention message *is* the command (no message body
+# is forwarded to the agent). The slash is optional only for the legacy commands
+# (``stop``, ``attach``) to preserve existing user behaviour; for all new commands
+# the slash is required so we don't mis-parse natural-language phrases like
+# "help me with X" or "status update" as commands.
+_BARE_COMMANDS: set[str] = {
+    "stop",
+    "attach",
+    "help",
+    "agents",
+    "models",
+    "status",
+    "verbose",
+    "quiet",
+}
+_LEGACY_NOSLASH_COMMANDS: set[str] = {"stop", "attach"}
+
 
 def _extract_command(text: str) -> tuple[str, str] | None:
-    """Extract a slash command from the message text, if any.
+    """Extract a bare slash command from the message text, if any.
 
-    Strips the bot @mention and leading/trailing whitespace, then checks
-    if the remaining text is a known command.
+    Bare commands are ones where the entire @mention message is a single
+    command (optionally followed by an arg for ``/attach``):
+
+        /stop           interrupt the running agent turn
+        /help           show usage
+        /agents         list available agents
+        /models         list available models
+        /status         show current session metadata
+        /verbose        turn tool-call display on  (default)
+        /quiet          turn tool-call display off
+        /attach         (rejected — needs a UUID)
+        /attach <uuid>  link thread to existing AHS session
+        /attach:<uuid>  legacy colon form (alias)
+
+    Case-insensitive. The slash is optional for ``stop`` and ``attach`` (legacy
+    behaviour) but **required** for the newer commands to avoid false-positives
+    on natural-language phrasing.
 
     Returns:
-        Tuple of (command_name, args_string) or None if not a command.
+        Tuple of ``(command_name, args_string)`` or None if not a command.
     """
     stripped = _MENTION_PATTERN.sub("", text).strip()
-    if stripped.lower() in ("/stop", "stop"):
-        return ("stop", "")
-    # /attach {session_id} — attach this thread to an existing AHS session
-    lower = stripped.lower()
-    if lower in ("/attach", "attach"):
-        return ("attach", "")
-    if lower.startswith(("/attach ", "attach ")):
-        args = stripped.split(None, 1)[1] if " " in stripped else ""
-        return ("attach", args.strip())
-    return None
+    if not stripped:
+        return None
+
+    parts = stripped.split(None, 1)
+    first = parts[0]
+    rest = parts[1].strip() if len(parts) > 1 else ""
+
+    # Colon-form attach alias: ``/attach:<uuid>`` → ("attach", "<uuid>").
+    # (We also accept ``attach:<uuid>`` without the leading slash to match the
+    # slash-optional legacy behaviour for ``attach``.)
+    if ":" in first and first.lstrip("/").lower().startswith("attach:"):
+        _, _, colon_arg = first.partition(":")
+        return ("attach", colon_arg.strip())
+
+    has_slash = first.startswith("/")
+    cmd_lower = first.lstrip("/").lower()
+
+    if cmd_lower not in _BARE_COMMANDS:
+        return None
+
+    # Slash-less form allowed only for legacy commands.
+    if not has_slash and cmd_lower not in _LEGACY_NOSLASH_COMMANDS:
+        return None
+
+    if cmd_lower == "attach":
+        return ("attach", rest)
+
+    # All other bare commands take no arguments — any trailing text is ignored.
+    return (cmd_lower, "")
+
+
+def _extract_leading_directive(stripped: str, directive: str) -> tuple[str | None, str]:
+    """Match a leading ``/<directive> <value>`` or ``/<directive>:<value>`` directive.
+
+    Must be the first whitespace-separated token. Both syntaxes are accepted for
+    backward compatibility, but the space form is preferred for consistency with
+    the bare ``/attach <uuid>`` command.
+
+    Returns:
+        ``(value, remainder)`` where ``value`` is the directive's argument and
+        ``remainder`` is the message text with the directive + value stripped.
+        If no directive matches, returns ``(None, stripped)``.
+    """
+    if not stripped:
+        return None, stripped
+
+    parts = stripped.split(None, 1)
+    first = parts[0]
+    rest = parts[1].strip() if len(parts) > 1 else ""
+
+    prefix_colon = f"/{directive}:"
+    if first.lower().startswith(prefix_colon):
+        value = first[len(prefix_colon) :]
+        if not value:
+            # Bare ``/model:`` or ``/agent:`` with no value — not a directive.
+            return None, stripped
+        return value, rest
+
+    if first.lower() == f"/{directive}":
+        if not rest:
+            # Bare ``/model`` or ``/agent`` with no value — not a directive.
+            return None, stripped
+        value_parts = rest.split(None, 1)
+        value = value_parts[0]
+        remainder = value_parts[1].strip() if len(value_parts) > 1 else ""
+        return value, remainder
+
+    return None, stripped
 
 
 def _extract_model_directive(text: str) -> tuple[str | None, str]:
-    """Extract an optional ``/model:<spec>`` directive from the message text.
+    """Extract an optional ``/model <spec>`` (or ``/model:<spec>``) directive.
 
-    The directive must be the *first* word after the @mention, e.g.:
-        ``@raccoon /model:anthropic/claude-sonnet-4-6 please review this PR``
+    The directive must be the *first* word after the @mention, e.g.::
+
+        @raccoon /model anthropic/claude-sonnet-4-6 please review this PR
+        @raccoon /model:anthropic/claude-sonnet-4-6 please review this PR   (alias)
 
     Returns:
-        ``(model_spec, cleaned_text)`` where ``model_spec`` is the value after
-        ``/model:`` (e.g. ``"anthropic/claude-sonnet-4-6"``) and ``cleaned_text``
-        is the message with the @mention and directive stripped.  If no directive
-        is present, ``model_spec`` is ``None`` and ``cleaned_text`` is the
-        @mention-stripped text unchanged.
+        ``(model_spec, cleaned_text)`` where ``cleaned_text`` is the message with
+        the @mention and directive stripped. If no directive is present,
+        ``model_spec`` is None and ``cleaned_text`` is the @mention-stripped text
+        unchanged.
     """
     stripped = _MENTION_PATTERN.sub("", text).strip()
-    words = stripped.split(None, 1)
-    if words and words[0].lower().startswith("/model:"):
-        spec = words[0][len("/model:") :]
-        rest = words[1].strip() if len(words) > 1 else ""
-        return spec, rest
-    return None, stripped
+    return _extract_leading_directive(stripped, "model")
+
+
+def _extract_agent_directive(text: str) -> tuple[str | None, str]:
+    """Extract an optional ``/agent <name>`` (or ``/agent:<name>``) directive.
+
+    Same shape as :func:`_extract_model_directive`. Used to override which AHS
+    agent handles a newly-created session, regardless of which Slack bot was
+    @mentioned. Only takes effect on the first message of a thread.
+    """
+    stripped = _MENTION_PATTERN.sub("", text).strip()
+    return _extract_leading_directive(stripped, "agent")
+
+
+def _extract_leading_directives(text: str) -> tuple[str | None, str | None, str]:
+    """Extract both ``/agent`` and ``/model`` leading directives, in any order.
+
+    Returns ``(agent_name, model_spec, cleaned_text)``. The user may stack both
+    directives at the start of their message in either order::
+
+        @raccoon /agent sre /model anthropic/claude-sonnet-4-6 alerts?
+        @raccoon /model anthropic/claude-sonnet-4-6 /agent sre alerts?
+
+    Each directive is optional. If neither matches, ``cleaned_text`` is the
+    @mention-stripped message unchanged.
+    """
+    stripped = _MENTION_PATTERN.sub("", text).strip()
+    agent_value: str | None = None
+    model_value: str | None = None
+
+    # Parse up to two iterations so each directive is consumed at most once; extra
+    # iterations are a no-op because the directives are gone after the first hit.
+    for _ in range(2):
+        if agent_value is None:
+            candidate, remainder = _extract_leading_directive(stripped, "agent")
+            if candidate is not None:
+                agent_value = candidate
+                stripped = remainder
+                continue
+        if model_value is None:
+            candidate, remainder = _extract_leading_directive(stripped, "model")
+            if candidate is not None:
+                model_value = candidate
+                stripped = remainder
+                continue
+        break
+
+    return agent_value, model_value, stripped
 
 
 def _format_models_list(models: dict) -> str:
@@ -301,8 +435,41 @@ def _format_models_list(models: dict) -> str:
         "*Raw LLM models* (direct API calls, no CLI wrapper):",
         *[f"• `{m}`" for m in raw],
         "",
-        "_Usage:_ `@agent /model:provider/modelname your message here`",
+        "_Usage:_ `@agent /model provider/modelname your message here`",
     ]
+    return "\n".join(lines)
+
+
+def _format_agents_list(agents: list[dict]) -> str:
+    """Format an agents list from AHS into a human-readable Slack mrkdwn block.
+
+    Each agent dict follows the ``AgentInfo`` schema returned by
+    ``GET /ahs/agents``: ``name``, ``display_name``, ``description``,
+    ``executor_type``, ``executor_model`` / ``llm_model``, etc.
+    """
+    if not agents:
+        return "_No agents available._"
+
+    # Sort by name for deterministic display.
+    sorted_agents = sorted(agents, key=lambda a: a.get("name", ""))
+    lines: list[str] = ["*Available agents* (use `/agent NAME` to override):"]
+    for agent in sorted_agents:
+        name = agent.get("name", "?")
+        display = agent.get("display_name") or name
+        description = agent.get("description") or ""
+        # Prefer executor_model (harness name) over llm_model for display.
+        model = agent.get("executor_model") or agent.get("llm_model") or "—"
+        # First sentence of description, capped for readability.
+        snippet = description.split("\n")[0].strip()
+        if len(snippet) > 120:
+            snippet = snippet[:117] + "..."
+        header = f"• `{name}` — *{display}* (model: `{model}`)"
+        if snippet:
+            lines.append(f"{header}\n  _{snippet}_")
+        else:
+            lines.append(header)
+    lines.append("")
+    lines.append("_Usage:_ `@agent /agent AGENT_NAME your message here` (first message only)")
     return "\n".join(lines)
 
 
@@ -649,6 +816,304 @@ async def _handle_attach_command(
     }
 
 
+# ---------------------------------------------------------------------------
+# Informational / session-control slash commands (help, agents, models, status,
+# verbose, quiet). These never forward anything to the agent — they just render
+# a Slack message or flip a session flag.
+# ---------------------------------------------------------------------------
+
+
+# Static help text — ordered roughly by lifecycle / frequency of use.
+# Kept inline (rather than read from a file) so it ships with the service and
+# stays in sync with the parser above.
+_HELP_TEXT = (
+    "*Slash commands*\n"
+    "\n"
+    "_Use these when you @mention me in a thread._\n"
+    "\n"
+    "*Anywhere in a thread:*\n"
+    "• `/help` — show this message\n"
+    "• `/stop` — interrupt the currently running turn\n"
+    "• `/status` — show session id, agent, model, and activity\n"
+    "• `/agents` — list all AHS agents you can route to\n"
+    "• `/models` — list all models you can use\n"
+    "• `/verbose` — show live tool-call info in-thread (default)\n"
+    "• `/quiet` — hide live tool-call info for the rest of this thread\n"
+    "\n"
+    "*First message of a thread only:*\n"
+    "• `/model SPEC` — use a specific model for this session "
+    "(e.g. `/model anthropic/claude-sonnet-4-6 please review this PR`)\n"
+    "• `/agent NAME` — route to a specific agent for this session "
+    "(e.g. `/agent sre what alerts are firing?`)\n"
+    "• `/attach UUID` — attach this thread to an existing AHS session\n"
+    "\n"
+    "_Colon syntax (`/model:SPEC`, `/agent:NAME`, `/attach:UUID`) is accepted as an alias._"
+)
+
+
+async def _handle_help_command(
+    app_config: AgentAppConfig,
+    channel_id: str,
+    thread_ts: str,
+) -> dict[str, Any]:
+    """Handle the /help command: post the command reference in-thread."""
+    try:
+        client = build_slack_client(app_config.app_id, app_config.bot_token)
+        await client.chat_postMessage(
+            channel=channel_id,
+            thread_ts=thread_ts,
+            text=_HELP_TEXT,
+        )
+    except Exception as e:
+        logger.warning("Failed to post /help response", error=str(e))
+    return {"status": "help_shown"}
+
+
+async def _handle_agents_list_command(
+    app_config: AgentAppConfig,
+    channel_id: str,
+    thread_ts: str,
+) -> dict[str, Any]:
+    """Handle the /agents command: list available agents from AHS."""
+    client = build_slack_client(app_config.app_id, app_config.bot_token)
+    agents = await get_available_agents()
+    if agents is None:
+        try:
+            await client.chat_postMessage(
+                channel=channel_id,
+                thread_ts=thread_ts,
+                text=":warning: Could not fetch the agent list — AHS may be unavailable.",
+            )
+        except Exception as e:
+            logger.warning("Failed to post /agents error", error=str(e))
+        return {"status": "agents_unavailable"}
+
+    text = _format_agents_list(agents)
+    try:
+        await client.chat_postMessage(
+            channel=channel_id,
+            thread_ts=thread_ts,
+            text=text,
+        )
+    except Exception as e:
+        logger.warning("Failed to post /agents response", error=str(e))
+    return {"status": "agents_listed", "count": len(agents)}
+
+
+async def _handle_models_list_command(
+    app_config: AgentAppConfig,
+    channel_id: str,
+    thread_ts: str,
+) -> dict[str, Any]:
+    """Handle the /models command: list available models from AHS."""
+    client = build_slack_client(app_config.app_id, app_config.bot_token)
+    available = await get_available_models()
+    if available is None:
+        try:
+            await client.chat_postMessage(
+                channel=channel_id,
+                thread_ts=thread_ts,
+                text=":warning: Could not fetch the model list — AHS may be unavailable.",
+            )
+        except Exception as e:
+            logger.warning("Failed to post /models error", error=str(e))
+        return {"status": "models_unavailable"}
+
+    text = _format_models_list(available)
+    try:
+        await client.chat_postMessage(
+            channel=channel_id,
+            thread_ts=thread_ts,
+            text=text,
+        )
+    except Exception as e:
+        logger.warning("Failed to post /models response", error=str(e))
+    return {"status": "models_listed"}
+
+
+def _format_session_status(
+    slack_session: AgentSession | None,
+    ahs_session: dict | None,
+    ahs_session_id: str | None,
+) -> str:
+    """Format session status as a Slack mrkdwn block."""
+    if ahs_session is None and slack_session is None:
+        return "_No active session in this thread._"
+
+    # Extract fields from AHS session detail (if available) first, then fall back
+    # to SAG session fields.
+    ahs_data = (ahs_session or {}).get("session") or {}
+    agent_name = ahs_data.get("agent_name") or (slack_session.agent_name if slack_session else "—")
+    model = ahs_data.get("model") or "_(agent default)_"
+    message_count = ahs_data.get("message_count", 0)
+    ahs_status = ahs_data.get("status") or (str(slack_session.status) if slack_session else "—")
+    title = ahs_data.get("title")
+
+    # Prefer AHS timestamp because SAG's created_at can be off by a few seconds
+    # (session row written after AHS create returns).
+    created_at_raw = ahs_data.get("created_at")
+    created_at: datetime | None = None
+    if created_at_raw:
+        try:
+            created_at = datetime.fromisoformat(created_at_raw)
+        except (ValueError, TypeError):
+            created_at = None
+    if created_at is None and slack_session is not None:
+        created_at = slack_session.created_at
+
+    elapsed_str = ""
+    if created_at is not None:
+        # Always compute "now" as UTC and assume a naive created_at is also UTC — SAG
+        # only ever writes UTC timestamps, and AHS returns ISO-8601 strings. A
+        # timezone-naive created_at would only show up from legacy data; subtracting
+        # two UTC-aware datetimes gives a tz-aware delta either way.
+        now = datetime.now(UTC)
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=UTC)
+        delta = now - created_at
+        total_s = int(delta.total_seconds())
+        if total_s < 60:
+            elapsed_str = f"{total_s}s"
+        elif total_s < 3600:
+            elapsed_str = f"{total_s // 60}m {total_s % 60}s"
+        else:
+            elapsed_str = f"{total_s // 3600}h {(total_s % 3600) // 60}m"
+
+    # Link out to the Lit console when we have an AHS UUID.
+    if ahs_session_id and AHS_LIT_BASE_URL:
+        short_id = ahs_session_id[:8]
+        session_ref = f"<{AHS_LIT_BASE_URL}/agent_harness_console?session_id={ahs_session_id}|{short_id}>"
+    elif ahs_session_id:
+        session_ref = f"`{ahs_session_id[:8]}`"
+    elif slack_session is not None:
+        session_ref = f"`{slack_session.session_id}`"
+    else:
+        session_ref = "`—`"
+
+    lines = [
+        "*Session status*",
+        f"• *ID:* {session_ref}",
+        f"• *Agent:* `{agent_name}`",
+        f"• *Model:* {model}",
+        f"• *Status:* `{ahs_status}`",
+        f"• *Messages:* {message_count}",
+    ]
+    if elapsed_str:
+        lines.append(f"• *Elapsed:* {elapsed_str}")
+    if slack_session is not None:
+        tool_mode = "verbose" if slack_session.show_tool_calls else "quiet"
+        lines.append(f"• *Tool-call display:* `{tool_mode}`")
+    if title:
+        lines.append(f"• *Title:* _{title}_")
+    lines.append("")
+    lines.append("_Token and cost aggregates coming in a follow-up PR._")
+    return "\n".join(lines)
+
+
+async def _handle_status_command(
+    app_config: AgentAppConfig,
+    channel_id: str,
+    thread_ts: str,
+) -> dict[str, Any]:
+    """Handle the /status command: show session metadata."""
+    client = build_slack_client(app_config.app_id, app_config.bot_token)
+
+    sag_session_id = AgentSession.build_session_id(channel_id, thread_ts, app_config.app_id)
+    slack_session = await get_session(sag_session_id)
+
+    # Resolve the best AHS identifier we have:
+    # 1. Thread initiated by an agent → stored as UUID in the thread-mapping.
+    # 2. Otherwise the SAG composite ID itself (AHS accepts either form).
+    ahs_session_id = await get_ahs_session_for_thread(channel_id, thread_ts)
+    if ahs_session_id is None and slack_session is not None:
+        ahs_session_id = slack_session.session_id
+
+    ahs_session_detail: dict | None = None
+    if ahs_session_id is not None:
+        ahs_session_detail = await get_session_info(ahs_session_id)
+
+    text = _format_session_status(
+        slack_session=slack_session,
+        ahs_session=ahs_session_detail,
+        ahs_session_id=ahs_session_id,
+    )
+    try:
+        await client.chat_postMessage(
+            channel=channel_id,
+            thread_ts=thread_ts,
+            text=text,
+        )
+    except Exception as e:
+        logger.warning("Failed to post /status response", error=str(e))
+    return {"status": "status_shown", "has_session": slack_session is not None}
+
+
+async def _handle_verbose_or_quiet_command(
+    app_config: AgentAppConfig,
+    channel_id: str,
+    thread_ts: str,
+    verbose: bool,
+) -> dict[str, Any]:
+    """Toggle tool-call display for the current session.
+
+    Requires an existing SAG session — the flag is stored on ``AgentSession`` and
+    flipped back and forth as the user re-issues the commands. If there's no
+    session yet, we tell the user to start one first so the default (verbose)
+    stays intuitive.
+    """
+    client = build_slack_client(app_config.app_id, app_config.bot_token)
+    sag_session_id = AgentSession.build_session_id(channel_id, thread_ts, app_config.app_id)
+    slack_session = await get_session(sag_session_id)
+
+    if slack_session is None:
+        try:
+            await client.chat_postMessage(
+                channel=channel_id,
+                thread_ts=thread_ts,
+                text=(
+                    "_No active session in this thread — start one by mentioning me first._\n"
+                    "_(Tool-call display is on by default for new sessions.)_"
+                ),
+            )
+        except Exception as e:
+            logger.warning("Failed to post no-session reply for /verbose or /quiet", error=str(e))
+        return {"status": "no_session"}
+
+    was_verbose = slack_session.show_tool_calls
+    slack_session.show_tool_calls = verbose
+    await save_session(slack_session)
+
+    if verbose and not was_verbose:
+        msg = ":loud_sound: Verbose mode: tool-call info will be shown in this thread."
+    elif verbose and was_verbose:
+        msg = ":loud_sound: Already in verbose mode."
+    elif not verbose and was_verbose:
+        msg = ":mute: Quiet mode: tool-call info will be hidden for the rest of this thread."
+    else:
+        msg = ":mute: Already in quiet mode."
+
+    try:
+        await client.chat_postMessage(
+            channel=channel_id,
+            thread_ts=thread_ts,
+            text=msg,
+        )
+    except Exception as e:
+        logger.warning(
+            "Failed to post /verbose or /quiet confirmation",
+            verbose=verbose,
+            error=str(e),
+        )
+
+    logger.info(
+        "Toggled tool-call display",
+        session_id=slack_session.session_id,
+        verbose=verbose,
+        was_verbose=was_verbose,
+    )
+    return {"status": "verbose" if verbose else "quiet"}
+
+
 async def handle_app_mention(
     event: dict[str, Any],
     app_config: AgentAppConfig,
@@ -698,9 +1163,10 @@ async def handle_app_mention(
     parsed_command = _extract_command(raw_text)
     if parsed_command is not None:
         cmd_name, cmd_args = parsed_command
+        # Every bare command gets the ack emoji so the user sees their message was seen.
+        create_background_task(_add_ack_reaction(app_config, channel_id, ts))
+
         if cmd_name == "stop":
-            # Fire-and-forget: ack emoji for the stop command too
-            create_background_task(_add_ack_reaction(app_config, channel_id, ts))
             return await _handle_stop_command(
                 app_config=app_config,
                 channel_id=channel_id,
@@ -708,7 +1174,6 @@ async def handle_app_mention(
                 user_id=user_id,
             )
         if cmd_name == "attach":
-            create_background_task(_add_ack_reaction(app_config, channel_id, ts))
             return await _handle_attach_command(
                 app_config=app_config,
                 channel_id=channel_id,
@@ -718,11 +1183,30 @@ async def handle_app_mention(
                 session_id_arg=cmd_args,
                 channel_name=channel_name,
             )
+        if cmd_name == "help":
+            return await _handle_help_command(app_config, channel_id, thread_ts)
+        if cmd_name == "agents":
+            return await _handle_agents_list_command(app_config, channel_id, thread_ts)
+        if cmd_name == "models":
+            return await _handle_models_list_command(app_config, channel_id, thread_ts)
+        if cmd_name == "status":
+            return await _handle_status_command(app_config, channel_id, thread_ts)
+        if cmd_name == "verbose":
+            return await _handle_verbose_or_quiet_command(app_config, channel_id, thread_ts, verbose=True)
+        if cmd_name == "quiet":
+            return await _handle_verbose_or_quiet_command(app_config, channel_id, thread_ts, verbose=False)
 
-    # Check for /model:<spec> directive — must be the first word after the @mention.
-    # Only applies to NEW sessions (existing threads ignore it).
-    model_directive, cleaned_text = _extract_model_directive(raw_text)
+    # Check for leading directives — each must be the first word of whatever's
+    # left after stripping previously-parsed directives. Only applies to NEW
+    # sessions (existing threads silently ignore the directive and forward the
+    # rest of the message as-is).
+    #
+    # We parse in a loop so either ordering works, e.g.:
+    #     @raccoon /agent sre /model anthropic/claude-sonnet-4-6 alerts?
+    #     @raccoon /model anthropic/claude-sonnet-4-6 /agent sre alerts?
+    agent_directive, model_directive, cleaned_text = _extract_leading_directives(raw_text)
     force_model: str | None = None
+    force_agent: str | None = None
 
     # Fire-and-forget: ack emoji should never block the main flow
     create_background_task(_add_ack_reaction(app_config, channel_id, ts))
@@ -739,13 +1223,47 @@ async def handle_app_mention(
     # If so, route the message to that session instead of creating a new one.
     existing_ahs_session_id = await get_ahs_session_for_thread(channel_id, thread_ts)
 
-    # Validate the /model: directive only for new sessions. For existing sessions the
+    # Validate the /agent directive only for new sessions.
+    if agent_directive and not existing_ahs_session_id:
+        agents = await get_available_agents()
+        if agents is None:
+            # AHS unreachable — fall back to the mentioned bot's default agent.
+            logger.warning("Could not fetch agent list from AHS; ignoring /agent directive")
+        else:
+            valid_agent_names = {a.get("name") for a in agents if a.get("name")}
+            if agent_directive not in valid_agent_names:
+                client = build_slack_client(app_config.app_id, app_config.bot_token)
+                agents_text = _format_agents_list(agents)
+                error_msg = f":x: Agent `{agent_directive}` not found.\n\n{agents_text}"
+                try:
+                    await client.chat_postMessage(
+                        channel=channel_id,
+                        thread_ts=thread_ts,
+                        text=error_msg,
+                    )
+                except Exception as post_err:
+                    logger.warning("Failed to post agent-not-found message", error=str(post_err))
+                return {
+                    "status": "agent_not_found",
+                    "agent": agent_directive,
+                    "channel_id": channel_id,
+                    "thread_ts": thread_ts,
+                }
+            force_agent = agent_directive
+            logger.info(
+                "Force agent directive parsed",
+                forced_agent=force_agent,
+                mentioned_bot_agent=app_config.agent_name,
+                channel_id=channel_id,
+            )
+
+    # Validate the /model directive only for new sessions. For existing sessions the
     # directive is silently ignored — the message is forwarded as-is (using cleaned_text).
     if model_directive and not existing_ahs_session_id:
         available = await get_available_models()
         if available is None:
             # AHS unreachable — let the normal flow continue without override
-            logger.warning("Could not fetch model list from AHS; ignoring /model: directive")
+            logger.warning("Could not fetch model list from AHS; ignoring /model directive")
         else:
             all_valid = set(available.get("harnessed", [])) | set(available.get("raw", []))
             if model_directive not in all_valid:
@@ -776,26 +1294,38 @@ async def handle_app_mention(
                 channel_id=channel_id,
             )
 
+    # Resolve the effective agent for this session. ``force_agent`` (from
+    # ``/agent NAME``) wins when set; otherwise we fall back to whichever agent
+    # the mentioned Slack bot is bound to. The mentioned bot still owns reply
+    # formatting (bot token / display name) — only AHS routing changes.
+    effective_agent_name = force_agent or app_config.agent_name
+
     # Get or create SAG session (for Slack tracking: placeholder, buffer, reply mapping)
     session, is_new = await get_or_create_session(
         channel_id=channel_id,
         thread_ts=thread_ts,
         app_id=app_config.app_id,
-        agent_name=app_config.agent_name,
+        agent_name=effective_agent_name,
         user_id=user_id,
     )
 
-    # Post model-override confirmation for new sessions so the user knows it took effect.
-    if force_model and is_new and not existing_ahs_session_id:
+    # Post directive confirmations for new sessions so the user knows overrides took effect.
+    if is_new and not existing_ahs_session_id and (force_agent or force_model):
+        confirm_parts: list[str] = []
+        if force_agent:
+            confirm_parts.append(f"agent `{force_agent}`")
+        if force_model:
+            confirm_parts.append(f"model `{force_model}`")
+        confirm_text = ":white_check_mark: Using " + " + ".join(confirm_parts) + " for this session."
         try:
             client = build_slack_client(app_config.app_id, app_config.bot_token)
             await client.chat_postMessage(
                 channel=channel_id,
                 thread_ts=thread_ts,
-                text=f":white_check_mark: Using model `{force_model}` for this session.",
+                text=confirm_text,
             )
         except Exception as confirm_err:
-            logger.warning("Failed to post force_model confirmation", error=str(confirm_err))
+            logger.warning("Failed to post directive confirmation", error=str(confirm_err))
 
     # Post a placeholder "Thinking..." message for immediate user feedback.
     # The first add_reply callback will update this message in-place instead of posting a new one.
@@ -812,7 +1342,8 @@ async def handle_app_mention(
         )
 
     # Build message from cleaned text (directive stripped) or raw event for non-new sessions.
-    if model_directive and is_new and not existing_ahs_session_id:
+    has_directive = bool(force_agent or force_model)
+    if has_directive and is_new and not existing_ahs_session_id:
         # Use a shallow copy of the event with the directive stripped from text
         event_for_message = dict(event)
         event_for_message["text"] = cleaned_text
@@ -841,7 +1372,7 @@ async def handle_app_mention(
                 )
         # Send the human's message to the existing session
         result = await send_message_to_agent(
-            agent_name=app_config.agent_name,
+            agent_name=effective_agent_name,
             session_id=existing_ahs_session_id,
             message=message,
         )
@@ -855,7 +1386,7 @@ async def handle_app_mention(
     elif is_new:
         # New session - create session on Agent Service
         result = await create_agent_session(
-            agent_name=app_config.agent_name,
+            agent_name=effective_agent_name,
             session_id=session.session_id,
             message=message,
             channel_id=channel_id,
@@ -864,9 +1395,11 @@ async def handle_app_mention(
             force_model=force_model,
         )
     else:
-        # Existing session - send message
+        # Existing session - send message. Use the session's stored agent_name
+        # (which may be a ``/agent NAME`` override applied earlier) to keep
+        # routing consistent with how the session was originally created.
         result = await send_message_to_agent(
-            agent_name=app_config.agent_name,
+            agent_name=session.agent_name,
             session_id=session.session_id,
             message=message,
         )
@@ -899,7 +1432,8 @@ async def handle_app_mention(
     return {
         "status": "session_created" if is_new else "session_updated",
         "session_id": session.session_id,
-        "agent_name": app_config.agent_name,
+        "agent_name": effective_agent_name,
+        "mentioned_bot_agent": app_config.agent_name,
         "channel_id": channel_id,
         "thread_ts": thread_ts,
         "forwarded": result is not None,
