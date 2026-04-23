@@ -51,7 +51,7 @@ def auth_misconfigured_screen() -> None:
     st.title("🔒 Authentication Required")
     st.error("This deployment requires Google OAuth, but it is not configured.")
     st.markdown(
-        "Set the following in `/opt/yupp-agent/.env` and restart `ahs-streamlit`:\n\n"
+        "Set the following in `/data/ahs/.env` and restart `ahs-streamlit`:\n\n"
         "- `GOOGLE_AUTH_CLIENT_ID`\n"
         "- `GOOGLE_AUTH_CLIENT_SECRET`\n"
         "- `GOOGLE_AUTH_REDIRECT_URI` (e.g. `https://lit.agcouch.com/oauth2callback`)\n"

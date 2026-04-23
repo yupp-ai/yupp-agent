@@ -63,6 +63,26 @@ _HERE = Path(__file__).parent
 ENV_TEMPLATE_PATH = _HERE / ".env.example"
 
 
+def _default_env_path() -> Path:
+    """Resolve where to read/write the runtime .env file.
+
+    Precedence:
+      1. AHS_ENV_PATH — explicit override (tests, bespoke layouts).
+      2. AHS_DATA_DIR / ".env" — canonical single-box layout.
+      3. /data/ahs/.env — final fallback (matches install.sh default).
+
+    Intentionally NOT ``./.env`` — the install.sh ran earlier pointed at
+    /opt/yupp-agent/.env, which meant secrets lived inside the service repo
+    and got transitively exposed to any process that could read /opt
+    (including agent subprocesses inside the bwrap sandbox). See
+    docs/plans/2026-04-22-single-box-agent-sandbox-hardening.md.
+    """
+    if explicit := os.environ.get("AHS_ENV_PATH"):
+        return Path(explicit)
+    data_dir = os.environ.get("AHS_DATA_DIR", "/data/ahs")
+    return Path(data_dir) / ".env"
+
+
 # ---------------------------------------------------------------------------
 # Pure helper functions (fully testable without I/O)
 # ---------------------------------------------------------------------------
@@ -403,7 +423,8 @@ async def setup_interactive() -> int:
         )
     )
 
-    env_path = Path(".env")
+    env_path = _default_env_path()
+    env_path.parent.mkdir(parents=True, exist_ok=True)
     skip_env_write = False
 
     if env_path.exists():

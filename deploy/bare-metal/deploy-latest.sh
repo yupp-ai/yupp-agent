@@ -19,6 +19,7 @@
 set -euo pipefail
 
 INSTALL_DIR="${INSTALL_DIR:-/opt/yupp-agent}"
+DATA_DIR="${DATA_DIR:-/data/ahs}"
 APP_USER="${APP_USER:-ahs}"
 SERVICES=(ahs-mono ahs-streamlit artifact-viewer)
 # Sub-apps with their own pyproject / venv. Each gets ``pip install -e`` on
@@ -136,7 +137,7 @@ info "alembic upgrade head (no-op if already at head)…"
 systemd-run --wait --quiet --pipe \
     --property=User="${APP_USER}" \
     --property=Group="${APP_USER}" \
-    --property=EnvironmentFile="${INSTALL_DIR}/.env" \
+    --property=EnvironmentFile="${DATA_DIR}/.env" \
     --property=WorkingDirectory="${INSTALL_DIR}" \
     "${INSTALL_DIR}/.venv/bin/python" -m alembic -c alembic.ini upgrade head \
     || die "alembic upgrade head failed. Fix the schema issue before retrying."
