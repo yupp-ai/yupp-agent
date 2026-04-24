@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 import re
 import uuid
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import func, or_, text
@@ -423,8 +424,11 @@ async def list_artifacts(
     *,
     artifact_type: AgentArtifactType | None = None,
     creator_user_id: str | None = None,
+    creator_agent_id: uuid.UUID | None = None,
     agent_session_id: uuid.UUID | None = None,
     agent_task_id: uuid.UUID | None = None,
+    created_after: datetime | None = None,
+    created_before: datetime | None = None,
     include_archived: bool = False,
     limit: int = 50,
     offset: int = 0,
@@ -435,15 +439,60 @@ async def list_artifacts(
             stmt = stmt.where(AgentArtifact.artifact_type == artifact_type)
         if creator_user_id is not None:
             stmt = stmt.where(AgentArtifact.creator_user_id == creator_user_id)
+        if creator_agent_id is not None:
+            stmt = stmt.where(AgentArtifact.creator_agent_id == creator_agent_id)
         if agent_session_id is not None:
             stmt = stmt.where(AgentArtifact.agent_session_id == agent_session_id)
         if agent_task_id is not None:
             stmt = stmt.where(AgentArtifact.agent_task_id == agent_task_id)
+        if created_after is not None:
+            stmt = stmt.where(col(AgentArtifact.created_at) >= created_after)
+        if created_before is not None:
+            stmt = stmt.where(col(AgentArtifact.created_at) < created_before)
         if not include_archived:
             stmt = stmt.where(text("(agent_artifacts.artifact_metadata->>'is_archived') IS DISTINCT FROM 'true'"))
         stmt = stmt.order_by(col(AgentArtifact.created_at).desc()).limit(limit).offset(offset)
         result = await session.execute(stmt)
         return list(result.scalars().all())
+
+
+@retry_db
+async def count_artifacts(
+    *,
+    artifact_type: AgentArtifactType | None = None,
+    creator_user_id: str | None = None,
+    creator_agent_id: uuid.UUID | None = None,
+    agent_session_id: uuid.UUID | None = None,
+    agent_task_id: uuid.UUID | None = None,
+    created_after: datetime | None = None,
+    created_before: datetime | None = None,
+    include_archived: bool = False,
+) -> int:
+    """Count artifacts matching the same filters as :func:`list_artifacts`.
+
+    Used by the listing UI to decide whether a "Next" page link should be
+    shown without paying the cost of fetching beyond the current page.
+    """
+    async with get_async_session_read_replica() as session:
+        stmt = select(func.count(col(AgentArtifact.agent_artifact_id))).where(col(AgentArtifact.deleted_at).is_(None))
+        if artifact_type is not None:
+            stmt = stmt.where(AgentArtifact.artifact_type == artifact_type)
+        if creator_user_id is not None:
+            stmt = stmt.where(AgentArtifact.creator_user_id == creator_user_id)
+        if creator_agent_id is not None:
+            stmt = stmt.where(AgentArtifact.creator_agent_id == creator_agent_id)
+        if agent_session_id is not None:
+            stmt = stmt.where(AgentArtifact.agent_session_id == agent_session_id)
+        if agent_task_id is not None:
+            stmt = stmt.where(AgentArtifact.agent_task_id == agent_task_id)
+        if created_after is not None:
+            stmt = stmt.where(col(AgentArtifact.created_at) >= created_after)
+        if created_before is not None:
+            stmt = stmt.where(col(AgentArtifact.created_at) < created_before)
+        if not include_archived:
+            stmt = stmt.where(text("(agent_artifacts.artifact_metadata->>'is_archived') IS DISTINCT FROM 'true'"))
+        result = await session.execute(stmt)
+        return int(result.scalar_one() or 0)
 
 
 @retry_db
@@ -531,3 +580,60 @@ async def resolve_attribution(
             agent_names = {aid: (display or name) for aid, display, name in rows if (display or name)}
 
     return user_names, agent_names
+
+
+@retry_db
+async def list_distinct_creators(
+    *,
+    include_archived: bool = False,
+) -> tuple[list[tuple[str, str | None]], list[tuple[uuid.UUID, str | None]]]:
+    """Return distinct ``(user_id, name)`` and ``(agent_id, display_name)`` pairs.
+
+    Used by the artifact-viewer filter dropdowns: only creators that actually
+    have at least one artifact are returned, so the dropdowns stay short.
+    Names come from a join to the ``users`` / ``agents`` tables — IDs whose
+    rows are missing or have NULL names are returned with ``name=None`` so
+    callers can fall back to the raw ID. Returns are sorted alphabetically
+    by name (then by ID for the rare missing-name case).
+    """
+    async with get_async_session_read_replica() as session:
+        # Distinct creator_user_id from artifacts, joined to users for names.
+        user_stmt = (
+            select(AgentArtifact.creator_user_id, User.name)
+            .outerjoin(User, col(User.user_id) == col(AgentArtifact.creator_user_id))
+            .where(
+                col(AgentArtifact.deleted_at).is_(None),
+                col(AgentArtifact.creator_user_id).is_not(None),
+            )
+        )
+        if not include_archived:
+            user_stmt = user_stmt.where(
+                text("(agent_artifacts.artifact_metadata->>'is_archived') IS DISTINCT FROM 'true'")
+            )
+        user_stmt = user_stmt.distinct()
+        user_rows = (await session.execute(user_stmt)).all()
+        users: list[tuple[str, str | None]] = sorted(
+            ((uid, name) for uid, name in user_rows if uid),
+            key=lambda r: ((r[1] or "").lower(), r[0]),
+        )
+
+        agent_stmt = (
+            select(AgentArtifact.creator_agent_id, Agent.display_name, Agent.name)
+            .outerjoin(Agent, col(Agent.agent_id) == col(AgentArtifact.creator_agent_id))
+            .where(
+                col(AgentArtifact.deleted_at).is_(None),
+                col(AgentArtifact.creator_agent_id).is_not(None),
+            )
+        )
+        if not include_archived:
+            agent_stmt = agent_stmt.where(
+                text("(agent_artifacts.artifact_metadata->>'is_archived') IS DISTINCT FROM 'true'")
+            )
+        agent_stmt = agent_stmt.distinct()
+        agent_rows = (await session.execute(agent_stmt)).all()
+        agents: list[tuple[uuid.UUID, str | None]] = sorted(
+            ((aid, (display or name)) for aid, display, name in agent_rows if aid),
+            key=lambda r: ((r[1] or "").lower(), str(r[0])),
+        )
+
+    return users, agents

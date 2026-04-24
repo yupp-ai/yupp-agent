@@ -28,11 +28,13 @@ from ypl.agent_harness_service.artifact_store import (
     Attachment,
     archive_artifact,
     archive_artifacts_by_slug,
+    count_artifacts,
     create_artifact,
     get_artifact_by_id,
     get_artifact_by_slug,
     list_artifact_versions,
     list_artifacts,
+    list_distinct_creators,
     read_artifact_attachment,
     read_artifact_content,
     resolve_attribution,
@@ -162,6 +164,24 @@ class CreateArtifactResponse(ArtifactResponse):
 
 class ArtifactListResponse(BaseModel):
     artifacts: list[ArtifactResponse]
+    # Total count of rows matching the same filters (independent of limit/offset).
+    # Optional so existing callers (e.g. legacy clients) keep working — filled in
+    # by ``list_artifacts_route`` when the caller passes ``include_total=true``.
+    total: int | None = None
+
+
+class CreatorOption(BaseModel):
+    """One entry in the creators-list response used by filter dropdowns."""
+
+    id: str
+    name: str | None = None
+
+
+class ArtifactCreatorsResponse(BaseModel):
+    """Distinct user/agent creators that have at least one artifact."""
+
+    users: list[CreatorOption]
+    agents: list[CreatorOption]
 
 
 class ArtifactVersionsResponse(BaseModel):
@@ -268,33 +288,81 @@ async def create_artifact_route(request: CreateArtifactRequest) -> CreateArtifac
 
 
 _OPTIONAL_TYPE_QUERY = Query(None, alias="type")
+_CREATED_AFTER_QUERY = Query(
+    None,
+    description="Lower bound on created_at (ISO 8601, inclusive). Naive timestamps are interpreted as UTC.",
+)
+_CREATED_BEFORE_QUERY = Query(
+    None,
+    description="Upper bound on created_at (ISO 8601, exclusive). Naive timestamps are interpreted as UTC.",
+)
+_INCLUDE_TOTAL_QUERY = Query(
+    False,
+    description="When true, also return the total count of matching rows (used by paginated UIs).",
+)
 
 
 @artifact_router.get("", response_model=ArtifactListResponse)
 async def list_artifacts_route(
     artifact_type: AgentArtifactType | None = _OPTIONAL_TYPE_QUERY,
     creator_user_id: str | None = None,
+    creator_agent_id: uuid.UUID | None = None,
     agent_session_id: uuid.UUID | None = None,
     agent_task_id: uuid.UUID | None = None,
+    created_after: datetime | None = _CREATED_AFTER_QUERY,
+    created_before: datetime | None = _CREATED_BEFORE_QUERY,
     include_archived: bool = False,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    include_total: bool = _INCLUDE_TOTAL_QUERY,
 ) -> ArtifactListResponse:
     rows = await list_artifacts(
         artifact_type=artifact_type,
         creator_user_id=creator_user_id,
+        creator_agent_id=creator_agent_id,
         agent_session_id=agent_session_id,
         agent_task_id=agent_task_id,
+        created_after=created_after,
+        created_before=created_before,
         include_archived=include_archived,
         limit=limit,
         offset=offset,
     )
-    return ArtifactListResponse(artifacts=await _artifacts_to_response_list(rows))
+    total: int | None = None
+    if include_total:
+        total = await count_artifacts(
+            artifact_type=artifact_type,
+            creator_user_id=creator_user_id,
+            creator_agent_id=creator_agent_id,
+            agent_session_id=agent_session_id,
+            agent_task_id=agent_task_id,
+            created_after=created_after,
+            created_before=created_before,
+            include_archived=include_archived,
+        )
+    return ArtifactListResponse(artifacts=await _artifacts_to_response_list(rows), total=total)
 
 
-# IMPORTANT: ``/search`` must be declared before the ``/{artifact_id}``
-# routes below — FastAPI matches path templates in declaration order, and
-# ``search`` would otherwise be interpreted as a (malformed) UUID.
+@artifact_router.get("/creators", response_model=ArtifactCreatorsResponse)
+async def list_creators_route(
+    include_archived: bool = False,
+) -> ArtifactCreatorsResponse:
+    """List distinct user/agent creators across all artifacts.
+
+    Powers the creator dropdowns in the artifact viewer's filter row so the
+    options stay scoped to creators that actually have at least one artifact.
+    """
+    users, agents = await list_distinct_creators(include_archived=include_archived)
+    return ArtifactCreatorsResponse(
+        users=[CreatorOption(id=uid, name=name) for uid, name in users],
+        agents=[CreatorOption(id=str(aid), name=name) for aid, name in agents],
+    )
+
+
+# IMPORTANT: ``/search`` (and ``/creators`` above) must be declared before the
+# ``/{artifact_id}`` routes below — FastAPI matches path templates in
+# declaration order, and these literal segments would otherwise be interpreted
+# as (malformed) UUIDs.
 @artifact_router.get("/search", response_model=ArtifactListResponse)
 async def search_artifacts_route(
     q: str = Query(..., min_length=1, description="Substring to match (case-insensitive)"),

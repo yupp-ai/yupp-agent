@@ -201,7 +201,8 @@ class TestListArtifactsRoute:
         ):
             resp = client.get("/ahs/artifacts")
         assert resp.status_code == 200
-        assert resp.json() == {"artifacts": []}
+        # ``total`` is null by default — the count query is opt-in via ``include_total``.
+        assert resp.json() == {"artifacts": [], "total": None}
 
     def test_forwards_filters(self, client: TestClient) -> None:
         fake = _mock_artifact()
@@ -224,6 +225,107 @@ class TestListArtifactsRoute:
         assert kwargs["artifact_type"] == AgentArtifactType.TEXT
         assert kwargs["agent_session_id"] == sess_id
         assert kwargs["limit"] == 10
+
+    def test_forwards_creator_agent_and_time_range(self, client: TestClient) -> None:
+        fake = _mock_artifact()
+        agent_id = uuid.uuid4()
+        with patch(
+            "ypl.agent_harness_service.artifact_routes.list_artifacts",
+            new=AsyncMock(return_value=[fake]),
+        ) as mock_list:
+            resp = client.get(
+                "/ahs/artifacts",
+                params={
+                    "creator_user_id": "user-42",
+                    "creator_agent_id": str(agent_id),
+                    "created_after": "2026-04-01T00:00:00+00:00",
+                    "created_before": "2026-05-01T00:00:00+00:00",
+                    "limit": 5,
+                    "offset": 5,
+                },
+            )
+        assert resp.status_code == 200
+        kwargs = mock_list.call_args.kwargs
+        assert kwargs["creator_user_id"] == "user-42"
+        assert kwargs["creator_agent_id"] == agent_id
+        assert kwargs["created_after"] == datetime(2026, 4, 1, tzinfo=UTC)
+        assert kwargs["created_before"] == datetime(2026, 5, 1, tzinfo=UTC)
+        assert kwargs["offset"] == 5
+
+    def test_returns_total_when_requested(self, client: TestClient) -> None:
+        fake = _mock_artifact()
+        with (
+            patch(
+                "ypl.agent_harness_service.artifact_routes.list_artifacts",
+                new=AsyncMock(return_value=[fake]),
+            ),
+            patch(
+                "ypl.agent_harness_service.artifact_routes.count_artifacts",
+                new=AsyncMock(return_value=137),
+            ) as mock_count,
+        ):
+            resp = client.get("/ahs/artifacts", params={"include_total": "true", "limit": 1})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total"] == 137
+        assert mock_count.await_count == 1
+
+    def test_total_omitted_by_default(self, client: TestClient) -> None:
+        with (
+            patch(
+                "ypl.agent_harness_service.artifact_routes.list_artifacts",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch(
+                "ypl.agent_harness_service.artifact_routes.count_artifacts",
+                new=AsyncMock(return_value=0),
+            ) as mock_count,
+        ):
+            resp = client.get("/ahs/artifacts")
+        assert resp.status_code == 200
+        body = resp.json()
+        # Field present (Pydantic emits it) but null — and the count query
+        # was skipped so we don't pay for it on every list call.
+        assert body.get("total") is None
+        assert mock_count.await_count == 0
+
+
+# ---------------------------------------------------------------------------
+# GET /ahs/artifacts/creators
+# ---------------------------------------------------------------------------
+
+
+class TestListCreatorsRoute:
+    def test_returns_users_and_agents(self, client: TestClient) -> None:
+        agent_uuid = uuid.uuid4()
+        with patch(
+            "ypl.agent_harness_service.artifact_routes.list_distinct_creators",
+            new=AsyncMock(
+                return_value=(
+                    [("user-1", "Alice"), ("user-2", None)],
+                    [(agent_uuid, "eng-raccoon")],
+                )
+            ),
+        ):
+            resp = client.get("/ahs/artifacts/creators")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["users"] == [
+            {"id": "user-1", "name": "Alice"},
+            {"id": "user-2", "name": None},
+        ]
+        assert body["agents"] == [{"id": str(agent_uuid), "name": "eng-raccoon"}]
+
+    def test_creators_path_does_not_match_artifact_id(self, client: TestClient) -> None:
+        # Regression guard: ``/creators`` is a literal path that must be matched
+        # before the ``/{artifact_id}`` route — otherwise FastAPI tries to parse
+        # "creators" as a UUID and 422s.
+        with patch(
+            "ypl.agent_harness_service.artifact_routes.list_distinct_creators",
+            new=AsyncMock(return_value=([], [])),
+        ):
+            resp = client.get("/ahs/artifacts/creators")
+        assert resp.status_code == 200
 
 
 # ---------------------------------------------------------------------------
