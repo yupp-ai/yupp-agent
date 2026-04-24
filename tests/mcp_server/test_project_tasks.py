@@ -65,7 +65,7 @@ NOW = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
 
 
 @pytest.fixture(autouse=True)
-def _grant_project_admin_by_default():
+def _grant_project_admin_by_default() -> Any:
     """By default, treat the test caller as MANAGE_AGENT_PROJECTS-holder so the
     ownership check in mutating tools is a no-op. Individual tests that care
     about the check should override this patch within their own scope.

@@ -436,6 +436,7 @@ class TestCancelAgentSchedule:
 
         assert result["success"] is True
         helper.assert_awaited_once()
+        assert helper.await_args is not None
         kwargs = helper.await_args.kwargs
         assert kwargs["caller_user_id"] == caller_id
         assert kwargs["allow_any_owner"] is False
@@ -462,6 +463,7 @@ class TestCancelAgentSchedule:
             result = await cancel_agent_schedule(schedule_id)
 
         assert result["success"] is True
+        assert helper.await_args is not None
         kwargs = helper.await_args.kwargs
         assert kwargs["allow_any_owner"] is True
 
@@ -490,6 +492,7 @@ class TestCancelAgentSchedule:
 
         assert result["success"] is True
         email_resolver.assert_not_awaited()
+        assert helper.await_args is not None
         assert helper.await_args.kwargs["caller_user_id"] == caller_id
 
 

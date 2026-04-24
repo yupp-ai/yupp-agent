@@ -80,9 +80,7 @@ def _check_project_ownership(
     return "Not authorized: you do not own this project and lack MANAGE_AGENT_PROJECTS permission"
 
 
-async def _load_project_for_task(
-    session: Any, task: AgentTask
-) -> AgentProject | None:
+async def _load_project_for_task(session: Any, task: AgentTask) -> AgentProject | None:
     """Load the parent project for a task, honoring soft-deletion."""
     result = await session.execute(
         select(AgentProject)
