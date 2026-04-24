@@ -29,7 +29,7 @@ mkdir -p $AHS_DATA_DIR/repos
 
 # Symlink shared files and repos
 ln -sfn $(pwd)/ypl/agent_harness_service/deploy/shared $AHS_DATA_DIR/shared
-ln -sfn $(pwd) $AHS_DATA_DIR/repos/yupp-mind
+ln -sfn $(pwd) $AHS_DATA_DIR/repos/yupp-agent
 ```
 
 > **Note:** Agent configs are loaded directly from
@@ -41,7 +41,7 @@ ln -sfn $(pwd) $AHS_DATA_DIR/repos/yupp-mind
 ```
 /tmp/ahs/
 ├── repos/            ← agent starts here (cwd, read-only)
-│   └── yupp-mind/    → symlink to your local checkout
+│   └── yupp-agent/   → symlink to your local checkout
 ├── shared/           → symlink to deploy/shared/
 │   ├── SOUL.md                    (shared identity)
 │   ├── WORKSPACE.md               (repo guide, injected into system prompt)
@@ -304,10 +304,11 @@ agent's system prompt so it can pass it to MCP tools.
 
 ### Set up a second repo
 
-To test cross-repo scenarios, clone another repo into the repos dir:
+To test cross-repo scenarios, clone or symlink another repo into the repos dir.
+Any public repo works — just use one with a recognizable README. For example:
 
 ```bash
-git clone https://github.com/yupp-ai/yupp-head.git $AHS_DATA_DIR/repos/yupp-head
+git clone https://github.com/yupp-ai/some-other-repo.git $AHS_DATA_DIR/repos/some-other-repo
 ```
 
 ### Test listing repos
@@ -319,13 +320,13 @@ ahscli create --agent code-reviewer \
 
 In the logs, watch for:
 - `"Launching Claude Code CLI"` — command should include `--mcp-config` pointing to a temp file
-- The agent response should list `yupp-mind` and `yupp-head`
+- The agent response should list `yupp-agent` and `some-other-repo`
 
 ### Test cross-repo query
 
 ```bash
 ahscli create --agent code-reviewer \
-  'Compare the README.md between yupp-mind and yupp-head. What are the key differences?'
+  'Compare the README.md between yupp-agent and some-other-repo. What are the key differences?'
 ```
 
 ## 7. Test write access and PR creation
@@ -334,7 +335,7 @@ ahscli create --agent code-reviewer \
 
 ```bash
 ahscli create --agent code-reviewer
-ahscli message 'Use the request_write_access tool to get write access to yupp-mind.'
+ahscli message 'Use the request_write_access tool to get write access to yupp-agent.'
 ```
 
 After the agent completes, check that a worktree was created:
@@ -342,7 +343,7 @@ After the agent completes, check that a worktree was created:
 ```bash
 SESSION_ID=$(cat /tmp/LAST_AHS_SESSION_ID)
 ls -la $AHS_DATA_DIR/workspaces/$SESSION_ID/
-# Should show: yupp-mind/
+# Should show: yupp-agent/ (plus any branch-suffixed worktree directory)
 ```
 
 ### Test PR creation (dry run)
@@ -366,7 +367,7 @@ ahscli history
 Worktrees persist under `$AHS_DATA_DIR/workspaces/{session_id}/`. To clean up manually:
 
 ```bash
-git -C $AHS_DATA_DIR/repos/yupp-mind worktree remove $AHS_DATA_DIR/workspaces/$SESSION_ID/yupp-mind --force
+git -C $AHS_DATA_DIR/repos/yupp-agent worktree remove $AHS_DATA_DIR/workspaces/$SESSION_ID/yupp-agent --force
 rm -rf $AHS_DATA_DIR/workspaces/$SESSION_ID
 ```
 

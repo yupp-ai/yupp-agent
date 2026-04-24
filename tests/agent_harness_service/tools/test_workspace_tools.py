@@ -41,9 +41,9 @@ class TestResolveWorkspace:
         # Create repo dirs and symlink them into the session
         repos_dir = tmp_path / "repos"
         (repos_dir / "yupp-agent").mkdir(parents=True)
-        (repos_dir / "yupp-head").mkdir(parents=True)
+        (repos_dir / "other-repo").mkdir(parents=True)
         (session_dir / "yupp-agent").symlink_to(repos_dir / "yupp-agent")
-        (session_dir / "yupp-head").symlink_to(repos_dir / "yupp-head")
+        (session_dir / "other-repo").symlink_to(repos_dir / "other-repo")
         (session_dir / "history").mkdir()
         return repos_dir
 
@@ -71,7 +71,7 @@ class TestResolveWorkspace:
         """Errors when multiple worktrees exist and no repo specified."""
         self._setup_session(tmp_path)
         (tmp_path / VALID_SESSION / "yupp-agent-fix-auth").mkdir(parents=True)
-        (tmp_path / VALID_SESSION / "yupp-head-add-feature").mkdir(parents=True)
+        (tmp_path / VALID_SESSION / "other-repo-add-feature").mkdir(parents=True)
 
         with (
             patch("ypl.agent_harness_service.tools.workspace_tools.AHS_SESSIONS_DIR", str(tmp_path)),

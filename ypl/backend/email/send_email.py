@@ -1,7 +1,7 @@
 """Stub email sender for yupp-agent.
 
-The full implementation in yupp-mind uses resend, campaign templates, etc.
-This stub provides the interface MCP tasks needs.
+Only the signature used by MCP tasks is provided; actual delivery (templates,
+campaigns, provider wiring) is not wired up yet and calls are logged only.
 """
 
 import uuid

@@ -31,6 +31,6 @@ See `.env.local.example` for required environment variables. `AHS_HOST` should p
 - tRPC + TanStack React Query
 - `@yupp/agents-protocol` / `@yupp/agents-runtime` / `@yupp/agents-ui` (published on public npm)
 
-## Ported from yupp-head
+## History
 
-War Room used to live in `yupp-head/apps/war-room`. It was moved here to co-locate the admin UI with AHS. See the initial port commit for the full diff.
+War Room used to live in a separate frontend repo. It was moved here to co-locate the admin UI with AHS.

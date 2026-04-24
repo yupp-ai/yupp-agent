@@ -74,7 +74,7 @@ def _validate_repo_name(repo: str) -> None:
         raise ValueError(f"Invalid repo name: {repo!r}")
     # Resolve the parent to prevent path traversal, but don't resolve the
     # final component — this allows repos that are symlinks (e.g., local dev
-    # where ln -sfn $(pwd) /tmp/ahs/repos/yupp-mind is standard practice).
+    # where ln -sfn $(pwd) /tmp/ahs/repos/yupp-agent is standard practice).
     repo_path = os.path.join(os.path.realpath(AHS_REPOS_DIR), repo)
     if not os.path.isdir(repo_path):
         raise ValueError(f"Repo not found: {repo!r}")
@@ -124,7 +124,7 @@ def create_worktree(
     """Create a git worktree for a session.
 
     Args:
-        repo: Repo name (e.g., 'yupp-mind')
+        repo: Repo name (e.g., 'yupp-agent')
         session_id: Session UUID string
         branch: Branch name. Defaults to 'agent/{session_id}'.
 
@@ -518,7 +518,7 @@ def parse_pr_url(pr_url: str) -> tuple[str, str]:
     Uses `gh` CLI to get the branch name from the PR.
 
     Args:
-        pr_url: GitHub PR URL (e.g., 'https://github.com/yupp-ai/yupp-mind/pull/123')
+        pr_url: GitHub PR URL (e.g., 'https://github.com/yupp-ai/yupp-agent/pull/123')
 
     Returns:
         Tuple of (repo_name, branch_name).
