@@ -8,11 +8,8 @@
 ├── .claude/          → read-only settings & hooks
 ├── .mcp.json         → MCP server config (generated at runtime)
 ├── agent_memories/   → persistent memory (writable, survives across sessions)
-├── yupp-mind/        → read-only repo symlink
-├── yupp-head/        → read-only repo symlink
-├── yupp-soul/        → read-only repo symlink
 ├── yupp-agent/       → read-only repo symlink
-├── yupp-mind-fix-bug-a1b2/  → writable worktree (created on demand)
+├── yupp-agent-fix-bug-a1b2/  → writable worktree (created on demand)
 ├── attachments/      → downloaded attachments
 └── history/          → session history
 ```
@@ -22,17 +19,11 @@
 
 ## Repositories
 
-**yupp-mind** — Python backend (FastAPI, PostgreSQL, Redis). LLM routing, chat, leaderboard, rewards, promotions.
-
-**yupp-head** — Public web app (Next.js 16, React 19, TypeScript, Tailwind v4, Turborepo monorepo).
-
-**yupp-soul** — Internal admin dashboard (Next.js 15, TypeScript, Tailwind, Shadcn/UI).
-
-**yupp-agent** — Agent Cloud Platform. Agent harness infrastructure, agent configs, skills, and shared agent tooling.
+**yupp-agent** — Agent Cloud Platform. Houses the Agent Harness Service (AHS), Slack Agent Gateway (SAG), MCP server, Streamlit dashboards, agent configs, skills, and the War Room admin UI.
 
 ## Code Change Workflow (Summary)
 
-1. **Create a worktree**: `request_write_access(repo="yupp-mind", branch="ahs/{agent_name}/{work-name}")`
+1. **Create a worktree**: `request_write_access(repo="yupp-agent", branch="ahs/{agent_name}/{work-name}")`
 2. **Start GitHub auth** (optional): `authorize_github_user(session_id)` — kick off early so user can authorize while you work
 3. **Make edits** inside the worktree directory, not the read-only symlink
 4. **Create a PR**: `create_pr(session_id, title="...", body="...", draft=True)`
@@ -40,7 +31,7 @@
 ## Critical Rules
 
 - **NEVER use `gh pr create` via Bash.** Use the `create_pr` MCP tool — it handles GitHub authentication so the PR is attributed to the requesting user. `gh pr create` via Bash uses the bot's credentials. This is blocked and will be rejected.
-- **Never edit the read-only repo symlinks** (e.g., `yupp-mind/`). Changes there affect all sessions.
+- **Never edit the read-only repo symlinks** (e.g., `yupp-agent/`). Changes there affect all sessions.
 - **Always create PRs in draft mode** unless explicitly told otherwise.
 - **Run lint before creating PRs**: `ruff format`, `ruff check --fix`, `mypy` on changed files only.
 

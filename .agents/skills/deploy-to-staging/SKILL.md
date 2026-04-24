@@ -5,7 +5,7 @@ description: Deploy services to staging environment using GitHub Actions. Can de
 
 # Deploy to Staging
 
-Deploy yupp-mind services to the staging environment using the "Build and Deploy v2 - step 1" GitHub Actions workflow.
+Deploy yupp-agent services to the staging environment using the "Build and Deploy v2 - step 1" GitHub Actions workflow.
 
 ## Usage
 
@@ -117,7 +117,7 @@ gh run view <RUN_ID> --web
 
 Or construct the URL directly:
 ```
-https://github.com/yupp-ai/yupp-mind/actions/runs/<RUN_ID>
+https://github.com/yupp-ai/yupp-agent/actions/runs/<RUN_ID>
 ```
 
 ## Examples

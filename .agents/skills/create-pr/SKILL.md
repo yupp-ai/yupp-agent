@@ -2,7 +2,7 @@
 name: create-pr
 description: >-
   Create a GitHub pull request with a standardized description format.
-  Use when creating PRs for yupp-mind or yupp-head repos.
+  Use when creating PRs for the yupp-agent repo.
   Enforces consistent title prefixes, attribution, TL;DR, Problem/Solution structure, and notes.
   Usage: /create-pr [base_branch]
 ---

@@ -9,9 +9,6 @@ These guidelines apply to all PR reviews regardless of repository.
 
 For repo-specific concerns, also consult the relevant skill:
 - `/review-pr-yupp-agent` — agent harness, Slack gateway, MCP server, Streamlit dashboards
-- `/review-pr-yupp-mind` — Python backend (routing, evaluations, chat completions)
-- `/review-pr-yupp-head` — Next.js frontend (chat UI, leaderboard, admin dashboards)
-- `/review-pr-yupp-soul` — internal admin dashboard (Next.js + tRPC)
 
 ## Review Style
 

@@ -25,7 +25,7 @@ To run a specific test, read the test file and follow its steps after completing
 
 ```bash
 # If in a worktree, copy .env from main repo
-cp ~/source/yupp-mind/.env .
+cp ~/source/yupp-agent/.env .
 
 # Ensure local database settings in .env
 # DATABASE_HOST=127.0.0.1
@@ -58,7 +58,7 @@ export PYTHONPATH=$(pwd)
 # Create data directories (one-time setup)
 mkdir -p $AHS_DATA_DIR/repos
 ln -sfn $(pwd)/ypl/agent_harness_service/deploy/shared $AHS_DATA_DIR/shared
-ln -sfn $(pwd) $AHS_DATA_DIR/repos/yupp-mind
+ln -sfn $(pwd) $AHS_DATA_DIR/repos/yupp-agent
 
 # Start server (logs to stdout; optionally redirect to file)
 poetry run uvicorn ypl.agent_harness_service.server:app \
