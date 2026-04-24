@@ -187,6 +187,165 @@ class TestAppendToReply:
         # Result depends on add_reply success
         assert result.success is True
 
+    # ---- Type-switch flush-failure regression tests ---------------------
+    # These cover the path that previously dropped the agent's final summary
+    # when the pre-switch flush failed (e.g. Slack rate-limit gate held).
+    # See buffer.py ``if not flushed:`` branch inside append_to_reply.
+
+    async def test_type_switch_flush_failure_still_delivers_new_text(self) -> None:
+        """Pre-switch flush fails with empty buffer: incoming text must still be posted.
+
+        Regression for the data-loss path where append_to_reply returned
+        ``success=False, buffered=False`` and silently dropped the incoming
+        new-type text. After the fix it must call add_reply for the new text
+        and return its success.
+        """
+        mock_session = MagicMock()
+        mock_session.last_reply_ts = "12345.0"
+        mock_session.last_reply_type = "thinking"
+
+        mock_add_result = MagicMock()
+        mock_add_result.success = True
+        mock_add_result.error = None
+        mock_add_result.message_ts = "67890.0"
+
+        add_reply_mock = AsyncMock(return_value=mock_add_result)
+
+        with (
+            patch("ypl.slack_agent_gateway.buffer.get_session", AsyncMock(return_value=mock_session)),
+            # Buffer is empty — ``effective_current_type`` falls back to
+            # ``session.last_reply_type = "thinking"``, which differs from
+            # the incoming ``reply_type=None``, triggering the type switch.
+            patch("ypl.slack_agent_gateway.buffer.get_buffer_type", AsyncMock(return_value=None)),
+            patch("ypl.slack_agent_gateway.buffer.get_buffer_size", AsyncMock(return_value=0)),
+            patch(
+                "ypl.slack_agent_gateway.buffer.flush_buffer",
+                AsyncMock(return_value=False),  # <- rate-limit gate held
+            ),
+            # No pending buffer to rescue; discard returns empty.
+            patch(
+                "ypl.slack_agent_gateway.buffer.discard_buffer",
+                AsyncMock(return_value=""),
+            ),
+            patch("ypl.slack_agent_gateway.callbacks.add_reply", add_reply_mock),
+        ):
+            req = AppendToReplyRequest(session_id="sess-1", text="final summary", reply_type=None)
+            result = await append_to_reply(req)
+
+        # The new-type summary must not be silently dropped.
+        assert result.success is True
+        assert result.buffered is False
+        # add_reply was called exactly once — for the new-type payload.
+        assert add_reply_mock.await_count == 1
+        call_args = add_reply_mock.await_args_list[0].args[0]
+        assert call_args.text == "final summary"
+        assert call_args.reply_type is None
+
+    async def test_type_switch_flush_failure_rescues_pending_old_type_content(self) -> None:
+        """Pre-switch flush fails with pending content: rescue via add_reply.
+
+        The pending old-type content must not be abandoned in the buffer
+        (where a later flush would stamp it onto the new-type message and
+        corrupt it). The fix discards the buffer and re-posts its content as
+        a new message of the OLD type, then posts the incoming new-type text.
+        """
+        mock_session = MagicMock()
+        mock_session.last_reply_ts = "12345.0"
+        mock_session.last_reply_type = "thinking"
+
+        mock_rescue_result = MagicMock()
+        mock_rescue_result.success = True
+        mock_rescue_result.error = None
+        mock_rescue_result.message_ts = "old-rescue-ts"
+
+        mock_new_result = MagicMock()
+        mock_new_result.success = True
+        mock_new_result.error = None
+        mock_new_result.message_ts = "new-ts"
+
+        add_reply_mock = AsyncMock(side_effect=[mock_rescue_result, mock_new_result])
+        discard_mock = AsyncMock(return_value="pending thinking chunk")
+
+        with (
+            patch("ypl.slack_agent_gateway.buffer.get_session", AsyncMock(return_value=mock_session)),
+            # Buffer currently holds "thinking" content.
+            patch("ypl.slack_agent_gateway.buffer.get_buffer_type", AsyncMock(return_value="thinking")),
+            patch("ypl.slack_agent_gateway.buffer.get_buffer_size", AsyncMock(return_value=42)),
+            patch(
+                "ypl.slack_agent_gateway.buffer.flush_buffer",
+                AsyncMock(return_value=False),  # <- rate-limit gate held
+            ),
+            patch("ypl.slack_agent_gateway.buffer.discard_buffer", discard_mock),
+            patch("ypl.slack_agent_gateway.callbacks.add_reply", add_reply_mock),
+        ):
+            req = AppendToReplyRequest(session_id="sess-1", text="final summary", reply_type=None)
+            result = await append_to_reply(req)
+
+        # Overall call succeeded (result mirrors the new-type add_reply).
+        assert result.success is True
+        assert result.buffered is False
+
+        # Buffer was drained atomically so a later scheduled flush cannot
+        # stamp the pending "thinking" content onto the new-type message.
+        discard_mock.assert_awaited_once_with("sess-1")
+
+        # add_reply was called TWICE: once to rescue the pending old-type
+        # content, once to post the new-type summary.
+        assert add_reply_mock.await_count == 2
+
+        rescue_call = add_reply_mock.await_args_list[0].args[0]
+        assert rescue_call.text == "pending thinking chunk"
+        assert rescue_call.reply_type == "thinking"
+
+        new_call = add_reply_mock.await_args_list[1].args[0]
+        assert new_call.text == "final summary"
+        assert new_call.reply_type is None
+
+    async def test_type_switch_flush_failure_continues_when_rescue_fails(self) -> None:
+        """If the rescue add_reply fails, still try to deliver the new-type text.
+
+        Dropping the rescued old-type chunk is bad, but dropping the incoming
+        new-type text on top of that is strictly worse. We keep going.
+        """
+        mock_session = MagicMock()
+        mock_session.last_reply_ts = "12345.0"
+        mock_session.last_reply_type = "thinking"
+
+        mock_rescue_result = MagicMock()
+        mock_rescue_result.success = False
+        mock_rescue_result.error = "Slack unreachable"
+        mock_rescue_result.message_ts = None
+
+        mock_new_result = MagicMock()
+        mock_new_result.success = True
+        mock_new_result.error = None
+        mock_new_result.message_ts = "new-ts"
+
+        add_reply_mock = AsyncMock(side_effect=[mock_rescue_result, mock_new_result])
+
+        with (
+            patch("ypl.slack_agent_gateway.buffer.get_session", AsyncMock(return_value=mock_session)),
+            patch("ypl.slack_agent_gateway.buffer.get_buffer_type", AsyncMock(return_value="thinking")),
+            patch("ypl.slack_agent_gateway.buffer.get_buffer_size", AsyncMock(return_value=42)),
+            patch(
+                "ypl.slack_agent_gateway.buffer.flush_buffer",
+                AsyncMock(return_value=False),
+            ),
+            patch(
+                "ypl.slack_agent_gateway.buffer.discard_buffer",
+                AsyncMock(return_value="pending thinking chunk"),
+            ),
+            patch("ypl.slack_agent_gateway.callbacks.add_reply", add_reply_mock),
+        ):
+            req = AppendToReplyRequest(session_id="sess-1", text="final summary", reply_type=None)
+            result = await append_to_reply(req)
+
+        # The new-type summary still made it out.
+        assert result.success is True
+        # Both add_reply calls attempted — rescue first, new-type second.
+        assert add_reply_mock.await_count == 2
+        assert add_reply_mock.await_args_list[1].args[0].text == "final summary"
+
 
 # ---------------------------------------------------------------------------
 # Tests: flush_buffer
