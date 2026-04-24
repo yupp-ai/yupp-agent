@@ -108,13 +108,58 @@ async def append_to_reply(request: AppendToReplyRequest) -> AppendToReplyRespons
         # Type mismatch — flush whatever is buffered, then post as a new message.
         flushed = await flush_buffer(request.session_id)
         if not flushed:
-            # Old buffer couldn't be flushed — don't post a new message
-            # that would orphan the pending content.
-            return AppendToReplyResponse(
-                success=False,
-                buffered=False,
-                error="Failed to flush buffer before type switch",
-            )
+            # Pre-switch flush failed. Most common cause: the Slack rate-limit
+            # gate was held (see ``try_acquire_slack_ratelimit`` in
+            # ``flush_buffer``), so the pending old-type content was left in
+            # the buffer with a retry scheduled.
+            #
+            # We cannot simply "retry later and return success=False" the way
+            # the same-type buffered path does, because ``add_reply`` below
+            # will mutate ``session.last_reply_ts`` to point at the NEW-type
+            # message. A later flush of the still-pending OLD-type content
+            # would then chat_update the NEW-type message with stale old
+            # content, corrupting it.
+            #
+            # We also must not silently drop the incoming new-type text — that
+            # was the pre-fix behavior and it caused the agent's final summary
+            # to disappear from Slack after long turns where the "thinking"
+            # buffer was non-empty at the moment the summary arrived.
+            #
+            # Resolution: rescue the pending old-type content out of the
+            # buffer and post it as its own new message of the OLD type. Then
+            # fall through and post the incoming new-type message as usual.
+            # Ordering cosmetics slip a little (the rescued chunk lands in a
+            # new message rather than as a trailing edit of the previous
+            # message) but nothing is lost.
+            rescued = await discard_buffer(request.session_id)
+            if rescued:
+                # Import here to avoid circular import at module level.
+                from ypl.slack_agent_gateway.callbacks import add_reply as _rescue_add_reply
+                from ypl.slack_agent_gateway.types import AddReplyRequest as _RescueAddReplyRequest
+
+                rescue_result = await _rescue_add_reply(
+                    _RescueAddReplyRequest(
+                        session_id=request.session_id,
+                        text=rescued,
+                        reply_type=effective_current_type,
+                    )
+                )
+                if rescue_result.success:
+                    logger.info(
+                        "Rescued pending buffer content after type-switch flush failure",
+                        session_id=request.session_id,
+                        rescued_chars=len(rescued),
+                        old_type=effective_current_type,
+                    )
+                else:
+                    logger.error(
+                        "Failed to rescue pending buffer content after type-switch flush failure",
+                        session_id=request.session_id,
+                        rescued_chars=len(rescued),
+                        error=rescue_result.error,
+                    )
+                    # Fall through anyway — delivering the incoming new-type
+                    # text is still more valuable than dropping it outright.
 
         # Import here to avoid circular import at module level.
         from ypl.slack_agent_gateway.callbacks import add_reply
