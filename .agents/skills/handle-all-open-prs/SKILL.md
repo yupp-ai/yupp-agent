@@ -79,7 +79,7 @@ For each PR, get the count of unresolved review comments:
 for pr_num in <PR_NUMBERS>; do
   count=$(gh api graphql -f query="
     query {
-      repository(owner: \"yupp-ai\", name: \"yupp-mind\") {
+      repository(owner: \"yupp-ai\", name: \"yupp-agent\") {
         pullRequest(number: $pr_num) {
           reviewThreads(first: 100) {
             nodes { isResolved }

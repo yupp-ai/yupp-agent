@@ -1,18 +1,18 @@
 ---
 name: investigate-sentry-issue
-description: Investigate issues from Sentry using agcouch MCP. Use when asked to investigate or fix Sentry errors, debug frontend production issues, investigate frontend exceptions, or resolve yupp-head bugs reported by Sentry alerts.
+description: Investigate issues from Sentry using agcouch MCP. Use when asked to investigate or fix Sentry errors, debug frontend/backend production issues, investigate exceptions, or resolve bugs reported by Sentry alerts.
 allowed-tools: mcp__agcouch-mcp-server__get_sentry_issue_details, mcp__agcouch-mcp-server__get_sentry_issue_tag_values, mcp__agcouch-mcp-server__get_sentry_trace_details, mcp__agcouch-mcp-server__get_sentry_breadcrumbs, Read, Glob, Grep, Bash
 ---
 
 # Investigate Sentry Issue
 
-Investigate issues from Sentry using agcouch MCP. This skill is designed to investigate frontend (git repository yupp-head) production issues reported by Sentry alerts.
+Investigate issues from Sentry using agcouch MCP. This skill is designed to investigate production issues reported by Sentry alerts across Yupp services (e.g. the War Room frontend in `apps/war-room/` or backend services in `ypl/`).
 
 ## Invoke This Skill When
 
 - User asks to "investigate Sentry issue", "investigate this sentry alert" or "fix this sentry issue"
 - User wants to "debug production bugs" or "investigate exceptions"
-- User mentions a sentry.io link or an issue ID resembling a sentry short ID (e.g. "YUPP-HEAD-535")
+- User mentions a sentry.io link or an issue ID resembling a sentry short ID (e.g. "WAR-ROOM-535")
 
 ## Prerequisites
 
@@ -34,10 +34,10 @@ Investigate issues from Sentry using agcouch MCP. This skill is designed to inve
 Use the get_sentry_issue_details tool from Yuppster MCP to find summary and event information about given issue(s) or specific events.
 
 Provide: 
-  - issue_id: can be a numerical ID or a short ID like YUPP-HEAD-535. 
+  - issue_id: can be a numerical ID or a short ID like WAR-ROOM-535. 
     - The numerical ID may be given as part of a sentry URL: https://bsl-ai.sentry.io/issues/6945510309?project=4508762901708800 includes the numerical ID 6945510309.
   - event_id: optionally fetches a specific event instead of the latest one
-  - project_slug: the project slug to query. Defaults to "yupp-head".
+  - project_slug: the Sentry project slug to query (pass explicitly for the project whose alert you're investigating).
 
 ## Phase 2: Deep Dive
 

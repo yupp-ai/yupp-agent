@@ -18,7 +18,7 @@ See the `/memory-guide` skill for full details on both memory systems and when/h
 Call `request_write_access` to create an isolated git worktree. The worktree appears in your workspace on your next turn.
 
 ```
-request_write_access(repo="yupp-mind", branch={BRANCH_NAME})
+request_write_access(repo="yupp-agent", branch={BRANCH_NAME})
 ```
 
 Use `list_available_repos()` to see which repos support write access.
@@ -30,7 +30,7 @@ Every piece of work needs a **work name** — a short slug of at most 4 dash-sep
 | Item | Pattern | Example |
 |---|---|---|
 | Work name | ≤ 4 dash-separated words | `fix-url-typo` |
-| Worktree directory | `{repo}-{work_name}` | `yupp-mind-fix-url-typo` |
+| Worktree directory | `{repo}-{work_name}` | `yupp-agent-fix-url-typo` |
 | Branch name | `ahs/{agent_name}/{work_name}` | `ahs/sre/fix-url-typo` |
 
 **Important:**
@@ -156,7 +156,7 @@ mypy --config-file=pyproject.toml <changed_files>
 
 **Run lint only on files you changed** — not the entire repo. Fix any errors before committing.
 
-For **yupp-head** and **yupp-soul** (TypeScript/Next.js), use `pnpm biome check` instead.
+For the TypeScript/Next.js code under `apps/war-room/`, use `pnpm biome check` instead.
 
 ## Working Style
 

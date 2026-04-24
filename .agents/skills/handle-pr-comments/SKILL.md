@@ -12,7 +12,7 @@ description: >-
 ## Usage
 
 ```
-/handle-pr-comments https://github.com/yupp-ai/yupp-mind/pull/10572
+/handle-pr-comments https://github.com/yupp-ai/yupp-agent/pull/10572
 /handle-pr-comments 10572
 /handle-pr-comments stack    # Handle comments on all PRs in the current Graphite stack
 ```
@@ -22,7 +22,7 @@ description: >-
 If the argument is `stack`, enter **Stack Mode** (see Phase 9 below).
 
 Otherwise, extract the PR number from the argument. Accept either:
-- A full URL: `https://github.com/yupp-ai/yupp-mind/pull/<NUMBER>`
+- A full URL: `https://github.com/yupp-ai/yupp-agent/pull/<NUMBER>`
 - A bare number: `<NUMBER>`
 
 Store as `<PR_NUMBER>` for use throughout.
@@ -94,7 +94,7 @@ If `FRONTEND_FILES` is empty, skip biome steps in later phases.
 ```bash
 gh api graphql -f query='
 query {
-  repository(owner: "yupp-ai", name: "yupp-mind") {
+  repository(owner: "yupp-ai", name: "yupp-agent") {
     pullRequest(number: <PR_NUMBER>) {
       reviewThreads(first: 100) {
         nodes {
@@ -122,7 +122,7 @@ query {
 ### 2.2 Also get top-level PR review comments (non-inline)
 
 ```bash
-gh api repos/yupp-ai/yupp-mind/pulls/<PR_NUMBER>/reviews --jq '.[] | {id, user: .user.login, state: .state, body: .body}'
+gh api repos/yupp-ai/yupp-agent/pulls/<PR_NUMBER>/reviews --jq '.[] | {id, user: .user.login, state: .state, body: .body}'
 ```
 
 ### 2.3 Categorize each comment
@@ -163,7 +163,7 @@ gh pr checks <PR_NUMBER> --json name,state,bucket,link
 Look for checks with `bucket: "fail"` or `state: "FAILURE"`. Common check names:
 - Python lint: `lint`, `Lint`, `ruff`, `pre-commit`
 - Python type check: `mypy`, `type-check`
-- Frontend lint: `biome`, `Biome`, `biome-check`, `format-check` (for yupp-head / frontend code)
+- Frontend lint: `biome`, `Biome`, `biome-check`, `format-check` (for `apps/war-room` / frontend code)
 - Tests: `test`, `Test`, `tests`, `pytest`, `ci`, `CI`, `unit-tests`, `integration-tests`
 
 ### 3.3 Fetch failed test logs
@@ -396,7 +396,7 @@ For each thread, do all three steps: **react → reply → resolve**.
 
 ```bash
 # FIXED / ACKNOWLEDGED → thumbs up; WON'T FIX / NOT APPLICABLE (AI reviewer) → thumbs down
-gh api repos/yupp-ai/yupp-mind/pulls/comments/<COMMENT_ID>/reactions -X POST -f content="+1"  # or "-1"
+gh api repos/yupp-ai/yupp-agent/pulls/comments/<COMMENT_ID>/reactions -X POST -f content="+1"  # or "-1"
 ```
 
 #### 6.2.2 Reply
@@ -404,7 +404,7 @@ gh api repos/yupp-ai/yupp-mind/pulls/comments/<COMMENT_ID>/reactions -X POST -f 
 Always prefix `(AI reply)` and include the verdict. Verify 201 response; log and move on if it fails.
 
 ```bash
-gh api repos/yupp-ai/yupp-mind/pulls/<PR_NUMBER>/comments/<COMMENT_ID>/replies \
+gh api repos/yupp-ai/yupp-agent/pulls/<PR_NUMBER>/comments/<COMMENT_ID>/replies \
   -X POST -f body="(AI reply) **<VERDICT>** — <explanation>"
 ```
 
@@ -533,7 +533,7 @@ for branch in $(gt log short --json 2>/dev/null | jq -r '.[].name' 2>/dev/null);
   if [ -n "$pr_num" ] && [ "$pr_num" != "null" ]; then
     count=$(gh api graphql -f query="
       query {
-        repository(owner: \"yupp-ai\", name: \"yupp-mind\") {
+        repository(owner: \"yupp-ai\", name: \"yupp-agent\") {
           pullRequest(number: $pr_num) {
             reviewThreads(first: 50) {
               nodes { isResolved }

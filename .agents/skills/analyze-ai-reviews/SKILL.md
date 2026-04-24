@@ -26,7 +26,7 @@ Auto-detect the GitHub owner and repo from the current git remote:
 
 ```bash
 gh repo view --json nameWithOwner --jq '.nameWithOwner'
-# Returns e.g. "yupp-ai/yupp-mind" → OWNER="yupp-ai", REPO="yupp-mind"
+# Returns e.g. "yupp-ai/yupp-agent" → OWNER="yupp-ai", REPO="yupp-agent"
 ```
 
 Use `OWNER/REPO` in all subsequent API calls. If detection fails, ask the user.
