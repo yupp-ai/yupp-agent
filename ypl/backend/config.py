@@ -486,11 +486,6 @@ class Settings(BaseSettings):
     # OAUTH: Uses Google OAuth via FastMCP's GoogleProvider
     MCP_SERVER_MODE: str = "DEV_TOKEN"
 
-    # Comma-separated list of DevToken emails that are allowed to set X-AHS-User-ID.
-    # Only these service tokens can override attribution — prevents regular DevToken
-    # holders from impersonating other users.
-    AHS_SERVICE_TOKEN_EMAILS: str = ""
-
     # AHS CORS configuration. The baseline loopback origins for local dev are
     # always added by server.py; these two settings let deployers add their
     # production frontends. Format: JSON list for explicit origins, a regex

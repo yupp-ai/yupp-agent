@@ -169,7 +169,7 @@ class AgcouchMcpAuthMiddleware(BaseHTTPMiddleware):
                 detail = "Invalid token"
             return JSONResponse(content={"detail": detail}, status_code=401)
 
-        ctx = create_request_context(db_token, request)
+        ctx = await create_request_context(db_token, request)
         cv_token = request_context.set(ctx)
         try:
             return await call_next(request)

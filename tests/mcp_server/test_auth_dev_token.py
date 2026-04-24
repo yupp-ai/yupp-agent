@@ -28,7 +28,7 @@ from starlette.testclient import TestClient
 from ypl.mcp_server.auth_dev_token import (
     TOKEN_LENGTH,
     DevTokenAuthMiddleware,
-    _is_service_token,
+    _can_assert_user_identity,
     create_request_context,
     generate_token,
     get_token_lookup_key,
@@ -171,41 +171,31 @@ class TestHashAndVerify:
 
 
 # ---------------------------------------------------------------------------
-# _is_service_token
+# _can_assert_user_identity
 # ---------------------------------------------------------------------------
 
 
-class TestIsServiceToken:
-    def test_listed_email_is_service(self) -> None:
-        token = _make_db_token(email="svc@example.com")
-        with patch("ypl.mcp_server.auth_dev_token.settings") as mock_settings:
-            mock_settings.AHS_SERVICE_TOKEN_EMAILS = "svc@example.com,other@example.com"
-            assert _is_service_token(token) is True
+class TestCanAssertUserIdentity:
+    """The middleware's X-User-ID / X-AHS-* trust gate is now driven by RBAC:
+    the token owner must hold MANAGE_AGENT_SESSIONS. This replaces the
+    legacy AHS_SERVICE_TOKEN_EMAILS env-var allowlist.
+    """
 
-    def test_unlisted_email_is_not_service(self) -> None:
+    async def test_permission_granted_trusts_token(self) -> None:
+        token = _make_db_token(email="admin@example.com")
+        with patch(
+            "ypl.mcp_server.auth_dev_token.has_permission_cached",
+            new=AsyncMock(return_value=True),
+        ):
+            assert await _can_assert_user_identity(token) is True
+
+    async def test_permission_missing_does_not_trust(self) -> None:
         token = _make_db_token(email="engineer@example.com")
-        with patch("ypl.mcp_server.auth_dev_token.settings") as mock_settings:
-            mock_settings.AHS_SERVICE_TOKEN_EMAILS = "svc@example.com"
-            assert _is_service_token(token) is False
-
-    def test_case_insensitive(self) -> None:
-        token = _make_db_token(email="SVC@Example.COM")
-        with patch("ypl.mcp_server.auth_dev_token.settings") as mock_settings:
-            mock_settings.AHS_SERVICE_TOKEN_EMAILS = "svc@example.com"
-            assert _is_service_token(token) is True
-
-    def test_empty_allowlist_trusts_all(self) -> None:
-        """When AHS_SERVICE_TOKEN_EMAILS is empty, every token is trusted (local dev mode)."""
-        token = _make_db_token(email="anyone@example.com")
-        with patch("ypl.mcp_server.auth_dev_token.settings") as mock_settings:
-            mock_settings.AHS_SERVICE_TOKEN_EMAILS = ""
-            assert _is_service_token(token) is True
-
-    def test_whitespace_stripped(self) -> None:
-        token = _make_db_token(email="svc@example.com")
-        with patch("ypl.mcp_server.auth_dev_token.settings") as mock_settings:
-            mock_settings.AHS_SERVICE_TOKEN_EMAILS = "  svc@example.com  ,  other@example.com  "
-            assert _is_service_token(token) is True
+        with patch(
+            "ypl.mcp_server.auth_dev_token.has_permission_cached",
+            new=AsyncMock(return_value=False),
+        ):
+            assert await _can_assert_user_identity(token) is False
 
 
 # ---------------------------------------------------------------------------
@@ -226,40 +216,46 @@ class TestCreateRequestContext:
         req.headers = headers or {}
         return req
 
-    def test_basic_fields_present(self) -> None:
+    async def test_basic_fields_present(self) -> None:
         db_token = _make_db_token()
         request = self._make_request(headers={"user-agent": "test-agent/1.0"})
 
-        with patch("ypl.mcp_server.auth_dev_token.settings") as mock_settings:
-            mock_settings.AHS_SERVICE_TOKEN_EMAILS = ""  # all tokens are service
-            ctx = create_request_context(db_token, request)
+        with patch(
+            "ypl.mcp_server.auth_dev_token.has_permission_cached",
+            new=AsyncMock(return_value=True),
+        ):
+            ctx = await create_request_context(db_token, request)
 
         assert ctx["token"] is db_token
         assert ctx["ip_address"] == "127.0.0.1"
         assert ctx["user_agent"] == "test-agent/1.0"
 
-    def test_service_token_trusts_x_user_id(self) -> None:
-        db_token = _make_db_token(email="svc@example.com")
+    async def test_privileged_token_trusts_x_user_id(self) -> None:
+        db_token = _make_db_token(email="admin@example.com")
         request = self._make_request(headers={"x-user-id": "user-abc-123"})
 
-        with patch("ypl.mcp_server.auth_dev_token.settings") as mock_settings:
-            mock_settings.AHS_SERVICE_TOKEN_EMAILS = "svc@example.com"
-            ctx = create_request_context(db_token, request)
+        with patch(
+            "ypl.mcp_server.auth_dev_token.has_permission_cached",
+            new=AsyncMock(return_value=True),
+        ):
+            ctx = await create_request_context(db_token, request)
 
         assert ctx["requesting_user_id"] == "user-abc-123"
 
-    def test_non_service_token_ignores_x_user_id(self) -> None:
+    async def test_non_privileged_token_ignores_x_user_id(self) -> None:
         db_token = _make_db_token(email="engineer@example.com")
         request = self._make_request(headers={"x-user-id": "user-abc-123"})
 
-        with patch("ypl.mcp_server.auth_dev_token.settings") as mock_settings:
-            mock_settings.AHS_SERVICE_TOKEN_EMAILS = "svc@example.com"
-            ctx = create_request_context(db_token, request)
+        with patch(
+            "ypl.mcp_server.auth_dev_token.has_permission_cached",
+            new=AsyncMock(return_value=False),
+        ):
+            ctx = await create_request_context(db_token, request)
 
         assert ctx["requesting_user_id"] is None
 
-    def test_service_token_reads_ahs_headers(self) -> None:
-        db_token = _make_db_token(email="svc@example.com")
+    async def test_privileged_token_reads_ahs_headers(self) -> None:
+        db_token = _make_db_token(email="admin@example.com")
         request = self._make_request(
             headers={
                 "x-ahs-agent-name": "test-raccoon",
@@ -267,14 +263,16 @@ class TestCreateRequestContext:
             }
         )
 
-        with patch("ypl.mcp_server.auth_dev_token.settings") as mock_settings:
-            mock_settings.AHS_SERVICE_TOKEN_EMAILS = "svc@example.com"
-            ctx = create_request_context(db_token, request)
+        with patch(
+            "ypl.mcp_server.auth_dev_token.has_permission_cached",
+            new=AsyncMock(return_value=True),
+        ):
+            ctx = await create_request_context(db_token, request)
 
         assert ctx["ahs_agent_name"] == "test-raccoon"
         assert ctx["ahs_session_id"] == "session-uuid-1234"
 
-    def test_non_service_token_ignores_ahs_headers(self) -> None:
+    async def test_non_privileged_token_ignores_ahs_headers(self) -> None:
         db_token = _make_db_token(email="engineer@example.com")
         request = self._make_request(
             headers={
@@ -283,21 +281,25 @@ class TestCreateRequestContext:
             }
         )
 
-        with patch("ypl.mcp_server.auth_dev_token.settings") as mock_settings:
-            mock_settings.AHS_SERVICE_TOKEN_EMAILS = "svc@example.com"
-            ctx = create_request_context(db_token, request)
+        with patch(
+            "ypl.mcp_server.auth_dev_token.has_permission_cached",
+            new=AsyncMock(return_value=False),
+        ):
+            ctx = await create_request_context(db_token, request)
 
         assert ctx["ahs_agent_name"] is None
         assert ctx["ahs_session_id"] is None
 
-    def test_no_client_host(self) -> None:
+    async def test_no_client_host(self) -> None:
         db_token = _make_db_token()
         request = self._make_request()
         request.client = None
 
-        with patch("ypl.mcp_server.auth_dev_token.settings") as mock_settings:
-            mock_settings.AHS_SERVICE_TOKEN_EMAILS = ""
-            ctx = create_request_context(db_token, request)
+        with patch(
+            "ypl.mcp_server.auth_dev_token.has_permission_cached",
+            new=AsyncMock(return_value=False),
+        ):
+            ctx = await create_request_context(db_token, request)
 
         assert ctx["ip_address"] is None
 
@@ -406,11 +408,7 @@ class TestDevTokenAuthMiddleware:
                 "ypl.mcp_server.auth_dev_token.has_permission_cached",
                 new=AsyncMock(return_value=False),
             ),
-            patch(
-                "ypl.mcp_server.auth_dev_token.settings",
-            ) as mock_settings,
         ):
-            mock_settings.AHS_SERVICE_TOKEN_EMAILS = ""
             r = client.get(
                 "/ping",
                 headers={"authorization": "Bearer yupp_dev_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"},
@@ -434,11 +432,7 @@ class TestDevTokenAuthMiddleware:
                 "ypl.mcp_server.auth_dev_token.has_permission_cached",
                 new=AsyncMock(return_value=True),
             ),
-            patch(
-                "ypl.mcp_server.auth_dev_token.settings",
-            ) as mock_settings,
         ):
-            mock_settings.AHS_SERVICE_TOKEN_EMAILS = ""
             r = client.get(
                 "/ping",
                 headers={"authorization": "Bearer yupp_dev_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"},

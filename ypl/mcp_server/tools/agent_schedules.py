@@ -4,14 +4,13 @@ Provides tools for listing AHS agents, creating one-time and recurring
 agent schedules, cancelling schedules, and listing schedules with filters.
 """
 
-import uuid
 from typing import Any
 
 import sqlalchemy as sa
 from sqlmodel import col, select
 
-from ypl.backend.db import get_async_session, get_async_session_read_replica, retry_db
-from ypl.backend.utils.soul_utils import has_permission_cached
+from ypl.backend.db import get_async_session_read_replica, retry_db
+from ypl.backend.utils.soul_utils import has_permission_by_user_id_cached, has_permission_cached
 from ypl.db.agent_harness import (
     Agent,
     AgentSchedule,
@@ -20,6 +19,7 @@ from ypl.db.agent_harness import (
 )
 from ypl.db.rbac import Permission
 from ypl.mcp_common.scheduled_agent_call_helpers import (
+    cancel_agent_schedule_by_id,
     compute_next_run_for_cron,
     create_agent_schedule,
     edit_agent_schedule_fields,
@@ -30,6 +30,7 @@ from ypl.mcp_common.scheduled_agent_call_helpers import (
     validate_cron_expression,
     validate_timezone,
 )
+from ypl.mcp_server.authorization import resolve_caller_user_id
 from ypl.mcp_server.core import get_authenticated_user_email, get_requesting_user_id, mcp_server
 from ypl.structured_logger import get_logger
 
@@ -243,7 +244,6 @@ async def cancel_agent_schedule(
         Dictionary with the cancellation result
     """
     try:
-        # Verify caller has USE_MCP permission
         auth_email = get_authenticated_user_email()
         if auth_email == "unknown":
             return {"success": False, "error": "Authentication required to cancel agent schedules"}
@@ -251,68 +251,19 @@ async def cancel_agent_schedule(
         if not await has_permission_cached(auth_email, Permission.USE_MCP):
             return {"success": False, "error": "You do not have permission to use MCP tools"}
 
-        # Resolve caller's user_id for the ownership check. Prefer the
-        # requesting-user header injected by AHS (X-User-ID) so an agent
-        # acting on behalf of a user can cancel schedules that user created;
-        # fall back to the MCP-authenticated email only if no header is set.
-        # This mirrors the CREATE path so CREATE vs CANCEL authorization is
-        # symmetric -- whatever identity was used to stamp ``created_by_user``
-        # at create time must also be accepted at cancel time.
-        caller_user_id: str | None = get_requesting_user_id()
-        if not caller_user_id:
-            caller_user_id, user_error = await resolve_user_id_from_email(auth_email)
-            if user_error:
-                return {"success": False, "error": user_error}
+        caller_user_id, err = await resolve_caller_user_id(auth_email)
+        if err or caller_user_id is None:
+            return {"success": False, "error": err or "Could not resolve caller"}
 
-        # Parse UUID
-        try:
-            schedule_uuid = uuid.UUID(agent_schedule_id)
-        except ValueError:
-            return {"success": False, "error": f"Invalid agent_schedule_id format: {agent_schedule_id}"}
+        # Admin bypass: a caller holding MANAGE_AGENT_SCHEDULES may cancel any
+        # user's schedule. Without it, they may only cancel their own.
+        allow_any_owner = await has_permission_by_user_id_cached(caller_user_id, Permission.MANAGE_AGENT_SCHEDULES)
 
-        async with get_async_session() as session:
-            # Atomic conditional UPDATE with ownership check
-            # Only cancels if status is PENDING or PAUSED AND caller owns the schedule
-            result = await session.execute(
-                sa.update(AgentSchedule)
-                .where(col(AgentSchedule.agent_schedule_id) == schedule_uuid)
-                .where(col(AgentSchedule.deleted_at).is_(None))
-                .where(col(AgentSchedule.status).in_([AgentScheduleStatus.PENDING, AgentScheduleStatus.PAUSED]))
-                .where(col(AgentSchedule.created_by_user) == caller_user_id)
-                .values(status=AgentScheduleStatus.CANCELLED, modified_at=sa.func.now())
-            )
-            await session.commit()
-
-            if result.rowcount == 0:  # type: ignore[attr-defined]
-                # Check why it failed: not found, wrong status, or not owner
-                check_result = await session.execute(
-                    select(AgentSchedule.status, AgentSchedule.created_by_user)
-                    .where(col(AgentSchedule.agent_schedule_id) == schedule_uuid)
-                    .where(col(AgentSchedule.deleted_at).is_(None))
-                )
-                existing = check_result.one_or_none()
-                if existing is None:
-                    return {"success": False, "error": f"Agent schedule not found: {agent_schedule_id}"}
-                if existing.created_by_user != caller_user_id:
-                    return {"success": False, "error": "You can only cancel schedules you created"}
-                return {
-                    "success": False,
-                    "error": f"Cannot cancel schedule with status {existing.status.value}. "
-                    f"Only PENDING or PAUSED schedules can be cancelled.",
-                }
-
-            logger.info(
-                "Cancelled agent schedule",
-                agent_schedule_id=agent_schedule_id,
-                cancelled_by=auth_email,
-                cancelled_by_user_id=caller_user_id,
-            )
-
-            return {
-                "success": True,
-                "agent_schedule_id": agent_schedule_id,
-                "status": "CANCELLED",
-            }
+        return await cancel_agent_schedule_by_id(
+            agent_schedule_id=agent_schedule_id,
+            caller_user_id=caller_user_id,
+            allow_any_owner=allow_any_owner,
+        )
 
     except Exception as e:
         logger.error(
@@ -371,18 +322,13 @@ async def edit_agent_schedule(
         if not await has_permission_cached(auth_email, Permission.USE_MCP):
             return {"success": False, "error": "You do not have permission to use MCP tools"}
 
-        # Resolve caller's user_id for the ownership check. Prefer the
-        # requesting-user header injected by AHS (X-User-ID) so an agent
-        # acting on behalf of a user can edit schedules that user created;
-        # fall back to the MCP-authenticated email only if no header is set.
-        # This mirrors the CREATE path so CREATE vs EDIT authorization is
-        # symmetric -- whatever identity was used to stamp ``created_by_user``
-        # at create time must also be accepted at edit time.
-        caller_user_id: str | None = get_requesting_user_id()
-        if not caller_user_id:
-            caller_user_id, user_error = await resolve_user_id_from_email(auth_email)
-            if user_error:
-                return {"success": False, "error": user_error}
+        caller_user_id, err = await resolve_caller_user_id(auth_email)
+        if err or caller_user_id is None:
+            return {"success": False, "error": err or "Could not resolve caller"}
+
+        # Admin bypass: a caller holding MANAGE_AGENT_SCHEDULES may edit any
+        # user's schedule. Without it, they may only edit their own.
+        allow_any_owner = await has_permission_by_user_id_cached(caller_user_id, Permission.MANAGE_AGENT_SCHEDULES)
 
         # Parse context JSON string if provided
         context_dict: dict[str, Any] | None = None
@@ -393,7 +339,7 @@ async def edit_agent_schedule(
 
         result = await edit_agent_schedule_fields(
             agent_schedule_id=agent_schedule_id,
-            caller_user_id=caller_user_id,  # type: ignore[arg-type]
+            caller_user_id=caller_user_id,
             message=message,
             cron_expression=cron_expression,
             timezone=timezone,
@@ -403,6 +349,7 @@ async def edit_agent_schedule(
             max_runs=max_runs,
             execute_at=execute_at,
             agent_name=agent_name,
+            allow_any_owner=allow_any_owner,
         )
 
         if not result.get("success"):
@@ -486,25 +433,29 @@ async def list_agent_schedules(
         else:
             schedule_type_enum = None
 
-        # Resolve the created_by filter to a user_id. If an explicit email was
-        # passed, look it up; otherwise default to "the caller's own schedules"
-        # and prefer the X-User-ID header injected by AHS (the user on whose
-        # behalf the agent is acting). Schedules created by AHS agents are
-        # stamped with ``created_by_user`` from that same header (see
-        # create_agent_schedule_tool); falling back to ``auth_email`` in the
-        # default case would resolve to the shared service-account user and
-        # return zero rows for legitimate users.
-        created_by_user_id: str | None = None
+        # Resolve the caller and determine the effective filter.
+        # Default (``created_by`` omitted): filter to the caller's own
+        # schedules. Explicit ``created_by=<email>``: must be the caller's
+        # own email OR the caller must hold MANAGE_AGENT_SCHEDULES.
+        caller_user_id, err = await resolve_caller_user_id(auth_email)
+        if err or caller_user_id is None:
+            return {"success": False, "error": err or "Could not resolve caller"}
+
+        created_by_user_id: str | None = caller_user_id
         if created_by:
-            created_by_user_id, resolve_error = await resolve_user_id_from_email(created_by)
+            resolved_id, resolve_error = await resolve_user_id_from_email(created_by)
             if resolve_error:
                 return {"success": False, "error": f"Invalid created_by filter: {resolve_error}"}
-        else:
-            created_by_user_id = get_requesting_user_id()
-            if not created_by_user_id:
-                created_by_user_id, resolve_error = await resolve_user_id_from_email(auth_email)
-                if resolve_error:
-                    return {"success": False, "error": f"Invalid created_by filter: {resolve_error}"}
+            if resolved_id != caller_user_id:
+                if not await has_permission_by_user_id_cached(caller_user_id, Permission.MANAGE_AGENT_SCHEDULES):
+                    return {
+                        "success": False,
+                        "error": (
+                            "Not authorized: listing another user's schedules requires "
+                            "MANAGE_AGENT_SCHEDULES permission"
+                        ),
+                    }
+            created_by_user_id = resolved_id
 
         async with get_async_session_read_replica() as session:
             # Build query

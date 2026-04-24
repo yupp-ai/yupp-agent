@@ -214,41 +214,50 @@ async def revoke_token(
         return db_token
 
 
-def _is_service_token(db_token: MCPDevToken) -> bool:
-    """Return True if the token belongs to a designated AHS service account."""
-    allowed_emails = {e.strip().lower() for e in settings.AHS_SERVICE_TOKEN_EMAILS.split(",") if e.strip()}
-    if not allowed_emails:
-        # No allowlist configured — trust all tokens (backward compat for local dev)
-        return True
-    return db_token.email.lower() in allowed_emails
+async def _can_assert_user_identity(db_token: MCPDevToken) -> bool:
+    """Return True if the token owner may assert another user's identity.
+
+    The token owner is trusted to set the ``X-User-ID`` header — and the
+    ``X-AHS-Agent-Name`` / ``X-AHS-Session-ID`` AHS identity headers — iff
+    they hold ``MANAGE_AGENT_SESSIONS``. This is the permission granted to
+    administrators and to the AHS service principal; holders can already
+    manage any user's agent sessions, so also letting them stamp
+    cross-user attribution on MCP requests adds no new privilege.
+
+    Regular DevToken holders fail this check, which means the middleware
+    drops their ``X-User-ID`` header and they act as themselves — preventing
+    token holders from impersonating other users to mutate data.
+    """
+    return await has_permission_cached(db_token.email, Permission.MANAGE_AGENT_SESSIONS)
 
 
-def create_request_context(
+async def create_request_context(
     db_token: MCPDevToken,
     request: Request,
 ) -> dict[str, Any]:
     """Create request context for MCP middleware."""
-    is_service = _is_service_token(db_token)
+    can_impersonate = await _can_assert_user_identity(db_token)
 
-    # Only trust X-User-ID from designated service tokens (e.g. AHS).
+    # Only trust X-User-ID when the token owner holds MANAGE_AGENT_SESSIONS.
     # This prevents regular DevToken holders from impersonating other users.
     requesting_user_id: str | None = None
     raw_header = request.headers.get("x-user-id")
     if raw_header:
-        if is_service:
+        if can_impersonate:
             requesting_user_id = raw_header
         else:
             logger.warning(
-                "Ignoring X-User-ID from non-service token",
+                "Ignoring X-User-ID from non-privileged token",
                 token_email=db_token.email.split("@")[0],
             )
 
-    # Only trust AHS identity headers from designated service tokens.
-    # X-AHS-Agent-Name is injected by the AHS runner into .mcp.json and is
-    # tamper-proof within the sandbox — it cannot be changed by the agent.
+    # AHS identity headers are injected by the AHS runner into .mcp.json and
+    # are tamper-proof within the sandbox. Trust them under the same gate so
+    # audit records (security incidents, artifact attribution, etc.) can't
+    # be spoofed by non-privileged DevToken holders.
     ahs_agent_name: str | None = None
     ahs_session_id: str | None = None
-    if is_service:
+    if can_impersonate:
         ahs_agent_name = request.headers.get("x-ahs-agent-name") or None
         ahs_session_id = request.headers.get("x-ahs-session-id") or None
 
@@ -349,7 +358,7 @@ class DevTokenAuthMiddleware(BaseHTTPMiddleware):
         request.state.token_type = MCPTokenType.DEV_TOKEN
 
         # Set context variable for MCP middleware to access
-        ctx = create_request_context(db_token, request)
+        ctx = await create_request_context(db_token, request)
         ctx_token = self.request_context_var.set(ctx)
 
         logger.debug("DevToken authenticated", engineer=email_local_part, path=request.url.path)

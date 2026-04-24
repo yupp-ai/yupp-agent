@@ -21,6 +21,7 @@ from ypl.agent_harness_service.projects.task_utils import (
     validate_task_status_change,
 )
 from ypl.backend.db import get_async_session, get_async_session_read_replica, retry_db
+from ypl.backend.utils.soul_utils import has_permission_by_user_id_cached
 from ypl.db.agent_harness import (
     Agent,
     AgentProject,
@@ -29,24 +30,67 @@ from ypl.db.agent_harness import (
     AgentTaskPriority,
     AgentTaskStatus,
 )
+from ypl.db.rbac import Permission
 from ypl.mcp_common.scheduled_agent_call_helpers import resolve_user_id_from_email
+from ypl.mcp_server.authorization import resolve_caller_user_id
 from ypl.mcp_server.core import get_authenticated_user_email, get_requesting_user_id, mcp_server
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
 
-# TODO: Add per-project ownership/authorization checks to all project and task tools.
-# Currently, mutation tools verify the user is authenticated but do not verify that the
-# caller owns (or has permission on) the target project. Read-only tools (get_project,
-# get_task, get_project_tasks, list_projects) have no auth at all, making project UUIDs
-# and task details accessible to any caller. Fix: resolve creator_user_id from the
-# authenticated email and enforce it on all project-scoped operations. Also filter
-# list_projects to the authenticated user's own projects. (see PR #10933)
+# NOTE: Read-only tools (get_project, get_task, get_project_tasks, list_projects)
+# still expose any caller's USE_MCP access to browse all projects; tightening
+# those is a follow-up. The mutating tools below enforce
+# ``caller == project.creator_user_id OR caller has MANAGE_AGENT_PROJECTS``.
 
 
 # ============================================================================
 # Helpers
 # ============================================================================
+
+
+async def _resolve_caller_for_project_auth(auth_email: str) -> tuple[str | None, bool, str | None]:
+    """Resolve ``(caller_user_id, is_project_admin, error)``.
+
+    ``is_project_admin`` is True iff the caller holds
+    ``MANAGE_AGENT_PROJECTS`` — meaning they may mutate any project.
+    Otherwise, per-resource mutation is limited to resources they own.
+    """
+    caller_user_id, err = await resolve_caller_user_id(auth_email)
+    if err or caller_user_id is None:
+        return None, False, err or "Could not resolve caller"
+    is_admin = await has_permission_by_user_id_cached(caller_user_id, Permission.MANAGE_AGENT_PROJECTS)
+    return caller_user_id, is_admin, None
+
+
+def _check_project_ownership(
+    project: AgentProject,
+    caller_user_id: str,
+    is_project_admin: bool,
+) -> str | None:
+    """Return an error message if the caller may not mutate this project, else None.
+
+    Allowed when the caller is the project's ``creator_user_id`` OR holds
+    ``MANAGE_AGENT_PROJECTS`` (``is_project_admin``).
+    """
+    if str(project.creator_user_id) == caller_user_id:
+        return None
+    if is_project_admin:
+        return None
+    return "Not authorized: you do not own this project and lack MANAGE_AGENT_PROJECTS permission"
+
+
+async def _load_project_for_task(
+    session: Any, task: AgentTask
+) -> AgentProject | None:
+    """Load the parent project for a task, honoring soft-deletion."""
+    result = await session.execute(
+        select(AgentProject)
+        .where(col(AgentProject.agent_project_id) == task.agent_project_id)
+        .where(col(AgentProject.deleted_at).is_(None))
+    )
+    project: AgentProject | None = result.scalars().first()
+    return project
 
 
 async def _resolve_agent_id_by_name(session: Any, agent_name: str) -> uuid.UUID | None:
@@ -757,6 +801,10 @@ async def set_task_status(
             except json.JSONDecodeError as e:
                 return {"success": False, "error": f"Invalid result JSON: {e}"}
 
+        caller_user_id, is_admin, auth_err = await _resolve_caller_for_project_auth(auth_email)
+        if auth_err or caller_user_id is None:
+            return {"success": False, "error": auth_err or "Could not authorize"}
+
         async with get_async_session() as session:
             # Lock the row to serialize concurrent status transitions on the same task
             task_result = await session.execute(
@@ -768,6 +816,14 @@ async def set_task_status(
             task = task_result.scalars().first()
             if not task:
                 return {"success": False, "error": f"Task not found: {task_id}"}
+
+            if not is_admin:
+                project = await _load_project_for_task(session, task)
+                if project is None:
+                    return {"success": False, "error": f"Project not found for task: {task_id}"}
+                ownership_err = _check_project_ownership(project, caller_user_id, False)
+                if ownership_err:
+                    return {"success": False, "error": ownership_err}
 
             # Validate transition and semantic constraints
             validation_error = await validate_task_status_change(session, task, target_status)
@@ -927,6 +983,10 @@ async def set_project_status(
             valid = [s.value for s in AgentProjectStatus]
             return {"success": False, "error": f"Invalid status: {status}. Must be one of: {valid}"}
 
+        caller_user_id, is_admin, auth_err = await _resolve_caller_for_project_auth(auth_email)
+        if auth_err or caller_user_id is None:
+            return {"success": False, "error": auth_err or "Could not authorize"}
+
         async with get_async_session() as session:
             proj_result = await session.execute(
                 select(AgentProject)
@@ -936,6 +996,9 @@ async def set_project_status(
             project = proj_result.scalars().first()
             if not project:
                 return {"success": False, "error": f"Project not found: {project_id}"}
+            ownership_err = _check_project_ownership(project, caller_user_id, is_admin)
+            if ownership_err:
+                return {"success": False, "error": ownership_err}
 
             project.status = target_status
             session.add(project)
@@ -1303,6 +1366,10 @@ async def update_task(
         except ValueError:
             return {"success": False, "error": f"Invalid task_id: {task_id}"}
 
+        caller_user_id, is_admin, auth_err = await _resolve_caller_for_project_auth(auth_email)
+        if auth_err or caller_user_id is None:
+            return {"success": False, "error": auth_err or "Could not authorize"}
+
         async with get_async_session() as session:
             task_result = await session.execute(
                 select(AgentTask)
@@ -1313,6 +1380,15 @@ async def update_task(
             task = task_result.scalars().first()
             if not task:
                 return {"success": False, "error": f"Task not found: {task_id}"}
+
+            if not is_admin:
+                # Owner check: load the project and compare creator_user_id.
+                project = await _load_project_for_task(session, task)
+                if project is None:
+                    return {"success": False, "error": f"Project not found for task: {task_id}"}
+                ownership_err = _check_project_ownership(project, caller_user_id, False)
+                if ownership_err:
+                    return {"success": False, "error": ownership_err}
 
             if title is not None:
                 task.title = title
@@ -1580,6 +1656,10 @@ async def update_project(
         except ValueError:
             return {"success": False, "error": f"Invalid project_id: {project_id}"}
 
+        caller_user_id, is_admin, auth_err = await _resolve_caller_for_project_auth(auth_email)
+        if auth_err or caller_user_id is None:
+            return {"success": False, "error": auth_err or "Could not authorize"}
+
         async with get_async_session() as session:
             proj_result = await session.execute(
                 select(AgentProject)
@@ -1589,6 +1669,9 @@ async def update_project(
             project = proj_result.scalars().first()
             if not project:
                 return {"success": False, "error": f"Project not found: {project_id}"}
+            ownership_err = _check_project_ownership(project, caller_user_id, is_admin)
+            if ownership_err:
+                return {"success": False, "error": ownership_err}
 
             if name is not None:
                 project.name = name

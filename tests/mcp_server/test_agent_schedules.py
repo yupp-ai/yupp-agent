@@ -378,6 +378,11 @@ class TestCreateRecurringAgentScheduleTool:
 
 
 class TestCancelAgentSchedule:
+    """The MCP tool delegates DB work to cancel_agent_schedule_by_id; these
+    tests cover the tool's contract (auth, permission, admin bypass, caller
+    resolution). The helper itself has its own tests in
+    test_scheduled_agent_call_helpers.py."""
+
     async def test_unauthenticated_returns_error(self) -> None:
         with patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="unknown"):
             result = await cancel_agent_schedule(str(uuid.uuid4()))
@@ -395,171 +400,14 @@ class TestCancelAgentSchedule:
         assert result["success"] is False
         assert "permission" in result["error"].lower()
 
-    async def test_invalid_uuid_returns_error(self) -> None:
-        caller_id = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
-
-        with (
-            patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@example.com"),
-            patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
-            patch(
-                "ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email",
-                new=AsyncMock(return_value=(caller_id, None)),
-            ),
-        ):
-            result = await cancel_agent_schedule("not-a-uuid")
-
-        assert result["success"] is False
-        assert "Invalid" in result["error"]
-
-    async def test_successful_cancellation(self) -> None:
-        caller_id = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
-        schedule_id = str(uuid.uuid4())
-
-        # rowcount = 1 → success
-        exec_result = MagicMock()
-        exec_result.rowcount = 1
-        session = AsyncMock()
-        session.execute = AsyncMock(return_value=exec_result)
-        session.commit = AsyncMock()
-
-        ctx = MagicMock()
-        ctx.__aenter__ = AsyncMock(return_value=session)
-        ctx.__aexit__ = AsyncMock(return_value=False)
-
-        with (
-            patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@example.com"),
-            patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
-            patch(
-                "ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email",
-                new=AsyncMock(return_value=(caller_id, None)),
-            ),
-            patch("ypl.mcp_server.tools.agent_schedules.get_async_session", return_value=ctx),
-        ):
-            result = await cancel_agent_schedule(schedule_id)
-
-        assert result["success"] is True
-        assert result["status"] == "CANCELLED"
-
-    async def test_schedule_not_found(self) -> None:
-        caller_id = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
-        schedule_id = str(uuid.uuid4())
-
-        # First execute: rowcount=0 (update failed)
-        # Second execute: one_or_none=None (schedule doesn't exist)
-        update_result = MagicMock()
-        update_result.rowcount = 0
-        check_result = MagicMock()
-        check_result.one_or_none = MagicMock(return_value=None)
-
-        session = AsyncMock()
-        session.execute = AsyncMock(side_effect=[update_result, check_result])
-        session.commit = AsyncMock()
-
-        ctx = MagicMock()
-        ctx.__aenter__ = AsyncMock(return_value=session)
-        ctx.__aexit__ = AsyncMock(return_value=False)
-
-        with (
-            patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@example.com"),
-            patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
-            patch(
-                "ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email",
-                new=AsyncMock(return_value=(caller_id, None)),
-            ),
-            patch("ypl.mcp_server.tools.agent_schedules.get_async_session", return_value=ctx),
-        ):
-            result = await cancel_agent_schedule(schedule_id)
-
-        assert result["success"] is False
-        assert "not found" in result["error"].lower()
-
-    async def test_wrong_owner_returns_error(self) -> None:
-        caller_id = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
-        other_id = uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
-        schedule_id = str(uuid.uuid4())
-
-        update_result = MagicMock()
-        update_result.rowcount = 0
-
-        existing = MagicMock()
-        existing.created_by_user = other_id
-        from ypl.db.agent_harness import AgentScheduleStatus
-
-        existing.status = AgentScheduleStatus.PENDING
-
-        check_result = MagicMock()
-        check_result.one_or_none = MagicMock(return_value=existing)
-
-        session = AsyncMock()
-        session.execute = AsyncMock(side_effect=[update_result, check_result])
-        session.commit = AsyncMock()
-
-        ctx = MagicMock()
-        ctx.__aenter__ = AsyncMock(return_value=session)
-        ctx.__aexit__ = AsyncMock(return_value=False)
-
-        with (
-            patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@example.com"),
-            patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
-            patch(
-                "ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email",
-                new=AsyncMock(return_value=(caller_id, None)),
-            ),
-            patch("ypl.mcp_server.tools.agent_schedules.get_async_session", return_value=ctx),
-        ):
-            result = await cancel_agent_schedule(schedule_id)
-
-        assert result["success"] is False
-        assert "only cancel" in result["error"].lower()
-
-    async def test_wrong_status_returns_error(self) -> None:
-        caller_id = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
-        schedule_id = str(uuid.uuid4())
-
-        update_result = MagicMock()
-        update_result.rowcount = 0
-
-        from ypl.db.agent_harness import AgentScheduleStatus
-
-        existing = MagicMock()
-        existing.created_by_user = caller_id
-        existing.status = AgentScheduleStatus.COMPLETED
-
-        check_result = MagicMock()
-        check_result.one_or_none = MagicMock(return_value=existing)
-
-        session = AsyncMock()
-        session.execute = AsyncMock(side_effect=[update_result, check_result])
-        session.commit = AsyncMock()
-
-        ctx = MagicMock()
-        ctx.__aenter__ = AsyncMock(return_value=session)
-        ctx.__aexit__ = AsyncMock(return_value=False)
-
-        with (
-            patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@example.com"),
-            patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
-            patch(
-                "ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email",
-                new=AsyncMock(return_value=(caller_id, None)),
-            ),
-            patch("ypl.mcp_server.tools.agent_schedules.get_async_session", return_value=ctx),
-        ):
-            result = await cancel_agent_schedule(schedule_id)
-
-        assert result["success"] is False
-        assert "Cannot cancel" in result["error"]
-
     async def test_user_id_resolution_failure(self) -> None:
+        """When neither X-User-ID nor the auth email resolve to a user, fail fast."""
         with (
             patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@example.com"),
             patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
+            patch("ypl.mcp_server.authorization.get_requesting_user_id", return_value=None),
             patch(
-                "ypl.mcp_server.tools.agent_schedules.get_requesting_user_id",
-                return_value=None,
-            ),
-            patch(
-                "ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email",
+                "ypl.mcp_server.authorization.resolve_user_id_from_email",
                 new=AsyncMock(return_value=(None, "User not found")),
             ),
         ):
@@ -568,27 +416,61 @@ class TestCancelAgentSchedule:
         assert result["success"] is False
         assert "User not found" in result["error"]
 
-    async def test_requesting_user_id_preferred_over_email(self) -> None:
-        """When AHS injects X-User-ID, cancel must use it and NOT hit email resolution.
-
-        This is the regression fix for the CREATE/CANCEL auth asymmetry: the
-        schedule was stamped with the triggering user's id via
-        ``get_requesting_user_id()`` at create time, so cancel must accept the
-        same identity.
-        """
-        caller_id = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    async def test_delegates_to_helper_as_non_admin(self) -> None:
+        """Non-admin caller: MCP tool calls helper with allow_any_owner=False."""
+        caller_id = str(uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
         schedule_id = str(uuid.uuid4())
+        helper = AsyncMock(return_value={"success": True, "agent_schedule_id": schedule_id, "status": "CANCELLED"})
 
-        exec_result = MagicMock()
-        exec_result.rowcount = 1
-        session = AsyncMock()
-        session.execute = AsyncMock(return_value=exec_result)
-        session.commit = AsyncMock()
+        with (
+            patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="user@example.com"),
+            patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
+            patch("ypl.mcp_server.authorization.get_requesting_user_id", return_value=caller_id),
+            patch(
+                "ypl.mcp_server.tools.agent_schedules.has_permission_by_user_id_cached",
+                new=AsyncMock(return_value=False),
+            ),
+            patch("ypl.mcp_server.tools.agent_schedules.cancel_agent_schedule_by_id", new=helper),
+        ):
+            result = await cancel_agent_schedule(schedule_id)
 
-        ctx = MagicMock()
-        ctx.__aenter__ = AsyncMock(return_value=session)
-        ctx.__aexit__ = AsyncMock(return_value=False)
+        assert result["success"] is True
+        helper.assert_awaited_once()
+        kwargs = helper.await_args.kwargs
+        assert kwargs["caller_user_id"] == caller_id
+        assert kwargs["allow_any_owner"] is False
 
+    async def test_admin_bypass_passes_allow_any_owner(self) -> None:
+        """Caller holding MANAGE_AGENT_SCHEDULES passes allow_any_owner=True
+        so the helper can cancel a schedule owned by another user."""
+        caller_id = str(uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
+        schedule_id = str(uuid.uuid4())
+        helper = AsyncMock(return_value={"success": True, "agent_schedule_id": schedule_id, "status": "CANCELLED"})
+
+        with (
+            patch(
+                "ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="admin@example.com"
+            ),
+            patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
+            patch("ypl.mcp_server.authorization.get_requesting_user_id", return_value=caller_id),
+            patch(
+                "ypl.mcp_server.tools.agent_schedules.has_permission_by_user_id_cached",
+                new=AsyncMock(return_value=True),  # ← MANAGE_AGENT_SCHEDULES granted
+            ),
+            patch("ypl.mcp_server.tools.agent_schedules.cancel_agent_schedule_by_id", new=helper),
+        ):
+            result = await cancel_agent_schedule(schedule_id)
+
+        assert result["success"] is True
+        kwargs = helper.await_args.kwargs
+        assert kwargs["allow_any_owner"] is True
+
+    async def test_requesting_user_id_preferred_over_email(self) -> None:
+        """When the middleware populated X-User-ID, the MCP tool uses that
+        value as the caller, not the token's auth email."""
+        caller_id = str(uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
+        schedule_id = str(uuid.uuid4())
+        helper = AsyncMock(return_value={"success": True, "agent_schedule_id": schedule_id, "status": "CANCELLED"})
         email_resolver = AsyncMock(return_value=(None, "should not be called"))
 
         with (
@@ -596,14 +478,19 @@ class TestCancelAgentSchedule:
                 "ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="agent@example.com"
             ),
             patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
-            patch("ypl.mcp_server.tools.agent_schedules.get_requesting_user_id", return_value=str(caller_id)),
-            patch("ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email", new=email_resolver),
-            patch("ypl.mcp_server.tools.agent_schedules.get_async_session", return_value=ctx),
+            patch("ypl.mcp_server.authorization.get_requesting_user_id", return_value=caller_id),
+            patch("ypl.mcp_server.authorization.resolve_user_id_from_email", new=email_resolver),
+            patch(
+                "ypl.mcp_server.tools.agent_schedules.has_permission_by_user_id_cached",
+                new=AsyncMock(return_value=False),
+            ),
+            patch("ypl.mcp_server.tools.agent_schedules.cancel_agent_schedule_by_id", new=helper),
         ):
             result = await cancel_agent_schedule(schedule_id)
 
         assert result["success"] is True
         email_resolver.assert_not_awaited()
+        assert helper.await_args.kwargs["caller_user_id"] == caller_id
 
 
 # ---------------------------------------------------------------------------
@@ -634,9 +521,9 @@ class TestEditAgentSchedule:
         with (
             patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@example.com"),
             patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
-            patch("ypl.mcp_server.tools.agent_schedules.get_requesting_user_id", return_value=None),
+            patch("ypl.mcp_server.authorization.get_requesting_user_id", return_value=None),
             patch(
-                "ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email",
+                "ypl.mcp_server.authorization.resolve_user_id_from_email",
                 new=AsyncMock(return_value=(None, "User not found")),
             ),
         ):
@@ -663,8 +550,12 @@ class TestEditAgentSchedule:
                 "ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="agent@example.com"
             ),
             patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
-            patch("ypl.mcp_server.tools.agent_schedules.get_requesting_user_id", return_value=str(caller_id)),
-            patch("ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email", new=email_resolver),
+            patch("ypl.mcp_server.authorization.get_requesting_user_id", return_value=str(caller_id)),
+            patch("ypl.mcp_server.authorization.resolve_user_id_from_email", new=email_resolver),
+            patch(
+                "ypl.mcp_server.tools.agent_schedules.has_permission_by_user_id_cached",
+                new=AsyncMock(return_value=False),
+            ),
             patch("ypl.mcp_server.tools.agent_schedules.edit_agent_schedule_fields", new=editor),
         ):
             result = await edit_agent_schedule(schedule_id, message="updated message")
@@ -687,8 +578,12 @@ class TestEditAgentSchedule:
         with (
             patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@example.com"),
             patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
-            patch("ypl.mcp_server.tools.agent_schedules.get_requesting_user_id", return_value=None),
-            patch("ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email", new=email_resolver),
+            patch("ypl.mcp_server.authorization.get_requesting_user_id", return_value=None),
+            patch("ypl.mcp_server.authorization.resolve_user_id_from_email", new=email_resolver),
+            patch(
+                "ypl.mcp_server.tools.agent_schedules.has_permission_by_user_id_cached",
+                new=AsyncMock(return_value=False),
+            ),
             patch("ypl.mcp_server.tools.agent_schedules.edit_agent_schedule_fields", new=editor),
         ):
             result = await edit_agent_schedule(schedule_id, name="new name")
@@ -747,12 +642,12 @@ class TestListAgentSchedules:
         assert "permission" in result["error"].lower()
 
     async def test_invalid_status_returns_error(self) -> None:
-        caller_id = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+        caller_id = str(uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
         with (
             patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@example.com"),
             patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
             patch(
-                "ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email",
+                "ypl.mcp_server.tools.agent_schedules.resolve_caller_user_id",
                 new=AsyncMock(return_value=(caller_id, None)),
             ),
         ):
@@ -762,12 +657,12 @@ class TestListAgentSchedules:
         assert "Invalid status" in result["error"]
 
     async def test_invalid_schedule_type_returns_error(self) -> None:
-        caller_id = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+        caller_id = str(uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
         with (
             patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@example.com"),
             patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
             patch(
-                "ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email",
+                "ypl.mcp_server.tools.agent_schedules.resolve_caller_user_id",
                 new=AsyncMock(return_value=(caller_id, None)),
             ),
         ):
@@ -777,7 +672,7 @@ class TestListAgentSchedules:
         assert "Invalid schedule_type" in result["error"]
 
     async def test_success_returns_schedules(self) -> None:
-        caller_id = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+        caller_id = str(uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
         rows = [_make_schedule_row(), _make_schedule_row(agent_name="bookkeeper")]
 
         exec_result = MagicMock()
@@ -793,7 +688,7 @@ class TestListAgentSchedules:
             patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@example.com"),
             patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
             patch(
-                "ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email",
+                "ypl.mcp_server.tools.agent_schedules.resolve_caller_user_id",
                 new=AsyncMock(return_value=(caller_id, None)),
             ),
             patch("ypl.mcp_server.tools.agent_schedules.get_async_session_read_replica", return_value=ctx),
@@ -804,7 +699,7 @@ class TestListAgentSchedules:
         assert result["count"] == 2
 
     async def test_message_truncated_at_100_chars(self) -> None:
-        caller_id = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+        caller_id = str(uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
         long_message = "A" * 150
         rows = [_make_schedule_row(message=long_message)]
 
@@ -821,7 +716,7 @@ class TestListAgentSchedules:
             patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@example.com"),
             patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
             patch(
-                "ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email",
+                "ypl.mcp_server.tools.agent_schedules.resolve_caller_user_id",
                 new=AsyncMock(return_value=(caller_id, None)),
             ),
             patch("ypl.mcp_server.tools.agent_schedules.get_async_session_read_replica", return_value=ctx),
@@ -834,9 +729,14 @@ class TestListAgentSchedules:
         assert len(msg) == 103  # 100 + "..."
 
     async def test_created_by_filter_resolve_error(self) -> None:
+        caller_id = str(uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
         with (
             patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@example.com"),
             patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
+            patch(
+                "ypl.mcp_server.tools.agent_schedules.resolve_caller_user_id",
+                new=AsyncMock(return_value=(caller_id, None)),
+            ),
             patch(
                 "ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email",
                 new=AsyncMock(return_value=(None, "Not found")),
@@ -876,8 +776,8 @@ class TestListAgentSchedules:
                 return_value="agcouch-service@example.com",
             ),
             patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
-            patch("ypl.mcp_server.tools.agent_schedules.get_requesting_user_id", return_value=caller_id),
-            patch("ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email", new=email_resolver),
+            patch("ypl.mcp_server.authorization.get_requesting_user_id", return_value=caller_id),
+            patch("ypl.mcp_server.authorization.resolve_user_id_from_email", new=email_resolver),
             patch("ypl.mcp_server.tools.agent_schedules.get_async_session_read_replica", return_value=ctx),
         ):
             result = await list_agent_schedules()
@@ -887,11 +787,40 @@ class TestListAgentSchedules:
         # Header-preferred path: email resolver must not be consulted.
         email_resolver.assert_not_awaited()
 
-    async def test_explicit_created_by_overrides_requesting_user_id(self) -> None:
-        """When the caller passes an explicit created_by email, that email is
-        resolved and used — even if X-User-ID is present. This preserves the
-        ability to list another user's schedules by email (e.g. admin flows).
+    async def test_explicit_created_by_requires_admin_permission(self) -> None:
+        """Non-admin caller passing created_by=<someone_else@email> is rejected.
+
+        Under the new policy, listing another user's schedules requires
+        MANAGE_AGENT_SCHEDULES — a regular user with USE_MCP can only list
+        their own.
         """
+        caller_id = str(uuid.UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"))
+        other_user_id = str(uuid.UUID("dddddddd-dddd-dddd-dddd-dddddddddddd"))
+
+        with (
+            patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@example.com"),
+            patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
+            patch(
+                "ypl.mcp_server.tools.agent_schedules.resolve_caller_user_id",
+                new=AsyncMock(return_value=(caller_id, None)),
+            ),
+            patch(
+                "ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email",
+                new=AsyncMock(return_value=(other_user_id, None)),
+            ),
+            patch(
+                "ypl.mcp_server.tools.agent_schedules.has_permission_by_user_id_cached",
+                new=AsyncMock(return_value=False),  # ← caller is NOT admin
+            ),
+        ):
+            result = await list_agent_schedules(created_by="other@example.com")
+
+        assert result["success"] is False
+        assert "MANAGE_AGENT_SCHEDULES" in result["error"]
+
+    async def test_admin_can_list_another_users_schedules(self) -> None:
+        """Admin holding MANAGE_AGENT_SCHEDULES can list any user's schedules
+        when they pass created_by=<email>."""
         caller_id = str(uuid.UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"))
         other_user_id = str(uuid.UUID("dddddddd-dddd-dddd-dddd-dddddddddddd"))
         rows = [_make_schedule_row()]
@@ -904,23 +833,33 @@ class TestListAgentSchedules:
         ctx.__aenter__ = AsyncMock(return_value=session)
         ctx.__aexit__ = AsyncMock(return_value=False)
 
-        email_resolver = AsyncMock(return_value=(other_user_id, None))
-
         with (
-            patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@example.com"),
+            patch(
+                "ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="admin@example.com"
+            ),
             patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
-            patch("ypl.mcp_server.tools.agent_schedules.get_requesting_user_id", return_value=caller_id),
-            patch("ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email", new=email_resolver),
+            patch(
+                "ypl.mcp_server.tools.agent_schedules.resolve_caller_user_id",
+                new=AsyncMock(return_value=(caller_id, None)),
+            ),
+            patch(
+                "ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email",
+                new=AsyncMock(return_value=(other_user_id, None)),
+            ),
+            patch(
+                "ypl.mcp_server.tools.agent_schedules.has_permission_by_user_id_cached",
+                new=AsyncMock(return_value=True),  # ← admin
+            ),
             patch("ypl.mcp_server.tools.agent_schedules.get_async_session_read_replica", return_value=ctx),
         ):
             result = await list_agent_schedules(created_by="other@example.com")
 
         assert result["success"] is True
-        email_resolver.assert_awaited_once_with("other@example.com")
+        assert result["count"] == 1
 
     async def test_default_falls_back_to_auth_email_when_no_header(self) -> None:
-        """Without an X-User-ID header, the list tool defaults to the
-        authenticated email — matching the pre-fix behavior for non-AHS
+        """Without an X-User-ID header, the caller resolves from the
+        authenticated email — matching the behavior for non-admin
         DevToken callers (e.g. a local dev with a personal token)."""
         caller_id = str(uuid.UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"))
         rows = [_make_schedule_row()]
@@ -938,8 +877,8 @@ class TestListAgentSchedules:
         with (
             patch("ypl.mcp_server.tools.agent_schedules.get_authenticated_user_email", return_value="dev@example.com"),
             patch("ypl.mcp_server.tools.agent_schedules.has_permission_cached", new=AsyncMock(return_value=True)),
-            patch("ypl.mcp_server.tools.agent_schedules.get_requesting_user_id", return_value=None),
-            patch("ypl.mcp_server.tools.agent_schedules.resolve_user_id_from_email", new=email_resolver),
+            patch("ypl.mcp_server.authorization.get_requesting_user_id", return_value=None),
+            patch("ypl.mcp_server.authorization.resolve_user_id_from_email", new=email_resolver),
             patch("ypl.mcp_server.tools.agent_schedules.get_async_session_read_replica", return_value=ctx),
         ):
             result = await list_agent_schedules()
