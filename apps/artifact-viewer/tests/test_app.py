@@ -148,14 +148,188 @@ class TestArtifactPage:
 class TestHome:
     def test_lists_recent(self, client: TestClient) -> None:
         _sign_in(client)
-        with patch(
-            "artifact_viewer.ahs_client.list_recent",
-            new=AsyncMock(return_value={"artifacts": [_meta(title="row-a"), _meta(title="row-b")]}),
+        with (
+            patch(
+                "artifact_viewer.ahs_client.list_recent",
+                new=AsyncMock(
+                    return_value={
+                        "artifacts": [_meta(title="row-a"), _meta(title="row-b")],
+                        "total": 2,
+                    }
+                ),
+            ),
+            patch(
+                "artifact_viewer.ahs_client.list_creators",
+                new=AsyncMock(return_value={"users": [], "agents": []}),
+            ),
         ):
             resp = client.get("/")
         assert resp.status_code == 200
         assert "row-a" in resp.text
         assert "row-b" in resp.text
+        # Filter row + apply button must be on the page.
+        assert 'class="filter-bar"' in resp.text
+        assert "Apply" in resp.text
+
+    def test_default_page_size_is_20(self, client: TestClient) -> None:
+        _sign_in(client)
+        list_recent = AsyncMock(return_value={"artifacts": [], "total": 0})
+        with (
+            patch("artifact_viewer.ahs_client.list_recent", new=list_recent),
+            patch(
+                "artifact_viewer.ahs_client.list_creators",
+                new=AsyncMock(return_value={"users": [], "agents": []}),
+            ),
+        ):
+            resp = client.get("/")
+        assert resp.status_code == 200
+        assert list_recent.await_count == 1
+        assert list_recent.await_args.kwargs["limit"] == 20
+        assert list_recent.await_args.kwargs["offset"] == 0
+        assert list_recent.await_args.kwargs["include_total"] is True
+
+    def test_forwards_filters_and_pagination(self, client: TestClient) -> None:
+        _sign_in(client)
+        list_recent = AsyncMock(return_value={"artifacts": [], "total": 0})
+        with (
+            patch("artifact_viewer.ahs_client.list_recent", new=list_recent),
+            patch(
+                "artifact_viewer.ahs_client.list_creators",
+                new=AsyncMock(return_value={"users": [], "agents": []}),
+            ),
+        ):
+            resp = client.get(
+                "/",
+                params={
+                    "type": "CODE_REVIEW",
+                    "creator_user_id": "user-1",
+                    "creator_agent_id": "11111111-2222-3333-4444-555555555555",
+                    "created_after": "2026-04-01",
+                    "created_before": "2026-04-15",
+                    "offset": 40,
+                    "limit": 20,
+                },
+            )
+        assert resp.status_code == 200
+        kwargs = list_recent.await_args.kwargs
+        assert kwargs["artifact_type"] == "CODE_REVIEW"
+        assert kwargs["creator_user_id"] == "user-1"
+        assert kwargs["creator_agent_id"] == "11111111-2222-3333-4444-555555555555"
+        # Date inputs are normalized to ISO timestamps; the upper bound walks
+        # to the next midnight so the picker is date-inclusive.
+        assert kwargs["created_after"] == "2026-04-01T00:00:00+00:00"
+        assert kwargs["created_before"] == "2026-04-16T00:00:00+00:00"
+        assert kwargs["offset"] == 40
+        assert kwargs["limit"] == 20
+
+    def test_invalid_type_filter_is_dropped(self, client: TestClient) -> None:
+        # Defense in depth: a stray query string with a bogus type value
+        # falls back to "no filter" rather than 400ing the upstream call.
+        _sign_in(client)
+        list_recent = AsyncMock(return_value={"artifacts": [], "total": 0})
+        with (
+            patch("artifact_viewer.ahs_client.list_recent", new=list_recent),
+            patch(
+                "artifact_viewer.ahs_client.list_creators",
+                new=AsyncMock(return_value={"users": [], "agents": []}),
+            ),
+        ):
+            resp = client.get("/", params={"type": "NOT-A-REAL-TYPE"})
+        assert resp.status_code == 200
+        assert list_recent.await_args.kwargs["artifact_type"] is None
+
+    def test_renders_creator_dropdown_options(self, client: TestClient) -> None:
+        _sign_in(client)
+        with (
+            patch(
+                "artifact_viewer.ahs_client.list_recent",
+                new=AsyncMock(return_value={"artifacts": [], "total": 0}),
+            ),
+            patch(
+                "artifact_viewer.ahs_client.list_creators",
+                new=AsyncMock(
+                    return_value={
+                        "users": [{"id": "user-1", "name": "Alice"}],
+                        "agents": [{"id": "agent-uuid", "name": "eng-raccoon"}],
+                    }
+                ),
+            ),
+        ):
+            resp = client.get("/")
+        assert resp.status_code == 200
+        assert "Alice" in resp.text
+        assert "eng-raccoon" in resp.text
+
+    def test_pagination_links(self, client: TestClient) -> None:
+        # Page 2 of 3 (offset=20, total=50) should show both Prev and Next.
+        _sign_in(client)
+        with (
+            patch(
+                "artifact_viewer.ahs_client.list_recent",
+                new=AsyncMock(
+                    return_value={
+                        "artifacts": [_meta(title=f"row-{i}") for i in range(20)],
+                        "total": 50,
+                    }
+                ),
+            ),
+            patch(
+                "artifact_viewer.ahs_client.list_creators",
+                new=AsyncMock(return_value={"users": [], "agents": []}),
+            ),
+        ):
+            resp = client.get("/", params={"offset": 20})
+        assert resp.status_code == 200
+        # Pager links round-trip the offset.
+        assert "offset=0" in resp.text  # Prev (max(0, 20-20))
+        assert "offset=40" in resp.text  # Next (20+20)
+        # Window indicator: "Showing 21-40 of 50" (en dash in the rendered text).
+        assert "21" in resp.text
+        assert "40" in resp.text
+        assert "50" in resp.text
+
+    def test_no_pagination_links_when_only_one_page(self, client: TestClient) -> None:
+        _sign_in(client)
+        with (
+            patch(
+                "artifact_viewer.ahs_client.list_recent",
+                new=AsyncMock(
+                    return_value={
+                        "artifacts": [_meta(title="only-row")],
+                        "total": 1,
+                    }
+                ),
+            ),
+            patch(
+                "artifact_viewer.ahs_client.list_creators",
+                new=AsyncMock(return_value={"users": [], "agents": []}),
+            ),
+        ):
+            resp = client.get("/")
+        assert resp.status_code == 200
+        # Neither prev nor next anchor should appear on a single-page result.
+        assert 'rel="prev"' not in resp.text
+        assert 'rel="next"' not in resp.text
+
+    def test_creators_endpoint_failure_does_not_break_page(self, client: TestClient) -> None:
+        from artifact_viewer.ahs_client import AHSError
+
+        _sign_in(client)
+        with (
+            patch(
+                "artifact_viewer.ahs_client.list_recent",
+                new=AsyncMock(return_value={"artifacts": [], "total": 0}),
+            ),
+            patch(
+                "artifact_viewer.ahs_client.list_creators",
+                new=AsyncMock(side_effect=AHSError(503, "creators down")),
+            ),
+        ):
+            resp = client.get("/")
+        # The page still renders even though the creator dropdown couldn't be
+        # populated — we don't want a 502 every time the optional sub-call fails.
+        assert resp.status_code == 200
+        assert "filter-bar" in resp.text
 
 
 class TestSearch:
@@ -320,3 +494,97 @@ class TestAHSClient:
 
         assert captured["headers"].get("x-api-key") == "test-key"
         assert "/ahs/artifacts?limit=5" in captured["url"]
+
+    async def test_list_recent_omits_unset_filters(self) -> None:
+        """Empty / None filters must not be forwarded as ``key=`` query params."""
+        from artifact_viewer import ahs_client
+
+        captured_url: str = ""
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            nonlocal captured_url
+            captured_url = str(req.url)
+            return httpx.Response(200, json={"artifacts": [], "total": 0})
+
+        def fake_client() -> httpx.AsyncClient:
+            return httpx.AsyncClient(
+                base_url="http://ahs.test",
+                headers={"X-API-Key": "test-key"},
+                transport=httpx.MockTransport(handler),
+            )
+
+        with patch.object(ahs_client, "_client", fake_client):
+            await ahs_client.list_recent(
+                limit=20,
+                offset=0,
+                artifact_type=None,
+                creator_user_id=None,
+                creator_agent_id=None,
+                created_after=None,
+                created_before=None,
+                include_total=True,
+            )
+
+        assert "limit=20" in captured_url
+        assert "offset=0" in captured_url
+        assert "include_total=true" in captured_url
+        for absent in ("type=", "creator_user_id=", "creator_agent_id=", "created_after=", "created_before="):
+            assert absent not in captured_url
+
+    async def test_list_recent_forwards_all_filters(self) -> None:
+        from artifact_viewer import ahs_client
+
+        captured_url: str = ""
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            nonlocal captured_url
+            captured_url = str(req.url)
+            return httpx.Response(200, json={"artifacts": [], "total": 0})
+
+        def fake_client() -> httpx.AsyncClient:
+            return httpx.AsyncClient(
+                base_url="http://ahs.test",
+                headers={"X-API-Key": "test-key"},
+                transport=httpx.MockTransport(handler),
+            )
+
+        with patch.object(ahs_client, "_client", fake_client):
+            await ahs_client.list_recent(
+                limit=20,
+                offset=20,
+                artifact_type="TEXT",
+                creator_user_id="user-1",
+                creator_agent_id="11111111-2222-3333-4444-555555555555",
+                created_after="2026-04-01T00:00:00+00:00",
+                created_before="2026-05-01T00:00:00+00:00",
+            )
+
+        assert "type=TEXT" in captured_url
+        assert "creator_user_id=user-1" in captured_url
+        assert "creator_agent_id=11111111-2222-3333-4444-555555555555" in captured_url
+        # httpx URL-encodes `:` and `+`; just sanity-check that the keys are present.
+        assert "created_after=" in captured_url
+        assert "created_before=" in captured_url
+
+    async def test_list_creators_hits_creators_path(self) -> None:
+        from artifact_viewer import ahs_client
+
+        captured_url: str = ""
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            nonlocal captured_url
+            captured_url = str(req.url)
+            return httpx.Response(200, json={"users": [], "agents": []})
+
+        def fake_client() -> httpx.AsyncClient:
+            return httpx.AsyncClient(
+                base_url="http://ahs.test",
+                headers={"X-API-Key": "test-key"},
+                transport=httpx.MockTransport(handler),
+            )
+
+        with patch.object(ahs_client, "_client", fake_client):
+            data = await ahs_client.list_creators()
+
+        assert "/ahs/artifacts/creators" in captured_url
+        assert data == {"users": [], "agents": []}

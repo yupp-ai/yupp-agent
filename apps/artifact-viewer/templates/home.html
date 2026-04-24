@@ -3,6 +3,106 @@
 {% block title %}Recent artifacts · Artifact Viewer{% endblock %}
 {% block content %}
 <h1>Recent artifacts</h1>
-<p class="muted">Showing the 20 most recent non-archived artifacts. Use search above to find by title, slug, or attachment filename.</p>
+
+{#- Filter row. Submits via GET so URLs stay shareable / bookmarkable. We
+    deliberately omit the ``offset`` field so changing any filter resets to
+    page 1 (a stale offset against a freshly filtered list would confuse). -#}
+<form class="filter-bar" action="/" method="get" role="search" aria-label="Filter artifacts">
+    <div class="filter-field">
+        <label for="filter-type">Type</label>
+        <select id="filter-type" name="type">
+            <option value="">All types</option>
+            {% for value, label in type_options %}
+                <option value="{{ value }}" {% if filters.type == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div class="filter-field">
+        <label for="filter-user">Creator (person)</label>
+        <select id="filter-user" name="creator_user_id">
+            <option value="">All people</option>
+            {% for u in creators.users %}
+                <option value="{{ u.id }}" {% if filters.creator_user_id == u.id %}selected{% endif %}>
+                    {{ u.name or u.id }}
+                </option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div class="filter-field">
+        <label for="filter-agent">Creator (agent)</label>
+        <select id="filter-agent" name="creator_agent_id">
+            <option value="">All agents</option>
+            {% for a in creators.agents %}
+                <option value="{{ a.id }}" {% if filters.creator_agent_id == a.id %}selected{% endif %}>
+                    {{ a.name or a.id }}
+                </option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div class="filter-field">
+        <label for="filter-after">From</label>
+        <input id="filter-after" type="date" name="created_after" value="{{ filters.created_after }}">
+    </div>
+
+    <div class="filter-field">
+        <label for="filter-before">To</label>
+        <input id="filter-before" type="date" name="created_before" value="{{ filters.created_before }}">
+    </div>
+
+    {#- Preserve page-size selection across submits but always reset to page 1. -#}
+    <input type="hidden" name="limit" value="{{ limit }}">
+
+    <div class="filter-actions">
+        <button type="submit" class="filter-apply">Apply</button>
+        {% if filters.type or filters.creator_user_id or filters.creator_agent_id or filters.created_after or filters.created_before %}
+            <a class="filter-clear" href="/">Clear</a>
+        {% endif %}
+    </div>
+</form>
+
+<p class="muted">
+    {% if total is not none %}
+        {% set window_end = offset + (artifacts|length) %}
+        {% if total == 0 %}
+            No artifacts match the current filters.
+        {% else %}
+            Showing {{ offset + 1 }}–{{ window_end }} of {{ total }} non-archived artifact{{ '' if total == 1 else 's' }}.
+        {% endif %}
+    {% else %}
+        Showing the most recent non-archived artifacts.
+    {% endif %}
+    Use search above to find by title, slug, or attachment filename.
+</p>
+
 {{ artifact_table(artifacts) }}
+
+{#- Pager. Mirrors the search page's URL shape and round-trips every active
+    filter so Prev/Next don't silently widen the result set. -#}
+{% set base_qs = {
+    'type': filters.type,
+    'creator_user_id': filters.creator_user_id,
+    'creator_agent_id': filters.creator_agent_id,
+    'created_after': filters.created_after,
+    'created_before': filters.created_before,
+    'limit': limit,
+} %}
+{% macro pager_link(target_offset, label, rel) %}
+    {%- set parts = [] -%}
+    {%- for k, v in base_qs.items() -%}
+        {%- if v not in (none, '') -%}{%- set _ = parts.append(k ~ '=' ~ (v|urlencode)) -%}{%- endif -%}
+    {%- endfor -%}
+    {%- set _ = parts.append('offset=' ~ target_offset) -%}
+    <a href="/?{{ parts|join('&') }}" rel="{{ rel }}">{{ label }}</a>
+{%- endmacro %}
+<nav class="pager" aria-label="Pagination">
+    {% if has_prev %}
+        {{ pager_link(prev_offset, '← Previous', 'prev') }}
+    {% endif %}
+    {% if has_next %}
+        {{ pager_link(next_offset, 'Next →', 'next') }}
+    {% endif %}
+</nav>
 {% endblock %}
