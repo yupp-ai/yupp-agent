@@ -298,3 +298,75 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
 .artifact-footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid var(--border); }
 
 .pager { margin-top: 16px; display: flex; gap: 16px; }
+
+/* --- Filter bar (recent artifacts page) --- */
+
+.filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 10px 12px;
+    margin: 8px 0 16px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-alt);
+}
+
+.filter-bar .filter-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.filter-bar label {
+    font-size: 11px;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+
+.filter-bar select,
+.filter-bar input[type="date"] {
+    padding: 5px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--fg);
+    font: inherit;
+    font-size: 13px;
+    /* Keep dropdowns from blowing the row apart on long labels. */
+    max-width: 220px;
+}
+
+.filter-bar input[type="date"] {
+    /* Native date control has its own intrinsic sizing; pin it so the row
+       layout stays consistent across browsers. */
+    min-width: 140px;
+}
+
+.filter-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+}
+
+.filter-apply {
+    padding: 6px 14px;
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    background: var(--accent);
+    color: #fff;
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+}
+.filter-apply:hover { filter: brightness(1.05); }
+
+.filter-clear {
+    font-size: 12px;
+    color: var(--fg-muted);
+}
+.filter-clear:hover { color: var(--accent); }

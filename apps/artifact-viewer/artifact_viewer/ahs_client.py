@@ -71,8 +71,37 @@ async def list_versions(slug: str) -> dict[str, Any]:
     return cast(dict[str, Any], await _get_json(f"/ahs/artifacts/by-slug/{slug}/versions"))
 
 
-async def list_recent(limit: int = 20, offset: int = 0) -> dict[str, Any]:
-    return cast(dict[str, Any], await _get_json("/ahs/artifacts", params={"limit": limit, "offset": offset}))
+async def list_recent(
+    limit: int = 20,
+    offset: int = 0,
+    *,
+    artifact_type: str | None = None,
+    creator_user_id: str | None = None,
+    creator_agent_id: str | None = None,
+    created_after: str | None = None,
+    created_before: str | None = None,
+    include_total: bool = False,
+) -> dict[str, Any]:
+    """Fetch artifacts via ``GET /ahs/artifacts``.
+
+    Empty / None filter values are not forwarded to AHS so the upstream
+    handler treats them as "no filter applied".
+    """
+    params: dict[str, Any] = {"limit": limit, "offset": offset}
+    if artifact_type:
+        # Upstream uses query name ``type`` (aliased on the FastAPI handler).
+        params["type"] = artifact_type
+    if creator_user_id:
+        params["creator_user_id"] = creator_user_id
+    if creator_agent_id:
+        params["creator_agent_id"] = creator_agent_id
+    if created_after:
+        params["created_after"] = created_after
+    if created_before:
+        params["created_before"] = created_before
+    if include_total:
+        params["include_total"] = "true"
+    return cast(dict[str, Any], await _get_json("/ahs/artifacts", params=params))
 
 
 async def search(query: str, limit: int = 50, offset: int = 0) -> dict[str, Any]:
@@ -80,6 +109,11 @@ async def search(query: str, limit: int = 50, offset: int = 0) -> dict[str, Any]
         dict[str, Any],
         await _get_json("/ahs/artifacts/search", params={"q": query, "limit": limit, "offset": offset}),
     )
+
+
+async def list_creators() -> dict[str, Any]:
+    """Fetch distinct creators (users + agents) for filter dropdowns."""
+    return cast(dict[str, Any], await _get_json("/ahs/artifacts/creators"))
 
 
 # ---------------------------------------------------------------------------

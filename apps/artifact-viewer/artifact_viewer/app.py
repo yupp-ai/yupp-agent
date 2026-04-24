@@ -18,7 +18,9 @@ Mount layout::
 
 from __future__ import annotations
 
+import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +39,51 @@ from artifact_viewer.config import settings
 from artifact_viewer.templating import templates
 
 _STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+# Default page size for the listing page; matches the upstream AHS limit.
+HOME_PAGE_SIZE = 20
+
+# Type filter options shown on the home page. Matches AgentArtifactType enum
+# values upstream — kept duplicated here so the viewer doesn't need to import
+# the AHS Python package (it talks to AHS purely over HTTP).
+_ARTIFACT_TYPE_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("TEXT", "📝 text"),
+    ("CODE_REVIEW", "🔍 code review"),
+    ("OTHER", "📦 other"),
+)
+_VALID_ARTIFACT_TYPES = frozenset(value for value, _ in _ARTIFACT_TYPE_OPTIONS)
+
+# YYYY-MM-DD — what the date inputs in the filter row produce.
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _logger() -> logging.Logger:
+    return logging.getLogger("artifact_viewer.app")
+
+
+def _normalize_date(raw: str | None, *, end_of_day: bool) -> str | None:
+    """Convert a ``YYYY-MM-DD`` filter value into an ISO-8601 timestamp.
+
+    The home page shows native ``<input type="date">`` controls, which post
+    back a bare date. Converting to a full timestamp here keeps the date math
+    on the server side: the "before" bound is exclusive and walks to the
+    *next* midnight so the picker behaves as a date-inclusive filter.
+    Returns ``None`` if the input doesn't match ``YYYY-MM-DD`` so a
+    fat-fingered query param doesn't 422 the upstream call.
+    """
+    if not raw or not _DATE_RE.match(raw):
+        return None
+    if end_of_day:
+        # Upstream uses `< created_before`, so add a day to make the picker
+        # behave as a date-inclusive upper bound.
+        from datetime import UTC, date, datetime, timedelta
+
+        try:
+            d = date.fromisoformat(raw)
+        except ValueError:
+            return None
+        return datetime.combine(d + timedelta(days=1), datetime.min.time(), tzinfo=UTC).isoformat()
+    return f"{raw}T00:00:00+00:00"
 
 
 # ---------------------------------------------------------------------------
@@ -57,17 +104,75 @@ def _current_user(request: Request) -> dict[str, str]:
 
 
 async def home(request: Request) -> Response:
+    """Recent artifacts page with a filter row and Prev/Next pagination.
+
+    Filter / paging state lives in the URL so links are bookmarkable and the
+    Prev/Next anchors round-trip every active filter. Default page size is
+    :data:`HOME_PAGE_SIZE` (20); the upper bound matches the AHS endpoint's
+    cap so a user can't request a giant page accidentally.
+    """
+    artifact_type = (request.query_params.get("type") or "").strip().upper() or None
+    if artifact_type and artifact_type not in _VALID_ARTIFACT_TYPES:
+        artifact_type = None
+    creator_user_id = (request.query_params.get("creator_user_id") or "").strip() or None
+    creator_agent_id = (request.query_params.get("creator_agent_id") or "").strip() or None
+    created_after = (request.query_params.get("created_after") or "").strip() or None
+    created_before = (request.query_params.get("created_before") or "").strip() or None
+    limit = _int_query(request, "limit", HOME_PAGE_SIZE, cap=200)
+    if limit <= 0:
+        limit = HOME_PAGE_SIZE
+    offset = _int_query(request, "offset", 0)
+
     try:
-        recent = await ahs_client.list_recent(limit=20)
+        recent = await ahs_client.list_recent(
+            limit=limit,
+            offset=offset,
+            artifact_type=artifact_type,
+            creator_user_id=creator_user_id,
+            creator_agent_id=creator_agent_id,
+            created_after=_normalize_date(created_after, end_of_day=False),
+            created_before=_normalize_date(created_before, end_of_day=True),
+            include_total=True,
+        )
     except AHSError as exc:
         return _error_page(request, exc, status_code=502)
+
+    # Creator dropdowns: failures here shouldn't break the page — the filter
+    # bar still renders (with raw-id text inputs) and the existing query
+    # params remain in effect.
+    creators: dict[str, Any] = {"users": [], "agents": []}
+    try:
+        creators = await ahs_client.list_creators()
+    except AHSError as exc:
+        _logger().warning("list_creators failed; rendering filter bar without dropdown options: %s", exc)
+
+    artifacts = recent.get("artifacts", []) or []
+    total = recent.get("total")
+    has_next = (total is not None and offset + limit < total) or (total is None and len(artifacts) == limit)
     return templates.TemplateResponse(
         request,
         "home.html",
         {
             "user": _current_user(request),
-            "artifacts": recent.get("artifacts", []),
+            "artifacts": artifacts,
             "query": "",
+            "filters": {
+                "type": artifact_type or "",
+                "creator_user_id": creator_user_id or "",
+                "creator_agent_id": creator_agent_id or "",
+                "created_after": created_after or "",
+                "created_before": created_before or "",
+            },
+            "creators": creators,
+            "type_options": _ARTIFACT_TYPE_OPTIONS,
+            "limit": limit,
+            "offset": offset,
+            "total": total,
+            "page_size": HOME_PAGE_SIZE,
+            "has_prev": offset > 0,
+            "has_next": has_next,
+            "prev_offset": max(0, offset - limit),
+            "next_offset": offset + limit,
         },
     )
 
