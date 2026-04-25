@@ -52,5 +52,9 @@ export function ChatFeed({ sessionId }: { sessionId: string }) {
     return merged.filter((i) => !TOOL_ITEM_TYPES.has(i.type))
   }, [sessionId, historyQuery.data?.messages, session.items, toolCallsVisible])
 
-  return <Feed items={items} />
+  return (
+    <div className="couch-feed">
+      <Feed items={items} />
+    </div>
+  )
 }

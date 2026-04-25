@@ -94,3 +94,56 @@
     @apply bg-background text-foreground antialiased;
   }
 }
+
+/*
+ * Couch is light-themed but @yupp/agents-ui ships with dark-theme Tailwind
+ * classes baked in (originally for war-room): text-zinc-{50,100,200,300},
+ * bg-zinc-{800..950}, bg-blue-950/40 user bubbles, etc. Since we can't edit
+ * the npm package, we re-map those classes to our light-theme tokens, but
+ * only inside the chat-feed wrapper so we don't inadvertently affect anything
+ * that intentionally uses those utilities elsewhere.
+ *
+ * Tool-use rows still read as muted (zinc-400/500 → muted-foreground) so
+ * they stay visually secondary; assistant message body text reads at full
+ * foreground contrast.
+ */
+.couch-feed [class*="text-zinc-50"],
+.couch-feed [class*="text-zinc-100"],
+.couch-feed [class*="text-zinc-200"],
+.couch-feed [class*="text-zinc-300"] {
+  color: var(--foreground);
+}
+
+.couch-feed [class*="text-zinc-400"],
+.couch-feed [class*="text-zinc-500"] {
+  color: var(--muted-foreground);
+}
+
+.couch-feed [class*="bg-zinc-800"],
+.couch-feed [class*="bg-zinc-900"],
+.couch-feed [class*="bg-zinc-950"] {
+  background-color: var(--card);
+}
+
+.couch-feed [class*="bg-blue-9"] {
+  background-color: oklch(0.96 0.02 240);
+}
+
+.couch-feed [class*="bg-emerald-9"] {
+  background-color: oklch(0.96 0.04 150);
+}
+
+.couch-feed [class*="bg-red-9"] {
+  background-color: oklch(0.97 0.03 25);
+}
+
+.couch-feed [class*="border-zinc-"],
+.couch-feed [class*="border-blue-"],
+.couch-feed [class*="border-emerald-"],
+.couch-feed [class*="border-red-"] {
+  border-color: var(--border);
+}
+
+.couch-feed [class*="ring-blue-"] {
+  --tw-ring-color: oklch(0.78 0.08 240 / 0.35);
+}

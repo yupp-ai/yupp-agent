@@ -58,7 +58,7 @@ export function NewSessionPrompt() {
               submit()
             }
           }}
-          placeholder="Ask Couch to build features, fix bugs, or work on your code"
+          placeholder="Ask Couch anything"
           rows={3}
           value={message}
         />
