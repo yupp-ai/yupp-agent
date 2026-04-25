@@ -6,7 +6,8 @@ import { Button } from '@/components/ui/button'
 
 const ERROR_MESSAGES: Record<string, string> = {
   authentication: 'Oops. Try again!',
-  unauthorized: 'Only Yuppsters can access Couch.',
+  unauthorized:
+    'This Google account is not registered in the AHS users database. Ask an admin to add it, then retry.',
   session_invalidated: 'Your session is no longer valid. Sign in again.',
 }
 
