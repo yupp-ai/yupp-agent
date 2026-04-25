@@ -13,6 +13,7 @@ from decimal import Decimal
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 import ypl.mcp_server.tools.project_tasks as _pt
 from ypl.db.agent_harness import (
     AgentProject,
@@ -63,6 +64,19 @@ USER_ID = "user-abc-123"
 NOW = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
 
 
+@pytest.fixture(autouse=True)
+def _grant_project_admin_by_default() -> Any:
+    """By default, treat the test caller as MANAGE_AGENT_PROJECTS-holder so the
+    ownership check in mutating tools is a no-op. Individual tests that care
+    about the check should override this patch within their own scope.
+    """
+    with patch(
+        "ypl.mcp_server.tools.project_tasks.has_permission_by_user_id_cached",
+        new=AsyncMock(return_value=True),
+    ):
+        yield
+
+
 def _set_auth_context(user_id: str = USER_ID, email: str = "test@example.com") -> None:
     """Set up a valid authenticated request context."""
     request_context.set({"requesting_user_id": user_id, "email": email})
@@ -79,6 +93,7 @@ def _make_project(
     status: AgentProjectStatus = AgentProjectStatus.PAUSED,
     default_agent_id: uuid.UUID | None = None,
     shared_state: dict | None = None,
+    creator_user_id: str | None = None,
 ) -> MagicMock:
     proj = MagicMock(spec=AgentProject)
     proj.agent_project_id = uuid.UUID(project_id) if project_id else uuid.uuid4()
@@ -89,6 +104,7 @@ def _make_project(
     proj.default_agent_id = default_agent_id
     proj.project_data = None
     proj.shared_state = shared_state
+    proj.creator_user_id = creator_user_id or USER_ID  # owned by the default caller in _set_auth_context
     proj.created_at = NOW
     proj.deleted_at = None
     return proj
@@ -1838,6 +1854,53 @@ class TestUpdateProject:
             result = await update_project(PROJECT_ID)
 
         assert result["success"] is False
+
+    async def test_non_owner_without_admin_permission_is_forbidden(self) -> None:
+        """A caller who is neither the project's creator nor holds
+        MANAGE_AGENT_PROJECTS cannot update the project."""
+        _set_auth_context(user_id="not-owner-xyz")
+        mock_session = _make_mock_session()
+        proj = _make_project(project_id=PROJECT_ID, creator_user_id=USER_ID)  # owned by someone else
+        proj_result = MagicMock()
+        proj_result.scalars.return_value.first.return_value = proj
+        mock_session.execute.return_value = proj_result
+
+        with (
+            patch(
+                "ypl.mcp_server.tools.project_tasks.get_async_session",
+                return_value=_make_async_session_ctx(mock_session),
+            ),
+            # Override the fixture-level admin-grant: this caller is NOT admin.
+            patch(
+                "ypl.mcp_server.tools.project_tasks.has_permission_by_user_id_cached",
+                new=AsyncMock(return_value=False),
+            ),
+        ):
+            result = await update_project(PROJECT_ID, name="Hijacked")
+
+        assert result["success"] is False
+        assert "MANAGE_AGENT_PROJECTS" in result["error"]
+
+    async def test_admin_can_update_any_project(self) -> None:
+        """A caller holding MANAGE_AGENT_PROJECTS can update a project they
+        don't own."""
+        _set_auth_context(user_id="admin-user")
+        mock_session = _make_mock_session()
+        proj = _make_project(project_id=PROJECT_ID, creator_user_id=USER_ID)  # owned by someone else
+        proj_result = MagicMock()
+        proj_result.scalars.return_value.first.return_value = proj
+        summary_result = MagicMock()
+        summary_result.all.return_value = []
+        mock_session.execute.side_effect = [proj_result, summary_result]
+
+        with patch(
+            "ypl.mcp_server.tools.project_tasks.get_async_session",
+            return_value=_make_async_session_ctx(mock_session),
+        ):
+            result = await update_project(PROJECT_ID, name="Admin rename")
+
+        assert result["success"] is True
+        assert proj.name == "Admin rename"
 
 
 # ---------------------------------------------------------------------------

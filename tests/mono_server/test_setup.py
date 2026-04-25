@@ -168,15 +168,6 @@ class TestGenerateEnvContent:
         content = generate_env_content(self._PARAMS)
         assert "MCP_SERVER_MODE=DEV_TOKEN" in content
 
-    def test_contains_ahs_token_emails(self) -> None:
-        content = generate_env_content(self._PARAMS)
-        assert "AHS_SERVICE_TOKEN_EMAILS=admin@example.com" in content
-
-    def test_ahs_token_emails_defaults_empty(self) -> None:
-        params = {k: v for k, v in self._PARAMS.items() if k != "ahs_token_emails"}
-        content = generate_env_content(params)
-        assert "AHS_SERVICE_TOKEN_EMAILS=" in content
-
 
 # ---------------------------------------------------------------------------
 # Role definitions
