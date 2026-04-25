@@ -2,6 +2,7 @@
 
 import { PanelRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { SessionMenu } from './session-menu'
 import {
   type SessionStatus,
   StatusPill,
@@ -9,6 +10,7 @@ import {
 } from './status-pill'
 
 export function SessionHeader({
+  sessionId,
   title,
   sessionStatus,
   wsStatus,
@@ -16,6 +18,7 @@ export function SessionHeader({
   onTogglePanel,
   panelOpen,
 }: {
+  sessionId: string
   title: string
   sessionStatus: SessionStatus
   wsStatus: WsStatus
@@ -41,6 +44,7 @@ export function SessionHeader({
           turnInFlight={turnInFlight}
           wsStatus={wsStatus}
         />
+        <SessionMenu sessionId={sessionId} />
         <Button
           aria-label={panelOpen ? 'hide panel' : 'show panel'}
           onClick={onTogglePanel}

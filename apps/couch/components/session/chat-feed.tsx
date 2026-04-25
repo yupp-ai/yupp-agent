@@ -11,6 +11,7 @@ import {
 } from '@/lib/ahs/session-feed'
 import type { AhsMessageHistoryItem } from '@/lib/ahs/types'
 import { useAhsSession } from '@/lib/hooks/use-ahs-session'
+import { useSessionMenu } from '@/lib/hooks/use-session-menu'
 
 function historyToStreamItems(
   sessionId: string,
@@ -29,22 +30,27 @@ function historyToStreamItems(
   }))
 }
 
+const TOOL_ITEM_TYPES = new Set(['command_execution', 'mcp_tool_call'])
+
 export function ChatFeed({ sessionId }: { sessionId: string }) {
   const historyQuery = useQuery({
     queryKey: ['session-history', sessionId],
     queryFn: () => getSessionHistoryAction(sessionId, { limit: 200 }),
   })
   const session = useAhsSession({ sessionId })
+  const [{ toolCallsVisible }] = useSessionMenu(sessionId)
 
   const items = useMemo(() => {
     const history = historyToStreamItems(
       sessionId,
       historyQuery.data?.messages ?? []
     )
-    return mergeSessionFeedItems(history, session.items, {
+    const merged = mergeSessionFeedItems(history, session.items, {
       assistantTurnPreference: 'live',
     })
-  }, [sessionId, historyQuery.data?.messages, session.items])
+    if (toolCallsVisible) return merged
+    return merged.filter((i) => !TOOL_ITEM_TYPES.has(i.type))
+  }, [sessionId, historyQuery.data?.messages, session.items, toolCallsVisible])
 
   return <Feed items={items} />
 }
