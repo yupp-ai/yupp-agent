@@ -23,11 +23,22 @@ export function LeftRail({
     <aside
       className={cn(
         'flex h-screen flex-col border-r bg-sidebar text-sidebar-foreground transition-all',
-        collapsed ? 'w-12' : 'w-64'
+        collapsed ? 'w-16' : 'w-64'
       )}
     >
-      <div className="flex items-center justify-between px-3 py-3">
-        <Link className="flex items-center gap-2" href="/">
+      <div
+        className={cn(
+          'py-3',
+          collapsed
+            ? 'flex flex-col items-center gap-3'
+            : 'flex items-center justify-between px-3'
+        )}
+      >
+        <Link
+          aria-label="home"
+          className="flex items-center gap-2"
+          href="/"
+        >
           <span aria-hidden className="text-lg">
             🛋️
           </span>
