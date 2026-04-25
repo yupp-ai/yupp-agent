@@ -1,6 +1,7 @@
 'use client'
 
 import { PanelRight } from 'lucide-react'
+import type { AhsTriggerType } from '@/lib/ahs/types'
 import { Button } from '@/components/ui/button'
 import { SessionMenu } from './session-menu'
 import {
@@ -8,11 +9,13 @@ import {
   StatusPill,
   type WsStatus,
 } from './status-pill'
+import { TriggerPill } from './trigger-pill'
 
 export function SessionHeader({
   sessionId,
   title,
   sessionStatus,
+  trigger,
   wsStatus,
   turnInFlight,
   onTogglePanel,
@@ -21,6 +24,7 @@ export function SessionHeader({
   sessionId: string
   title: string
   sessionStatus: SessionStatus
+  trigger?: AhsTriggerType | null
   wsStatus: WsStatus
   turnInFlight: boolean
   onTogglePanel: () => void
@@ -39,6 +43,7 @@ export function SessionHeader({
         )}
       </div>
       <div className="flex items-center gap-3">
+        <TriggerPill trigger={trigger} />
         <StatusPill
           sessionStatus={sessionStatus}
           turnInFlight={turnInFlight}

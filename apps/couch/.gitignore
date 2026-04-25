@@ -9,3 +9,5 @@ out
 *.log
 .DS_Store
 .bun
+playwright-report
+test-results

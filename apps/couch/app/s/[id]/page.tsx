@@ -27,6 +27,7 @@ export default async function SessionPage({
       <SessionView
         initialStatus={detail.session.status}
         initialTitle={title}
+        initialTrigger={detail.session.trigger}
         sessionId={id}
       />
     </div>

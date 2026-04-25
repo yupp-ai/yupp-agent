@@ -66,7 +66,14 @@ export function NewSessionPrompt() {
           className="resize-none border-0 bg-transparent px-2 pt-1 text-base shadow-none focus-visible:ring-0"
           onChange={(e) => setMessage(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            // Enter sends; Cmd/Ctrl-Enter or Shift-Enter inserts a newline.
+            if (
+              e.key === 'Enter' &&
+              !e.metaKey &&
+              !e.ctrlKey &&
+              !e.shiftKey &&
+              !e.nativeEvent.isComposing
+            ) {
               e.preventDefault()
               submit()
             }
@@ -110,7 +117,7 @@ function AgentSelect({
     <SelectPrimitive.Root
       items={options}
       onValueChange={(next) => onChange((next ?? '') as string)}
-      value={value || undefined}
+      value={value}
     >
       <SelectPrimitive.Trigger
         className={cn(

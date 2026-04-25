@@ -129,6 +129,66 @@
   background-color: oklch(0.96 0.02 240);
 }
 
+/* Inside the user-message bubble, code chips and code blocks inherit the
+ * default streamdown gray background, which clashes with the light-blue
+ * bubble. Tint them a slightly darker shade of the bubble blue instead. */
+.couch-feed [class*="bg-blue-9"] :not(pre) > code {
+  background-color: oklch(0.91 0.03 240);
+  color: oklch(0.30 0.06 240);
+  border-radius: 0.25rem;
+  padding: 0.05rem 0.3rem;
+}
+
+/* Streamdown code blocks have an outer wrapper, header (action buttons),
+ * and inner pre. Paint the whole box one shade so the chrome isn't a white
+ * band above the code. */
+.couch-feed [class*="bg-blue-9"] [data-streamdown="code-block"] {
+  background-color: oklch(0.88 0.04 240);
+  border-color: oklch(0.82 0.05 240);
+}
+
+.couch-feed [class*="bg-blue-9"] [data-streamdown="code-block-header"],
+.couch-feed [class*="bg-blue-9"] [data-streamdown="code-block-actions"],
+.couch-feed [class*="bg-blue-9"] [data-streamdown="code-block-body"],
+.couch-feed [class*="bg-blue-9"] [data-streamdown="code-block"] pre,
+.couch-feed [class*="bg-blue-9"] [data-streamdown="code-block"] pre code {
+  background-color: transparent;
+  color: oklch(0.25 0.07 240);
+}
+
+/* Headings inside the chat feed are huge by default (h1 ≈ 2em). Tighten
+ * the scale so they read as section labels rather than billboards. */
+.couch-feed [data-streamdown="heading-1"] {
+  font-size: 1.25rem;
+  line-height: 1.35;
+  font-weight: 600;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+}
+.couch-feed [data-streamdown="heading-2"] {
+  font-size: 1.1rem;
+  line-height: 1.35;
+  font-weight: 600;
+  margin-top: 0.875rem;
+  margin-bottom: 0.4rem;
+}
+.couch-feed [data-streamdown="heading-3"] {
+  font-size: 1rem;
+  line-height: 1.4;
+  font-weight: 600;
+  margin-top: 0.75rem;
+  margin-bottom: 0.3rem;
+}
+.couch-feed [data-streamdown="heading-4"],
+.couch-feed [data-streamdown="heading-5"],
+.couch-feed [data-streamdown="heading-6"] {
+  font-size: 0.95rem;
+  line-height: 1.4;
+  font-weight: 600;
+  margin-top: 0.625rem;
+  margin-bottom: 0.25rem;
+}
+
 .couch-feed [class*="bg-emerald-9"] {
   background-color: oklch(0.96 0.04 150);
 }

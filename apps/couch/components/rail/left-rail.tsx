@@ -3,7 +3,8 @@
 import { cn } from '@/lib/utils'
 import { Calendar, Folder, Layers, PanelLeft, Plus, Settings } from 'lucide-react'
 import Link from 'next/link'
-import { useState } from 'react'
+import { usePathname } from 'next/navigation'
+import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import {
   Tooltip,
@@ -11,6 +12,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { RecentSessions } from './recent-sessions'
+import { ScheduledSessions } from './scheduled-sessions'
 
 export function LeftRail({
   activeSessionId,
@@ -18,6 +20,9 @@ export function LeftRail({
   activeSessionId?: string
 }) {
   const [collapsed, setCollapsed] = useState(false)
+  const pathname = usePathname()
+  const onSchedules = pathname?.startsWith('/schedules')
+  const onSessions = !onSchedules
 
   return (
     <aside
@@ -60,7 +65,10 @@ export function LeftRail({
         <>
           <nav className="flex flex-col gap-0.5 px-2 py-1">
             <Link
-              className="flex items-center gap-2 rounded-md bg-sidebar-accent px-2 py-1.5 text-sm font-medium"
+              className={cn(
+                'flex items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium',
+                onSessions && 'bg-sidebar-accent'
+              )}
               href="/"
             >
               <Layers className="h-4 w-4" /> Sessions
@@ -75,29 +83,34 @@ export function LeftRail({
               </TooltipTrigger>
               <TooltipContent>Coming soon</TooltipContent>
             </Tooltip>
-            <Tooltip>
-              <TooltipTrigger
-                className="flex cursor-not-allowed items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground/60"
-              >
-                <span className="flex items-center gap-2">
-                  <Calendar className="h-4 w-4" /> Schedules
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>Coming soon</TooltipContent>
-            </Tooltip>
+            <Link
+              className={cn(
+                'flex items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium',
+                onSchedules && 'bg-sidebar-accent'
+              )}
+              href="/schedules"
+            >
+              <Calendar className="h-4 w-4" /> Schedules
+            </Link>
           </nav>
 
           <div className="mt-3 flex items-center justify-between px-3">
             <span className="text-muted-foreground text-xs uppercase tracking-wider">
-              Recent
+              {onSchedules ? 'Scheduled' : 'Recent'}
             </span>
-            <Link aria-label="new session" href="/">
-              <Plus className="h-4 w-4 text-muted-foreground hover:text-foreground" />
-            </Link>
+            {onSessions && (
+              <Link aria-label="new session" href="/">
+                <Plus className="h-4 w-4 text-muted-foreground hover:text-foreground" />
+              </Link>
+            )}
           </div>
 
           <div className="flex-1 overflow-y-auto px-2 py-1">
-            <RecentSessions activeId={activeSessionId} />
+            {onSchedules ? (
+              <ScheduledSessions activeId={activeSessionId} />
+            ) : (
+              <RecentSessions activeId={activeSessionId} />
+            )}
           </div>
 
           <SettingsButton />
@@ -125,17 +138,27 @@ function SettingsButton() {
 }
 
 function SettingsDialog({ onClose }: { onClose: () => void }) {
+  // Backdrop must be a div, not a button — the dialog body contains a form
+  // submit button and a close button, and <button> cannot nest <button>.
+  // Keyboard dismissal: Escape closes the dialog.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
   return (
-    <button
-      aria-label="close settings"
+    <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
       onClick={onClose}
-      type="button"
+      role="presentation"
     >
       <div
+        aria-modal="true"
         className="w-full max-w-md rounded-2xl border bg-card p-6 shadow-lg"
         onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => e.stopPropagation()}
         role="dialog"
       >
         <h2 className="font-semibold text-lg">Settings</h2>
@@ -155,6 +178,6 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
           Close
         </Button>
       </div>
-    </button>
+    </div>
   )
 }

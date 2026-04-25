@@ -9,8 +9,7 @@ export async function listAgentsAction() {
   if (session.status === 'unauthenticated') {
     throw new Error('Unauthorized')
   }
-  return listAgents({
-    user_id: session.user.id,
-    include_all: false,
-  })
+  // include_all=true so the picker shows every agent the user can talk to,
+  // not only ones they personally created (most users have created none).
+  return listAgents({ include_all: true })
 }

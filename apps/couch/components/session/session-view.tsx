@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { ArtifactPanel } from '@/components/artifacts/artifact-panel'
 import { FollowUpPrompt } from '@/components/prompt/follow-up-prompt'
+import type { AhsTriggerType } from '@/lib/ahs/types'
 import { useAhsSession } from '@/lib/hooks/use-ahs-session'
 import { useArtifacts } from '@/lib/hooks/use-artifacts'
 import { ChatFeed } from './chat-feed'
@@ -13,10 +14,12 @@ export function SessionView({
   sessionId,
   initialTitle,
   initialStatus,
+  initialTrigger,
 }: {
   sessionId: string
   initialTitle: string
   initialStatus: SessionStatus
+  initialTrigger?: AhsTriggerType | null
 }) {
   const [panelOpen, setPanelOpen] = useState(false)
   const [autoOpened, setAutoOpened] = useState(false)
@@ -43,6 +46,7 @@ export function SessionView({
         sessionId={sessionId}
         sessionStatus={initialStatus}
         title={initialTitle}
+        trigger={initialTrigger}
         turnInFlight={turnInFlight}
         wsStatus={session.connectionStatus}
       />
@@ -50,10 +54,17 @@ export function SessionView({
         <main className="flex flex-1 flex-col overflow-hidden">
           <div className="flex-1 overflow-y-auto px-4 py-6">
             <div className="mx-auto max-w-3xl">
-              <ChatFeed sessionId={sessionId} />
+              <ChatFeed
+                items={session.items}
+                sessionId={sessionId}
+                turnInFlight={turnInFlight}
+              />
             </div>
           </div>
-          <FollowUpPrompt sessionId={sessionId} />
+          <FollowUpPrompt
+            onSendMessage={session.sendMessage}
+            sessionId={sessionId}
+          />
         </main>
         {panelOpen && (
           <aside className="w-[480px] border-l bg-card">

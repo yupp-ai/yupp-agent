@@ -34,7 +34,10 @@ export function RecentSessions({ activeId }: { activeId?: string }) {
     refetchInterval: 30_000,
   })
 
-  const all: SessionRowData[] = (data?.sessions ?? []) as SessionRowData[]
+  // Recents excludes CRON-triggered sessions; those live under "Schedules".
+  const all: SessionRowData[] = (
+    (data?.sessions ?? []) as SessionRowData[]
+  ).filter((s) => s.trigger !== 'CRON')
   const sorted = [...all].sort((a, b) => {
     const ap = pinned[a.session_id] ? 1 : 0
     const bp = pinned[b.session_id] ? 1 : 0

@@ -27,6 +27,7 @@ export interface SessionRowData {
   agent_name: string
   status: string
   created_at: string
+  trigger?: string | null
 }
 
 export function SessionRow({
