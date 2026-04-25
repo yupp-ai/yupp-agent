@@ -2,7 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { ArrowUp } from 'lucide-react'
-import { useState, useTransition } from 'react'
+import { useEffect, useState, useTransition } from 'react'
 import { createSessionAction } from '@/app/_actions/create-session'
 import { listAgentsAction } from '@/app/_actions/list-agents'
 import { Button } from '@/components/ui/button'
@@ -18,13 +18,15 @@ import { Textarea } from '@/components/ui/textarea'
 const LAST_AGENT_KEY = 'couch.lastAgent'
 
 export function NewSessionPrompt() {
-  const [agentId, setAgentId] = useState<string>(() =>
-    typeof window === 'undefined'
-      ? ''
-      : (localStorage.getItem(LAST_AGENT_KEY) ?? '')
-  )
+  // Hydration-safe: empty on first render, populated from localStorage after mount.
+  const [agentId, setAgentId] = useState<string>('')
   const [message, setMessage] = useState('')
   const [pending, startTransition] = useTransition()
+
+  useEffect(() => {
+    const stored = localStorage.getItem(LAST_AGENT_KEY)
+    if (stored) setAgentId(stored)
+  }, [])
 
   const { data: agents = [] } = useQuery({
     queryKey: ['agents'],
@@ -46,9 +48,9 @@ export function NewSessionPrompt() {
       <span aria-hidden className="text-6xl opacity-50">
         🛋️
       </span>
-      <div className="w-full rounded-2xl border bg-card shadow-sm">
+      <div className="w-full rounded-2xl border bg-card p-3 shadow-sm">
         <Textarea
-          className="resize-none border-0 px-4 pt-4 text-base shadow-none focus-visible:ring-0"
+          className="resize-none border-0 bg-transparent px-2 pt-1 text-base shadow-none focus-visible:ring-0"
           onChange={(e) => setMessage(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
@@ -60,12 +62,12 @@ export function NewSessionPrompt() {
           rows={3}
           value={message}
         />
-        <div className="flex items-center justify-between px-3 pb-3">
+        <div className="mt-2 flex items-center justify-between gap-2">
           <Select
             onValueChange={(value) => setAgentId(value ?? '')}
-            value={agentId}
+            value={agentId || undefined}
           >
-            <SelectTrigger aria-label="agent" className="h-8 w-44">
+            <SelectTrigger aria-label="agent" className="h-9">
               <SelectValue placeholder="Pick an agent" />
             </SelectTrigger>
             <SelectContent>
@@ -78,9 +80,10 @@ export function NewSessionPrompt() {
           </Select>
           <Button
             aria-label="submit"
+            className="h-9 w-9 rounded-full"
             disabled={!canSubmit}
             onClick={submit}
-            size="sm"
+            size="icon"
           >
             <ArrowUp className="h-4 w-4" />
           </Button>
