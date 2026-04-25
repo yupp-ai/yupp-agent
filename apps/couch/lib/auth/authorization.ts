@@ -1,16 +1,18 @@
 import type { SessionUser } from './auth-types'
 
-function isYuppEmail(email: string): boolean {
-  return email.toLowerCase().endsWith('@yupp.ai')
-}
+// Couch is internal but does not enforce a domain allowlist — anyone
+// with a verified Google account passes. Tighten this when we expose
+// Couch outside the team. Function names mirror war-room's so the
+// callsites in get-session.ts and the OAuth callback don't need to
+// change; rename in a later cleanup if useful.
 
-export function canAccessWarRoom(user: Pick<SessionUser, 'email'>) {
-  return isYuppEmail(user.email)
+export function canAccessWarRoom(_user: Pick<SessionUser, 'email'>) {
+  return true
 }
 
 export function canAccessWarRoomDuringLogin(input: {
   email: string
   emailVerified?: boolean
 }) {
-  return input.emailVerified === true && isYuppEmail(input.email)
+  return input.emailVerified === true
 }
