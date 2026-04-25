@@ -2,17 +2,20 @@
   Artifact table macro.
 
   Column order (left → right):
-    1. Type        — emoji + label (📝 text, 🔍 code review, 📦 other)
-    2. Created     — ISO timestamp in a <time> tag; the toggle below the table
-                     flips the rendered value between local time (default) and UTC.
-    3. Title       — viewer link. For CODE_REVIEW the title is auto-prefixed
+    1. Type        — emoji only (📝 / 🔍 / 📦). The full label is exposed via
+                     ``title`` for hover and aria-label for screen readers.
+    2. Title       — viewer link. For CODE_REVIEW the title is auto-prefixed
                      with "PR {pr_number} - " when the PR number is extractable
                      from the artifact URL.
-    4. Link        — PR link for CODE_REVIEW, external URL for OTHER, dash otherwise.
-    5. Creator     — creator_user_name when available, falls back to creator_user_id.
-    6. Agent       — creator_agent_name when available, falls back to a short agent id.
-    7. Slug / Ver
-    8. Status
+    3. Link        — PR link for CODE_REVIEW, external URL for OTHER, dash otherwise.
+    4. Creator     — creator_user_name when available, falls back to creator_user_id.
+    5. Agent       — creator_agent_name when available, falls back to a short agent id.
+    6. Slug / Ver
+    7. Status
+    8. Created     — ISO timestamp in a <time> tag; the toggle below the table
+                     flips the rendered value between local time (default) and UTC.
+                     Lives at the end because the timestamp is the lowest-priority
+                     piece of metadata for scanning the list.
 
   Emojis / labels live in `_type_meta` so they stay consistent across pages.
 -#}
@@ -50,16 +53,16 @@
 <table class="artifacts">
     <thead>
         <tr>
-            <th>Type</th>
-            <th>
-                Created <span class="time-mode-label muted">(local)</span>
-            </th>
+            <th aria-label="Type"></th>
             <th>Title</th>
             <th>Link</th>
             <th>Creator</th>
             <th>Agent</th>
             <th>Slug / Version</th>
             <th>Status</th>
+            <th>
+                Created <span class="time-mode-label muted">(local)</span>
+            </th>
         </tr>
     </thead>
     <tbody>
@@ -72,16 +75,8 @@
             {% set display_title = 'PR ' ~ pr_num ~ ' - ' ~ display_title %}
         {% endif %}
         <tr>
-            <td class="type-cell">
-                <span class="type-emoji" aria-hidden="true">{{ tmeta.emoji }}</span>
-                <span class="type-label">{{ tmeta.label }}</span>
-            </td>
-            <td>
-                {% if a.created_at %}
-                    <time class="timestamp" datetime="{{ a.created_at }}" data-utc="{{ a.created_at }}">{{ (a.created_at or '')[:19]|replace('T', ' ') }}</time>
-                {% else %}
-                    <span class="muted">—</span>
-                {% endif %}
+            <td class="type-cell" title="{{ tmeta.label }}">
+                <span class="type-emoji" role="img" aria-label="{{ tmeta.label }}">{{ tmeta.emoji }}</span>
             </td>
             <td>
                 <a href="/artifacts/{{ a.artifact_id }}">
@@ -130,6 +125,13 @@
                     <span class="tag archived">archived</span>
                 {% else %}
                     <span class="tag active">active</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if a.created_at %}
+                    <time class="timestamp" datetime="{{ a.created_at }}" data-utc="{{ a.created_at }}">{{ (a.created_at or '')[:19]|replace('T', ' ') }}</time>
+                {% else %}
+                    <span class="muted">—</span>
                 {% endif %}
             </td>
         </tr>

@@ -101,6 +101,12 @@ pre.plain { white-space: pre-wrap; }
 .user-email { font-size: 0.9em; color: var(--fg-muted); }
 .logout { font-size: 0.9em; }
 
+/* On narrow viewports the avatar carries the identity — drop the email
+   text so the topbar doesn't overflow or push the search field aside. */
+@media (max-width: 720px) {
+    .user-email { display: none; }
+}
+
 /* --- Main --- */
 
 .main {
@@ -139,9 +145,8 @@ table.artifacts th {
 
 table.artifacts tbody tr:hover { background: var(--bg-alt); }
 
-.type-cell { white-space: nowrap; }
-.type-cell .type-emoji { font-size: 1.05em; margin-right: 4px; }
-.type-cell .type-label { color: var(--fg-muted); text-transform: lowercase; font-size: 0.9em; }
+.type-cell { white-space: nowrap; width: 1%; text-align: center; }
+.type-cell .type-emoji { font-size: 1.1em; }
 time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap; }
 
 /* --- Time toggle --- */
@@ -301,35 +306,41 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
 
 /* --- Filter bar (recent artifacts page) --- */
 
+/* The filter row stays on a single line. Each field is compact (label
+   sits inline with the control) so all five controls + the Apply/Clear
+   actions fit comfortably on a desktop viewport. On a mobile viewport
+   we let it scroll horizontally rather than wrap — keeps the visual
+   "one row" promise instead of cascading into a tall stack. */
 .filter-bar {
     display: flex;
-    flex-wrap: wrap;
-    align-items: flex-end;
-    gap: 10px 12px;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 12px;
     margin: 8px 0 16px;
-    padding: 10px 12px;
+    padding: 8px 12px;
     border: 1px solid var(--border);
     border-radius: 6px;
     background: var(--bg-alt);
+    overflow-x: auto;
 }
 
 .filter-bar .filter-field {
     display: flex;
-    flex-direction: column;
-    gap: 4px;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
     min-width: 0;
+    flex-shrink: 0;
 }
 
 .filter-bar label {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--fg-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.4px;
 }
 
 .filter-bar select,
 .filter-bar input[type="date"] {
-    padding: 5px 8px;
+    padding: 4px 6px;
     border: 1px solid var(--border);
     border-radius: 6px;
     background: var(--bg);
@@ -337,13 +348,28 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
     font: inherit;
     font-size: 13px;
     /* Keep dropdowns from blowing the row apart on long labels. */
-    max-width: 220px;
+    max-width: 180px;
 }
 
 .filter-bar input[type="date"] {
     /* Native date control has its own intrinsic sizing; pin it so the row
        layout stays consistent across browsers. */
-    min-width: 140px;
+    min-width: 130px;
+}
+
+/* "From me" checkbox: sit naturally next to its label, no caps. */
+.filter-bar .filter-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--fg);
+    cursor: pointer;
+    user-select: none;
+    flex-shrink: 0;
+}
+.filter-bar .filter-checkbox input[type="checkbox"] {
+    margin: 0;
 }
 
 .filter-actions {
@@ -351,10 +377,11 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
     align-items: center;
     gap: 8px;
     margin-left: auto;
+    flex-shrink: 0;
 }
 
 .filter-apply {
-    padding: 6px 14px;
+    padding: 5px 12px;
     border: 1px solid var(--accent);
     border-radius: 6px;
     background: var(--accent);

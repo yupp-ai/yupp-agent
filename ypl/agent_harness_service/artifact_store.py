@@ -587,14 +587,24 @@ async def list_distinct_creators(
     *,
     include_archived: bool = False,
 ) -> tuple[list[tuple[str, str | None]], list[tuple[uuid.UUID, str | None]]]:
-    """Return distinct ``(user_id, name)`` and ``(agent_id, display_name)`` pairs.
+    """Return ``(user_id, name)`` and ``(agent_id, display_name)`` pairs for filter dropdowns.
 
-    Used by the artifact-viewer filter dropdowns: only creators that actually
-    have at least one artifact are returned, so the dropdowns stay short.
-    Names come from a join to the ``users`` / ``agents`` tables — IDs whose
-    rows are missing or have NULL names are returned with ``name=None`` so
-    callers can fall back to the raw ID. Returns are sorted alphabetically
-    by name (then by ID for the rare missing-name case).
+    Two different policies for the two dropdowns:
+
+    * **Users**: only those who have actually created at least one artifact.
+      The user dropdown is bounded by "people who have ever published" and
+      that list stays short, so we don't pre-list every user in the system.
+    * **Agents**: every non-deleted agent in the agents table — regardless
+      of whether it has any artifacts yet. This keeps the dropdown useful
+      while the agent attribution backfill is still in progress (we have
+      29 registered agents but none have been attributed on existing
+      artifacts), and the registered-agent set is small enough that listing
+      them all isn't noisy.
+
+    Names come from the ``users`` / ``agents`` tables — IDs whose rows are
+    missing or have NULL names are returned with ``name=None`` so callers
+    can fall back to the raw ID. Results are sorted alphabetically by name
+    (then by ID for the rare missing-name case).
     """
     async with get_async_session_read_replica() as session:
         # Distinct creator_user_id from artifacts, joined to users for names.
@@ -617,19 +627,9 @@ async def list_distinct_creators(
             key=lambda r: ((r[1] or "").lower(), r[0]),
         )
 
-        agent_stmt = (
-            select(AgentArtifact.creator_agent_id, Agent.display_name, Agent.name)
-            .outerjoin(Agent, col(Agent.agent_id) == col(AgentArtifact.creator_agent_id))
-            .where(
-                col(AgentArtifact.deleted_at).is_(None),
-                col(AgentArtifact.creator_agent_id).is_not(None),
-            )
-        )
-        if not include_archived:
-            agent_stmt = agent_stmt.where(
-                text("(agent_artifacts.artifact_metadata->>'is_archived') IS DISTINCT FROM 'true'")
-            )
-        agent_stmt = agent_stmt.distinct()
+        # All non-deleted agents — no join to artifacts. Keeps the dropdown
+        # useful even before agent attribution is wired up everywhere.
+        agent_stmt = select(Agent.agent_id, Agent.display_name, Agent.name).where(col(Agent.deleted_at).is_(None))
         agent_rows = (await session.execute(agent_stmt)).all()
         agents: list[tuple[uuid.UUID, str | None]] = sorted(
             ((aid, (display or name)) for aid, display, name in agent_rows if aid),
