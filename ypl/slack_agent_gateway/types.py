@@ -96,6 +96,17 @@ class AgentSession(BaseModel):
         "Edited in-place for each status update; cleared when a real reply arrives.",
     )
 
+    # Presentation preferences (toggled by /verbose and /quiet slash commands)
+    show_tool_calls: bool = Field(
+        default=True,
+        description=(
+            "Whether tool-call start/result events should render as the live status "
+            "cluster in this thread. Default True (verbose). Flipped to False by "
+            "/quiet, back to True by /verbose. Purely a presentation flag — the "
+            "underlying agent behaviour is unchanged."
+        ),
+    )
+
     # State - soft expiration model
     status: SessionStatus = Field(default=SessionStatus.ACTIVE, description="Derived from expires_at")
     created_at: datetime = Field(default_factory=_utc_now, description="When session was created")
