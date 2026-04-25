@@ -1,6 +1,7 @@
 # AGENTS.md — apps/couch
 
-Next.js 16 web frontend for AHS. Runs standalone on port 3010.
+Next.js 16 web frontend for AHS. Runs standalone on port 3010. Production:
+`https://couch.agcouch.com`.
 
 ## Stack
 
@@ -32,6 +33,18 @@ bun test
 # Set AHS_HOST=http://localhost:8090 in .env.local
 bun run dev
 ```
+
+## Deployment
+
+Deployed by `deploy/bare-metal/deploy-latest.sh`. The script learns Bun apps
+through a `BUN_APPS=(apps/couch)` array, runs `bun install --production
+&& bun run build` per app, copies the systemd unit at
+`apps/couch/deploy/couch.service` to `/etc/systemd/system/`, and restarts
+the `couch` service.
+
+Domain: `couch.agcouch.com` (Cloudflare → monolith VM, terminating TLS at
+Cloudflare and proxying :3010). The reverse-proxy block is server-side
+config and not part of this repo.
 
 ## Do not
 

@@ -1,0 +1,19 @@
+[Unit]
+Description=Couch — AHS web frontend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ahs
+Group=ahs
+WorkingDirectory=/opt/yupp-agent/apps/couch
+EnvironmentFile=/data/ahs/.env
+Environment=NODE_ENV=production
+Environment=PORT=3010
+ExecStart=/usr/local/bin/bun run start
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
