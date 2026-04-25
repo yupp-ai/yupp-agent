@@ -1,7 +1,7 @@
 """Simplified User model for yupp-agent.
 
-Only contains columns needed by agent services. The full User model with
-demographics, payment, onboarding, etc. lives in yupp-mind.
+Only contains the columns used by agent services (AHS / SAG / MCP). Columns
+for demographics, payment, onboarding, etc. are intentionally omitted.
 """
 
 import enum
@@ -11,7 +11,7 @@ from sqlalchemy import Column, UniqueConstraint
 from sqlmodel import Field
 
 from ypl.db.base import BaseModel
-from ypl.db.rbac import UserRoleAssociation as UserRole  # noqa: F401 — compat with yupp-mind imports
+from ypl.db.rbac import UserRoleAssociation as UserRole  # noqa: F401 — re-export for legacy call sites
 
 
 class UserStatus(enum.Enum):

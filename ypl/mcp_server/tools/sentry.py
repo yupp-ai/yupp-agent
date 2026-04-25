@@ -329,17 +329,17 @@ async def _resolve_issue_id(issue_id: str) -> str:
 async def get_sentry_issue_details(
     issue_id: str,
     event_id: str | None = None,
-    project_slug: str = "yupp-head",
+    project_slug: str = "",
 ) -> dict[str, Any]:
     """Get Sentry issue details, optionally for a specific event.
 
     Args:
         issue_id: Numerical issue ID or short ID (e.g. YUPP-HEAD-QKE).
         event_id: Optional event ID to fetch a specific event instead of the issue summary.
-        project_slug: Sentry project slug (default: yupp-head). Not currently used —
-            all endpoints here are issue-scoped (/issues/{id}/...) so Sentry resolves the
-            project internally. Kept in the signature so the MCP schema exposes it for
-            future project-scoped endpoints (e.g. issue search).
+        project_slug: Sentry project slug. Not currently used — all endpoints here are
+            issue-scoped (/issues/{id}/...) so Sentry resolves the project internally.
+            Kept in the signature so the MCP schema exposes it for future project-scoped
+            endpoints (e.g. issue search).
 
     Returns:
         Dictionary with success flag and markdown-formatted data.
@@ -409,7 +409,7 @@ async def get_sentry_trace_details(
 async def get_sentry_breadcrumbs(
     issue_id: str,
     event_id: str | None = None,
-    project_slug: str = "yupp-head",
+    project_slug: str = "",
 ) -> dict[str, Any]:
     """Get breadcrumbs for an issue's latest or specific event.
 
@@ -419,10 +419,10 @@ async def get_sentry_breadcrumbs(
     Args:
         issue_id: Numerical issue ID or short ID.
         event_id: Optional event ID. If not provided, fetches the latest event.
-        project_slug: Sentry project slug (default: yupp-head). Not currently used —
-            all endpoints here are issue-scoped (/issues/{id}/...) so Sentry resolves the
-            project internally. Kept in the signature so the MCP schema exposes it for
-            future project-scoped endpoints (e.g. issue search).
+        project_slug: Sentry project slug. Not currently used — all endpoints here are
+            issue-scoped (/issues/{id}/...) so Sentry resolves the project internally.
+            Kept in the signature so the MCP schema exposes it for future project-scoped
+            endpoints (e.g. issue search).
 
     Returns:
         Dictionary with success flag and markdown-formatted breadcrumbs.
@@ -468,14 +468,14 @@ async def get_sentry_breadcrumbs(
 async def mcp_get_sentry_issue_details(
     issue_id: str,
     event_id: str | None = None,
-    project_slug: str = "yupp-head",
+    project_slug: str = "",
 ) -> dict[str, Any]:
     """Get Sentry issue details.
 
     Args:
         issue_id: Numerical issue ID or short ID (e.g. YUPP-HEAD-QKE).
         event_id: Optional event ID for a specific event.
-        project_slug: Sentry project slug (default: yupp-head).
+        project_slug: Sentry project slug (currently unused — see get_sentry_issue_details).
     """
     return await get_sentry_issue_details(issue_id, event_id, project_slug)
 
@@ -530,13 +530,13 @@ async def mcp_get_sentry_trace_details(
 async def mcp_get_sentry_breadcrumbs(
     issue_id: str,
     event_id: str | None = None,
-    project_slug: str = "yupp-head",
+    project_slug: str = "",
 ) -> dict[str, Any]:
     """Get breadcrumbs for a Sentry issue event.
 
     Args:
         issue_id: Numerical issue ID or short ID.
         event_id: Optional event ID. If not provided, uses the latest event.
-        project_slug: Sentry project slug (default: yupp-head).
+        project_slug: Sentry project slug (currently unused — see get_sentry_breadcrumbs).
     """
     return await get_sentry_breadcrumbs(issue_id, event_id, project_slug)

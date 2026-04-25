@@ -1,8 +1,8 @@
-"""Stub of dynamic_app_settings for yupp-agent.
+"""Minimal dynamic_app_settings for yupp-agent.
 
-The full implementation in yupp-mind has deep imports into LLM routing,
-abuse, payment, etc. This stub provides only the functions used by
-AHS, SAG, and MCP services, loading settings from YAML files.
+Loads runtime settings from YAML files. Only implements the surface used by
+AHS, SAG, and MCP services — the richer LLM-routing / abuse / payment
+settings from the legacy code path are intentionally not carried over.
 """
 
 import enum

@@ -685,7 +685,7 @@ class AgentArtifact(BaseModel, table=True):
         default=None, foreign_key="agent_tasks.agent_task_id", nullable=True, index=True
     )
 
-    # Flexible bag for type-specific data (e.g. {"pr_number": 123, "repo": "yupp-mind"})
+    # Flexible bag for type-specific data (e.g. {"pr_number": 123, "repo": "yupp-agent"})
     artifact_metadata: dict[str, Any] | None = Field(default=None, sa_column=Column(JSONB, nullable=True))
 
     # Unify Artifact and Artifact: stable human-readable identity and versioning

@@ -573,7 +573,7 @@ export function AgentForm({
               placeholder="Optional extra system prompt"
               value={formState.additionalSystemPrompt}
             />
-            {/* TODO(yupp-mind): Extend GET /ahs/agent/{name} to return additional_system_prompt,
+            {/* TODO: Extend GET /ahs/agent/{name} to return additional_system_prompt,
                 feedback_probability, feedback_min_turns, and the full sandbox config so War Room
                 can render a lossless edit form instead of treating these fields as write-only. */}
             <p className="text-xs text-zinc-500">

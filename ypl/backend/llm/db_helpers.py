@@ -1,7 +1,6 @@
 """Slim DB helpers for yupp-agent.
 
-Only includes functions used by AHS, SAG, and MCP services.
-Full implementation lives in yupp-mind.
+Only includes the lookup functions used by AHS, SAG, and MCP services.
 """
 
 from sqlalchemy import func

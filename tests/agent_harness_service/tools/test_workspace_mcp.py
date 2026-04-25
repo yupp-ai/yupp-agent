@@ -72,7 +72,7 @@ class TestListAvailableRepos:
     def test_returns_repos_list(self) -> None:
         repos = [
             {"name": "yupp-agent", "path": "/data/ahs/repos/yupp-agent"},
-            {"name": "yupp-mind", "path": "/data/ahs/repos/yupp-mind"},
+            {"name": "other-repo", "path": "/data/ahs/repos/other-repo"},
         ]
         with patch("ypl.agent_harness_service.tools.workspace._list_repos", return_value=repos):
             result = list_available_repos()
@@ -117,7 +117,7 @@ class TestCreatePr:
         session_dir = tmp_path / VALID_SESSION
         session_dir.mkdir()
         (session_dir / "yupp-agent-fix-bug").mkdir()
-        (session_dir / "yupp-mind-add-feature").mkdir()
+        (session_dir / "other-repo-add-feature").mkdir()
 
         with patch("ypl.agent_harness_service.tools.workspace.AHS_SESSIONS_DIR", str(tmp_path)):
             result = await create_pr(session_id=VALID_SESSION, title="PR", body="body")
@@ -131,10 +131,10 @@ class TestCreatePr:
         (session_dir / "yupp-agent-fix-bug").mkdir()
 
         with patch("ypl.agent_harness_service.tools.workspace.AHS_SESSIONS_DIR", str(tmp_path)):
-            result = await create_pr(session_id=VALID_SESSION, title="PR", body="body", repo="yupp-mind")
+            result = await create_pr(session_id=VALID_SESSION, title="PR", body="body", repo="other-repo")
 
         assert result["status"] == "error"
-        assert "yupp-mind" in result["error"]
+        assert "other-repo" in result["error"]
 
     async def test_no_github_token_returns_auth_error(self, tmp_path: Path) -> None:
         session_dir = tmp_path / VALID_SESSION
@@ -200,7 +200,7 @@ class TestCreatePr:
         session_dir = tmp_path / VALID_SESSION
         session_dir.mkdir()
         (session_dir / "yupp-agent-fix-bug").mkdir()
-        (session_dir / "yupp-mind-feature").mkdir()
+        (session_dir / "other-repo-feature").mkdir()
 
         with (
             patch("ypl.agent_harness_service.tools.workspace.AHS_SESSIONS_DIR", str(tmp_path)),

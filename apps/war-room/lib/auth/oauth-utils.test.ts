@@ -86,7 +86,7 @@ describe('isAllowedOauthInitiatorHost', () => {
     withOauthRedirectHost('https://war-room.preview.yuppster.ai', () => {
       expect(
         isAllowedOauthInitiatorHost(
-          'https://yupp-head-git-ax-war-room-auth-shell.preview.yuppster.ai',
+          'https://yupp-agent-git-ax-war-room-auth-shell.preview.yuppster.ai',
           'https://war-room.yupp.ai'
         )
       ).toBe(true)
@@ -108,7 +108,7 @@ describe('isAllowedOauthInitiatorHost', () => {
     withOauthRedirectHost('https://war-room.yupp.ai', () => {
       expect(
         isAllowedOauthInitiatorHost(
-          'https://yupp-head-git-ax-war-room-auth-shell.preview.yuppster.ai',
+          'https://yupp-agent-git-ax-war-room-auth-shell.preview.yuppster.ai',
           'https://war-room.yupp.ai'
         )
       ).toBe(false)

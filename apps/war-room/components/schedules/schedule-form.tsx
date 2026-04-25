@@ -554,13 +554,13 @@ export function ScheduleForm(props: ScheduleFormProps) {
             ) : (
               <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 text-sm text-zinc-400 md:col-span-2">
                 <p>{scheduleTimingLabel}</p>
-                {/* TODO(yupp-mind): Add execute_at to POST /ahs/schedule/edit for SCHEDULED jobs.
+                {/* TODO: Add execute_at to POST /ahs/schedule/edit for SCHEDULED jobs.
                     War Room can only update shared metadata until one-time schedules can be
                     rescheduled through the AHS edit endpoint. */}
                 <p className="mt-2 text-xs text-zinc-500">
                   One-time automations cannot be rescheduled from War Room yet.
-                  That requires `execute_at` support in Yupp Mind's schedule
-                  edit endpoint.
+                  That requires `execute_at` support in the AHS schedule edit
+                  endpoint.
                 </p>
               </div>
             )}
