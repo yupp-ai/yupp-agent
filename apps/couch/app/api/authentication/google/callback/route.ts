@@ -1,7 +1,7 @@
 import { unstable_rethrow } from 'next/navigation'
 import { type NextRequest, NextResponse } from 'next/server'
 import { isAhsHttpError, resolveUserByEmail } from '@/lib/ahs/server/client'
-import { canAccessWarRoomDuringLogin } from '@/lib/auth/authorization'
+import { canAccessCouchDuringLogin } from '@/lib/auth/authorization'
 import {
   decodeAndValidateOauthState,
   GOOGLE_CSRF_COOKIE_NAME,
@@ -71,7 +71,7 @@ export async function GET(request: NextRequest) {
     }
 
     if (
-      !canAccessWarRoomDuringLogin({
+      !canAccessCouchDuringLogin({
         email: userInfo.email,
         emailVerified: userInfo.email_verified,
       })

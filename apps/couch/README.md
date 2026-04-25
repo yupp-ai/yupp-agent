@@ -27,7 +27,7 @@ bun run dev                         # http://localhost:3010
 - Right artifact panel with tabs — TEXT (markdown) and PR (link) rendered
   inline; other types fall back to a download CTA
 - Session …-menu: Copy ID, Stop, Toggle tool calls, Rename, Pin
-- Google OAuth — same allowlist as war-room
+- Google OAuth — verified Google account + present in AHS users DB (via `resolveUserByEmail`)
 
 See `AGENTS.md` for backend contract and conventions. Design and roadmap:
 `docs/frontend/2026-04-24-couch-ahs-frontend-prd.md`. Plan:

@@ -30,7 +30,7 @@ describe('normalizeOauthRedirectPath', () => {
     expect(
       normalizeOauthRedirectPath(
         '/session/123?tab=activity#details',
-        'https://war-room.example'
+        'https://couch.example'
       )
     ).toBe('/session/123?tab=activity#details')
   })
@@ -38,8 +38,8 @@ describe('normalizeOauthRedirectPath', () => {
   it('normalizes same-origin absolute URLs back to internal paths', () => {
     expect(
       normalizeOauthRedirectPath(
-        'https://war-room.example/session/123?tab=activity#details',
-        'https://war-room.example'
+        'https://couch.example/session/123?tab=activity#details',
+        'https://couch.example'
       )
     ).toBe('/session/123?tab=activity#details')
   })
@@ -48,17 +48,17 @@ describe('normalizeOauthRedirectPath', () => {
     expect(
       normalizeOauthRedirectPath(
         'https://evil.example/session/123?tab=activity#details',
-        'https://war-room.example'
+        'https://couch.example'
       )
     ).toBe('/')
   })
 
   it('falls back to the root path for invalid redirects', () => {
     expect(
-      normalizeOauthRedirectPath('https://%', 'https://war-room.example')
+      normalizeOauthRedirectPath('https://%', 'https://couch.example')
     ).toBe('/')
     expect(
-      normalizeOauthRedirectPath(undefined, 'https://war-room.example')
+      normalizeOauthRedirectPath(undefined, 'https://couch.example')
     ).toBe('/')
   })
 })
@@ -67,8 +67,8 @@ describe('isAllowedOauthInitiatorHost', () => {
   it('allows the current origin', () => {
     expect(
       isAllowedOauthInitiatorHost(
-        'https://war-room.example',
-        'https://war-room.example'
+        'https://couch.example',
+        'https://couch.example'
       )
     ).toBe(true)
   })
@@ -83,33 +83,33 @@ describe('isAllowedOauthInitiatorHost', () => {
   })
 
   it('allows preview-to-preview redirects when the configured callback host is a preview deployment', () => {
-    withOauthRedirectHost('https://war-room.preview.yuppster.ai', () => {
+    withOauthRedirectHost('https://couch.preview.yuppster.ai', () => {
       expect(
         isAllowedOauthInitiatorHost(
-          'https://yupp-agent-git-ax-war-room-auth-shell.preview.yuppster.ai',
-          'https://war-room.yupp.ai'
+          'https://yupp-agent-git-ax-couch-auth-shell.preview.yuppster.ai',
+          'https://couch.yupp.ai'
         )
       ).toBe(true)
     })
   })
 
   it('rejects arbitrary external origins', () => {
-    withOauthRedirectHost('https://war-room.yupp.ai', () => {
+    withOauthRedirectHost('https://couch.yupp.ai', () => {
       expect(
         isAllowedOauthInitiatorHost(
           'https://evil.example',
-          'https://war-room.yupp.ai'
+          'https://couch.yupp.ai'
         )
       ).toBe(false)
     })
   })
 
   it('rejects preview redirects when the callback host is not a preview deployment', () => {
-    withOauthRedirectHost('https://war-room.yupp.ai', () => {
+    withOauthRedirectHost('https://couch.yupp.ai', () => {
       expect(
         isAllowedOauthInitiatorHost(
-          'https://yupp-agent-git-ax-war-room-auth-shell.preview.yuppster.ai',
-          'https://war-room.yupp.ai'
+          'https://yupp-agent-git-ax-couch-auth-shell.preview.yuppster.ai',
+          'https://couch.yupp.ai'
         )
       ).toBe(false)
     })
@@ -118,14 +118,14 @@ describe('isAllowedOauthInitiatorHost', () => {
   it('rejects malformed initiator hosts', () => {
     expect(
       isAllowedOauthInitiatorHost(
-        'https://war-room.example/path',
-        'https://war-room.example'
+        'https://couch.example/path',
+        'https://couch.example'
       )
     ).toBe(false)
     expect(
       isAllowedOauthInitiatorHost(
         'javascript:alert(1)',
-        'https://war-room.example'
+        'https://couch.example'
       )
     ).toBe(false)
   })

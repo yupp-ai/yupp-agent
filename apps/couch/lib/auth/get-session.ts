@@ -3,7 +3,7 @@ import 'server-only'
 import { cookies } from 'next/headers'
 import { cache } from 'react'
 import type { AuthenticatedSession, Session, SessionUser } from './auth-types'
-import { canAccessWarRoom } from './authorization'
+import { canAccessCouch } from './authorization'
 import {
   type SessionCookiePayload,
   unsafeGetSessionFromCookie,
@@ -74,7 +74,7 @@ export const getInternalSession = cache(async (): Promise<InternalSession> => {
     firstName: payload.firstName,
   })
 
-  if (!canAccessWarRoom(user)) {
+  if (!canAccessCouch(user)) {
     return { status: 'unauthenticated' }
   }
 

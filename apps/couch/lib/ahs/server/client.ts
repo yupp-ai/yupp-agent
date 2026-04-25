@@ -474,7 +474,7 @@ export async function cancelSchedule(
 }
 
 // ---------------------------------------------------------------------------
-// Artifacts — couch-only additions (war-room doesn't render artifacts yet).
+// Artifacts — couch-only additions.
 // ---------------------------------------------------------------------------
 
 const ahsArtifactSchema = z.object({

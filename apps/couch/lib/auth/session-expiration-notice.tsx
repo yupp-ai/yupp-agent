@@ -48,7 +48,7 @@ export function SessionExpirationNotice() {
     >
       <div className="mx-auto flex max-w-7xl items-center justify-between gap-3">
         <p className="text-sm">
-          Login required. Your War Room session has expired.
+          Login required. Your Couch session has expired.
         </p>
         <form action="/api/authentication/logout" method="post">
           <button

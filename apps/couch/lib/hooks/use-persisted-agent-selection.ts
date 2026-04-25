@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { AhsAgentInfo } from '@/lib/ahs/types'
 
-const SELECTED_AGENT_STORAGE_KEY = 'war-room:selected-agent'
+const SELECTED_AGENT_STORAGE_KEY = 'couch:selected-agent'
 
 function readStoredAgent() {
   if (typeof window === 'undefined' || !window.localStorage) {

@@ -1,16 +1,15 @@
 import type { SessionUser } from './auth-types'
 
 // Couch is internal but does not enforce a domain allowlist — anyone
-// with a verified Google account passes. Tighten this when we expose
-// Couch outside the team. Function names mirror war-room's so the
-// callsites in get-session.ts and the OAuth callback don't need to
-// change; rename in a later cleanup if useful.
+// with a verified Google account who is also registered in the AHS
+// users database (checked via resolveUserByEmail in the OAuth callback)
+// passes. Tighten this when Couch is exposed outside the team.
 
-export function canAccessWarRoom(_user: Pick<SessionUser, 'email'>) {
+export function canAccessCouch(_user: Pick<SessionUser, 'email'>) {
   return true
 }
 
-export function canAccessWarRoomDuringLogin(input: {
+export function canAccessCouchDuringLogin(input: {
   email: string
   emailVerified?: boolean
 }) {
