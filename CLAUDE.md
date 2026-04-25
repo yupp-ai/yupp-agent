@@ -69,7 +69,17 @@ ypl/
 └── db/                      # SQLModel models + Alembic migrations
 
 apps/
-└── war-room/                # Next.js 16 admin UI for AHS (Bun, port 3009, standalone — see apps/war-room/AGENTS.md)
+├── couch/                   # Next.js 16 user-facing UI for AHS (Bun, port 3010, standalone — see apps/couch/CLAUDE.md). Prod: couch.agcouch.com
+├── war-room/                # Next.js 16 admin UI for AHS (Bun, port 3009, standalone — see apps/war-room/AGENTS.md)
+└── artifact-viewer/         # Python artifact viewer (separate service)
+```
+
+### Frontend Apps (couch, war-room)
+
+Pure frontends that talk to AHS over HTTP/WebSocket — they do not import Python from `ypl/`. Each has its own `bun.lock` and is built/deployed independently. To run couch locally:
+
+```bash
+cd apps/couch && bun install && bun run dev   # http://localhost:3010
 ```
 
 ### AHS Layering (Critical Constraint)
