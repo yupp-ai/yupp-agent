@@ -53,6 +53,13 @@ _ARTIFACT_TYPE_OPTIONS: tuple[tuple[str, str], ...] = (
 )
 _VALID_ARTIFACT_TYPES = frozenset(value for value, _ in _ARTIFACT_TYPE_OPTIONS)
 
+# Default ``type`` filter when the URL doesn't specify one. TEXT is by far
+# the most common thing to browse; CODE_REVIEW entries are pointers to PRs
+# and OTHER is rare, so leading with TEXT keeps the default view scoped to
+# "documents the user actually wants to read". Pass ``type=`` (empty) to
+# opt out and see every type.
+_DEFAULT_ARTIFACT_TYPE = "TEXT"
+
 # YYYY-MM-DD — what the date inputs in the filter row produce.
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -100,6 +107,10 @@ def _current_user(request: Request) -> dict[str, str]:
         "email": request.session.get("email", ""),
         "name": request.session.get("name", ""),
         "picture": request.session.get("picture", ""),
+        # Stamped at OAuth callback time after AHS confirms the email maps to
+        # a row in the users table. Used by the home page's "From me" filter
+        # so we never have to round-trip back to AHS to resolve the user.
+        "user_id": request.session.get("user_id", ""),
     }
 
 
@@ -110,11 +121,35 @@ async def home(request: Request) -> Response:
     Prev/Next anchors round-trip every active filter. Default page size is
     :data:`HOME_PAGE_SIZE` (20); the upper bound matches the AHS endpoint's
     cap so a user can't request a giant page accidentally.
+
+    Two filters have non-trivial defaults so the landing view is useful
+    without the user touching the bar:
+
+    * ``type`` defaults to ``TEXT`` (the most common, most readable type).
+      Pass ``?type=`` (empty) to see every type.
+    * ``from_me`` defaults to ``ON`` for signed-in users — the form posts a
+      hidden ``from_me=0`` together with the checkbox so an unchecked box
+      still sends a value, otherwise we couldn't tell "default" apart from
+      "explicitly off".
     """
-    artifact_type = (request.query_params.get("type") or "").strip().upper() or None
-    if artifact_type and artifact_type not in _VALID_ARTIFACT_TYPES:
-        artifact_type = None
-    creator_user_id = (request.query_params.get("creator_user_id") or "").strip() or None
+    user = _current_user(request)
+    raw_type = request.query_params.get("type")
+    if raw_type is None:
+        # No ``type`` param at all — apply the default.
+        artifact_type: str | None = _DEFAULT_ARTIFACT_TYPE
+    else:
+        # Empty string means the user explicitly chose "All". A bogus value
+        # falls back to "no filter" rather than 400ing the upstream call.
+        artifact_type = raw_type.strip().upper() or None
+        if artifact_type and artifact_type not in _VALID_ARTIFACT_TYPES:
+            artifact_type = None
+
+    # Default-ON when signed in. If we have no user_id (rare — would mean
+    # the session pre-dates the user_id stamping) we can't filter, so default
+    # to OFF rather than send an empty creator_user_id and match nothing.
+    raw_from_me = request.query_params.get("from_me")
+    from_me = bool(user["user_id"]) if raw_from_me is None else raw_from_me.strip() == "1"
+    creator_user_id = user["user_id"] if from_me and user["user_id"] else None
     creator_agent_id = (request.query_params.get("creator_agent_id") or "").strip() or None
     created_after = (request.query_params.get("created_after") or "").strip() or None
     created_before = (request.query_params.get("created_before") or "").strip() or None
@@ -153,12 +188,12 @@ async def home(request: Request) -> Response:
         request,
         "home.html",
         {
-            "user": _current_user(request),
+            "user": user,
             "artifacts": artifacts,
             "query": "",
             "filters": {
                 "type": artifact_type or "",
-                "creator_user_id": creator_user_id or "",
+                "from_me": from_me,
                 "creator_agent_id": creator_agent_id or "",
                 "created_after": created_after or "",
                 "created_before": created_before or "",

@@ -39,9 +39,19 @@ def client() -> TestClient:
     return TestClient(build_app(), follow_redirects=False)
 
 
-def _sign_in(client: TestClient, email: str = "alice@agcouch.com") -> None:
+def _sign_in(
+    client: TestClient,
+    email: str = "alice@agcouch.com",
+    user_id: str = "user-alice",
+) -> None:
     """Poke the signed session cookie directly so tests don't need to
-    round-trip through real Google OAuth."""
+    round-trip through real Google OAuth.
+
+    The ``user_id`` defaults to a non-empty string so the home page's
+    "From me" filter (which is on-by-default for signed-in users) takes
+    effect — set ``user_id=""`` to simulate a session that pre-dates
+    user_id stamping.
+    """
     import base64
     import json
 
@@ -49,7 +59,12 @@ def _sign_in(client: TestClient, email: str = "alice@agcouch.com") -> None:
 
     # Mirror SessionMiddleware's cookie format (b64(json) + signature).
     signer = TimestampSigner("test-secret-key")
-    data = {"email": email, "name": email.split("@")[0], "picture": ""}
+    data = {
+        "email": email,
+        "name": email.split("@")[0],
+        "picture": "",
+        "user_id": user_id,
+    }
     encoded = base64.b64encode(json.dumps(data).encode()).decode()
     signed = signer.sign(encoded).decode()
     # SessionMiddleware default cookie name is ``session``.
@@ -184,9 +199,62 @@ class TestHome:
             resp = client.get("/")
         assert resp.status_code == 200
         assert list_recent.await_count == 1
-        assert list_recent.await_args.kwargs["limit"] == 20
-        assert list_recent.await_args.kwargs["offset"] == 0
-        assert list_recent.await_args.kwargs["include_total"] is True
+        kwargs = list_recent.await_args.kwargs
+        assert kwargs["limit"] == 20
+        assert kwargs["offset"] == 0
+        assert kwargs["include_total"] is True
+        # Default landing view: type=TEXT and "From me" ON (filtered to the
+        # signed-in user) — both meant to keep the default list short and
+        # personally relevant.
+        assert kwargs["artifact_type"] == "TEXT"
+        assert kwargs["creator_user_id"] == "user-alice"
+
+    def test_type_filter_can_be_explicitly_cleared(self, client: TestClient) -> None:
+        # ``?type=`` (empty) is the explicit "all types" opt-out from the
+        # TEXT default.
+        _sign_in(client)
+        list_recent = AsyncMock(return_value={"artifacts": [], "total": 0})
+        with (
+            patch("artifact_viewer.ahs_client.list_recent", new=list_recent),
+            patch(
+                "artifact_viewer.ahs_client.list_creators",
+                new=AsyncMock(return_value={"users": [], "agents": []}),
+            ),
+        ):
+            resp = client.get("/", params={"type": ""})
+        assert resp.status_code == 200
+        assert list_recent.await_args.kwargs["artifact_type"] is None
+
+    def test_from_me_off_drops_user_filter(self, client: TestClient) -> None:
+        # ``from_me=0`` is the explicit "show everyone's artifacts" override.
+        _sign_in(client)
+        list_recent = AsyncMock(return_value={"artifacts": [], "total": 0})
+        with (
+            patch("artifact_viewer.ahs_client.list_recent", new=list_recent),
+            patch(
+                "artifact_viewer.ahs_client.list_creators",
+                new=AsyncMock(return_value={"users": [], "agents": []}),
+            ),
+        ):
+            resp = client.get("/", params={"from_me": "0"})
+        assert resp.status_code == 200
+        assert list_recent.await_args.kwargs["creator_user_id"] is None
+
+    def test_from_me_default_off_when_no_user_id(self, client: TestClient) -> None:
+        # Sessions that pre-date user_id stamping shouldn't filter to an
+        # empty string and accidentally match nothing.
+        _sign_in(client, user_id="")
+        list_recent = AsyncMock(return_value={"artifacts": [], "total": 0})
+        with (
+            patch("artifact_viewer.ahs_client.list_recent", new=list_recent),
+            patch(
+                "artifact_viewer.ahs_client.list_creators",
+                new=AsyncMock(return_value={"users": [], "agents": []}),
+            ),
+        ):
+            resp = client.get("/")
+        assert resp.status_code == 200
+        assert list_recent.await_args.kwargs["creator_user_id"] is None
 
     def test_forwards_filters_and_pagination(self, client: TestClient) -> None:
         _sign_in(client)
@@ -202,7 +270,7 @@ class TestHome:
                 "/",
                 params={
                     "type": "CODE_REVIEW",
-                    "creator_user_id": "user-1",
+                    "from_me": "1",
                     "creator_agent_id": "11111111-2222-3333-4444-555555555555",
                     "created_after": "2026-04-01",
                     "created_before": "2026-04-15",
@@ -213,7 +281,8 @@ class TestHome:
         assert resp.status_code == 200
         kwargs = list_recent.await_args.kwargs
         assert kwargs["artifact_type"] == "CODE_REVIEW"
-        assert kwargs["creator_user_id"] == "user-1"
+        # "From me" maps to the signed-in user's user_id.
+        assert kwargs["creator_user_id"] == "user-alice"
         assert kwargs["creator_agent_id"] == "11111111-2222-3333-4444-555555555555"
         # Date inputs are normalized to ISO timestamps; the upper bound walks
         # to the next midnight so the picker is date-inclusive.
@@ -238,7 +307,9 @@ class TestHome:
         assert resp.status_code == 200
         assert list_recent.await_args.kwargs["artifact_type"] is None
 
-    def test_renders_creator_dropdown_options(self, client: TestClient) -> None:
+    def test_renders_agent_dropdown_options(self, client: TestClient) -> None:
+        # The user dropdown was replaced by a "From me" checkbox; only the
+        # agent dropdown still consumes the creators payload.
         _sign_in(client)
         with (
             patch(
@@ -257,8 +328,9 @@ class TestHome:
         ):
             resp = client.get("/")
         assert resp.status_code == 200
-        assert "Alice" in resp.text
         assert "eng-raccoon" in resp.text
+        # "From me" replaces the user dropdown.
+        assert "From me" in resp.text
 
     def test_pagination_links(self, client: TestClient) -> None:
         # Page 2 of 3 (offset=20, total=50) should show both Prev and Next.
