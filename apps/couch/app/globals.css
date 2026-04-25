@@ -1,0 +1,209 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "streamdown/styles.css";
+@source "../node_modules/@yupp/agents-ui/dist";
+@source "../node_modules/@yupp/agents-runtime/dist";
+@source "../node_modules/@yupp/agents-protocol/dist";
+@source "../node_modules/streamdown/dist/*.js";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+}
+
+:root {
+  --font-sans:
+    Inter, Geist, ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    sans-serif;
+  --font-geist-mono:
+    "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+
+  /* Off-white canvas, near-black ink — matches Devin screenshots */
+  --background: oklch(0.985 0.002 90);
+  --foreground: oklch(0.18 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.18 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.18 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.96 0 0);
+  --secondary-foreground: oklch(0.21 0 0);
+  --muted: oklch(0.96 0 0);
+  --muted-foreground: oklch(0.5 0 0);
+  --accent: oklch(0.94 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.55 0.22 27);
+  --border: oklch(0.91 0 0);
+  --input: oklch(0.91 0 0);
+  --ring: oklch(0.7 0 0);
+
+  --sidebar: oklch(0.97 0.002 90);
+  --sidebar-foreground: oklch(0.18 0 0);
+  --sidebar-primary: oklch(0.18 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.92 0 0);
+  --sidebar-accent-foreground: oklch(0.18 0 0);
+  --sidebar-border: oklch(0.9 0 0);
+  --sidebar-ring: oklch(0.7 0 0);
+
+  --radius: 0.625rem;
+  color-scheme: light;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+}
+
+/*
+ * Couch is light-themed but @yupp/agents-ui ships with dark-theme Tailwind
+ * classes baked in (originally for war-room): text-zinc-{50,100,200,300},
+ * bg-zinc-{800..950}, bg-blue-950/40 user bubbles, etc. Since we can't edit
+ * the npm package, we re-map those classes to our light-theme tokens, but
+ * only inside the chat-feed wrapper so we don't inadvertently affect anything
+ * that intentionally uses those utilities elsewhere.
+ *
+ * Tool-use rows still read as muted (zinc-400/500 → muted-foreground) so
+ * they stay visually secondary; assistant message body text reads at full
+ * foreground contrast.
+ */
+.couch-feed [class*="text-zinc-50"],
+.couch-feed [class*="text-zinc-100"],
+.couch-feed [class*="text-zinc-200"],
+.couch-feed [class*="text-zinc-300"] {
+  color: var(--foreground);
+}
+
+.couch-feed [class*="text-zinc-400"],
+.couch-feed [class*="text-zinc-500"] {
+  color: var(--muted-foreground);
+}
+
+.couch-feed [class*="bg-zinc-800"],
+.couch-feed [class*="bg-zinc-900"],
+.couch-feed [class*="bg-zinc-950"] {
+  background-color: var(--card);
+}
+
+.couch-feed [class*="bg-blue-9"] {
+  background-color: oklch(0.96 0.02 240);
+}
+
+/* Inside the user-message bubble, code chips and code blocks inherit the
+ * default streamdown gray background, which clashes with the light-blue
+ * bubble. Tint them a slightly darker shade of the bubble blue instead. */
+.couch-feed [class*="bg-blue-9"] :not(pre) > code {
+  background-color: oklch(0.91 0.03 240);
+  color: oklch(0.30 0.06 240);
+  border-radius: 0.25rem;
+  padding: 0.05rem 0.3rem;
+}
+
+/* Streamdown code blocks have an outer wrapper, header (action buttons),
+ * and inner pre. Paint the whole box one shade so the chrome isn't a white
+ * band above the code. */
+.couch-feed [class*="bg-blue-9"] [data-streamdown="code-block"] {
+  background-color: oklch(0.88 0.04 240);
+  border-color: oklch(0.82 0.05 240);
+}
+
+.couch-feed [class*="bg-blue-9"] [data-streamdown="code-block-header"],
+.couch-feed [class*="bg-blue-9"] [data-streamdown="code-block-actions"],
+.couch-feed [class*="bg-blue-9"] [data-streamdown="code-block-body"],
+.couch-feed [class*="bg-blue-9"] [data-streamdown="code-block"] pre,
+.couch-feed [class*="bg-blue-9"] [data-streamdown="code-block"] pre code {
+  background-color: transparent;
+  color: oklch(0.25 0.07 240);
+}
+
+/* Headings inside the chat feed are huge by default (h1 ≈ 2em). Tighten
+ * the scale so they read as section labels rather than billboards. */
+.couch-feed [data-streamdown="heading-1"] {
+  font-size: 1.25rem;
+  line-height: 1.35;
+  font-weight: 600;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+}
+.couch-feed [data-streamdown="heading-2"] {
+  font-size: 1.1rem;
+  line-height: 1.35;
+  font-weight: 600;
+  margin-top: 0.875rem;
+  margin-bottom: 0.4rem;
+}
+.couch-feed [data-streamdown="heading-3"] {
+  font-size: 1rem;
+  line-height: 1.4;
+  font-weight: 600;
+  margin-top: 0.75rem;
+  margin-bottom: 0.3rem;
+}
+.couch-feed [data-streamdown="heading-4"],
+.couch-feed [data-streamdown="heading-5"],
+.couch-feed [data-streamdown="heading-6"] {
+  font-size: 0.95rem;
+  line-height: 1.4;
+  font-weight: 600;
+  margin-top: 0.625rem;
+  margin-bottom: 0.25rem;
+}
+
+.couch-feed [class*="bg-emerald-9"] {
+  background-color: oklch(0.96 0.04 150);
+}
+
+.couch-feed [class*="bg-red-9"] {
+  background-color: oklch(0.97 0.03 25);
+}
+
+.couch-feed [class*="border-zinc-"],
+.couch-feed [class*="border-blue-"],
+.couch-feed [class*="border-emerald-"],
+.couch-feed [class*="border-red-"] {
+  border-color: var(--border);
+}
+
+.couch-feed [class*="ring-blue-"] {
+  --tw-ring-color: oklch(0.78 0.08 240 / 0.35);
+}

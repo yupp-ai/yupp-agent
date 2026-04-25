@@ -21,10 +21,13 @@ set -euo pipefail
 INSTALL_DIR="${INSTALL_DIR:-/opt/yupp-agent}"
 DATA_DIR="${DATA_DIR:-/data/ahs}"
 APP_USER="${APP_USER:-ahs}"
-SERVICES=(ahs-mono ahs-streamlit artifact-viewer)
+SERVICES=(ahs-mono ahs-streamlit artifact-viewer couch)
 # Sub-apps with their own pyproject / venv. Each gets ``pip install -e`` on
 # every deploy so code changes take effect without a separate step.
 SUBAPPS=(apps/artifact-viewer)
+# Bun apps. Each gets ``bun install --production && bun run build`` on every
+# deploy so code changes take effect without a separate step.
+BUN_APPS=(apps/couch)
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 info() { echo -e "${GREEN}[deploy]${NC} $*"; }
@@ -74,10 +77,29 @@ for subapp in "${SUBAPPS[@]}"; do
     sudo -u "$APP_USER" "${app_venv}/bin/pip" install --quiet -e "$app_dir"
 done
 
+# --- 2c. Sync Bun apps (couch, etc.) ---------------------------------------
+for bunapp in "${BUN_APPS[@]}"; do
+    app_dir="${INSTALL_DIR}/${bunapp}"
+    if [[ ! -d "$app_dir" ]]; then
+        warn "Bun app ${bunapp} not present in repo — skipping."
+        continue
+    fi
+    if ! command -v bun >/dev/null 2>&1; then
+        die "bun not found on PATH; install Bun system-wide before deploying ${bunapp}."
+    fi
+    info "bun install + build for ${bunapp} (cheap if nothing changed)…"
+    sudo -u "$APP_USER" bash -c "
+        set -euo pipefail
+        cd '$app_dir'
+        bun install --production --frozen-lockfile
+        bun run build
+    " || die "bun install/build for ${bunapp} failed."
+done
+
 # --- 3. Sync systemd unit files --------------------------------------------
 # Unit files can live under deploy/systemd/ (main services) OR
-# apps/*/deploy/*.service (sub-apps). Each service name maps to whichever
-# source file exists.
+# apps/*/deploy/*.service (sub-apps and Bun apps). Each service name maps
+# to whichever source file exists.
 UNITS_CHANGED=0
 unit_source_for() {
     local unit="$1"
@@ -85,7 +107,7 @@ unit_source_for() {
     if [[ -f "$main" ]]; then
         echo "$main"; return 0
     fi
-    for subapp in "${SUBAPPS[@]}"; do
+    for subapp in "${SUBAPPS[@]}" "${BUN_APPS[@]}"; do
         local alt="${INSTALL_DIR}/${subapp}/deploy/${unit}.service"
         if [[ -f "$alt" ]]; then
             echo "$alt"; return 0
