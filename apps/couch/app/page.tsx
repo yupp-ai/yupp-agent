@@ -1,11 +1,13 @@
+import { NewSessionPrompt } from '@/components/prompt/new-session-prompt'
+import { LeftRail } from '@/components/rail/left-rail'
+
 export default function Home() {
   return (
-    <main className="flex min-h-screen items-center justify-center">
-      <div className="text-center">
-        <p className="text-3xl">🛋️</p>
-        <h1 className="mt-2 text-2xl font-semibold tracking-tight">Couch</h1>
-        <p className="mt-1 text-sm text-muted-foreground">scaffolding ok</p>
-      </div>
-    </main>
+    <div className="flex h-screen">
+      <LeftRail />
+      <main className="flex flex-1 flex-col">
+        <NewSessionPrompt />
+      </main>
+    </div>
   )
 }
