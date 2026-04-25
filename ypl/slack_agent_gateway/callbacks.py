@@ -749,6 +749,18 @@ async def handle_tool_event(request: SendToolEventRequest) -> SendToolEventRespo
     if not session:
         return SendToolEventResponse(success=False, error="Session not found")
 
+    # If the user toggled /quiet for this session, drop tool events on the floor —
+    # don't buffer, don't render. Toggling /verbose later will resume showing the
+    # cluster for subsequent tool calls. We return success so AHS doesn't retry.
+    if not session.show_tool_calls:
+        logger.debug(
+            "Tool event suppressed (session is in /quiet mode)",
+            session_id=request.session_id,
+            kind=request.kind,
+            tool_use_id=request.tool_use_id,
+        )
+        return SendToolEventResponse(success=True, message_ts=session.status_message_ts)
+
     if request.kind == ToolEventKind.START:
         entry = ToolUseEntry(
             tool_use_id=request.tool_use_id,

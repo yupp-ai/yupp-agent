@@ -318,11 +318,11 @@ class TestHandleAppMentionStopCommand:
                 return_value=(True, [".*"], "general"),
             ),
             patch(
-                "ypl.slack_agent_gateway.events.get_session",
+                "ypl.slack_agent_gateway.mention_commands.get_session",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
-            patch("ypl.slack_agent_gateway.events.build_slack_client", return_value=mock_client),
+            patch("ypl.slack_agent_gateway.mention_commands.build_slack_client", return_value=mock_client),
             patch("ypl.slack_agent_gateway.events.create_background_task"),
         ):
             result = await handle_app_mention(event, app_config)
@@ -346,20 +346,20 @@ class TestHandleAppMentionStopCommand:
                 return_value=(True, [".*"], "general"),
             ),
             patch(
-                "ypl.slack_agent_gateway.events.get_session",
+                "ypl.slack_agent_gateway.mention_commands.get_session",
                 new_callable=AsyncMock,
                 return_value=session,
             ),
             patch(
-                "ypl.slack_agent_gateway.events.stop_agent_session",
+                "ypl.slack_agent_gateway.mention_commands.stop_agent_session",
                 new_callable=AsyncMock,
                 return_value={"status": "stopped"},
             ),
             patch(
-                "ypl.slack_agent_gateway.events.save_session",
+                "ypl.slack_agent_gateway.mention_commands.save_session",
                 new_callable=AsyncMock,
             ),
-            patch("ypl.slack_agent_gateway.events.build_slack_client", return_value=mock_client),
+            patch("ypl.slack_agent_gateway.mention_commands.build_slack_client", return_value=mock_client),
             patch("ypl.slack_agent_gateway.events.create_background_task"),
         ):
             result = await handle_app_mention(event, app_config)
@@ -382,20 +382,20 @@ class TestHandleAppMentionStopCommand:
                 return_value=(True, [".*"], "general"),
             ),
             patch(
-                "ypl.slack_agent_gateway.events.get_session",
+                "ypl.slack_agent_gateway.mention_commands.get_session",
                 new_callable=AsyncMock,
                 return_value=session,
             ),
             patch(
-                "ypl.slack_agent_gateway.events.stop_agent_session",
+                "ypl.slack_agent_gateway.mention_commands.stop_agent_session",
                 new_callable=AsyncMock,
                 return_value={"status": "no_inflight_turn"},
             ),
             patch(
-                "ypl.slack_agent_gateway.events.save_session",
+                "ypl.slack_agent_gateway.mention_commands.save_session",
                 new_callable=AsyncMock,
             ),
-            patch("ypl.slack_agent_gateway.events.build_slack_client", return_value=mock_client),
+            patch("ypl.slack_agent_gateway.mention_commands.build_slack_client", return_value=mock_client),
             patch("ypl.slack_agent_gateway.events.create_background_task"),
         ):
             result = await handle_app_mention(event, app_config)
@@ -421,20 +421,20 @@ class TestHandleAppMentionStopCommand:
                 return_value=(True, [".*"], "general"),
             ),
             patch(
-                "ypl.slack_agent_gateway.events.get_session",
+                "ypl.slack_agent_gateway.mention_commands.get_session",
                 new_callable=AsyncMock,
                 return_value=session,
             ),
             patch(
-                "ypl.slack_agent_gateway.events.stop_agent_session",
+                "ypl.slack_agent_gateway.mention_commands.stop_agent_session",
                 new_callable=AsyncMock,
                 return_value={"status": "stopped"},
             ),
             patch(
-                "ypl.slack_agent_gateway.events.save_session",
+                "ypl.slack_agent_gateway.mention_commands.save_session",
                 new_callable=AsyncMock,
             ),
-            patch("ypl.slack_agent_gateway.events.build_slack_client", return_value=mock_client),
+            patch("ypl.slack_agent_gateway.mention_commands.build_slack_client", return_value=mock_client),
             patch("ypl.slack_agent_gateway.events.create_background_task"),
         ):
             result = await handle_app_mention(event, app_config)
@@ -469,7 +469,7 @@ class TestHandleAppMentionAttachCommand:
                 new_callable=AsyncMock,
                 return_value=(True, [".*"], "general"),
             ),
-            patch("ypl.slack_agent_gateway.events.build_slack_client", return_value=mock_client),
+            patch("ypl.slack_agent_gateway.mention_commands.build_slack_client", return_value=mock_client),
             patch("ypl.slack_agent_gateway.events.create_background_task"),
         ):
             result = await handle_app_mention(event, app_config)
@@ -492,7 +492,7 @@ class TestHandleAppMentionAttachCommand:
                 new_callable=AsyncMock,
                 return_value=(True, [".*"], "general"),
             ),
-            patch("ypl.slack_agent_gateway.events.build_slack_client", return_value=mock_client),
+            patch("ypl.slack_agent_gateway.mention_commands.build_slack_client", return_value=mock_client),
             patch("ypl.slack_agent_gateway.events.create_background_task"),
         ):
             result = await handle_app_mention(event, app_config)
@@ -514,7 +514,7 @@ class TestHandleAppMentionAttachCommand:
                 new_callable=AsyncMock,
                 return_value=(True, [".*"], "general"),
             ),
-            patch("ypl.slack_agent_gateway.events.build_slack_client", return_value=mock_client),
+            patch("ypl.slack_agent_gateway.mention_commands.build_slack_client", return_value=mock_client),
             patch("ypl.slack_agent_gateway.events.create_background_task"),
         ):
             result = await handle_app_mention(event, app_config)
@@ -540,11 +540,11 @@ class TestHandleAppMentionAttachCommand:
                 return_value=(True, [".*"], "general"),
             ),
             patch(
-                "ypl.slack_agent_gateway.events.get_session_info",
+                "ypl.slack_agent_gateway.mention_commands.get_session_info",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
-            patch("ypl.slack_agent_gateway.events.build_slack_client", return_value=mock_client),
+            patch("ypl.slack_agent_gateway.mention_commands.build_slack_client", return_value=mock_client),
             patch("ypl.slack_agent_gateway.events.create_background_task"),
         ):
             result = await handle_app_mention(event, app_config)
@@ -572,16 +572,16 @@ class TestHandleAppMentionAttachCommand:
                 return_value=(True, [".*"], "general"),
             ),
             patch(
-                "ypl.slack_agent_gateway.events.get_session_info",
+                "ypl.slack_agent_gateway.mention_commands.get_session_info",
                 new_callable=AsyncMock,
                 return_value=session_detail,
             ),
             patch(
-                "ypl.slack_agent_gateway.events.attach_slack_to_session",
+                "ypl.slack_agent_gateway.mention_commands.attach_slack_to_session",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
-            patch("ypl.slack_agent_gateway.events.build_slack_client", return_value=mock_client),
+            patch("ypl.slack_agent_gateway.mention_commands.build_slack_client", return_value=mock_client),
             patch("ypl.slack_agent_gateway.events.create_background_task"),
         ):
             result = await handle_app_mention(event, app_config)
@@ -617,25 +617,25 @@ class TestHandleAppMentionAttachCommand:
                 return_value=(True, [".*"], "general"),
             ),
             patch(
-                "ypl.slack_agent_gateway.events.get_session_info",
+                "ypl.slack_agent_gateway.mention_commands.get_session_info",
                 new_callable=AsyncMock,
                 return_value=session_detail,
             ),
             patch(
-                "ypl.slack_agent_gateway.events.attach_slack_to_session",
+                "ypl.slack_agent_gateway.mention_commands.attach_slack_to_session",
                 new_callable=AsyncMock,
                 return_value={"status": "ok"},
             ),
             patch(
-                "ypl.slack_agent_gateway.events.store_thread_session_mapping",
+                "ypl.slack_agent_gateway.mention_commands.store_thread_session_mapping",
                 new_callable=AsyncMock,
             ),
             patch(
-                "ypl.slack_agent_gateway.events.create_sag_session",
+                "ypl.slack_agent_gateway.mention_commands.create_sag_session",
                 new_callable=AsyncMock,
                 return_value=fake_session,
             ),
-            patch("ypl.slack_agent_gateway.events.build_slack_client", return_value=mock_client),
+            patch("ypl.slack_agent_gateway.mention_commands.build_slack_client", return_value=mock_client),
             patch("ypl.slack_agent_gateway.events.create_background_task"),
         ):
             result = await handle_app_mention(event, app_config)

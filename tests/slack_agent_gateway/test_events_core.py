@@ -1,13 +1,12 @@
 """Unit tests for SAG events module.
 
-Covers:
-- verify_slack_signature_multi (HMAC validation, replay protection)
-- handle_url_verification (challenge echo)
-- _extract_command (stop / attach / attach <id>)
-- _extract_model_directive (/model: parsing)
-- _format_models_list (formatting helper)
-- handle_reaction_added (emoji feedback routing)
-- handle_app_mention basics (channel denied, stop command, invalid event)
+Covers the wiring layer in ``events.py``:
+- ``verify_slack_signature_multi`` (HMAC validation, replay protection)
+- ``handle_url_verification`` (challenge echo)
+- ``handle_reaction_added`` (emoji feedback routing)
+
+Parser / formatter / dispatch tests live in ``test_mention_commands.py`` now
+that those surfaces have moved into ``mention_commands.py``.
 """
 
 from __future__ import annotations
@@ -20,9 +19,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 from ypl.slack_agent_gateway.events import (
-    _extract_command,
-    _extract_model_directive,
-    _format_models_list,
     handle_reaction_added,
     handle_url_verification,
     verify_slack_signature_multi,
@@ -243,116 +239,6 @@ class TestHandleUrlVerification:
         with pytest.raises(HTTPException) as exc_info:
             await handle_url_verification(payload)
         assert exc_info.value.status_code == 400
-
-
-# ---------------------------------------------------------------------------
-# _extract_command
-# ---------------------------------------------------------------------------
-
-
-class TestExtractCommand:
-    def test_stop_command(self) -> None:
-        assert _extract_command("<@U123> /stop") == ("stop", "")
-
-    def test_stop_command_uppercase(self) -> None:
-        assert _extract_command("<@U123> /STOP") == ("stop", "")
-
-    def test_stop_without_slash(self) -> None:
-        assert _extract_command("<@U123> stop") == ("stop", "")
-
-    def test_attach_without_args(self) -> None:
-        result = _extract_command("<@U123> /attach")
-        assert result == ("attach", "")
-
-    def test_attach_with_session_id(self) -> None:
-        result = _extract_command("<@U123> /attach abc-uuid-123")
-        assert result is not None
-        assert result[0] == "attach"
-        assert result[1] == "abc-uuid-123"
-
-    def test_non_command_returns_none(self) -> None:
-        assert _extract_command("<@U123> hello world") is None
-
-    def test_regular_message_returns_none(self) -> None:
-        assert _extract_command("<@U123> can you help me?") is None
-
-    def test_empty_text_returns_none(self) -> None:
-        assert _extract_command("") is None
-
-    def test_attach_without_slash(self) -> None:
-        result = _extract_command("<@U123> attach abc-uuid")
-        assert result is not None
-        assert result[0] == "attach"
-
-    def test_mention_stripped_before_matching(self) -> None:
-        # Multiple mentions stripped
-        assert _extract_command("<@U1> <@U2> stop") == ("stop", "")
-
-
-# ---------------------------------------------------------------------------
-# _extract_model_directive
-# ---------------------------------------------------------------------------
-
-
-class TestExtractModelDirective:
-    def test_no_directive_returns_none_spec(self) -> None:
-        spec, text = _extract_model_directive("<@U123> please review my PR")
-        assert spec is None
-        assert "please review my PR" in text
-
-    def test_model_directive_extracted(self) -> None:
-        spec, text = _extract_model_directive("<@U123> /model:anthropic/claude-3-5 do this task")
-        assert spec == "anthropic/claude-3-5"
-        assert text == "do this task"
-
-    def test_model_directive_case_insensitive(self) -> None:
-        spec, _ = _extract_model_directive("<@U123> /Model:openai/gpt-4 hello")
-        assert spec == "openai/gpt-4"
-
-    def test_model_only_no_remaining_text(self) -> None:
-        spec, text = _extract_model_directive("<@U123> /model:mymodel/v1")
-        assert spec == "mymodel/v1"
-        assert text == ""
-
-    def test_mention_stripped_from_cleaned_text(self) -> None:
-        _, text = _extract_model_directive("<@UABC> no directive here")
-        assert "<@UABC>" not in text
-
-    def test_model_directive_not_first_word_ignored(self) -> None:
-        """If /model: is not the first word, it's treated as normal text."""
-        spec, text = _extract_model_directive("<@U123> hello /model:foo do stuff")
-        assert spec is None
-        assert "/model:foo" in text
-
-
-# ---------------------------------------------------------------------------
-# _format_models_list
-# ---------------------------------------------------------------------------
-
-
-class TestFormatModelsList:
-    def test_contains_harnessed_section(self) -> None:
-        models = {"harnessed": ["claude-agent", "codex-agent"], "raw": []}
-        result = _format_models_list(models)
-        assert "Harnessed" in result
-        assert "claude-agent" in result
-        assert "codex-agent" in result
-
-    def test_contains_raw_section(self) -> None:
-        models = {"harnessed": [], "raw": ["gpt-4o", "claude-3-5-sonnet"]}
-        result = _format_models_list(models)
-        assert "Raw LLM" in result
-        assert "gpt-4o" in result
-
-    def test_usage_example_included(self) -> None:
-        models: dict[str, list[str]] = {"harnessed": [], "raw": []}
-        result = _format_models_list(models)
-        assert "/model:" in result
-
-    def test_empty_models_dict(self) -> None:
-        result = _format_models_list({})
-        # Should not raise, just return formatted empty sections
-        assert isinstance(result, str)
 
 
 # ---------------------------------------------------------------------------

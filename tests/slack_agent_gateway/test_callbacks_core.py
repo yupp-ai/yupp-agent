@@ -55,6 +55,7 @@ def _make_session(
     last_reply_ts: str | None = None,
     placeholder_ts: str | None = None,
     status_message_ts: str | None = None,
+    show_tool_calls: bool = True,
 ) -> AgentSession:
     now = datetime.now(UTC)
     return AgentSession(
@@ -69,6 +70,7 @@ def _make_session(
         last_reply_ts=last_reply_ts,
         placeholder_ts=placeholder_ts,
         status_message_ts=status_message_ts,
+        show_tool_calls=show_tool_calls,
         created_at=now,
         last_activity_at=now,
         expires_at=now + timedelta(hours=8),
@@ -862,3 +864,54 @@ class TestHandleToolEvent:
 
         assert result.success is True
         mock_update.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_quiet_session_suppresses_tool_events(self) -> None:
+        """When /quiet is active on a session, tool events are dropped without
+        buffering, rendering, or flushing to Slack."""
+        session = _make_session(show_tool_calls=False, status_message_ts="1111.222")
+
+        with (
+            patch("ypl.slack_agent_gateway.callbacks.get_session", return_value=session),
+            patch("ypl.slack_agent_gateway.callbacks.append_tool_entry", new_callable=AsyncMock) as mock_append,
+            patch("ypl.slack_agent_gateway.callbacks.update_tool_result", new_callable=AsyncMock) as mock_update,
+            patch(
+                "ypl.slack_agent_gateway.callbacks.set_tool_cluster_pending",
+                new_callable=AsyncMock,
+            ) as mock_pending,
+            patch(
+                "ypl.slack_agent_gateway.callbacks.try_acquire_status_ratelimit",
+                return_value=True,
+            ) as mock_ratelimit,
+            patch(
+                "ypl.slack_agent_gateway.callbacks.flush_status_update",
+                new_callable=AsyncMock,
+            ) as mock_flush,
+        ):
+            start_req = SendToolEventRequest(
+                session_id=session.session_id,
+                kind=ToolEventKind.START,
+                tool_use_id="t1",
+                name="Bash",
+                command="ls",
+            )
+            start_result = await handle_tool_event(start_req)
+
+            result_req = SendToolEventRequest(
+                session_id=session.session_id,
+                kind=ToolEventKind.RESULT,
+                tool_use_id="t1",
+                result_status="done",
+                result_content="ok",
+            )
+            result_result = await handle_tool_event(result_req)
+
+        # Both events return success so AHS doesn't retry.
+        assert start_result.success is True
+        assert result_result.success is True
+        # Nothing was buffered, rendered, or posted to Slack.
+        mock_append.assert_not_called()
+        mock_update.assert_not_called()
+        mock_pending.assert_not_called()
+        mock_ratelimit.assert_not_called()
+        mock_flush.assert_not_called()
