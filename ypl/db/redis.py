@@ -17,7 +17,7 @@ REDIS_RETRY_POLICY = Retry(ExponentialBackoff(), 5)
 async def get_redis_client() -> redis.Redis:
     """
     Returns a regular Redis client.
-    Use this by default, especially if you do not need to share the state with yupp-head. (e.g. for rate limiting).
+    Use this by default, especially for process-local state (e.g. rate limiting).
     """
     global REDIS_CONNECTION_POOL
     client = None
@@ -45,7 +45,7 @@ async def get_redis_client() -> redis.Redis:
 async def get_upstash_redis_client_for_stop_streaming_check() -> UpstashRedis:
     """
     Returns an Upstash Redis client.
-    Use this ONLY if you need to share the state with yupp-head (e.g. for stop streaming).
+    Use this ONLY if you need to share state with an external frontend service (e.g. stop-streaming signals).
     """
     global UPSTASH_REDIS_CLIENT
     if UPSTASH_REDIS_CLIENT is None:

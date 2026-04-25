@@ -101,7 +101,7 @@ export async function submitSlackGatewayRequest(input: {
     }
   }
 
-  // TODO: Once yupp-mind's canonical pending_request response is released, use
+  // TODO: Once the AHS canonical pending_request response is released, use
   // that record here for both success and duplicate-submit responses instead of
   // synthesizing an optimistic pending state.
   // The currently deployed gateway does not return that canonical record yet,

@@ -1,7 +1,7 @@
 """Agent memory search constants and stub.
 
-The full search implementation is in the original file from yupp-mind.
-This stub provides only what AHS needs.
+Only the constants and the callable signature used by AHS are exposed here;
+hybrid/semantic search is not yet wired up in yupp-agent.
 """
 
 from typing import Any
@@ -20,7 +20,7 @@ async def search_agent_memory(
 ) -> list[dict[str, Any]]:
     """Stub for agent memory search. Returns empty results.
 
-    The full implementation lives in yupp-mind. This stub exists so that
-    imports don't break in yupp-agent services.
+    Hybrid/semantic search is not yet wired up in yupp-agent; this stub
+    keeps callers working until it is.
     """
     return []

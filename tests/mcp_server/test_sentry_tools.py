@@ -36,7 +36,7 @@ def _make_issue_data(**overrides: Any) -> dict[str, Any]:
         "level": "error",
         "priority": "high",
         "platform": "javascript",
-        "project": {"slug": "yupp-head"},
+        "project": {"slug": "test-project"},
         "assignedTo": {"name": "Alice", "email": "alice@example.com"},
         "culprit": "app.js in handleClick",
         "count": "42",

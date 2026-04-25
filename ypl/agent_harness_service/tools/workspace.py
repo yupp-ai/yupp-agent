@@ -40,7 +40,7 @@ def request_write_access(session_id: str, repo: str, branch: str | None = None) 
 
     Args:
         session_id: Your harness session ID (provided in the system prompt).
-        repo: Repository name (e.g., 'yupp-mind').
+        repo: Repository name (e.g., 'yupp-agent').
         branch: Optional branch name. Defaults to 'agent/{session_id}'.
 
     Returns:

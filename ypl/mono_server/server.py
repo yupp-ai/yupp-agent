@@ -240,8 +240,6 @@ def create_app() -> FastAPI:
     application.add_middleware(
         CORSMiddleware,
         allow_origins=[
-            "https://yupp-soul.vercel.app",
-            "https://chaos-soul.vercel.app",
             "http://localhost:3000",
             "http://localhost:3001",
             "http://localhost:8080",

@@ -328,7 +328,7 @@ export function AgentDetail({
                 </div>
               ))
             )}
-            {/* TODO(yupp-mind): Extend AgentDetailResponse with additional_system_prompt and
+            {/* TODO: Extend AgentDetailResponse with additional_system_prompt and
                 the remaining DB-backed config fields so the detail page can show a complete
                 agent record instead of only the current summary + prompt files. */}
             <p className="text-xs text-zinc-500">

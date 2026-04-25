@@ -10,7 +10,7 @@ Here's how to set it up to work with Claude Code:
 - Copy your Access Token from the email you received, and add it to your bash environment.
   - e.g. `echo "export AGCOUCH_MCP_TOKEN=yupp_dev_{...}" >> ~/.zshrc` if you use zsh, or any other places where you keep environment variables. (Remember to `source ~/.zshrc` when you are done, so it's part of current terminal)
   - or `export AGCOUCH_MCP_TOKEN=yupp_dev_{...}` directly on your terminal if you don't want to it set for every terminal session.
-- In your Claude Code, run `/mcp` command in yupp-mind repo, it should automatically discover the MCP server, and authenticate for you.
+- In your Claude Code, run `/mcp` command in the yupp-agent repo, it should automatically discover the MCP server, and authenticate for you.
 - Just ask Claude some question that requires knowledge of our DB, Bigquery, Redis, GCP (BE) and Vercel (FE) logs
 
 For using Claude code on Web UI (remote agent). You should:
@@ -38,7 +38,7 @@ Engineer's Cloud Agent (Claude Code Web)    or    Browser-based MCP Client
     HTTPS with Bearer token                    HTTPS with OAuth
          ↓                                              ↓
     ┌───────────────────────────────────────────────────┐
-    │           Cloud Run (yupp-mind:mcp mode)          │
+    │           Cloud Run (yupp-agent:mcp mode)         │
     │                                                   │
     │   MCP_SERVER_MODE=DEV_TOKEN  │  MCP_SERVER_MODE=OAUTH
     │   DevTokenAuthMiddleware     │  GoogleProvider (FastMCP)
@@ -524,7 +524,7 @@ Potential additions:
 
 ```bash
 # Using entrypoint.sh (production-like)
-cd /path/to/yupp-mind
+cd /path/to/yupp-agent
 ./ypl/mcp_server/entrypoint.sh
 
 # Or using uvicorn directly

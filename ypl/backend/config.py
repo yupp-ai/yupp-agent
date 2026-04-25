@@ -97,7 +97,7 @@ class Settings(BaseSettings):
 
     # Database connections are configured via JSON env vars. Each contains:
     # {"user", "password", "host", "host_non_pooling", "database", "cloud_sql_proxy_socket"(optional)}
-    # yuppdb = the shared Yupp database (from yupp-mind), agentdb = the agent-specific database.
+    # yuppdb = the shared Yupp database, agentdb = the agent-specific database.
     POSTGRES_CONNECTION_YUPPDB: str = ""
     POSTGRES_CONNECTION_YUPPDB_REPLICA: str = ""
     POSTGRES_CONNECTION_AGENTDB: str = ""
@@ -305,9 +305,9 @@ class Settings(BaseSettings):
     TASKIQ_ADMIN_API_TOKEN: str = ""
 
     # The URL of the Redis instance to use for the application.
-    # If you do not need to share the state with yupp-head, use get_redis_client, which uses this URL.
-    # If you need to share the state with yupp-head (for stop streaming), use
-    # get_upstash_redis_client_for_stop_streaming_check, which uses the UPSTASH_REDIS_* environment variables.
+    # For process-local state (e.g. rate limiting) use get_redis_client, which uses this URL.
+    # For state shared with an external frontend service (e.g. stop-streaming signals) use
+    # get_upstash_redis_client_for_stop_streaming_check, which reads UPSTASH_REDIS_* env vars.
     REDIS_URL: str = "redis://localhost:6379/1"
 
     # Whether to process events via Kafka.
