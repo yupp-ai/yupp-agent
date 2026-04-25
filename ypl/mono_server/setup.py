@@ -155,8 +155,7 @@ def generate_env_content(params: dict[str, str]) -> str:
 
             postgres_user, postgres_password, postgres_host, postgres_database,
             redis_url, secret_key, x_api_key, ahs_api_key,
-            mcp_jwt_key, mcp_enc_key, slack_enc_key, base_url,
-            ahs_token_emails
+            mcp_jwt_key, mcp_enc_key, slack_enc_key, base_url
 
     Returns:
         Complete ``.env`` file content as a string.
@@ -168,7 +167,6 @@ def generate_env_content(params: dict[str, str]) -> str:
         params.get("postgres_database", "yadb"),
     )
     base_url = params.get("base_url", "http://localhost:8090")
-    ahs_token_emails = params.get("ahs_token_emails", "")
     lit_base_url = params.get("lit_base_url", "")
     google_auth_client_id = params.get("google_auth_client_id", "")
     google_auth_client_secret = params.get("google_auth_client_secret", "")
@@ -227,9 +225,6 @@ GOOGLE_AUTH_COOKIE_SECRET={google_auth_cookie_secret}
 # MCP Authentication
 # ---------------------------------------------------------------------------
 MCP_SERVER_MODE=DEV_TOKEN
-# SECURITY: comma-separated admin emails allowed to create agent sessions via
-# service tokens.  Keep this list minimal — treat it like a root-access list.
-AHS_SERVICE_TOKEN_EMAILS={ahs_token_emails}
 MCP_OAUTH_GOOGLE_CLIENT_ID=
 MCP_OAUTH_GOOGLE_CLIENT_SECRET=
 MCP_OAUTH_JWT_SIGNING_KEY={params.get("mcp_jwt_key", "")}
@@ -518,14 +513,10 @@ async def setup_interactive() -> int:
         # ------------------------------------------------------------------
         # Step 3 — Collect public base URL + admin email for service token
         # ------------------------------------------------------------------
-        console.print("\n[bold]Step 3 / 7 — Service base URL & admin email[/bold]")
+        console.print("\n[bold]Step 3 / 7 — Service base URL[/bold]")
         base_url = Prompt.ask(
             "  Public base URL (used in token emails and gateway callbacks)",
             default="http://localhost:8090",
-        )
-        admin_email_for_env = Prompt.ask(
-            "  Admin email for AHS_SERVICE_TOKEN_EMAILS\n"
-            "  [dim](grants server-to-server access — keep this list minimal)[/dim]"
         )
 
         # ------------------------------------------------------------------
@@ -579,7 +570,6 @@ async def setup_interactive() -> int:
             "postgres_database": pg_database,
             "redis_url": redis_url,
             "base_url": base_url,
-            "ahs_token_emails": admin_email_for_env,
             "secret_key": generate_secret(),
             "x_api_key": generate_secret(),
             "ahs_api_key": generate_secret(),

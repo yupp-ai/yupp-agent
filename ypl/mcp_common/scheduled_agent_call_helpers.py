@@ -448,8 +448,16 @@ async def list_agent_schedules_by_filters(
 async def cancel_agent_schedule_by_id(
     agent_schedule_id: str,
     caller_user_id: str,
+    allow_any_owner: bool = False,
 ) -> dict[str, Any]:
-    """Cancel a schedule. Only the creator can cancel PENDING/PAUSED schedules. Returns result dict."""
+    """Cancel a schedule. Caller must be creator unless ``allow_any_owner`` is set.
+
+    ``allow_any_owner`` is the admin bypass: set to True when the caller holds
+    ``MANAGE_AGENT_SCHEDULES`` and is explicitly allowed to cancel another
+    user's schedule. Callers are responsible for the permission check.
+
+    Only PENDING or PAUSED schedules can be cancelled. Returns result dict.
+    """
     try:
         schedule_uuid = uuid.UUID(agent_schedule_id)
     except ValueError:
@@ -460,14 +468,16 @@ async def cancel_agent_schedule_by_id(
         }
 
     async with get_async_session() as session:
-        result = await session.execute(
+        update_stmt = (
             sa.update(AgentSchedule)
             .where(col(AgentSchedule.agent_schedule_id) == schedule_uuid)
             .where(col(AgentSchedule.deleted_at).is_(None))
             .where(col(AgentSchedule.status).in_([AgentScheduleStatus.PENDING, AgentScheduleStatus.PAUSED]))
-            .where(col(AgentSchedule.created_by_user) == caller_user_id)
-            .values(status=AgentScheduleStatus.CANCELLED, modified_at=sa.func.now())
         )
+        if not allow_any_owner:
+            update_stmt = update_stmt.where(col(AgentSchedule.created_by_user) == caller_user_id)
+        update_stmt = update_stmt.values(status=AgentScheduleStatus.CANCELLED, modified_at=sa.func.now())
+        result = await session.execute(update_stmt)
         await session.commit()
 
         if result.rowcount == 0:  # type: ignore[attr-defined]
@@ -483,7 +493,7 @@ async def cancel_agent_schedule_by_id(
                     "error": f"Agent schedule not found: {agent_schedule_id}",
                     "error_code": "NOT_FOUND",
                 }
-            if existing.created_by_user != caller_user_id:
+            if not allow_any_owner and existing.created_by_user != caller_user_id:
                 return {
                     "success": False,
                     "error": "You can only cancel schedules you created",
@@ -500,6 +510,7 @@ async def cancel_agent_schedule_by_id(
             "Cancelled agent schedule",
             agent_schedule_id=agent_schedule_id,
             cancelled_by_user_id=caller_user_id,
+            admin_override=allow_any_owner,
         )
 
         return {
@@ -691,8 +702,16 @@ async def edit_agent_schedule_fields(
     max_runs: int | None = None,
     execute_at: str | None = None,
     agent_name: str | None = None,
+    allow_any_owner: bool = False,
 ) -> dict[str, Any]:
-    """Edit schedule fields. Only creator can edit PENDING/PAUSED schedules. Returns result dict."""
+    """Edit schedule fields. Caller must be creator unless ``allow_any_owner`` is set.
+
+    ``allow_any_owner`` is the admin bypass: set to True when the caller holds
+    ``MANAGE_AGENT_SCHEDULES`` and is explicitly allowed to edit another
+    user's schedule. Callers are responsible for the permission check.
+
+    Only PENDING or PAUSED schedules can be edited. Returns result dict.
+    """
     try:
         schedule_uuid = uuid.UUID(agent_schedule_id)
     except ValueError:
@@ -717,7 +736,7 @@ async def edit_agent_schedule_fields(
                 "error_code": "NOT_FOUND",
             }
 
-        if schedule.created_by_user != caller_user_id:
+        if not allow_any_owner and schedule.created_by_user != caller_user_id:
             return {
                 "success": False,
                 "error": "You can only edit schedules you created",
