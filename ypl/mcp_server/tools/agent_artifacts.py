@@ -372,6 +372,15 @@ async def add_artifact(
         }
 
     parsed_type = AgentArtifactType(artifact_type)
+    if parsed_type == AgentArtifactType.MEMORY:
+        # MEMORY artifacts have a dedicated tool surface (save_memory) because
+        # they require scope + subject and scope-authz checks that this tool
+        # doesn't model. Fail loudly rather than silently creating an
+        # unreachable row.
+        return {
+            "success": False,
+            "error": "Use save_memory for MEMORY artifacts — it threads scope/subject and authz automatically.",
+        }
 
     parsed_task_id: uuid.UUID | None = None
     if agent_task_id:
@@ -908,3 +917,11 @@ async def archive_artifact_slug(slug: str) -> dict[str, Any]:
         "archived_count": count,
         "message": f"Archived {count} version(s) under slug '{slug}'.",
     }
+
+
+# ---------------------------------------------------------------------------
+# Memory MCP tools — scope-aware wrappers around MEMORY artifacts
+# ---------------------------------------------------------------------------
+#
+# Moved to ``ypl/mcp_server/tools/memory_artifacts.py`` (registered there via
+# ``@mcp_server.tool()`` and imported by ``mcp_tools.py``).

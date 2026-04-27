@@ -29,6 +29,7 @@ import ypl.mcp_server.tools.agent_schedules
 import ypl.mcp_server.tools.database
 import ypl.mcp_server.tools.gcp_logs
 import ypl.mcp_server.tools.linear_sync
+import ypl.mcp_server.tools.memory_artifacts
 import ypl.mcp_server.tools.project_tasks
 import ypl.mcp_server.tools.redis
 import ypl.mcp_server.tools.security_incidents

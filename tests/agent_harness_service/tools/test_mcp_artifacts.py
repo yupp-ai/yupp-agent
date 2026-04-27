@@ -1,4 +1,7 @@
-"""Unit tests for ypl/mcp_server/tools/agent_artifacts.py (unified surface)."""
+"""Unit tests for ypl/mcp_server/tools/agent_artifacts.py (unified surface)
+and ypl/mcp_server/tools/memory_artifacts.py (memory tools split from the
+same surface).
+"""
 
 from __future__ import annotations
 import uuid
@@ -16,6 +19,12 @@ from ypl.mcp_server.tools.agent_artifacts import (
     search_artifacts,
     update_artifact,
     update_artifact_content,
+)
+from ypl.mcp_server.tools.memory_artifacts import (
+    list_memory,
+    load_memory,
+    save_memory,
+    search_memory,
 )
 
 FAKE_SESSION_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -469,3 +478,358 @@ class TestArchiveArtifactSlug:
         ):
             result = await archive_artifact_slug.fn(slug="x")
         assert result["success"] is False
+
+
+# ---------------------------------------------------------------------------
+# Memory MCP tools — scope-authz helpers
+# ---------------------------------------------------------------------------
+
+
+def _memory_artifact(
+    *,
+    scope: str = "agent",
+    subject: str | None = "eng-raccoon",
+    slug: str = "feedback_style",
+    version: int = 1,
+    inline_content: str = "# Feedback",
+) -> MagicMock:
+    from ypl.db.agent_harness import AgentArtifactType
+
+    a = MagicMock()
+    a.agent_artifact_id = uuid.uuid4()
+    a.artifact_type = AgentArtifactType.MEMORY
+    a.title = slug
+    a.description = None
+    a.url = None
+    a.content_type = "text/markdown"
+    a.inline_content = inline_content
+    a.named_slug = slug
+    a.version = version
+    a.memory_scope = scope
+    a.memory_scope_subject = subject
+    a.created_at = datetime(2026, 1, 1, tzinfo=UTC)
+    a.artifact_metadata = {}
+    a.deleted_at = None
+    return a
+
+
+def _caller_ctx(stack: ExitStack, *, user_id: str | None = "USR_X", agent_name: str | None = "eng-raccoon") -> None:
+    """Install MCP caller-context patches inside ``stack``.
+
+    Memory tools live in ``memory_artifacts``; they call ``get_*`` directly
+    for ``_memory_caller_from_context`` *and* call ``_resolve_caller_context``
+    in ``agent_artifacts`` (which has its own bound ``get_ahs_session_id`` /
+    ``_resolve_agent_id``). Patch both module namespaces.
+    """
+    session_id_value = FAKE_SESSION_ID if user_id or agent_name else None
+    # agent_artifacts namespace (used inside _resolve_caller_context).
+    stack.enter_context(patch("ypl.mcp_server.tools.agent_artifacts.get_ahs_session_id", return_value=session_id_value))
+    stack.enter_context(patch("ypl.mcp_server.tools.agent_artifacts.get_ahs_agent_name", return_value=agent_name))
+    stack.enter_context(patch("ypl.mcp_server.tools.agent_artifacts.get_requesting_user_id", return_value=user_id))
+    stack.enter_context(patch("ypl.mcp_server.tools.agent_artifacts._resolve_agent_id", AsyncMock(return_value=None)))
+    # memory_artifacts namespace (used by _memory_caller_from_context).
+    stack.enter_context(patch("ypl.mcp_server.tools.memory_artifacts.get_ahs_agent_name", return_value=agent_name))
+    stack.enter_context(patch("ypl.mcp_server.tools.memory_artifacts.get_requesting_user_id", return_value=user_id))
+
+
+class TestSaveMemory:
+    async def test_default_scope_is_agent_and_fills_subject(self) -> None:
+        art = _memory_artifact(scope="agent", subject="eng-raccoon")
+        with ExitStack() as stack:
+            _caller_ctx(stack)
+            stack.enter_context(
+                patch(
+                    "ypl.mcp_server.tools.memory_artifacts.get_artifact_by_slug",
+                    AsyncMock(return_value=None),
+                )
+            )
+            mock_create = stack.enter_context(
+                patch(
+                    "ypl.mcp_server.tools.memory_artifacts.create_artifact",
+                    AsyncMock(return_value=art),
+                )
+            )
+            result = await save_memory.fn(topic="feedback_style", content="# Feedback")
+        assert result["success"] is True
+        assert result["scope"] == "agent"
+        assert result["subject"] == "eng-raccoon"
+        assert result["address"] == "a:eng-raccoon:feedback_style"
+        kwargs = mock_create.call_args.kwargs
+        assert kwargs["memory_scope"] == "agent"
+        assert kwargs["memory_scope_subject"] == "eng-raccoon"
+        assert kwargs["inline_content"] == "# Feedback"
+        assert kwargs["named_slug"] == "feedback_style"
+        assert kwargs["create_new_slug"] is True  # first save → new slug
+
+    async def test_version_bump_on_existing_slug(self) -> None:
+        existing = _memory_artifact(version=1)
+        new_version = _memory_artifact(version=2)
+        with ExitStack() as stack:
+            _caller_ctx(stack)
+            stack.enter_context(
+                patch(
+                    "ypl.mcp_server.tools.memory_artifacts.get_artifact_by_slug",
+                    AsyncMock(return_value=existing),
+                )
+            )
+            mock_create = stack.enter_context(
+                patch(
+                    "ypl.mcp_server.tools.memory_artifacts.create_artifact",
+                    AsyncMock(return_value=new_version),
+                )
+            )
+            result = await save_memory.fn(topic="feedback_style", content="# v2")
+        assert result["success"] is True
+        assert result["version"] == 2
+        # Second save → append version (not new slug).
+        assert mock_create.call_args.kwargs["create_new_slug"] is False
+
+    async def test_user_scope_defaults_to_caller_user_id(self) -> None:
+        art = _memory_artifact(scope="user", subject="USR_X", slug="prefs")
+        with ExitStack() as stack:
+            _caller_ctx(stack, user_id="USR_X", agent_name="eng-raccoon")
+            stack.enter_context(
+                patch(
+                    "ypl.mcp_server.tools.memory_artifacts.get_artifact_by_slug",
+                    AsyncMock(return_value=None),
+                )
+            )
+            mock_create = stack.enter_context(
+                patch(
+                    "ypl.mcp_server.tools.memory_artifacts.create_artifact",
+                    AsyncMock(return_value=art),
+                )
+            )
+            result = await save_memory.fn(topic="prefs", content="...", scope="user")
+        assert result["success"] is True
+        assert mock_create.call_args.kwargs["memory_scope_subject"] == "USR_X"
+
+    async def test_cross_user_write_rejected(self) -> None:
+        with ExitStack() as stack:
+            _caller_ctx(stack, user_id="USR_X", agent_name="eng-raccoon")
+            result = await save_memory.fn(
+                topic="prefs",
+                content="...",
+                scope="user",
+                subject="USR_OTHER",
+            )
+        assert result["success"] is False
+        assert "Cross-scope write rejected" in result["error"]
+
+    async def test_cross_agent_write_rejected(self) -> None:
+        with ExitStack() as stack:
+            _caller_ctx(stack, user_id="USR_X", agent_name="alice")
+            result = await save_memory.fn(
+                topic="notes",
+                content="...",
+                scope="agent",
+                subject="bob",
+            )
+        assert result["success"] is False
+        assert "Cross-scope write rejected" in result["error"]
+
+    async def test_user_scope_without_user_id_rejected(self) -> None:
+        """Caller with no user_id can't write to user scope at all."""
+        with ExitStack() as stack:
+            _caller_ctx(stack, user_id=None, agent_name="alice")
+            result = await save_memory.fn(topic="prefs", content="...", scope="user")
+        assert result["success"] is False
+        # Either 'requires subject' or 'cross-scope rejected' — both are correct.
+        assert "subject" in result["error"].lower() or "cross-scope" in result["error"].lower()
+
+    async def test_topic_scope_allowed_for_any_caller(self) -> None:
+        art = _memory_artifact(scope="topic", subject=None, slug="routing_tips")
+        with ExitStack() as stack:
+            _caller_ctx(stack, user_id="USR_X", agent_name="alice")
+            stack.enter_context(
+                patch(
+                    "ypl.mcp_server.tools.memory_artifacts.get_artifact_by_slug",
+                    AsyncMock(return_value=None),
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "ypl.mcp_server.tools.memory_artifacts.create_artifact",
+                    AsyncMock(return_value=art),
+                )
+            )
+            result = await save_memory.fn(topic="routing_tips", content="...", scope="topic")
+        assert result["success"] is True
+        assert result["address"] == "t:routing_tips"
+
+    async def test_invalid_scope_rejected(self) -> None:
+        with ExitStack() as stack:
+            _caller_ctx(stack)
+            result = await save_memory.fn(topic="x", content="y", scope="project")
+        assert result["success"] is False
+        assert "Invalid scope" in result["error"]
+
+
+class TestLoadMemory:
+    async def test_load_own_agent_scope(self) -> None:
+        art = _memory_artifact(scope="agent", subject="alice")
+        with ExitStack() as stack:
+            _caller_ctx(stack, user_id="USR_X", agent_name="alice")
+            stack.enter_context(
+                patch(
+                    "ypl.mcp_server.tools.memory_artifacts.get_artifact_by_slug",
+                    AsyncMock(return_value=art),
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "ypl.mcp_server.tools.memory_artifacts.read_artifact_content",
+                    AsyncMock(return_value=(b"# Feedback", "text/markdown")),
+                )
+            )
+            result = await load_memory.fn(topic="feedback_style")
+        assert result["success"] is True
+        assert result["content"] == "# Feedback"
+        assert result["address"] == "a:alice:feedback_style"
+
+    async def test_cross_user_read_rejected(self) -> None:
+        with ExitStack() as stack:
+            _caller_ctx(stack, user_id="USR_X", agent_name="alice")
+            result = await load_memory.fn(topic="prefs", scope="user", subject="USR_OTHER")
+        assert result["success"] is False
+        assert "Cross-user" in result["error"]
+
+    async def test_cross_agent_read_rejected(self) -> None:
+        with ExitStack() as stack:
+            _caller_ctx(stack, user_id="USR_X", agent_name="alice")
+            result = await load_memory.fn(topic="notes", scope="agent", subject="bob")
+        assert result["success"] is False
+        assert "Cross-agent" in result["error"]
+
+    async def test_topic_read_allowed(self) -> None:
+        art = _memory_artifact(scope="topic", subject=None, slug="tips")
+        with ExitStack() as stack:
+            _caller_ctx(stack, user_id="USR_X", agent_name="alice")
+            stack.enter_context(
+                patch(
+                    "ypl.mcp_server.tools.memory_artifacts.get_artifact_by_slug",
+                    AsyncMock(return_value=art),
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "ypl.mcp_server.tools.memory_artifacts.read_artifact_content",
+                    AsyncMock(return_value=(b"# Tips", "text/markdown")),
+                )
+            )
+            result = await load_memory.fn(topic="tips", scope="topic")
+        assert result["success"] is True
+        assert result["address"] == "t:tips"
+
+    async def test_not_found(self) -> None:
+        with ExitStack() as stack:
+            _caller_ctx(stack)
+            stack.enter_context(
+                patch(
+                    "ypl.mcp_server.tools.memory_artifacts.get_artifact_by_slug",
+                    AsyncMock(return_value=None),
+                )
+            )
+            result = await load_memory.fn(topic="missing")
+        assert result["success"] is False
+        assert "not found" in result["error"].lower()
+
+
+class TestSearchMemory:
+    async def test_threads_caller_context(self) -> None:
+        art = _memory_artifact(scope="topic", subject=None, slug="tips")
+        with ExitStack() as stack:
+            _caller_ctx(stack, user_id="USR_X", agent_name="alice")
+            mock_search = stack.enter_context(
+                patch(
+                    "ypl.mcp_server.tools.memory_artifacts._search_artifacts",
+                    AsyncMock(return_value=[art]),
+                )
+            )
+            result = await search_memory.fn(query="tips")
+        assert result["success"] is True
+        caller = mock_search.call_args.kwargs["memory_caller"]
+        assert caller is not None
+        assert caller.user_id == "USR_X"
+        assert caller.agent_name == "alice"
+
+    async def test_cross_user_subject_rejected(self) -> None:
+        with ExitStack() as stack:
+            _caller_ctx(stack, user_id="USR_X", agent_name="alice")
+            result = await search_memory.fn(query="x", scope="user", subject="USR_OTHER")
+        assert result["success"] is False
+        assert "Cross-user" in result["error"]
+
+    async def test_topic_visibility_for_caller_without_user(self) -> None:
+        """A caller with only agent_name still sees topic memories in results."""
+        art_topic = _memory_artifact(scope="topic", subject=None, slug="tips")
+        with ExitStack() as stack:
+            _caller_ctx(stack, user_id=None, agent_name="alice")
+            stack.enter_context(
+                patch(
+                    "ypl.mcp_server.tools.memory_artifacts._search_artifacts",
+                    AsyncMock(return_value=[art_topic]),
+                )
+            )
+            result = await search_memory.fn(query="tips")
+        assert result["success"] is True
+        assert result["count"] == 1
+        assert result["results"][0]["scope"] == "topic"
+
+    async def test_empty_query(self) -> None:
+        result = await search_memory.fn(query="   ")
+        assert result["success"] is False
+
+
+class TestListMemory:
+    async def test_threads_caller_context(self) -> None:
+        mine = _memory_artifact(scope="agent", subject="alice")
+        topic = _memory_artifact(scope="topic", subject=None, slug="tips")
+        with ExitStack() as stack:
+            _caller_ctx(stack, user_id="USR_X", agent_name="alice")
+            mock_list = stack.enter_context(
+                patch(
+                    "ypl.mcp_server.tools.memory_artifacts._list_artifacts",
+                    AsyncMock(return_value=[mine, topic]),
+                )
+            )
+            result = await list_memory.fn()
+        assert result["success"] is True
+        assert result["count"] == 2
+        caller = mock_list.call_args.kwargs["memory_caller"]
+        assert caller is not None
+        assert caller.agent_name == "alice"
+
+    async def test_scope_user_defaults_to_caller_subject(self) -> None:
+        with ExitStack() as stack:
+            _caller_ctx(stack, user_id="USR_X", agent_name="alice")
+            mock_list = stack.enter_context(
+                patch(
+                    "ypl.mcp_server.tools.memory_artifacts._list_artifacts",
+                    AsyncMock(return_value=[]),
+                )
+            )
+            await list_memory.fn(scope="user")
+        assert mock_list.call_args.kwargs["memory_scope_subject"] == "USR_X"
+
+    async def test_cross_agent_list_rejected(self) -> None:
+        with ExitStack() as stack:
+            _caller_ctx(stack, agent_name="alice")
+            result = await list_memory.fn(scope="agent", subject="bob")
+        assert result["success"] is False
+        assert "Cross-agent" in result["error"]
+
+
+class TestAddArtifactRejectsMemory:
+    """add_artifact is the pointer tool — MEMORY must go through save_memory."""
+
+    async def test_memory_routed_to_save_memory(self) -> None:
+        with ExitStack() as stack:
+            _enter_caller_ctx(stack)
+            result = await add_artifact.fn(
+                artifact_type="MEMORY",
+                title="prefs",
+                content="...",
+            )
+        assert result["success"] is False
+        assert "save_memory" in result["error"]
