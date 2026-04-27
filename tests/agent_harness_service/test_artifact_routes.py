@@ -65,8 +65,14 @@ def _mock_artifact(
     m.description = None
     m.url = f"/ahs/artifacts/{artifact_id}"
     m.content_type = content_type
+    # TEXT artifacts never set inline_content. Make this explicit so the
+    # ``read_artifact_content`` inline short-circuit doesn't trip on
+    # MagicMock's auto-attribute behavior.
+    m.inline_content = None
     m.named_slug = named_slug
     m.version = version
+    m.memory_scope = None
+    m.memory_scope_subject = None
     m.creator_user_id = "user-1"
     m.creator_agent_id = None
     m.agent_session_id = None
@@ -550,17 +556,24 @@ class TestListVersionsRoute:
 
 class TestArchiveArtifactRoute:
     def test_archive_success_returns_204(self, client: TestClient) -> None:
-        with patch(
-            "ypl.agent_harness_service.artifact_routes.archive_artifact",
-            new=AsyncMock(return_value=True),
+        fake = _mock_artifact()
+        with (
+            patch(
+                "ypl.agent_harness_service.artifact_routes.get_artifact_by_id",
+                new=AsyncMock(return_value=fake),
+            ),
+            patch(
+                "ypl.agent_harness_service.artifact_routes.archive_artifact",
+                new=AsyncMock(return_value=True),
+            ),
         ):
             resp = client.delete(f"/ahs/artifacts/{FAKE_ARTIFACT_ID}")
         assert resp.status_code == 204
 
     def test_archive_missing_returns_404(self, client: TestClient) -> None:
         with patch(
-            "ypl.agent_harness_service.artifact_routes.archive_artifact",
-            new=AsyncMock(return_value=False),
+            "ypl.agent_harness_service.artifact_routes.get_artifact_by_id",
+            new=AsyncMock(return_value=None),
         ):
             resp = client.delete(f"/ahs/artifacts/{FAKE_ARTIFACT_ID}")
         assert resp.status_code == 404
@@ -645,3 +658,374 @@ class TestSearchArtifactsRoute:
         assert kwargs["limit"] == 10
         assert kwargs["offset"] == 20
         assert kwargs["artifact_type"] == AgentArtifactType.TEXT
+
+
+# ---------------------------------------------------------------------------
+# MEMORY — create / list / read / delete scope authz
+# ---------------------------------------------------------------------------
+
+
+def _memory_artifact(
+    *,
+    artifact_id: uuid.UUID | None = None,
+    scope: str = "agent",
+    subject: str | None = "eng-raccoon",
+    slug: str = "feedback_style",
+    version: int = 1,
+    inline_content: str = "# Feedback\nPrefers short answers.",
+) -> MagicMock:
+    a = MagicMock()
+    a.agent_artifact_id = artifact_id or uuid.uuid4()
+    a.artifact_type = AgentArtifactType.MEMORY
+    a.title = slug
+    a.description = None
+    a.url = None  # MEMORY has no url
+    a.content_type = "text/markdown"
+    a.inline_content = inline_content
+    a.named_slug = slug
+    a.version = version
+    a.memory_scope = scope
+    a.memory_scope_subject = subject
+    a.creator_user_id = None
+    a.creator_agent_id = None
+    a.agent_session_id = None
+    a.agent_task_id = None
+    a.created_at = datetime(2026, 1, 1, tzinfo=UTC)
+    a.artifact_metadata = {}
+    return a
+
+
+class TestCreateMemoryRoute:
+    def test_create_agent_scope_success(self, client: TestClient) -> None:
+        fake = _memory_artifact(scope="agent", subject="eng-raccoon")
+        with patch(
+            "ypl.agent_harness_service.artifact_routes.create_artifact",
+            new=AsyncMock(return_value=fake),
+        ) as mock_create:
+            resp = client.post(
+                "/ahs/artifacts",
+                headers={"X-AHS-Agent-Name": "eng-raccoon", "X-User-ID": "USR_X"},
+                json={
+                    "type": "MEMORY",
+                    "title": "feedback_style",
+                    "inline_content": "# Feedback\nPrefers short answers.",
+                    "memory_scope": "agent",
+                    "memory_scope_subject": "eng-raccoon",
+                    "named_slug": "feedback_style",
+                    "create_new_slug": True,
+                },
+            )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["memory_scope"] == "agent"
+        assert body["memory_scope_subject"] == "eng-raccoon"
+        assert body["url"] is None
+        assert body["type"] == "MEMORY"
+        # Store was called with inline_content, scope fields, and no content.
+        kwargs = mock_create.call_args.kwargs
+        assert kwargs["content"] is None
+        assert kwargs["inline_content"] == "# Feedback\nPrefers short answers."
+        assert kwargs["memory_scope"] == "agent"
+        assert kwargs["memory_scope_subject"] == "eng-raccoon"
+
+    def test_create_cross_agent_rejected_403(self, client: TestClient) -> None:
+        """Caller is agent 'alice' trying to write to agent 'bob' — 403."""
+        resp = client.post(
+            "/ahs/artifacts",
+            headers={"X-AHS-Agent-Name": "alice", "X-User-ID": "USR_X"},
+            json={
+                "type": "MEMORY",
+                "title": "notes",
+                "inline_content": "plotting",
+                "memory_scope": "agent",
+                "memory_scope_subject": "bob",
+                "named_slug": "notes",
+                "create_new_slug": True,
+            },
+        )
+        assert resp.status_code == 403
+        assert "memory_scope=" in resp.json()["detail"]
+
+    def test_create_cross_user_rejected_403(self, client: TestClient) -> None:
+        resp = client.post(
+            "/ahs/artifacts",
+            headers={"X-AHS-Agent-Name": "alice", "X-User-ID": "USR_X"},
+            json={
+                "type": "MEMORY",
+                "title": "prefs",
+                "inline_content": "...",
+                "memory_scope": "user",
+                "memory_scope_subject": "USR_OTHER",
+                "named_slug": "prefs",
+                "create_new_slug": True,
+            },
+        )
+        assert resp.status_code == 403
+
+    def test_create_topic_scope_anyone(self, client: TestClient) -> None:
+        fake = _memory_artifact(scope="topic", subject=None, slug="routing_tips")
+        with patch(
+            "ypl.agent_harness_service.artifact_routes.create_artifact",
+            new=AsyncMock(return_value=fake),
+        ):
+            resp = client.post(
+                "/ahs/artifacts",
+                headers={"X-AHS-Agent-Name": "alice", "X-User-ID": "USR_X"},
+                json={
+                    "type": "MEMORY",
+                    "title": "routing_tips",
+                    "inline_content": "# Routing",
+                    "memory_scope": "topic",
+                    "named_slug": "routing_tips",
+                    "create_new_slug": True,
+                },
+            )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["memory_scope"] == "topic"
+
+    def test_create_memory_requires_inline_content(self, client: TestClient) -> None:
+        resp = client.post(
+            "/ahs/artifacts",
+            headers={"X-AHS-Agent-Name": "alice"},
+            json={
+                "type": "MEMORY",
+                "title": "foo",
+                "memory_scope": "agent",
+                "memory_scope_subject": "alice",
+            },
+        )
+        assert resp.status_code == 400
+        assert "inline_content" in resp.json()["detail"]
+
+    def test_create_memory_requires_scope(self, client: TestClient) -> None:
+        resp = client.post(
+            "/ahs/artifacts",
+            headers={"X-AHS-Agent-Name": "alice"},
+            json={"type": "MEMORY", "title": "foo", "inline_content": "x"},
+        )
+        assert resp.status_code == 400
+        assert "memory_scope" in resp.json()["detail"]
+
+    def test_text_rejects_scope_params(self, client: TestClient) -> None:
+        resp = client.post(
+            "/ahs/artifacts",
+            json={
+                "type": "TEXT",
+                "title": "foo",
+                "content": "hi",
+                "memory_scope": "user",
+                "memory_scope_subject": "USR_X",
+            },
+        )
+        assert resp.status_code == 400
+        assert "only apply to MEMORY" in resp.json()["detail"]
+
+
+class TestListMemoryRoute:
+    def test_list_threads_caller_context(self, client: TestClient) -> None:
+        """Caller headers become a MemoryCallerContext passed to the store."""
+        mine = _memory_artifact(scope="agent", subject="alice")
+        topic = _memory_artifact(scope="topic", subject=None, slug="tips")
+        with patch(
+            "ypl.agent_harness_service.artifact_routes.list_artifacts",
+            new=AsyncMock(return_value=[mine, topic]),
+        ) as mock_list:
+            resp = client.get(
+                "/ahs/artifacts",
+                headers={"X-AHS-Agent-Name": "alice", "X-User-ID": "USR_X"},
+                params={"type": "MEMORY"},
+            )
+        assert resp.status_code == 200
+        caller = mock_list.call_args.kwargs["memory_caller"]
+        assert caller is not None
+        assert caller.user_id == "USR_X"
+        assert caller.agent_name == "alice"
+
+    def test_list_without_identity_uses_admin_mode(self, client: TestClient) -> None:
+        with patch(
+            "ypl.agent_harness_service.artifact_routes.list_artifacts",
+            new=AsyncMock(return_value=[]),
+        ) as mock_list:
+            resp = client.get("/ahs/artifacts", params={"type": "MEMORY"})
+        assert resp.status_code == 200
+        assert mock_list.call_args.kwargs["memory_caller"] is None
+
+    def test_list_scope_user_defaults_subject_to_caller(self, client: TestClient) -> None:
+        with patch(
+            "ypl.agent_harness_service.artifact_routes.list_artifacts",
+            new=AsyncMock(return_value=[]),
+        ) as mock_list:
+            resp = client.get(
+                "/ahs/artifacts",
+                headers={"X-User-ID": "USR_X"},
+                params={"type": "MEMORY", "scope": "user"},
+            )
+        assert resp.status_code == 200
+        kwargs = mock_list.call_args.kwargs
+        assert kwargs["memory_scope"] == "user"
+        assert kwargs["memory_scope_subject"] == "USR_X"
+
+    def test_list_cross_user_subject_rejected(self, client: TestClient) -> None:
+        resp = client.get(
+            "/ahs/artifacts",
+            headers={"X-User-ID": "USR_X", "X-AHS-Agent-Name": "alice"},
+            params={"type": "MEMORY", "scope": "user", "subject": "USR_OTHER"},
+        )
+        assert resp.status_code == 403
+
+    def test_list_cross_agent_subject_rejected(self, client: TestClient) -> None:
+        resp = client.get(
+            "/ahs/artifacts",
+            headers={"X-User-ID": "USR_X", "X-AHS-Agent-Name": "alice"},
+            params={"type": "MEMORY", "scope": "agent", "subject": "bob"},
+        )
+        assert resp.status_code == 403
+
+    def test_list_scope_topic_allowed(self, client: TestClient) -> None:
+        with patch(
+            "ypl.agent_harness_service.artifact_routes.list_artifacts",
+            new=AsyncMock(return_value=[]),
+        ) as mock_list:
+            resp = client.get(
+                "/ahs/artifacts",
+                headers={"X-User-ID": "USR_X", "X-AHS-Agent-Name": "alice"},
+                params={"type": "MEMORY", "scope": "topic"},
+            )
+        assert resp.status_code == 200
+        assert mock_list.call_args.kwargs["memory_scope"] == "topic"
+
+
+class TestReadMemoryBySlugRoute:
+    def test_requires_scope_for_memory(self, client: TestClient) -> None:
+        resp = client.get(
+            "/ahs/artifacts/by-slug/feedback_style",
+            params={"type": "MEMORY"},
+        )
+        assert resp.status_code == 400
+        assert "scope" in resp.json()["detail"]
+
+    def test_defaults_user_subject_to_caller(self, client: TestClient) -> None:
+        fake = _memory_artifact(scope="user", subject="USR_X", slug="prefs")
+        with patch(
+            "ypl.agent_harness_service.artifact_routes.get_artifact_by_slug",
+            new=AsyncMock(return_value=fake),
+        ) as mock_get:
+            resp = client.get(
+                "/ahs/artifacts/by-slug/prefs",
+                headers={"X-User-ID": "USR_X"},
+                params={"type": "MEMORY", "scope": "user"},
+            )
+        assert resp.status_code == 200, resp.text
+        kwargs = mock_get.call_args.kwargs
+        assert kwargs["memory_scope"] == "user"
+        assert kwargs["memory_scope_subject"] == "USR_X"
+
+    def test_cross_user_read_403(self, client: TestClient) -> None:
+        resp = client.get(
+            "/ahs/artifacts/by-slug/prefs",
+            headers={"X-User-ID": "USR_X"},
+            params={"type": "MEMORY", "scope": "user", "subject": "USR_OTHER"},
+        )
+        assert resp.status_code == 403
+
+
+class TestReadMemoryByIdRoute:
+    def test_admin_can_read_any_memory(self, client: TestClient) -> None:
+        fake = _memory_artifact(scope="user", subject="USR_X")
+        with (
+            patch(
+                "ypl.agent_harness_service.artifact_routes.get_artifact_by_id",
+                new=AsyncMock(return_value=fake),
+            ),
+            patch(
+                "ypl.agent_harness_service.artifact_routes.read_artifact_content",
+                new=AsyncMock(return_value=(b"hi", "text/markdown")),
+            ),
+        ):
+            resp = client.get(f"/ahs/artifacts/{fake.agent_artifact_id}")
+        assert resp.status_code == 200
+
+    def test_cross_user_read_returns_404(self, client: TestClient) -> None:
+        """Identity-bearing caller can't see another user's memory — 404 (not 403) to avoid existence leak."""
+        fake = _memory_artifact(scope="user", subject="USR_OTHER")
+        with patch(
+            "ypl.agent_harness_service.artifact_routes.get_artifact_by_id",
+            new=AsyncMock(return_value=fake),
+        ):
+            resp = client.get(
+                f"/ahs/artifacts/{fake.agent_artifact_id}",
+                headers={"X-User-ID": "USR_X"},
+            )
+        assert resp.status_code == 404
+
+    def test_cross_agent_read_returns_404(self, client: TestClient) -> None:
+        fake = _memory_artifact(scope="agent", subject="bob")
+        with patch(
+            "ypl.agent_harness_service.artifact_routes.get_artifact_by_id",
+            new=AsyncMock(return_value=fake),
+        ):
+            resp = client.get(
+                f"/ahs/artifacts/{fake.agent_artifact_id}",
+                headers={"X-AHS-Agent-Name": "alice"},
+            )
+        assert resp.status_code == 404
+
+    def test_topic_memory_visible_to_any_authenticated(self, client: TestClient) -> None:
+        fake = _memory_artifact(scope="topic", subject=None, slug="tips")
+        with (
+            patch(
+                "ypl.agent_harness_service.artifact_routes.get_artifact_by_id",
+                new=AsyncMock(return_value=fake),
+            ),
+            patch(
+                "ypl.agent_harness_service.artifact_routes.read_artifact_content",
+                new=AsyncMock(return_value=(b"tips", "text/markdown")),
+            ),
+        ):
+            resp = client.get(
+                f"/ahs/artifacts/{fake.agent_artifact_id}",
+                headers={"X-AHS-Agent-Name": "alice"},
+            )
+        assert resp.status_code == 200
+
+
+class TestArchiveMemoryRoute:
+    def test_by_id_requires_write_permission(self, client: TestClient) -> None:
+        fake = _memory_artifact(scope="agent", subject="bob")
+        with patch(
+            "ypl.agent_harness_service.artifact_routes.get_artifact_by_id",
+            new=AsyncMock(return_value=fake),
+        ):
+            resp = client.delete(
+                f"/ahs/artifacts/{fake.agent_artifact_id}",
+                headers={"X-AHS-Agent-Name": "alice"},
+            )
+        assert resp.status_code == 403
+
+    def test_by_slug_requires_write_authz(self, client: TestClient) -> None:
+        resp = client.delete(
+            "/ahs/artifacts/by-slug/feedback_style",
+            headers={"X-AHS-Agent-Name": "alice"},
+            params={"type": "MEMORY", "scope": "agent", "subject": "bob"},
+        )
+        assert resp.status_code == 403
+
+    def test_by_slug_own_agent_succeeds(self, client: TestClient) -> None:
+        fake = _memory_artifact(scope="agent", subject="alice")
+        with (
+            patch(
+                "ypl.agent_harness_service.artifact_routes.list_artifact_versions",
+                new=AsyncMock(return_value=[fake]),
+            ),
+            patch(
+                "ypl.agent_harness_service.artifact_routes.archive_artifacts_by_slug",
+                new=AsyncMock(return_value=1),
+            ),
+        ):
+            resp = client.delete(
+                "/ahs/artifacts/by-slug/feedback_style",
+                headers={"X-AHS-Agent-Name": "alice"},
+                params={"type": "MEMORY", "scope": "agent"},
+            )
+        assert resp.status_code == 200
+        assert resp.json()["archived_count"] == 1

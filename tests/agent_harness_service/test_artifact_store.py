@@ -23,12 +23,16 @@ import pytest
 from ypl.agent_harness_service.artifact_store import (
     CONTENT_TYPE_EXTENSIONS,
     MAX_ATTACHMENT_SIZE_BYTES,
+    VALID_MEMORY_SCOPES,
     ArtifactError,
     Attachment,
+    MemoryCallerContext,
     attachment_path_for,
+    caller_can_write_memory,
     content_path_for,
     read_artifact_attachment,
     read_artifact_content,
+    validate_memory_scope_shape,
     validate_named_slug,
 )
 
@@ -205,11 +209,15 @@ def _artifact(
     artifact_id: uuid.UUID = FAKE_ID,
     content_type: str | None = "text/markdown",
     metadata: dict[str, Any] | None = None,
+    inline_content: str | None = None,
 ) -> MagicMock:
     m = MagicMock()
     m.agent_artifact_id = artifact_id
     m.content_type = content_type
     m.artifact_metadata = metadata
+    # Explicit so ``read_artifact_content``'s inline-content short-circuit
+    # doesn't trip on MagicMock's auto-attributes.
+    m.inline_content = inline_content
     return m
 
 
@@ -289,3 +297,143 @@ class TestSearchArtifacts:
 
         assert await search_artifacts("") == []
         assert await search_artifacts("   ") == []
+
+
+# ---------------------------------------------------------------------------
+# Memory scope / authz helpers (pure, no DB)
+# ---------------------------------------------------------------------------
+
+
+class TestValidateMemoryScopeShape:
+    def test_topic_allows_null_subject(self) -> None:
+        validate_memory_scope_shape("topic", None)
+
+    def test_topic_rejects_subject(self) -> None:
+        with pytest.raises(ArtifactError, match="forbids"):
+            validate_memory_scope_shape("topic", "anyone")
+
+    @pytest.mark.parametrize("scope", ["user", "agent"])
+    def test_user_agent_requires_subject(self, scope: str) -> None:
+        with pytest.raises(ArtifactError, match="requires"):
+            validate_memory_scope_shape(scope, None)
+        with pytest.raises(ArtifactError, match="requires"):
+            validate_memory_scope_shape(scope, "")
+
+    def test_rejects_unknown_scope(self) -> None:
+        with pytest.raises(ArtifactError, match="Invalid memory_scope"):
+            validate_memory_scope_shape("project", "anything")
+
+    def test_scope_constants_match_valid_set(self) -> None:
+        assert VALID_MEMORY_SCOPES == frozenset({"user", "agent", "topic"})
+
+
+class TestCallerCanWriteMemory:
+    def test_topic_allows_anyone(self) -> None:
+        assert caller_can_write_memory(MemoryCallerContext(), "topic", None)
+        assert caller_can_write_memory(MemoryCallerContext(user_id="u", agent_name="a"), "topic", None)
+
+    def test_user_requires_matching_user(self) -> None:
+        caller = MemoryCallerContext(user_id="USR_X", agent_name="eng-raccoon")
+        assert caller_can_write_memory(caller, "user", "USR_X") is True
+        assert caller_can_write_memory(caller, "user", "USR_OTHER") is False
+        # Caller with no user_id cannot write to any user scope.
+        empty = MemoryCallerContext(agent_name="eng-raccoon")
+        assert caller_can_write_memory(empty, "user", "USR_X") is False
+
+    def test_agent_requires_matching_agent(self) -> None:
+        caller = MemoryCallerContext(user_id="USR_X", agent_name="eng-raccoon")
+        assert caller_can_write_memory(caller, "agent", "eng-raccoon") is True
+        assert caller_can_write_memory(caller, "agent", "other-agent") is False
+        empty = MemoryCallerContext(user_id="USR_X")
+        assert caller_can_write_memory(empty, "agent", "eng-raccoon") is False
+
+    def test_unknown_scope_refused(self) -> None:
+        caller = MemoryCallerContext(user_id="u", agent_name="a")
+        assert caller_can_write_memory(caller, "project", None) is False
+
+
+class TestMemoryCallerContext:
+    def test_has_identity_flag(self) -> None:
+        assert MemoryCallerContext().has_identity is False
+        assert MemoryCallerContext(user_id="u").has_identity is True
+        assert MemoryCallerContext(agent_name="a").has_identity is True
+        assert MemoryCallerContext(user_id="u", agent_name="a").has_identity is True
+
+
+# ---------------------------------------------------------------------------
+# read_artifact_content with inline_content short-circuit
+# ---------------------------------------------------------------------------
+
+
+class TestReadArtifactContentInline:
+    async def test_inline_content_skips_blob_store(self) -> None:
+        """MEMORY rows with inline_content return directly, never touching the store."""
+        store = _FakeBlobStore()
+        artifact = MagicMock()
+        artifact.agent_artifact_id = FAKE_ID
+        artifact.content_type = "text/markdown"
+        artifact.inline_content = "# User preferences\nLikes tabs."
+        artifact.artifact_metadata = {}
+
+        data, ct = await read_artifact_content(artifact, blob_store=store)
+
+        assert data == b"# User preferences\nLikes tabs."
+        assert ct == "text/markdown"
+
+    async def test_inline_content_defaults_content_type_when_missing(self) -> None:
+        """Even a MEMORY row with NULL content_type still resolves."""
+        store = _FakeBlobStore()
+        artifact = MagicMock()
+        artifact.agent_artifact_id = FAKE_ID
+        artifact.content_type = None
+        artifact.inline_content = "hello"
+        artifact.artifact_metadata = {}
+
+        data, ct = await read_artifact_content(artifact, blob_store=store)
+        assert data == b"hello"
+        assert ct == "text/markdown"
+
+
+# ---------------------------------------------------------------------------
+# _scope_slug_filter shape (no DB)
+# ---------------------------------------------------------------------------
+
+
+class TestScopeSlugFilter:
+    def test_memory_topic_requires_scope(self) -> None:
+        from ypl.agent_harness_service.artifact_store import _scope_slug_filter
+        from ypl.db.agent_harness import AgentArtifactType
+
+        # MEMORY lookup without scope → ArtifactError.
+        with pytest.raises(ArtifactError, match="memory_scope"):
+            _scope_slug_filter(
+                slug="x",
+                artifact_type=AgentArtifactType.MEMORY,
+                memory_scope=None,
+                memory_scope_subject=None,
+            )
+
+    def test_memory_user_requires_subject(self) -> None:
+        from ypl.agent_harness_service.artifact_store import _scope_slug_filter
+        from ypl.db.agent_harness import AgentArtifactType
+
+        with pytest.raises(ArtifactError, match="memory_scope_subject"):
+            _scope_slug_filter(
+                slug="x",
+                artifact_type=AgentArtifactType.MEMORY,
+                memory_scope="user",
+                memory_scope_subject=None,
+            )
+
+    def test_text_ignores_scope(self) -> None:
+        from ypl.agent_harness_service.artifact_store import _scope_slug_filter
+        from ypl.db.agent_harness import AgentArtifactType
+
+        # TEXT lookups never touch scope columns — no error on missing scope.
+        clauses = _scope_slug_filter(
+            slug="x",
+            artifact_type=AgentArtifactType.TEXT,
+            memory_scope=None,
+            memory_scope_subject=None,
+        )
+        assert len(clauses) == 2  # named_slug == x, artifact_type == TEXT
