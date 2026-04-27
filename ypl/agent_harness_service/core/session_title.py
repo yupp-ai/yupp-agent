@@ -60,15 +60,28 @@ async def _generate_title_text(user_messages: list[str]) -> str | None:
     prompt = _TITLE_PROMPT.format(messages=combined)
 
     client = openai.AsyncOpenAI(api_key=api_key, base_url=provider_config.api_base)
+    # gpt-oss-120b on Cerebras uses Harmony format and consumes part of the
+    # output budget on internal reasoning before emitting visible content. With
+    # max_tokens=50 the budget is exhausted before any title is produced.
+    # reasoning_effort='low' is the lowest level Cerebras accepts for gpt-oss
+    # ('none' is rejected by the chat template).
     response = await client.chat.completions.create(
         model=model_id,
-        max_tokens=50,
+        max_tokens=256,
+        reasoning_effort="low",
         messages=[{"role": "user", "content": prompt}],
     )
     if not response.choices:
+        logger.warning("title gen returned no choices", model=_TITLE_MODEL_ID)
         return None
-    content = response.choices[0].message.content
+    choice = response.choices[0]
+    content = choice.message.content
     if not content:
+        logger.warning(
+            "title gen returned empty content",
+            model=_TITLE_MODEL_ID,
+            finish_reason=choice.finish_reason,
+        )
         return None
     title = content.strip()
     if not title or title == "[NO TITLE]":
