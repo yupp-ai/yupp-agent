@@ -54,6 +54,11 @@ from ypl.agent_harness_service.executors.runner import (
 )
 from ypl.agent_harness_service.gateway import TRIGGER_TO_GATEWAY, GatewayRegistry
 from ypl.agent_harness_service.gateway.slack_prefetch import fetch_slack_thread_content
+from ypl.agent_harness_service.memory_materialization import (
+    is_memory_db_authoritative,
+    materialize_memory_for_session,
+)
+from ypl.agent_harness_service.memory_store import MemoryCallerContext
 from ypl.agent_harness_service.service.agent_messaging import (
     check_agent_message_authz,
 )
@@ -1173,21 +1178,67 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
         # Create history/ subdir for session history persistence
         os.makedirs(os.path.join(workspace, "history"), exist_ok=True)
 
-        # Symlink persistent memory directory into workspace for all agents.
-        # This makes agent_memories/ available across sessions.
-        memory_dir = os.path.join(AHS_MEMORIES_DIR, resolved_agent_id, "agent_memories")
-        os.makedirs(memory_dir, exist_ok=True)
-        memory_link = os.path.join(workspace, "agent_memories")
-        try:
-            os.symlink(memory_dir, memory_link)
-        except FileExistsError:
-            pass
-        logger.info(
-            "Symlinked agent memory directory",
-            agent_name=resolved_agent_id,
-            memory_dir=memory_dir,
-            workspace=workspace,
-        )
+        # Provide ``agent_memories/`` in the workspace.
+        #
+        # Two paths, gated by the MEMORY_DB_AUTHORITATIVE feature flag:
+        #
+        # - DB-authoritative (new): the artifact registry is the source of
+        #   truth. Materialize every MEMORY row visible to (user, agent)
+        #   into a fresh local directory inside the sandbox. No symlink,
+        #   no GCS sync — when the session ends the disk copy is discarded
+        #   and the next session re-materializes from the DB.
+        #
+        # - Legacy: symlink ``agent_memories/`` to the persistent
+        #   per-agent dir under AHS_MEMORIES_DIR so on-disk writes survive
+        #   across sessions, with a turn-end GCS sync pushing them to the
+        #   shared bucket.
+        #
+        # Both paths leave the agent with the same workspace-relative path
+        # (``agent_memories/``) so the prompt / tooling don't need to care
+        # which path is active.
+        if await is_memory_db_authoritative():
+            memory_local_dir = os.path.join(workspace, "agent_memories")
+            os.makedirs(memory_local_dir, exist_ok=True)
+            try:
+                materialized = await materialize_memory_for_session(
+                    workspace=workspace,
+                    caller=MemoryCallerContext(
+                        user_id=user_id,
+                        agent_name=resolved_agent_id,
+                    ),
+                )
+            except Exception:
+                # Materialization is best-effort — a transient DB blip
+                # should not block session creation. The agent can still
+                # call MCP load_memory / search_memory at runtime to read
+                # from the DB directly.
+                materialized = 0
+                logger.warning(
+                    "Failed to materialize MEMORY artifacts for session",
+                    session_id=str(agent_session.agent_session_id),
+                    agent_name=resolved_agent_id,
+                    exc_info=True,
+                )
+            logger.info(
+                "Materialized agent memory directory (DB-authoritative)",
+                agent_name=resolved_agent_id,
+                files=materialized,
+                workspace=workspace,
+            )
+        else:
+            memory_dir = os.path.join(AHS_MEMORIES_DIR, resolved_agent_id, "agent_memories")
+            os.makedirs(memory_dir, exist_ok=True)
+            memory_link = os.path.join(workspace, "agent_memories")
+            try:
+                os.symlink(memory_dir, memory_link)
+            except FileExistsError:
+                pass
+            logger.info(
+                "Symlinked agent memory directory (legacy GCS path)",
+                agent_name=resolved_agent_id,
+                memory_dir=memory_dir,
+                workspace=workspace,
+            )
 
         # Create the BCH manager for this session.  The bwrap proxy process starts
         # lazily on the first tool call; creating the manager here is cheap (no I/O).

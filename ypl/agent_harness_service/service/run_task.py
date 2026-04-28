@@ -46,6 +46,7 @@ from ypl.agent_harness_service.executors.runner import (
 )
 from ypl.agent_harness_service.gateway import TRIGGER_TO_GATEWAY, GatewayRegistry
 from ypl.agent_harness_service.gateway.base import Gateway
+from ypl.agent_harness_service.memory_materialization import is_memory_db_authoritative
 from ypl.agent_harness_service.service.message_helpers import (
     _extract_visible_content,
     _scrub_null_bytes,
@@ -1179,7 +1180,14 @@ async def _run_agent_task(
             )
 
         # Best-effort sync agent memory to GCS for all agents.
-        if agent_config_name:
+        # Skipped under MEMORY_DB_AUTHORITATIVE because:
+        #   - The DB already has every save (MCP save_memory writes through
+        #     synchronously before returning to the agent).
+        #   - The next session re-materializes from the DB, so there is
+        #     nothing on disk that needs to survive the sandbox teardown.
+        # Legacy path stays in place for prod until the human checkpoint
+        # flips the flag on; see PR [5] for the full deletion.
+        if agent_config_name and not await is_memory_db_authoritative():
             try:
                 await sync_agent_memory_to_gcs(agent_config_name)
             except Exception:
