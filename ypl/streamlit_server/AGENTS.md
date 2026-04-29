@@ -62,9 +62,17 @@ keeps the default (`auto`) because `scripts/run_local.sh` and direct
 `streamlit run …` invocations don't pass the flag. If you add a new
 production-shaped entrypoint, **disable the watcher there too**.
 
-A regression test —
-`tests/streamlit_server/test_entrypoint_disables_file_watcher.py` — fails
-if either production entrypoint loses the flag.
+Two regression tests guard this:
+
+- `tests/streamlit_server/test_entrypoint_disables_file_watcher.py` fails
+  if either production entrypoint loses the
+  `--server.fileWatcherType=none` flag.
+- `tests/streamlit_server/test_pages_smoke.py` runs every
+  `pages/*.py` script through `streamlit.testing.v1.AppTest` and asserts
+  no SQLAlchemy `InvalidRequestError` is raised (catches the
+  duplicate-import-path variant of the same bug), and separately
+  reproduces the watcher's `del sys.modules[…]` purge to prove the
+  underlying SQLModel behaviour we're guarding against still exists.
 
 ### Investigating "this happened again"
 
