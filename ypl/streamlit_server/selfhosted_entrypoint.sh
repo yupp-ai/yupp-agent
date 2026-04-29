@@ -41,9 +41,20 @@ fi
 
 STREAMLIT_BIN="${VENV_BIN:-/opt/yupp-agent/.venv/bin}/streamlit"
 
+# --server.fileWatcherType=none disables Streamlit's LocalSourcesWatcher.
+# That watcher reloads modules via `del sys.modules[...]` whenever a watched
+# source file's mtime changes (e.g. mid-deploy `git pull` before the systemd
+# restart, or any post-start file touch). On a SQLModel codebase that
+# behaviour redefines table-mapped classes against an unchanged
+# `SQLModel.metadata`, raising:
+#     sqlalchemy.exc.InvalidRequestError: Table 'agents' is already defined
+#     for this MetaData instance.
+# Production never benefits from hot-reload (we restart the service on deploy),
+# so it's strictly a footgun here. See ypl/streamlit_server/AGENTS.md.
 exec "${STREAMLIT_BIN}" run \
     ypl/streamlit_server/app.py \
     --server.port "${PORT:-8501}" \
     --server.address 0.0.0.0 \
     --server.headless true \
+    --server.fileWatcherType none \
     --browser.gatherUsageStats false
