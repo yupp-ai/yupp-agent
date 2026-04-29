@@ -9,9 +9,26 @@ This skill expands on the workspace summary already in your system prompt. See t
 
 ## Agent Memory (`agent_memories/`)
 
-You have a **persistent, writable** memory directory at `agent_memories/`. Files here are private to you — they survive across sessions and are only visible to your future sessions. Use this for personal context (user preferences, past conversations, corrections, project notes).
+The `agent_memories/` directory in your sandbox is a **per-session materialized cache** from the database, **not** a persistent home for your notes. At session start, every memory visible to your (agent, user) pair is materialized fresh from the DB into:
 
-See the `/memory-guide` skill for full details on both memory systems and when/how to use them.
+```
+agent_memories/
+  topic/{slug}.md      ← scope=topic memories
+  user/{slug}.md       ← scope=user, current user
+  agent/{slug}.md      ← scope=agent, your agent_name
+```
+
+`cat` and `grep` against these files are cheap and fine to use during a turn. **But direct file writes are LOST at session end** — the sandbox tears down and nothing gets back to the DB. To persist, use the `save_memory` MCP tool:
+
+```
+save_memory(topic="<slug>", content="<...>")                  # scope="agent" by default
+save_memory(topic="<slug>", content="<...>", scope="user")    # current user's notes
+save_memory(topic="<slug>", content="<...>", scope="topic")   # team-shared
+```
+
+`save_memory` writes through to the DB and refreshes the on-disk file in the same call, so subsequent `cat`s in the same turn see the new content.
+
+See the `/memory-guide` skill for the full guide on scopes, search, slug hygiene, and recording tool errors.
 
 ## Worktree Details
 

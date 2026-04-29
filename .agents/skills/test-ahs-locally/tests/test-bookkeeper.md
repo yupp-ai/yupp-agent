@@ -35,7 +35,7 @@ curl -s "http://localhost:8090/ahs/session/<session_id>/history" \
 
 ### Server Logs
 Check the server terminal output (or `/tmp/ahs_server.log` if you started with `| tee`) for:
-- `tool_count=4` for agcouch MCP server (list_memory, search_memory, load_memory, save_memory)
+- `tool_count=5` for agcouch MCP server (list_memory, search_memory, load_memory, save_memory, report_security_incident — see `bookkeeper/config.json` `tool_permissions`)
 - `Agent config loaded for task  agent_name=bookkeeper`
 
 ### Session Response
