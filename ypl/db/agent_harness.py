@@ -50,6 +50,10 @@ class AgentSessionStatus(str, enum.Enum):
     ACTIVE = "ACTIVE"
     COMPLETED = "COMPLETED"
     STALE = "STALE"
+    # Manually archived (via SAG /archive command) or auto-archived after a
+    # long period of inactivity. Archived sessions are filtered out of
+    # pending-input dashboards but remain readable for history / audit.
+    ARCHIVED = "ARCHIVED"
 
 
 class AgentSessionMessageRole(str, enum.Enum):

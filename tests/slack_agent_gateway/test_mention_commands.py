@@ -13,14 +13,18 @@ alongside their handlers' integration tests in test_events_extended.py.
 """
 
 from __future__ import annotations
+from datetime import UTC, datetime, timedelta
 
 from ypl.slack_agent_gateway.mention_commands import (
+    HELP_TEXT,
+    _format_relative_time,
     extract_agent_directive,
     extract_bare_command,
     extract_leading_directives,
     extract_model_directive,
     format_agents_list,
     format_models_list,
+    format_pending_sessions,
 )
 
 # ---------------------------------------------------------------------------
@@ -336,3 +340,147 @@ class TestFormatAgentsList:
         # Description is truncated with ellipsis rather than dumped verbatim.
         assert "..." in result
         assert long_desc not in result
+
+
+# ---------------------------------------------------------------------------
+# /pending and /archive command parsing + help
+# ---------------------------------------------------------------------------
+
+
+class TestPendingArchiveCommands:
+    def test_pending_command(self) -> None:
+        assert extract_bare_command("<@U123> /pending") == ("pending", "")
+
+    def test_archive_command(self) -> None:
+        assert extract_bare_command("<@U123> /archive") == ("archive", "")
+
+    def test_pending_requires_slash(self) -> None:
+        # "pending" without a slash is a common natural-language word.
+        assert extract_bare_command("<@U123> pending") is None
+
+    def test_archive_requires_slash(self) -> None:
+        assert extract_bare_command("<@U123> archive this session") is None
+
+    def test_pending_case_insensitive(self) -> None:
+        assert extract_bare_command("<@U123> /PENDING") == ("pending", "")
+        assert extract_bare_command("<@U123> /Pending") == ("pending", "")
+
+    def test_archive_case_insensitive(self) -> None:
+        assert extract_bare_command("<@U123> /ARCHIVE") == ("archive", "")
+
+    def test_help_text_mentions_new_commands(self) -> None:
+        assert "/pending" in HELP_TEXT
+        assert "/archive" in HELP_TEXT
+
+
+# ---------------------------------------------------------------------------
+# format_pending_sessions
+# ---------------------------------------------------------------------------
+
+
+class TestFormatPendingSessions:
+    def test_empty_state(self) -> None:
+        result = format_pending_sessions([], [], hours_back=24)
+        assert "caught up" in result.lower() or "no sessions" in result.lower()
+        assert "24h" in result
+
+    def test_renders_pending_human_section(self) -> None:
+        recent = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
+        result = format_pending_sessions(
+            pending_human=[
+                {
+                    "session_id": "abc12345-aaaa",
+                    "agent_name": "raccoon",
+                    "last_message_at": recent,
+                    "last_message_preview": "Here's what I found...",
+                    "title": "Investigate alert",
+                    "slack_channel_name": "alerts",
+                    "slack_channel_id": "C123",
+                    "slack_thread_ts": "1700000000.0",
+                }
+            ],
+            pending_ai=[],
+            hours_back=24,
+        )
+        assert "Waiting on you" in result
+        assert "raccoon" in result
+        assert "Investigate alert" in result or "alerts" in result
+        assert "Here's what I found" in result
+
+    def test_renders_pending_ai_section(self) -> None:
+        recent = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
+        result = format_pending_sessions(
+            pending_human=[],
+            pending_ai=[
+                {
+                    "session_id": "def67890-bbbb",
+                    "agent_name": "sre",
+                    "last_message_at": recent,
+                    "last_message_preview": "Can you look at this?",
+                }
+            ],
+            hours_back=24,
+        )
+        assert "Waiting on the agent" in result
+        assert "sre" in result
+
+    def test_uses_permalink_when_provided(self) -> None:
+        recent = datetime.now(UTC).isoformat()
+        result = format_pending_sessions(
+            pending_human=[
+                {
+                    "session_id": "abc12345-aaaa",
+                    "agent_name": "raccoon",
+                    "last_message_at": recent,
+                    "title": "My Session",
+                    "slack_channel_id": "C123",
+                    "slack_thread_ts": "1700000000.0",
+                }
+            ],
+            pending_ai=[],
+            hours_back=24,
+            permalinks={"abc12345-aaaa": "https://yupp.slack.com/archives/C123/p1700000000000"},
+        )
+        # Slack mrkdwn link format: <url|label>
+        assert "<https://yupp.slack.com/archives/C123/p1700000000000|My Session>" in result
+
+    def test_falls_back_when_no_permalink(self) -> None:
+        recent = datetime.now(UTC).isoformat()
+        result = format_pending_sessions(
+            pending_human=[
+                {
+                    "session_id": "abc12345-aaaa",
+                    "agent_name": "raccoon",
+                    "last_message_at": recent,
+                    "slack_channel_name": "alerts",
+                    "slack_channel_id": "C123",
+                    "slack_thread_ts": "1700000000.0",
+                }
+            ],
+            pending_ai=[],
+            hours_back=24,
+        )
+        assert "#alerts" in result
+
+
+class TestFormatRelativeTime:
+    def test_seconds(self) -> None:
+        now = datetime.now(UTC)
+        assert _format_relative_time(now - timedelta(seconds=10), now=now) == "10s ago"
+
+    def test_minutes(self) -> None:
+        now = datetime.now(UTC)
+        assert _format_relative_time(now - timedelta(minutes=3), now=now) == "3m ago"
+
+    def test_hours(self) -> None:
+        now = datetime.now(UTC)
+        assert _format_relative_time(now - timedelta(hours=5), now=now) == "5h ago"
+
+    def test_days(self) -> None:
+        now = datetime.now(UTC)
+        assert _format_relative_time(now - timedelta(days=2), now=now) == "2d ago"
+
+    def test_naive_datetime_treated_as_utc(self) -> None:
+        now = datetime.now(UTC)
+        naive = (now - timedelta(minutes=5)).replace(tzinfo=None)
+        assert _format_relative_time(naive, now=now) == "5m ago"

@@ -712,6 +712,94 @@ async def send_questionnaire_answer_to_agent(
         return None
 
 
+async def archive_session(session_id: str) -> dict | None:
+    """Archive a session via AHS POST /ahs/session/archive.
+
+    The session can be addressed by AHS UUID or by SAG composite
+    slack_session_id. Archived sessions are excluded from /pending and
+    similar dashboards.
+
+    Args:
+        session_id: AHS session UUID or SAG composite session ID.
+
+    Returns:
+        Response dict from AHS (``{session_id, status}`` where status is
+        ``"archived"`` or ``"already_archived"``), or None on failure.
+    """
+    base_url = get_agent_service_url()
+    if not base_url:
+        logger.error("Agent Harness Service URL not configured")
+        return None
+
+    payload = {"session_id": session_id}
+    url = f"{base_url}/ahs/session/archive"
+    _log_outbound_payload("/ahs/session/archive", payload)
+
+    try:
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            response = await client.post(url, json=payload, headers=_get_ahs_headers())
+            response.raise_for_status()
+
+            logger.info(
+                "Archived AHS session",
+                session_id=session_id,
+                status_code=response.status_code,
+            )
+            result: dict = response.json()
+            return result
+
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "HTTP error archiving AHS session",
+            session_id=session_id,
+            status_code=e.response.status_code,
+            error=str(e),
+        )
+        return None
+    except Exception as e:
+        logger.error(
+            "Error archiving AHS session",
+            session_id=session_id,
+            error=str(e),
+            exc_info=True,
+        )
+        return None
+
+
+async def get_pending_sessions(user_id: str, hours_back: int = 24) -> dict | None:
+    """Fetch sessions pending input for ``user_id`` from AHS GET /ahs/sessions/pending.
+
+    Args:
+        user_id: Yupp user ID whose Slack sessions to inspect.
+        hours_back: Time window for last_message_at, in hours (1..168).
+
+    Returns:
+        Response dict with ``pending_human``, ``pending_ai``, ``hours_back``,
+        or None on failure.
+    """
+    base_url = get_agent_service_url()
+    if not base_url:
+        logger.error("Agent Harness Service URL not configured")
+        return None
+
+    url = f"{base_url}/ahs/sessions/pending"
+    params = {"user_id": user_id, "hours_back": str(hours_back)}
+
+    try:
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            response = await client.get(url, headers=_get_ahs_headers(), params=params)
+            response.raise_for_status()
+            result: dict = response.json()
+            return result
+    except Exception as e:
+        logger.error(
+            "Failed to fetch pending sessions from AHS",
+            user_id=user_id,
+            error=str(e),
+        )
+        return None
+
+
 async def is_agent_service_healthy() -> bool:
     """Check if the Agent Harness Service is healthy.
 

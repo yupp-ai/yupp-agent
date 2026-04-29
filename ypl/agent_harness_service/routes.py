@@ -4,7 +4,9 @@ Endpoints:
 - POST /session/create — create or resume a session
 - POST /session/message — send a message to a session (returns immediately)
 - POST /session/stop — stop a running agent task
+- POST /session/archive — mark a session as ARCHIVED (manual or auto)
 - POST /session/feedback — record feedback
+- GET  /sessions/pending — list a user's Slack sessions waiting on a turn
 - GET  /session/{session_id}/history — get message history with pagination (includes tool uses)
 - GET  /session/{session_id} — get session detail with descendant subsessions
 - GET  /sessions — list sessions with filters, user_id, include_all, and pagination
@@ -39,6 +41,7 @@ from ypl.agent_harness_service.common.types import (
     AHSValidationError,
     FeedbackResponse,
     ModelsListResponse,
+    PendingSessionsResponse,
     RecurringScheduleCreateRequest,
     ResolveUserRequest,
     ResolveUserResponse,
@@ -52,6 +55,8 @@ from ypl.agent_harness_service.common.types import (
     ScheduleRunsResponse,
     ScheduleTriggerRequest,
     ScheduleTriggerResponse,
+    SessionArchiveRequest,
+    SessionArchiveResponse,
     SessionAttachSlackRequest,
     SessionAttachSlackResponse,
     SessionCreateRequest,
@@ -79,6 +84,7 @@ from ypl.agent_harness_service.projects.schedule_service import (
 from ypl.agent_harness_service.search.search_routes import search_router
 from ypl.agent_harness_service.service import (
     AgentAuthorizationError,
+    archive_session,
     attach_slack_to_session,
     create_agent,
     create_session,
@@ -87,6 +93,7 @@ from ypl.agent_harness_service.service import (
     get_session_detail,
     get_session_history,
     list_agents,
+    list_pending_sessions,
     list_sessions,
     send_feedback,
     send_message,
@@ -168,6 +175,46 @@ async def session_stop(request: SessionStopRequest) -> SessionStopResponse:
         return await stop_session(request.session_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from None
+
+
+@router.post(
+    "/session/archive",
+    dependencies=[Depends(verify_api_key)],
+)
+async def session_archive(request: SessionArchiveRequest) -> SessionArchiveResponse:
+    """Archive a session (manual or auto).
+
+    Sets ``status = ARCHIVED``. Idempotent — archiving an already-archived
+    session returns ``status="already_archived"``. Archived sessions are
+    excluded from /sessions/pending and similar dashboards but remain
+    readable for history / audit.
+    """
+    try:
+        return await archive_session(request.session_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from None
+
+
+@router.get(
+    "/sessions/pending",
+    dependencies=[Depends(verify_api_key)],
+)
+async def list_pending_sessions_route(
+    user_id: str = Query(..., description="Yupp user ID whose Slack sessions to inspect"),
+    hours_back: int = Query(24, ge=1, le=168, description="Time window for last_message_at, in hours"),
+) -> PendingSessionsResponse:
+    """List Slack sessions for ``user_id`` waiting on a turn.
+
+    Buckets:
+
+    - ``pending_human``: agent posted last; waiting on a user reply.
+    - ``pending_ai``:    user posted last; waiting on the agent.
+
+    Filters: trigger=SLACK, status != ARCHIVED, root sessions only,
+    not soft-deleted, last completed USER/AGENT message within
+    ``hours_back`` hours.
+    """
+    return await list_pending_sessions(user_id=user_id, hours_back=hours_back)
 
 
 @router.post(
@@ -278,7 +325,7 @@ async def edit_agent_route(request: AgentEditRequest) -> AgentEditResponse:
     dependencies=[Depends(verify_api_key)],
 )
 async def list_sessions_route(
-    status: str | None = Query(None, description="Filter by status: ACTIVE, COMPLETED, STALE"),
+    status: str | None = Query(None, description="Filter by status: ACTIVE, COMPLETED, STALE, ARCHIVED"),
     agent_name: str | None = Query(None, description="Filter by agent name"),
     trigger: str | None = Query(None, description="Filter by trigger: SLACK, WEBHOOK, CRON, API"),
     since: str | None = Query(None, description="Created after (ISO-8601 datetime)"),

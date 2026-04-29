@@ -27,7 +27,7 @@ Bare commands (full @mention message is the command) — see
 :data:`BARE_COMMANDS`:
 
     /stop, /help, /agents, /models, /status, /verbose, /quiet,
-    /attach <uuid>
+    /attach <uuid>, /pending, /archive
 
 Leading directives (first word of a message, prefix for the actual text):
 
@@ -46,10 +46,15 @@ from datetime import UTC, datetime
 from typing import Any
 
 from ypl.agent_harness_service.common.constants import AHS_LIT_BASE_URL
+from ypl.backend.utils.slack_utils import resolve_slack_user_to_yupp_user_id
+from ypl.slack_agent_gateway.agent_client import (
+    archive_session as ahs_archive_session,
+)
 from ypl.slack_agent_gateway.agent_client import (
     attach_slack_to_session,
     get_available_agents,
     get_available_models,
+    get_pending_sessions,
     get_session_info,
     stop_agent_session,
 )
@@ -92,6 +97,8 @@ BARE_COMMANDS: set[str] = {
     "status",
     "verbose",
     "quiet",
+    "pending",
+    "archive",
 }
 LEGACY_NOSLASH_COMMANDS: set[str] = {"stop", "attach"}
 
@@ -112,6 +119,8 @@ def extract_bare_command(text: str) -> tuple[str, str] | None:
         /attach         (rejected — needs a UUID)
         /attach <uuid>  link thread to existing AHS session
         /attach:<uuid>  legacy colon form (alias)
+        /pending        list sessions waiting on the caller's input
+        /archive        archive the current thread's session
 
     Case-insensitive. The slash is optional for ``stop`` and ``attach``
     (legacy behaviour) but **required** for the newer commands to avoid
@@ -278,6 +287,8 @@ HELP_TEXT = (
     "• `/models` — list all models you can use\n"
     "• `/verbose` — show live tool-call info in-thread (default)\n"
     "• `/quiet` — hide live tool-call info for the rest of this thread\n"
+    "• `/pending` — list your sessions waiting on a turn (last 24h)\n"
+    "• `/archive` — archive this thread's session (excludes it from `/pending`)\n"
     "\n"
     "*First message of a thread only:*\n"
     "• `/model SPEC` — use a specific model for this session "
@@ -337,6 +348,86 @@ def format_agents_list(agents: list[dict]) -> str:
     lines.append("")
     lines.append("_Usage:_ `@agent /agent AGENT_NAME your message here` (first message only)")
     return "\n".join(lines)
+
+
+def _format_relative_time(when: datetime, *, now: datetime | None = None) -> str:
+    """Format a duration like ``"2h ago"`` for /pending output."""
+    now = now or datetime.now(UTC)
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    delta = now - when
+    total_s = max(0, int(delta.total_seconds()))
+    if total_s < 60:
+        return f"{total_s}s ago"
+    if total_s < 3600:
+        return f"{total_s // 60}m ago"
+    if total_s < 86400:
+        return f"{total_s // 3600}h ago"
+    return f"{total_s // 86400}d ago"
+
+
+def format_pending_sessions(
+    pending_human: list[dict[str, Any]],
+    pending_ai: list[dict[str, Any]],
+    hours_back: int,
+    *,
+    permalinks: dict[str, str] | None = None,
+) -> str:
+    """Render /pending response as Slack mrkdwn.
+
+    ``permalinks`` maps ``session_id`` to a resolved Slack permalink. Sessions
+    without a resolved permalink fall back to a non-clickable channel/thread
+    reference.
+    """
+    permalinks = permalinks or {}
+
+    if not pending_human and not pending_ai:
+        return f"_No sessions are pending input in the last {hours_back}h. You're caught up!_ :tada:"
+
+    def _render_one(session: dict[str, Any]) -> str:
+        session_id = session.get("session_id", "")
+        agent_name = session.get("agent_name") or "—"
+        last_at_raw = session.get("last_message_at")
+        last_at: datetime | None = None
+        if isinstance(last_at_raw, str):
+            try:
+                last_at = datetime.fromisoformat(last_at_raw)
+            except ValueError:
+                last_at = None
+        when_str = _format_relative_time(last_at) if last_at else "—"
+        title = (session.get("title") or "").strip()
+        preview = (session.get("last_message_preview") or "").strip()
+        channel_name = session.get("slack_channel_name")
+        channel_id = session.get("slack_channel_id")
+        thread_ts = session.get("slack_thread_ts")
+
+        permalink = permalinks.get(session_id)
+        if permalink:
+            label = title or (f"#{channel_name}" if channel_name else f"`{session_id[:8]}`")
+            link = f"<{permalink}|{label}>"
+        elif channel_id and thread_ts:
+            ref = f"#{channel_name}" if channel_name else f"`{channel_id}`"
+            link = f"{ref} ({thread_ts})"
+        else:
+            link = f"`{session_id[:8]}`"
+
+        line = f"• {link} — `{agent_name}` · _{when_str}_"
+        if preview:
+            line += f"\n  › _{preview}_"
+        return line
+
+    parts: list[str] = [f"*Pending sessions* (last {hours_back}h)"]
+    if pending_human:
+        parts.append("")
+        parts.append(f":bell: *Waiting on you* ({len(pending_human)})")
+        parts.extend(_render_one(s) for s in pending_human)
+    if pending_ai:
+        parts.append("")
+        parts.append(f":robot_face: *Waiting on the agent* ({len(pending_ai)})")
+        parts.extend(_render_one(s) for s in pending_ai)
+    parts.append("")
+    parts.append("_Use `/archive` in a thread to remove it from this list._")
+    return "\n".join(parts)
 
 
 def format_session_status(
@@ -847,6 +938,188 @@ async def _handle_verbose_or_quiet_command(
     return {"status": "verbose" if verbose else "quiet"}
 
 
+async def _resolve_permalinks(
+    client: Any,
+    sessions: list[dict[str, Any]],
+) -> dict[str, str]:
+    """Best-effort resolve Slack permalinks for a batch of pending sessions.
+
+    Failures are swallowed — sessions without a permalink still render with
+    a fallback channel/thread reference.
+    """
+    import asyncio
+
+    async def _one(s: dict[str, Any]) -> tuple[str, str | None]:
+        channel_id = s.get("slack_channel_id")
+        thread_ts = s.get("slack_thread_ts")
+        session_id = s.get("session_id", "")
+        if not channel_id or not thread_ts:
+            return session_id, None
+        try:
+            resp = await client.chat_getPermalink(channel=channel_id, message_ts=thread_ts)
+            link = resp.get("permalink") if isinstance(resp, dict) else getattr(resp, "data", {}).get("permalink")
+            return session_id, link
+        except Exception:
+            return session_id, None
+
+    if not sessions:
+        return {}
+    results = await asyncio.gather(*[_one(s) for s in sessions])
+    return {sid: link for sid, link in results if link}
+
+
+async def _handle_pending_command(
+    app_config: AgentAppConfig,
+    channel_id: str,
+    thread_ts: str,
+    user_id: str,
+) -> dict[str, Any]:
+    """Handle the /pending command: list the caller's sessions awaiting a turn.
+
+    Resolves the calling Slack user to a Yupp user_id, then asks AHS for the
+    pending split. Posts results inline to the thread that invoked it.
+    """
+    client = build_slack_client(app_config.app_id, app_config.bot_token)
+
+    try:
+        yupp_user_id = await resolve_slack_user_to_yupp_user_id(user_id, bot_token=app_config.bot_token)
+    except Exception:
+        logger.exception(
+            "Failed to resolve Slack user to Yupp user_id for /pending",
+            slack_user_id=user_id,
+        )
+        yupp_user_id = None
+
+    if not yupp_user_id:
+        try:
+            await client.chat_postMessage(
+                channel=channel_id,
+                thread_ts=thread_ts,
+                text=":warning: I couldn't match your Slack account to a Yupp user. "
+                "Make sure your account is linked, then try `/pending` again.",
+            )
+        except Exception as e:
+            logger.warning("Failed to post /pending unresolved-user reply", error=str(e))
+        return {"status": "user_unresolved"}
+
+    payload = await get_pending_sessions(yupp_user_id, hours_back=24)
+    if payload is None:
+        try:
+            await client.chat_postMessage(
+                channel=channel_id,
+                thread_ts=thread_ts,
+                text=":warning: Could not fetch pending sessions — AHS may be unavailable.",
+            )
+        except Exception as e:
+            logger.warning("Failed to post /pending error", error=str(e))
+        return {"status": "ahs_unavailable"}
+
+    pending_human = payload.get("pending_human") or []
+    pending_ai = payload.get("pending_ai") or []
+    hours_back = int(payload.get("hours_back", 24))
+
+    permalinks = await _resolve_permalinks(client, [*pending_human, *pending_ai])
+    text = format_pending_sessions(
+        pending_human=pending_human,
+        pending_ai=pending_ai,
+        hours_back=hours_back,
+        permalinks=permalinks,
+    )
+
+    try:
+        await client.chat_postMessage(
+            channel=channel_id,
+            thread_ts=thread_ts,
+            text=text,
+            unfurl_links=False,
+            unfurl_media=False,
+        )
+    except Exception as e:
+        logger.warning("Failed to post /pending response", error=str(e))
+
+    return {
+        "status": "pending_listed",
+        "pending_human": len(pending_human),
+        "pending_ai": len(pending_ai),
+    }
+
+
+async def _handle_archive_command(
+    app_config: AgentAppConfig,
+    channel_id: str,
+    thread_ts: str,
+    user_id: str,
+) -> dict[str, Any]:
+    """Handle the /archive command: archive the current thread's session.
+
+    Looks up the session ID from the thread mapping (or falls back to the
+    SAG composite ID), then asks AHS to set ``status = ARCHIVED``.
+    """
+    client = build_slack_client(app_config.app_id, app_config.bot_token)
+
+    sag_session_id = AgentSession.build_session_id(channel_id, thread_ts, app_config.app_id)
+    slack_session = await get_session(sag_session_id)
+
+    # Prefer the AHS UUID stored in the thread mapping when this thread was
+    # initiated by an agent; otherwise the SAG composite ID is what AHS knows
+    # the session by.
+    ahs_session_id = await get_ahs_session_for_thread(channel_id, thread_ts)
+    target_id = ahs_session_id or (slack_session.session_id if slack_session else sag_session_id)
+
+    if not slack_session and not ahs_session_id:
+        try:
+            await client.chat_postMessage(
+                channel=channel_id,
+                thread_ts=thread_ts,
+                text="_No session in this thread to archive._",
+            )
+        except Exception as e:
+            logger.warning("Failed to post /archive no-session reply", error=str(e))
+        return {"status": "no_session"}
+
+    result = await ahs_archive_session(target_id)
+    if result is None:
+        try:
+            await client.chat_postMessage(
+                channel=channel_id,
+                thread_ts=thread_ts,
+                text=":warning: Failed to archive this session — AHS may be unavailable.",
+            )
+        except Exception as e:
+            logger.warning("Failed to post /archive error", error=str(e))
+        return {"status": "ahs_unavailable"}
+
+    ahs_status = result.get("status")
+    if ahs_status == "archived":
+        msg = ":file_cabinet: Archived. This thread won't appear in `/pending` anymore."
+    elif ahs_status == "already_archived":
+        msg = ":file_cabinet: Already archived."
+    else:
+        msg = f":warning: Unexpected archive response: `{ahs_status}`"
+
+    try:
+        await client.chat_postMessage(
+            channel=channel_id,
+            thread_ts=thread_ts,
+            text=msg,
+        )
+    except Exception as e:
+        logger.warning("Failed to post /archive confirmation", error=str(e))
+
+    logger.info(
+        "Archived session via /archive command",
+        sag_session_id=sag_session_id,
+        ahs_session_id=ahs_session_id,
+        target_id=target_id,
+        ahs_status=ahs_status,
+        slack_user_id=user_id,
+    )
+    return {
+        "status": ahs_status or "error",
+        "target_id": target_id,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Dispatch — single entry point called by ``events.handle_app_mention`` once
 # a bare command has been parsed out of the message text.
@@ -906,6 +1179,10 @@ async def dispatch_bare_command(
         return await _handle_verbose_or_quiet_command(app_config, channel_id, thread_ts, verbose=True)
     if cmd_name == "quiet":
         return await _handle_verbose_or_quiet_command(app_config, channel_id, thread_ts, verbose=False)
+    if cmd_name == "pending":
+        return await _handle_pending_command(app_config, channel_id, thread_ts, user_id)
+    if cmd_name == "archive":
+        return await _handle_archive_command(app_config, channel_id, thread_ts, user_id)
 
     # Parsing contract says this is unreachable; return None so callers can
     # decide (e.g. fall through to normal message forwarding).

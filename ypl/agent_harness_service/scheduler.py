@@ -18,7 +18,7 @@ import sqlalchemy as sa
 from sqlmodel import col, select
 
 from ypl.agent_harness_service.common.types import SessionCreateRequest
-from ypl.agent_harness_service.service import create_session, has_execution_capacity
+from ypl.agent_harness_service.service import auto_archive_stale_sessions, create_session, has_execution_capacity
 from ypl.backend.db import get_async_session
 from ypl.backend.utils.async_utils import create_background_task
 from ypl.backend.utils.parsing_utils import parse_rfc3339_timestamp
@@ -61,6 +61,10 @@ SCHEDULER_STALE_TIMEOUT_MINUTES = _parse_env_int("AHS_SCHEDULER_STALE_TIMEOUT_MI
 LINEAR_SYNC_ENABLED = os.environ.get("AHS_LINEAR_SYNC_ENABLED", "true").lower() == "true"
 # Minimum seconds between Linear sync polls (to avoid hammering the API on every scheduler tick)
 LINEAR_SYNC_INTERVAL_SECONDS = _parse_env_int("AHS_LINEAR_SYNC_INTERVAL_SECONDS", 60)
+# Auto-archive Slack sessions whose last activity is older than this many days.
+# Set the interval to 0 to disable (default: sweep every 6 hours).
+SESSION_AUTO_ARCHIVE_DAYS = _parse_env_int("AHS_SESSION_AUTO_ARCHIVE_DAYS", 7)
+SESSION_AUTO_ARCHIVE_INTERVAL_SECONDS = _parse_env_int("AHS_SESSION_AUTO_ARCHIVE_INTERVAL_SECONDS", 6 * 3600)
 
 
 async def recover_stale_in_progress_schedules() -> int:
@@ -571,6 +575,8 @@ async def run_scheduler() -> None:
         task_executor_enabled=TASK_EXECUTOR_ENABLED,
         linear_sync_enabled=LINEAR_SYNC_ENABLED,
         linear_sync_interval_seconds=LINEAR_SYNC_INTERVAL_SECONDS,
+        session_auto_archive_days=SESSION_AUTO_ARCHIVE_DAYS,
+        session_auto_archive_interval_seconds=SESSION_AUTO_ARCHIVE_INTERVAL_SECONDS,
     )
 
     # Recover stale schedules on startup
@@ -594,6 +600,13 @@ async def run_scheduler() -> None:
     # How many polls between Linear sync checks (LINEAR_SYNC_INTERVAL_SECONDS / poll interval)
     linear_sync_polls = max(1, LINEAR_SYNC_INTERVAL_SECONDS // SCHEDULER_POLL_INTERVAL_SECONDS)
     linear_sync_counter = 0
+    # How many polls between session auto-archive sweeps (0 = disabled).
+    session_archive_polls = (
+        max(1, SESSION_AUTO_ARCHIVE_INTERVAL_SECONDS // SCHEDULER_POLL_INTERVAL_SECONDS)
+        if SESSION_AUTO_ARCHIVE_INTERVAL_SECONDS > 0
+        else 0
+    )
+    session_archive_counter = 0
     while True:
         try:
             await poll_and_execute_due_schedules()
@@ -613,6 +626,22 @@ async def run_scheduler() -> None:
                     await poll_and_sync_linear_projects()
                 except Exception as e:
                     logger.error("Linear sync poll error", error=str(e), exc_info=True)
+
+            # Auto-archive Slack sessions inactive for >= SESSION_AUTO_ARCHIVE_DAYS days.
+            if session_archive_polls > 0:
+                session_archive_counter += 1
+                if session_archive_counter >= session_archive_polls:
+                    session_archive_counter = 0
+                    try:
+                        archived = await auto_archive_stale_sessions(days=SESSION_AUTO_ARCHIVE_DAYS)
+                        if archived > 0:
+                            logger.info(
+                                "Auto-archived stale Slack sessions",
+                                count=archived,
+                                threshold_days=SESSION_AUTO_ARCHIVE_DAYS,
+                            )
+                    except Exception as e:
+                        logger.error("Session auto-archive sweep failed", error=str(e), exc_info=True)
 
             # Periodically check for stale schedules/tasks (every ~10 minutes at default poll interval)
             poll_count += 1

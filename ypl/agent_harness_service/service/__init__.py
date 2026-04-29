@@ -33,6 +33,15 @@ from ypl.agent_harness_service.service.agent_messaging import (
 )
 
 # ---------------------------------------------------------------------------
+# Archival & pending-input queries
+# ---------------------------------------------------------------------------
+from ypl.agent_harness_service.service.archive import (
+    archive_session,
+    auto_archive_stale_sessions,
+    list_pending_sessions,
+)
+
+# ---------------------------------------------------------------------------
 # Message / data helpers
 # ---------------------------------------------------------------------------
 from ypl.agent_harness_service.service.message_helpers import (
@@ -165,4 +174,8 @@ __all__ = [
     # Agent messaging authorization
     "AgentAuthorizationError",
     "check_agent_message_authz",
+    # Archival & pending-input
+    "archive_session",
+    "auto_archive_stale_sessions",
+    "list_pending_sessions",
 ]

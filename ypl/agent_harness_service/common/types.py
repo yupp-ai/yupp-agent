@@ -414,6 +414,65 @@ class SessionDetailResponse(BaseModel):
     subsessions: list[SessionInfo]
 
 
+class SessionArchiveRequest(BaseModel):
+    """POST /session/archive — archive a session (manual or auto)."""
+
+    session_id: str = Field(..., description="Session ID (UUID or slack_session_id)")
+
+
+class SessionArchiveResponse(BaseModel):
+    """Response from archiving a session.
+
+    ``status`` is one of:
+    - ``"archived"`` — the session was active and is now archived.
+    - ``"already_archived"`` — idempotent no-op; the session was already archived.
+    """
+
+    session_id: str
+    status: str = Field(..., description="'archived' or 'already_archived'")
+
+
+class PendingSessionInfo(BaseModel):
+    """A session waiting on input from one side of the conversation.
+
+    ``waiting_on`` is one of:
+    - ``"human"`` — agent posted last; waiting for the user to reply.
+    - ``"ai"``    — user posted last; waiting for the agent to reply.
+    """
+
+    session_id: str
+    agent_name: str
+    waiting_on: str = Field(..., description="'human' or 'ai'")
+    last_message_at: datetime
+    last_message_role: str = Field(..., description="USER, AGENT, SYSTEM, or FELLOW_AGENT")
+    last_message_preview: str | None = Field(
+        None,
+        description="First ~120 chars of the last message body, for context.",
+    )
+    slack_channel_id: str | None = None
+    slack_channel_name: str | None = None
+    slack_thread_ts: str | None = None
+    slack_permalink: str | None = Field(
+        None,
+        description="Direct link to the Slack thread, if resolvable.",
+    )
+    title: str | None = None
+
+
+class PendingSessionsResponse(BaseModel):
+    """Response for GET /sessions/pending."""
+
+    pending_human: list[PendingSessionInfo] = Field(
+        default_factory=list,
+        description="Sessions where the agent posted last; waiting on a human reply.",
+    )
+    pending_ai: list[PendingSessionInfo] = Field(
+        default_factory=list,
+        description="Sessions where the user posted last; waiting on an agent reply.",
+    )
+    hours_back: int = Field(..., description="Time window applied to last_message_at, in hours.")
+
+
 # --- Agent Create Models ---
 
 
