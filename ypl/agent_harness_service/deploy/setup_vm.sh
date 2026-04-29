@@ -239,7 +239,7 @@ echo ""
 echo "--------------------------------------------"
 echo "  Step 5/13: Creating directory structure"
 echo "--------------------------------------------"
-mkdir -p "${AHS_DATA_DIR}"/{shared,agents,repos,sessions,session_logs,artifacts,attachments,memories}
+mkdir -p "${AHS_DATA_DIR}"/{shared,agents,repos,sessions,session_logs,artifacts,attachments}
 chown -R ahs:ahs "${AHS_DATA_DIR}"
 echo "  ${AHS_DATA_DIR}/ directory structure ready"
 

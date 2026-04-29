@@ -11,7 +11,7 @@ import os
 import subprocess
 from functools import lru_cache
 
-from ypl.agent_harness_service.common.constants import AHS_MEMORIES_DIR, AHS_REPOS_DIR
+from ypl.agent_harness_service.common.constants import AHS_REPOS_DIR
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -31,11 +31,6 @@ _ALLOWED_SYMLINK_TARGET_PREFIXES: tuple[str, ...] = (
 # (inner symlinks resolved by _resolve_inner_symlinks), and raw executors
 # access via the load_skill() MCP tool (which reads from this path directly).
 _REAL_SKILLS_DIR = os.path.realpath(os.path.join(_SERVICE_REPO_DIR, ".agents", "skills"))
-
-# Only this well-known symlink name is accepted for memory mounts.
-# Prevents a sandboxed agent from planting arbitrary symlinks into
-# AHS_MEMORIES_DIR to access other agents' memories.
-_MEMORY_SYMLINK_NAME = "agent_memories"
 
 # ---------------------------------------------------------------------------
 # System mounts (shared by raw and CLI executors)
@@ -240,51 +235,38 @@ def _resolve_inner_symlinks(
     return args
 
 
-def _resolve_workspace_symlinks(
-    workspace: str,
-) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
-    """Scan workspace for symlinks and resolve to real paths.
+def _resolve_workspace_symlinks(workspace: str) -> list[tuple[str, str]]:
+    """Scan workspace for repo symlinks and resolve to real paths.
 
-    Only includes symlinks whose resolved target is under an allowed directory
-    (``AHS_REPOS_DIR`` or ``AHS_MEMORIES_DIR``) to prevent a writable workspace
-    from injecting arbitrary host paths into the bwrap mount list (symlink
-    escape attack).
-
-    Memory symlinks are further constrained: only the well-known
-    ``agent_memories`` entry is accepted, and it must point into
-    ``AHS_MEMORIES_DIR``.  This prevents a sandboxed agent from planting
-    additional symlinks to access other agents' memory directories.
+    Only includes symlinks whose resolved target is under ``AHS_REPOS_DIR``
+    to prevent a writable workspace from injecting arbitrary host paths
+    into the bwrap mount list (symlink escape attack). The materialized
+    ``agent_memories/`` directory is a regular subdirectory of the
+    workspace (no symlink), so it is mounted via the workspace bind and
+    needs no special handling here.
 
     Returns:
-        A tuple of two lists of (real_path, symlink_path) tuples:
-        - repo_binds: symlinks into AHS_REPOS_DIR (mounted read-only)
-        - memory_binds: symlinks into AHS_MEMORIES_DIR (mounted read-write)
+        A list of ``(real_path, symlink_path)`` tuples for repos symlinks
+        (mounted read-only).
     """
     repo_binds: list[tuple[str, str]] = []
-    memory_binds: list[tuple[str, str]] = []
     if not os.path.isdir(workspace):
-        return repo_binds, memory_binds
+        return repo_binds
     real_repos_dir = os.path.realpath(AHS_REPOS_DIR)
-    real_memories_dir = os.path.realpath(AHS_MEMORIES_DIR)
     for entry in os.listdir(workspace):
         full = os.path.join(workspace, entry)
         if os.path.islink(full) and os.path.isdir(full):
             real = os.path.realpath(full)
             if real.startswith(real_repos_dir + os.sep) or real == real_repos_dir:
                 repo_binds.append((real, full))
-            elif entry == _MEMORY_SYMLINK_NAME and (
-                real.startswith(real_memories_dir + os.sep) or real == real_memories_dir
-            ):
-                memory_binds.append((real, full))
             else:
                 logger.warning(
                     "Skipping workspace symlink outside allowed dirs",
                     symlink=full,
                     target=real,
                     repos_dir=real_repos_dir,
-                    memories_dir=real_memories_dir,
                 )
-    return repo_binds, memory_binds
+    return repo_binds
 
 
 def log_bwrap_details(bwrap_args: list[str], session_id: str, label: str) -> None:
@@ -359,7 +341,7 @@ def build_bwrap_command(command: str, workspace: str) -> list[str]:
 
     # Resolve workspace symlinks — bwrap doesn't follow symlinks by default,
     # so we need explicit mount entries for each real path.
-    repo_binds, memory_binds = _resolve_workspace_symlinks(workspace)
+    repo_binds = _resolve_workspace_symlinks(workspace)
     for real_path, _symlink_path in repo_binds:
         args += ["--ro-bind", real_path, real_path]
 
@@ -369,13 +351,8 @@ def build_bwrap_command(command: str, workspace: str) -> list[str]:
     if os.path.isdir(_REAL_SKILLS_DIR):
         args += ["--ro-bind", _REAL_SKILLS_DIR, _REAL_SKILLS_DIR]
 
-    # Read-write workspace
+    # Read-write workspace (includes agent_memories/ as a real subdir).
     args += ["--bind", workspace, workspace]
-
-    # Read-write memory symlink targets (must come after workspace --bind
-    # so the symlink itself is visible, and the target is writable)
-    for real_path, _symlink_path in memory_binds:
-        args += ["--bind", real_path, real_path]
 
     # Ephemeral /tmp, minimal /dev, /proc
     args += ["--tmpfs", "/tmp"]
@@ -451,7 +428,7 @@ def build_bwrap_cli_command(args: list[str], workspace: str) -> list[str]:
     # Repos: source tree + most of .git/ read-only; only specific .git/ subdirs
     # are overlaid as --bind (read-write). This protects repo config, hooks,
     # and alternates while still allowing git commit/push/fetch to work.
-    repo_binds, memory_binds = _resolve_workspace_symlinks(workspace)
+    repo_binds = _resolve_workspace_symlinks(workspace)
     for real_path, _symlink_path in repo_binds:
         bwrap_args += ["--ro-bind", real_path, real_path]
         git_dir = os.path.join(real_path, ".git")
@@ -466,13 +443,9 @@ def build_bwrap_cli_command(args: list[str], workspace: str) -> list[str]:
                 os.makedirs(subdir_path, exist_ok=True)
                 bwrap_args += ["--bind", subdir_path, subdir_path]
 
-    # Read-write session workspace (worktrees, attachments, history)
+    # Read-write session workspace (worktrees, attachments, history,
+    # agent_memories/).
     bwrap_args += ["--bind", workspace, workspace]
-
-    # Read-write memory symlink targets (must come after workspace --bind
-    # so the symlink itself is visible, and the target is writable)
-    for real_path, _symlink_path in memory_binds:
-        bwrap_args += ["--bind", real_path, real_path]
 
     # Ephemeral /tmp, minimal /dev, /proc
     bwrap_args += ["--tmpfs", "/tmp"]

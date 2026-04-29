@@ -47,7 +47,7 @@ class TestBuildBwrapCliCommand:
         with (
             patch(
                 "ypl.agent_harness_service.executors.sandbox._resolve_workspace_symlinks",
-                return_value=([(str(repo), str(workspace / "my-repo"))], []),
+                return_value=[(str(repo), str(workspace / "my-repo"))],
             ),
             patch(
                 "ypl.agent_harness_service.executors.sandbox._bwrap_system_mounts",
@@ -68,7 +68,7 @@ class TestBuildBwrapCliCommand:
         with (
             patch(
                 "ypl.agent_harness_service.executors.sandbox._resolve_workspace_symlinks",
-                return_value=([(str(repo), str(workspace / "my-repo"))], []),
+                return_value=[(str(repo), str(workspace / "my-repo"))],
             ),
             patch(
                 "ypl.agent_harness_service.executors.sandbox._bwrap_system_mounts",
@@ -89,7 +89,7 @@ class TestBuildBwrapCliCommand:
         with (
             patch(
                 "ypl.agent_harness_service.executors.sandbox._resolve_workspace_symlinks",
-                return_value=([(str(repo), str(workspace / "my-repo"))], []),
+                return_value=[(str(repo), str(workspace / "my-repo"))],
             ),
             patch(
                 "ypl.agent_harness_service.executors.sandbox._bwrap_system_mounts",
@@ -113,7 +113,7 @@ class TestBuildBwrapCliCommand:
         with (
             patch(
                 "ypl.agent_harness_service.executors.sandbox._resolve_workspace_symlinks",
-                return_value=([(str(repo), str(workspace / "my-repo"))], []),
+                return_value=[(str(repo), str(workspace / "my-repo"))],
             ),
             patch(
                 "ypl.agent_harness_service.executors.sandbox._bwrap_system_mounts",
@@ -133,7 +133,7 @@ class TestBuildBwrapCliCommand:
         with (
             patch(
                 "ypl.agent_harness_service.executors.sandbox._resolve_workspace_symlinks",
-                return_value=([(str(repo), str(workspace / "my-repo"))], []),
+                return_value=[(str(repo), str(workspace / "my-repo"))],
             ),
             patch(
                 "ypl.agent_harness_service.executors.sandbox._bwrap_system_mounts",
@@ -150,7 +150,7 @@ class TestBuildBwrapCliCommand:
         with (
             patch(
                 "ypl.agent_harness_service.executors.sandbox._resolve_workspace_symlinks",
-                return_value=([(str(repo), str(workspace / "my-repo"))], []),
+                return_value=[(str(repo), str(workspace / "my-repo"))],
             ),
             patch(
                 "ypl.agent_harness_service.executors.sandbox._bwrap_system_mounts",

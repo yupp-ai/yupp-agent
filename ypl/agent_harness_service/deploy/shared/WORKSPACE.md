@@ -7,7 +7,7 @@
 ```
 ├── .claude/          → read-only settings & hooks
 ├── .mcp.json         → MCP server config (generated at runtime)
-├── agent_memories/   → persistent memory (writable, survives across sessions)
+├── agent_memories/   → memory working copy (materialized from DB at session start; writable; persistence is via the DB, not the disk)
 ├── yupp-agent/       → read-only repo symlink
 ├── yupp-agent-fix-bug-a1b2/  → writable worktree (created on demand)
 ├── attachments/      → downloaded attachments

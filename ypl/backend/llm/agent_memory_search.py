@@ -1,12 +1,12 @@
-"""Agent memory search constants and stub.
+"""Agent memory search stub.
 
-Only the constants and the callable signature used by AHS are exposed here;
-hybrid/semantic search is not yet wired up in yupp-agent.
+Only the callable signature used by AHS is exposed here; hybrid/semantic
+search is not yet wired up in yupp-agent. The follow-up "memory section
+search" project replaces this stub once section-level search is
+re-implemented on top of MEMORY artifacts.
 """
 
 from typing import Any
-
-PRIVATE_TOPIC_PREFIX = "PRIVATE"
 
 
 async def search_agent_memory(
