@@ -25,7 +25,6 @@ from ypl.agent_harness_service.common.constants import (
     HARNESSED_MODELS,
     TURN_LIMIT_NOTICE,
 )
-from ypl.agent_harness_service.core.memory_persistence import sync_agent_memory_to_gcs
 from ypl.agent_harness_service.core.session_persistence import sync_session_to_gcs
 from ypl.agent_harness_service.core.session_title import maybe_generate_session_title
 from ypl.agent_harness_service.core.streaming import (
@@ -46,7 +45,6 @@ from ypl.agent_harness_service.executors.runner import (
 )
 from ypl.agent_harness_service.gateway import TRIGGER_TO_GATEWAY, GatewayRegistry
 from ypl.agent_harness_service.gateway.base import Gateway
-from ypl.agent_harness_service.memory_materialization import is_memory_db_authoritative
 from ypl.agent_harness_service.service.message_helpers import (
     _extract_visible_content,
     _scrub_null_bytes,
@@ -1179,21 +1177,9 @@ async def _run_agent_task(
                 exc_info=True,
             )
 
-        # Best-effort sync agent memory to GCS for all agents.
-        # Skipped under MEMORY_DB_AUTHORITATIVE because:
-        #   - The DB already has every save (MCP save_memory writes through
-        #     synchronously before returning to the agent).
-        #   - The next session re-materializes from the DB, so there is
-        #     nothing on disk that needs to survive the sandbox teardown.
-        # Legacy path stays in place for prod until the human checkpoint
-        # flips the flag on; see PR [5] for the full deletion.
-        if agent_config_name and not await is_memory_db_authoritative():
-            try:
-                await sync_agent_memory_to_gcs(agent_config_name)
-            except Exception:
-                logger.warning(
-                    "GCS agent memory sync failed after agent turn",
-                    agent_name=agent_config_name,
-                    session_id=str(agent_session_id),
-                    exc_info=True,
-                )
+        # Agent memory is no longer synced to GCS at turn end. The DB
+        # (artifact registry) is the single source of truth: every
+        # save_memory writes through synchronously before returning to
+        # the agent, and the next session re-materializes from the DB.
+        # The disk copy under {workspace}/agent_memories/ is a transient
+        # working cache that's discarded with the sandbox.

@@ -103,12 +103,3 @@ feature_flags:
     description: "Whether to enable winddown mode to gradually shut down product functionalities"
     default_state: false
     critical: true
-  - name: MEMORY_DB_AUTHORITATIVE
-    description: >-
-      Treat the MEMORY artifact rows in Postgres as the source of truth for agent memory:
-      materialize the sandbox at session start from the DB, write through MCP save_memory,
-      and skip the GCS sync at turn end. The helper resolves an environment-derived default
-      (default-on for ENVIRONMENT=staging, default-off elsewhere) when no Redis override
-      exists. Flip on in prod via Redis after the soak (PR [3] human checkpoint).
-    default_state: false
-    critical: true

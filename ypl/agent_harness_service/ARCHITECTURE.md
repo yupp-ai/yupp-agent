@@ -38,7 +38,6 @@ ypl/agent_harness_service/
 |-- core/                 Layer 1 -- depends on common/ only
 |   |-- streaming.py        Event bus, WebSocket, PubSub
 |   |-- gcs_sync.py         GCS manifest-based sync
-|   |-- memory_persistence.py
 |   |-- session_persistence.py
 |   +-- session_title.py
 |

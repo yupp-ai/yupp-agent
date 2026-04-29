@@ -103,9 +103,9 @@ class CommandHandlerManager:
         """Build the bwrap command line to launch the BCH proxy binary.
 
         Mount configuration mirrors ``build_bwrap_command()`` in sandbox.py:
-        system binaries (read-only), workspace (read-write), repo symlink
-        targets (read-only), memory symlinks (read-write), ephemeral /tmp,
-        and namespace isolation (pid/ipc/uts).
+        system binaries (read-only), workspace (read-write — includes the
+        materialized ``agent_memories/`` subdir), repo symlink targets
+        (read-only), ephemeral /tmp, and namespace isolation (pid/ipc/uts).
         """
         # Local import to avoid circular dependency; sandbox.py is in the
         # same package but doesn't import command_handler.
@@ -121,7 +121,7 @@ class CommandHandlerManager:
         args += _bwrap_system_mounts()
 
         # Resolve workspace symlinks — bwrap doesn't follow host symlinks.
-        repo_binds, memory_binds = _resolve_workspace_symlinks(self._workspace)
+        repo_binds = _resolve_workspace_symlinks(self._workspace)
         for real_path, _symlink_path in repo_binds:
             args += ["--ro-bind", real_path, real_path]
 
@@ -129,12 +129,8 @@ class CommandHandlerManager:
         if os.path.isdir(_REAL_SKILLS_DIR):
             args += ["--ro-bind", _REAL_SKILLS_DIR, _REAL_SKILLS_DIR]
 
-        # Read-write workspace
+        # Read-write workspace (includes agent_memories/ as a real subdir).
         args += ["--bind", self._workspace, self._workspace]
-
-        # Read-write memory symlink targets
-        for real_path, _symlink_path in memory_binds:
-            args += ["--bind", real_path, real_path]
 
         # Ephemeral /tmp, minimal /dev and /proc
         args += ["--tmpfs", "/tmp"]

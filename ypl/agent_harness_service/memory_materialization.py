@@ -1,6 +1,6 @@
 """DB-authoritative materialization of MEMORY artifacts onto the sandbox disk.
 
-Handles the two halves of the new path gated by ``MEMORY_DB_AUTHORITATIVE``:
+Two halves:
 
 1. **Session-start materialization** — fetch every MEMORY artifact visible
    to ``(caller_user_id, caller_agent_name)`` (topic + own user + own
@@ -29,15 +29,10 @@ from ypl.agent_harness_service.artifact_store import (
     read_artifact_content,
 )
 from ypl.agent_harness_service.memory_store import MemoryCallerContext
-from ypl.backend.feature_flags import get_feature_value, strtobool
 from ypl.db.agent_harness import AgentArtifactType
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
-
-# Feature flag name. Default-on for staging, default-off elsewhere; see
-# :func:`is_memory_db_authoritative`.
-MEMORY_DB_AUTHORITATIVE_FLAG = "MEMORY_DB_AUTHORITATIVE"
 
 # Sandbox-relative root for materialized memory.
 MEMORY_ROOT = "agent_memories"
@@ -48,44 +43,8 @@ SCOPE_SUBDIRS: tuple[str, str, str] = ("topic", "user", "agent")
 
 # Slugs become filenames. Allow nested folders (``foo/bar``) but reject
 # anything that could escape the memory root via path traversal or hidden
-# filenames. Mirrors the validator in the legacy ``agent_memory.py`` MCP
-# tool but is intentionally narrower since this value lands on disk.
+# filenames.
 _SLUG_FILENAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_./-]{0,254}$")
-
-
-# ---------------------------------------------------------------------------
-# Feature-flag resolution
-# ---------------------------------------------------------------------------
-
-
-async def is_memory_db_authoritative() -> bool:
-    """Return True when MEMORY rows in the DB are the source of truth.
-
-    Resolution order:
-
-    1. Explicit Redis override (``feature_flag:MEMORY_DB_AUTHORITATIVE``)
-       — wins if set, parsed as bool / strtobool.
-    2. Environment-derived default — ``ENVIRONMENT=staging`` defaults to
-       True; everything else (prod, local, tests) defaults to False.
-
-    The asymmetric default lets us land the new path enabled in staging
-    without flipping prod, then flip prod via Redis once the soak passes
-    (the human checkpoint in PR [3]).
-    """
-    raw = await get_feature_value(MEMORY_DB_AUTHORITATIVE_FLAG)
-    if raw is None:
-        env = os.environ.get("ENVIRONMENT", "local").lower()
-        return env == "staging"
-    if isinstance(raw, bool):
-        return raw
-    try:
-        return bool(strtobool(str(raw)))
-    except ValueError:
-        logger.warning(
-            "Invalid MEMORY_DB_AUTHORITATIVE feature flag value; treating as False",
-            value=raw,
-        )
-        return False
 
 
 # ---------------------------------------------------------------------------

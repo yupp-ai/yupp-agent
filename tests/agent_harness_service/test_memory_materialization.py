@@ -7,9 +7,6 @@ Covers the pure / disk-only pieces of the materialization module:
   - ``write_memory_file`` returns ``None`` (no I/O) on invalid input
   - ``materialize_memory_for_session`` writes one .md per artifact and
     creates the three scope subdirs even when the listing is empty
-  - ``is_memory_db_authoritative`` resolution order: explicit Redis
-    override wins; otherwise the env-derived default fires (staging on,
-    everything else off)
 
 The DB / artifact-store interaction is exercised via patched
 ``list_artifacts`` / ``read_artifact_content`` so the test stays
@@ -27,7 +24,6 @@ from ypl.agent_harness_service.memory_materialization import (
     MEMORY_ROOT,
     SCOPE_SUBDIRS,
     _safe_relpath_for,
-    is_memory_db_authoritative,
     materialize_memory_for_session,
     memory_file_path,
     write_memory_file,
@@ -215,67 +211,3 @@ class TestMaterializeMemoryForSession:
         assert written == 0
         for sub in SCOPE_SUBDIRS:
             assert os.path.isdir(os.path.join(ws, MEMORY_ROOT, sub))
-
-
-# ---------------------------------------------------------------------------
-# is_memory_db_authoritative
-# ---------------------------------------------------------------------------
-
-
-class TestIsMemoryDbAuthoritative:
-    async def test_explicit_redis_true_overrides_env(self, monkeypatch: Any) -> None:
-        monkeypatch.setenv("ENVIRONMENT", "production")
-        with patch(
-            "ypl.agent_harness_service.memory_materialization.get_feature_value",
-            return_value=True,
-        ):
-            assert await is_memory_db_authoritative() is True
-
-    async def test_explicit_redis_false_overrides_staging_default(self, monkeypatch: Any) -> None:
-        monkeypatch.setenv("ENVIRONMENT", "staging")
-        with patch(
-            "ypl.agent_harness_service.memory_materialization.get_feature_value",
-            return_value=False,
-        ):
-            assert await is_memory_db_authoritative() is False
-
-    async def test_env_default_staging_on(self, monkeypatch: Any) -> None:
-        monkeypatch.setenv("ENVIRONMENT", "staging")
-        with patch(
-            "ypl.agent_harness_service.memory_materialization.get_feature_value",
-            return_value=None,
-        ):
-            assert await is_memory_db_authoritative() is True
-
-    async def test_env_default_prod_off(self, monkeypatch: Any) -> None:
-        monkeypatch.setenv("ENVIRONMENT", "production")
-        with patch(
-            "ypl.agent_harness_service.memory_materialization.get_feature_value",
-            return_value=None,
-        ):
-            assert await is_memory_db_authoritative() is False
-
-    async def test_env_default_local_off(self, monkeypatch: Any) -> None:
-        monkeypatch.setenv("ENVIRONMENT", "local")
-        with patch(
-            "ypl.agent_harness_service.memory_materialization.get_feature_value",
-            return_value=None,
-        ):
-            assert await is_memory_db_authoritative() is False
-
-    async def test_string_truthy_value_parses(self, monkeypatch: Any) -> None:
-        monkeypatch.setenv("ENVIRONMENT", "production")
-        with patch(
-            "ypl.agent_harness_service.memory_materialization.get_feature_value",
-            return_value="true",
-        ):
-            assert await is_memory_db_authoritative() is True
-
-    async def test_garbage_value_treated_as_false(self, monkeypatch: Any) -> None:
-        monkeypatch.setenv("ENVIRONMENT", "staging")
-        with patch(
-            "ypl.agent_harness_service.memory_materialization.get_feature_value",
-            return_value="garbage",
-        ):
-            # Invalid override → fallback treats as False (conservative).
-            assert await is_memory_db_authoritative() is False
