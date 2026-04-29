@@ -36,6 +36,11 @@ from ypl.agent_harness_service.artifact_store import (
 from ypl.agent_harness_service.artifact_store import (
     search_artifacts as _search_artifacts,
 )
+from ypl.agent_harness_service.common.constants import get_session_dir
+from ypl.agent_harness_service.memory_materialization import (
+    is_memory_db_authoritative,
+    write_memory_file,
+)
 from ypl.agent_harness_service.memory_store import (
     VALID_MEMORY_SCOPES,
     MemoryCallerContext,
@@ -43,7 +48,7 @@ from ypl.agent_harness_service.memory_store import (
     validate_memory_scope_shape,
 )
 from ypl.db.agent_harness import AgentArtifactType
-from ypl.mcp_server.core import get_ahs_agent_name, get_requesting_user_id, mcp_server
+from ypl.mcp_server.core import get_ahs_agent_name, get_ahs_session_id, get_requesting_user_id, mcp_server
 from ypl.mcp_server.tools.agent_artifacts import _resolve_caller_context
 from ypl.structured_logger import get_logger
 
@@ -188,6 +193,33 @@ async def save_memory(
         address=address,
         version=artifact.version,
     )
+
+    # Write-through: refresh the on-disk working copy in the calling
+    # session's sandbox so the agent's in-turn ``cat`` / ``grep`` see
+    # the new content. Strictly best-effort — the DB is authoritative
+    # and the next session will re-materialize from the DB. A failure
+    # here is logged but does NOT fail the save.
+    if await is_memory_db_authoritative():
+        session_id_str = get_ahs_session_id()
+        if session_id_str:
+            try:
+                workspace = get_session_dir(session_id_str)
+                written_path = write_memory_file(workspace, scope, topic, content)
+                if written_path is not None:
+                    logger.debug(
+                        "Wrote memory file to sandbox (write-through)",
+                        workspace=workspace,
+                        path=written_path,
+                    )
+            except Exception:
+                logger.warning(
+                    "Memory write-through to sandbox failed (DB write succeeded)",
+                    session_id=session_id_str,
+                    slug=topic,
+                    scope=scope,
+                    exc_info=True,
+                )
+
     return {
         "success": True,
         "artifact_id": str(artifact.agent_artifact_id),
