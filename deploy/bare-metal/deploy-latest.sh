@@ -21,13 +21,17 @@ set -euo pipefail
 INSTALL_DIR="${INSTALL_DIR:-/opt/yupp-agent}"
 DATA_DIR="${DATA_DIR:-/data/ahs}"
 APP_USER="${APP_USER:-ahs}"
-SERVICES=(ahs-mono ahs-streamlit artifact-viewer couch)
+# NOTE: `couch` (apps/couch) is intentionally NOT deployed yet — the app is
+# pre-release and the prod box has no `bun` installed. Re-enable by adding
+# `couch` back to SERVICES and `apps/couch` back to BUN_APPS once Bun is
+# installed system-wide on ahs-mono-prod and the app is ready to ship.
+SERVICES=(ahs-mono ahs-streamlit artifact-viewer)
 # Sub-apps with their own pyproject / venv. Each gets ``pip install -e`` on
 # every deploy so code changes take effect without a separate step.
 SUBAPPS=(apps/artifact-viewer)
 # Bun apps. Each gets ``bun install --production && bun run build`` on every
 # deploy so code changes take effect without a separate step.
-BUN_APPS=(apps/couch)
+BUN_APPS=()
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 info() { echo -e "${GREEN}[deploy]${NC} $*"; }
