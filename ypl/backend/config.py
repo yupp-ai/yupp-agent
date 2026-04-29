@@ -400,6 +400,13 @@ class Settings(BaseSettings):
     # ``/ahs/artifacts/{uuid}`` path.
     VIEWER_BASE_URL: str = "https://artifacts.agcouch.com"
 
+    # Slack channel ID to receive a notification every time an artifact is
+    # created or updated. Posted as OpsBot in production / staging; skipped
+    # entirely on local + test environments to avoid spamming the channel
+    # during dev. Set to the empty string to disable globally.
+    # Default: ``#agent-artifacts`` (C0B0M10JR8E).
+    ARTIFACT_NOTIFICATIONS_CHANNEL: str = "C0B0M10JR8E"
+
     # Data Takeout settings
     DATA_TAKEOUT_BUCKET: str = "yupp-data-takeouts-staging"  # GCS bucket for takeout ZIPs
     DATA_TAKEOUT_OUTPUT_DIR: str = "/tmp/data-takeouts"  # Local/FUSE path for writing ZIPs
