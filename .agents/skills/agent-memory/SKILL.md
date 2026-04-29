@@ -1,65 +1,89 @@
 ---
 name: agent-memory
-description: Read and write agent memory for cross-session learnings. Use before investigations to check for known patterns, and after to store reusable insights.
+description: Save and recall scoped memories (agent / user / topic) backed by MEMORY artifacts. Use to capture cross-session learnings — your own notebook, the current user's notes, or shared topics — and to look them up before doing similar work again.
 allowed-tools: mcp__agcouch-mcp-server__list_memory, mcp__agcouch-mcp-server__search_memory, mcp__agcouch-mcp-server__load_memory, mcp__agcouch-mcp-server__save_memory
 ---
 
-# Agent Memory
+# Agent Memory (Scoped MEMORY Artifacts)
 
-Persistent memory backed by `MEMORY` artifacts in the artifact registry. Each entry is addressed by **(scope, subject, slug)**:
+Memories live as `MEMORY` artifacts in the artifact registry. The database is the source of truth — versioning is automatic and there is no compare-and-swap. Each entry is addressed by **(scope, subject, slug)**.
 
-| Scope   | Subject               | Visibility                                              |
-| ------- | --------------------- | ------------------------------------------------------- |
-| `agent` | your `agent_name`     | Your private notebook (default for every memory tool)   |
-| `user`  | the caller's user_id  | The current user's notes — only visible to that user    |
-| `topic` | (none)                | Globally shared across all agents and users             |
+## Scopes
 
-The DB is the source of truth. There is no GCS, no compare-and-swap, and no `expected_generation`. Each `save_memory` allocates the next version under the same `(scope, subject, slug)` automatically.
+| Scope   | Subject                | Default? | Visibility                                              |
+| ------- | ---------------------- | -------- | ------------------------------------------------------- |
+| `agent` | your `agent_name`      | yes      | Your private notebook — only sessions of the same agent |
+| `user`  | the caller's `user_id` | opt-in   | Notes about the current user — only that user (and agents serving them) |
+| `topic` | (none)                 | opt-in   | Globally shared — readable and writable by anyone       |
 
-## Reading Memory
-
-```
-list_memory()                                # Everything visible to you (topic + own user + own agent)
-list_memory(scope="topic")                   # Just shared topics
-search_memory(query="oncall")                # Substring search across your visibility
-load_memory(topic="oncall-learnings")        # Defaults to scope="agent" (your own notebook)
-load_memory(topic="oncall-learnings", scope="topic")
-```
-
-**Fallback**: If a memory call fails, continue your task without blocking. Memory is supplementary context, not a prerequisite.
-
-**Trust but verify**: Memory entries may be outdated. Use them to guide investigation direction, but always validate against fresh evidence (logs, code, database) before acting on them.
-
-## Storing Memory
-
-After completing a task, if you discovered something reusable:
-
-```
-save_memory(topic="oncall-learnings", content="<full markdown body>")                # scope="agent" by default
-save_memory(topic="oncall-learnings", content="<full markdown body>", scope="topic") # team-shared
-```
+When you call a memory tool without a `scope` argument, the server uses **`scope="agent"`** with your own `agent_name` as the subject. Use `user` or `topic` only when you explicitly mean to.
 
 The server rejects cross-scope writes — you can only write into your own agent notebook, the current user's notes, or shared topics.
 
-### Choosing a Slug
+## Display Form
+
+Tool return values, the viewer, and logs render the address as a short prefix-form:
+
+| Scope   | Display                 | Example                          |
+| ------- | ----------------------- | -------------------------------- |
+| `user`  | `u:{user_id}:{slug}`    | `u:USR_7f2a:user_preferences`    |
+| `agent` | `a:{agent_name}:{slug}` | `a:eng-raccoon:feedback_style`   |
+| `topic` | `t:{slug}`              | `t:routing_tips`                 |
+
+The `u:` / `a:` / `t:` prefix is **illustrative** — it's reconstructed from the structured columns on the fly. The stored slug is just the topic, e.g. `user_preferences`.
+
+## Tool Surface
+
+```
+list_memory()                                      # Everything visible (topic + own user + own agent)
+list_memory(scope="topic")                         # Just shared topics
+list_memory(scope="agent")                         # Just your own notebook
+
+search_memory(query="<keywords>")                  # Substring search across your full visibility
+search_memory(query="<keywords>", scope="topic")   # Narrow to a single scope
+
+load_memory(topic="<slug>")                        # Default scope="agent"
+load_memory(topic="<slug>", scope="topic")
+load_memory(topic="<slug>", scope="user")
+
+save_memory(topic="<slug>", content="<markdown>")                  # scope="agent" by default
+save_memory(topic="<slug>", content="<markdown>", scope="user")    # caller's own user notes
+save_memory(topic="<slug>", content="<markdown>", scope="topic")   # team-shared
+```
+
+`search_memory` accepts `scope=user|agent|topic` to narrow; **omit `scope` for full visibility**.
+
+**Fallback**: If a memory tool fails, continue your task without blocking. Memory is supplementary context, not a prerequisite.
+
+**Trust but verify**: Memory entries may be outdated. Use them to guide investigation direction, but always validate against fresh evidence (logs, code, database) before acting on them.
+
+## Versioning
+
+Every `save_memory` allocates the next version under the same `(scope, subject, slug)`. Versioning is fully automatic — you don't pass a version number, you don't read-then-CAS, you just save. `load_memory` returns the latest non-archived version; older versions remain in history if you ever need them.
+
+Last-write-wins at the (scope, subject, slug) level: if you and another session save to the same slug, both writes succeed and the most recent one is what subsequent loads return. Reduce conflicts by reading immediately before writing and including all existing content in your save body.
+
+## Choosing a Slug
 
 When storing a learning, first browse with `list_memory()` and `search_memory()`. Then:
 
 1. **Check if an existing slug fits.** If one does, `load_memory` it, merge your entry into the body, and call `save_memory` again with the same slug — that allocates a new version while keeping the (scope, subject, slug) sequence stable. Prefer adding to an existing slug over creating a new one.
 2. **Create a new slug only when** the learning doesn't fit any existing slug and represents a distinct, recurring category (not a single entry). Just call `save_memory(topic="<new-slug>", content=...)` — there is no separate "create" call.
 
-#### Suggested Slugs (not exhaustive)
+### Suggested Slugs (not exhaustive)
 
-- `oncall-learnings` — General investigation patterns and cross-cutting insights (default)
-- `provider-quirks` — Model provider-specific behavior and failure modes
-- `service-gotchas` — Per-service debugging tips (backend, admin-service, cron jobs)
-- `routing-patterns` — Model routing edge cases and known issues
+- `oncall-learnings` — General investigation patterns and cross-cutting insights (typically `scope="topic"`)
+- `provider-quirks` — Model provider-specific behavior and failure modes (`scope="topic"`)
+- `service-gotchas` — Per-service debugging tips (backend, admin-service, cron jobs) (`scope="topic"`)
+- `routing-patterns` — Model routing edge cases and known issues (`scope="topic"`)
+- `tool_use_errors` — Tool calling mistakes worth remembering (use `scope="agent"` — see `/record-tool-error`)
+- `user-preferences` — Communication style, prior corrections (use `scope="user"`)
 
-When in doubt, use `oncall-learnings`.
+When in doubt, use `oncall-learnings` for shared knowledge or your own custom agent-scope slug.
 
-### Entry Format
+## Entry Format
 
-Each entry in a memory body should follow this format:
+Each entry inside a memory body should follow this format:
 
 ```markdown
 ### <short description>
@@ -71,7 +95,7 @@ Each entry in a memory body should follow this format:
 - **Evidence**: <artifact link or PR link, if available>
 ```
 
-### When to Store
+## When to Store
 
 Good candidates:
 - Recurring error patterns with non-obvious root causes
@@ -84,11 +108,7 @@ Do **not** store:
 - Obvious issues that any engineer would diagnose immediately
 - Sensitive data (credentials, PII, internal URLs with tokens)
 
-### Versioning and Concurrency
-
-Every save creates a new version. Last-write-wins at the (scope, subject, slug) level — there is no CAS / `expected_generation`. If you and another session both append to the same slug, both versions are preserved in the version history; the "current" content is whichever one wrote last. Reduce conflicts by reading immediately before writing and including all existing content in your save body.
-
-### Compacting Verbose Entries
+## Compacting Verbose Entries
 
 If a slug grows unwieldy, compact it:
 
@@ -97,4 +117,4 @@ If a slug grows unwieldy, compact it:
    - Entries for issues that have been permanently fixed (look for references to merged PRs)
    - Duplicate or near-duplicate entries (consolidate into one)
    - Low-value entries (one-off transient errors, obvious issues)
-3. `save_memory(topic="<slug>", content=<compacted body>)` — this writes a new version under the same slug
+3. `save_memory(topic="<slug>", content=<compacted body>)` — this allocates a new version under the same slug
