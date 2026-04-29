@@ -1,21 +1,33 @@
-"""Agent Memory Viewer — Browse and search shared agent memory files."""
+"""Agent Memory Viewer — browse MEMORY artifacts grouped by scope.
+
+This page is a thin Streamlit client over the AHS artifact REST API. It
+**never** touches GCS or the database directly: every list / fetch / search
+call goes through ``/ahs/artifacts`` with the service ``X-API-Key``. The
+viewer presents itself as an admin caller (no ``X-User-ID`` /
+``X-AHS-Agent-Name`` headers), so AHS skips the per-caller MEMORY read
+filter and returns everything — that's the point of this page.
+
+The sidebar groups by scope:
+
+* **Topics**  — global MEMORY rows (``scope=topic``).
+* **Users**   — per-user notebooks (``scope=user``); a subject picker
+  selects which user's memories to show.
+* **Agents**  — per-agent notebooks (``scope=agent``); a subject picker
+  selects which agent's memories to show.
+
+Display form (used everywhere — sidebar, headings, search results):
+
+    u:{subject}:{slug}    a:{subject}:{slug}    t:{slug}
+"""
 
 from __future__ import annotations
-import re
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
+import httpx
 import streamlit as st
-from google.cloud import storage
-from pydantic import BaseModel
-from sqlalchemy import text
 from ypl.backend.config import settings
-from ypl.backend.db import get_async_session_read_replica, retry_db
-from ypl.backend.utils.streamlit_utils import run_coroutine_in_lit_worker
 from ypl.streamlit_server.auth import require_auth
-
-_BUCKET_NAME = settings.AGENT_MEMORY_BUCKET
-_MEMORY_PREFIX = "memory/"
 
 st.set_page_config(page_title="Agent Memory Viewer", layout="wide")
 require_auth()
@@ -23,201 +35,191 @@ require_auth()
 st.title("Agent Memory Viewer")
 
 
-class MemoryFileInfo(BaseModel):
-    topic: str
-    blob_name: str
-    size_bytes: int
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
+# ── REST client ──────────────────────────────────────────────────────────
+#
+# The viewer hits AHS as an admin (no caller-identity headers). The only
+# header is ``X-API-Key`` for the service-to-service shared-secret gate;
+# without an ``X-User-ID`` / ``X-AHS-Agent-Name`` pair, AHS treats us as
+# admin and returns MEMORY rows across every scope/subject. That's the
+# desired behaviour for a viewer.
+
+_BASE_URL = (settings.AGENT_HARNESS_SERVICE_BASE_URL or "").rstrip("/")
+_API_KEY = settings.AGENT_HARNESS_SERVICE_API_KEY
 
 
-# `from __future__ import annotations` makes all type hints lazy strings.
-# Pydantic v2 needs model_rebuild() to resolve them before validation.
-MemoryFileInfo.model_rebuild()
+class _AHSError(Exception):
+    """Raised when an AHS call fails."""
+
+    def __init__(self, status_code: int, detail: str) -> None:
+        super().__init__(f"AHS {status_code}: {detail}")
+        self.status_code = status_code
+        self.detail = detail
 
 
-# ── GCS functions ─────────────────────────────────────────────────────────
+def _ahs_client() -> httpx.Client:
+    if not _BASE_URL:
+        raise _AHSError(503, "AGENT_HARNESS_SERVICE_BASE_URL is not configured.")
+    if not _API_KEY:
+        raise _AHSError(503, "AGENT_HARNESS_SERVICE_API_KEY is not configured.")
+    return httpx.Client(
+        base_url=_BASE_URL,
+        headers={"X-API-Key": _API_KEY},
+        timeout=30.0,
+    )
 
 
-@st.cache_resource
-def _get_storage_client() -> storage.Client:
-    """Cached GCS client singleton."""
-    return storage.Client()
+def _ahs_get_json(path: str, params: dict[str, Any] | None = None) -> Any:
+    with _ahs_client() as http:
+        resp = http.get(path, params=params)
+    if resp.status_code >= 400:
+        try:
+            detail = resp.json().get("detail", resp.text)
+        except Exception:
+            detail = resp.text
+        raise _AHSError(resp.status_code, str(detail))
+    return resp.json()
+
+
+def _ahs_get_bytes(path: str) -> tuple[bytes, str]:
+    """Return ``(body, content_type)`` for a raw artifact endpoint."""
+    with _ahs_client() as http:
+        resp = http.get(path)
+    if resp.status_code >= 400:
+        raise _AHSError(resp.status_code, resp.text or "request failed")
+    return resp.content, resp.headers.get("content-type", "application/octet-stream")
+
+
+# ── Cached fetchers ──────────────────────────────────────────────────────
+#
+# Streamlit's ``cache_data`` keys on argument values, so the cache version
+# nonce (bumped by the Refresh button) isolates this page from the global
+# cache. TTLs are short — memory writes happen at human cadence.
+
+
+_LIST_PAGE_LIMIT = 200  # AHS hard ceiling; matches Query(le=200) on the route.
+
+
+def _list_all_memory_artifacts() -> list[dict[str, Any]]:
+    """Return every visible MEMORY artifact (paginated under the hood)."""
+    artifacts: list[dict[str, Any]] = []
+    offset = 0
+    while True:
+        page = _ahs_get_json(
+            "/ahs/artifacts",
+            params={"type": "MEMORY", "limit": _LIST_PAGE_LIMIT, "offset": offset},
+        )
+        chunk = cast(list[dict[str, Any]], page.get("artifacts", []))
+        artifacts.extend(chunk)
+        if len(chunk) < _LIST_PAGE_LIMIT:
+            break
+        offset += _LIST_PAGE_LIMIT
+        # Defensive cap so a buggy upstream can't force unbounded paging.
+        if offset >= 5000:
+            break
+    return artifacts
 
 
 @st.cache_data(ttl=120, show_spinner=False)
-def _list_memory_files_cached() -> list[dict[str, Any]]:
-    """List all .md files under gs://yupp-agents/memory/. Returns serializable dicts for cache."""
-    client = _get_storage_client()
-    bucket = client.bucket(_BUCKET_NAME)
-    blobs = bucket.list_blobs(prefix=_MEMORY_PREFIX)
-
-    files: list[dict[str, Any]] = []
-    for blob in blobs:
-        name: str = blob.name
-        if not name.endswith(".md"):
-            continue
-        topic = name.removeprefix(_MEMORY_PREFIX).removesuffix(".md")
-        if not topic:
-            continue
-        files.append(
-            {
-                "topic": topic,
-                "blob_name": name,
-                "size_bytes": blob.size or 0,
-                "created_at": blob.time_created,
-                "updated_at": blob.updated,
-            }
-        )
-
-    files.sort(
-        key=lambda f: f["updated_at"] or f["created_at"] or datetime.min.replace(tzinfo=UTC),
-        reverse=True,
-    )
-    return files
-
-
-def _to_models(raw: list[dict[str, Any]]) -> list[MemoryFileInfo]:
-    return [MemoryFileInfo(**d) for d in raw]
+def _load_memory_index(_cache_ver: int = 0) -> list[dict[str, Any]]:
+    """Cached list of all MEMORY artifacts (latest visible version per slug)."""
+    return _list_all_memory_artifacts()
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def _read_memory_file_cached(blob_name: str) -> str:
-    """Download and return the content of a memory file (cached 5 min)."""
-    client = _get_storage_client()
-    bucket = client.bucket(_BUCKET_NAME)
-    blob = bucket.blob(blob_name)
-    result: str = blob.download_as_text(encoding="utf-8")
-    return result
-
-
-# ── DB query functions ────────────────────────────────────────────────────
-
-
-async def _search_sections_async(
-    query: str,
-    mode: str = "hybrid",
-    topic_filter: str | None = None,
-    limit: int = 20,
-) -> list[dict[str, Any]]:
-    """Search agent memory sections via the shared search module."""
-    from ypl.backend.llm.agent_memory_search import search_agent_memory
-
-    return await search_agent_memory(
-        query=query,
-        mode=mode,
-        top_k=limit,
-        topic=topic_filter,
-        full_content=False,
-    )
-
-
-@retry_db
-async def _list_sections_for_topic_async(topic: str) -> list[dict[str, Any]]:
-    """List all live sections for a topic with metadata."""
-    sql = """
-        SELECT
-            s.section_key,
-            s.section_title,
-            LENGTH(s.content) AS content_length,
-            s.last_indexed_at,
-            s.source_generation,
-            EXISTS(
-                SELECT 1 FROM agent_memory_section_embeddings e
-                WHERE e.agent_memory_section_id = s.agent_memory_section_id
-            ) AS has_embedding
-        FROM agent_memory_sections s
-        WHERE s.topic = :topic AND s.deleted_at IS NULL
-        ORDER BY s.created_at ASC
-    """
-
-    async with get_async_session_read_replica() as session:
-        result = await session.execute(text(sql), {"topic": topic})
-        rows = result.all()
-
-    return [dict(row._mapping) for row in rows]
-
-
-@retry_db
-async def _get_topic_stats_async() -> dict[str, dict[str, Any]]:
-    """Aggregate section count + last_indexed_at per topic from DB."""
-    sql = """
-        SELECT
-            s.topic,
-            COUNT(*) AS section_count,
-            MAX(s.last_indexed_at) AS last_indexed,
-            MAX(s.source_generation) AS source_generation,
-            COUNT(*) FILTER (
-                WHERE EXISTS(
-                    SELECT 1 FROM agent_memory_section_embeddings e
-                    WHERE e.agent_memory_section_id = s.agent_memory_section_id
-                )
-            ) AS with_embeddings
-        FROM agent_memory_sections s
-        WHERE s.deleted_at IS NULL
-        GROUP BY s.topic
-    """
-
-    async with get_async_session_read_replica() as session:
-        result = await session.execute(text(sql))
-        rows = result.all()
-
-    return {
-        row.topic: {
-            "section_count": row.section_count,
-            "last_indexed": row.last_indexed,
-            "source_generation": row.source_generation,
-            "with_embeddings": row.with_embeddings,
-        }
-        for row in rows
-    }
+def _load_artifact_content(artifact_id: str, _cache_ver: int = 0) -> str:
+    """Fetch and decode the raw content of a single artifact (5 min cache)."""
+    body, _ = _ahs_get_bytes(f"/ahs/artifacts/{artifact_id}")
+    return body.decode("utf-8", errors="replace")
 
 
 @st.cache_data(ttl=120, show_spinner=False)
-def _get_topic_stats() -> dict[str, dict[str, Any]]:
-    return run_coroutine_in_lit_worker(_get_topic_stats_async())
+def _load_versions(slug: str, scope: str, subject: str | None, _cache_ver: int = 0) -> list[dict[str, Any]]:
+    """List every version of a (scope, subject?, slug) MEMORY tuple."""
+    params: dict[str, Any] = {"type": "MEMORY", "scope": scope}
+    if subject is not None:
+        params["subject"] = subject
+    payload = _ahs_get_json(f"/ahs/artifacts/by-slug/{slug}/versions", params=params)
+    return cast(list[dict[str, Any]], payload.get("versions", []))
 
 
-@st.cache_data(ttl=60, show_spinner=False)
-def _list_sections_for_topic(topic: str) -> list[dict[str, Any]]:
-    return run_coroutine_in_lit_worker(_list_sections_for_topic_async(topic))
+def _search_memory(q: str, scope: str | None) -> list[dict[str, Any]]:
+    """Substring search across MEMORY title, description, slug, inline content."""
+    params: dict[str, Any] = {"q": q, "type": "MEMORY", "limit": 100}
+    if scope:
+        params["scope"] = scope
+    payload = _ahs_get_json("/ahs/artifacts/search", params=params)
+    return cast(list[dict[str, Any]], payload.get("artifacts", []))
 
 
-def _search_sections(
-    query: str,
-    mode: str = "hybrid",
-    topic_filter: str | None = None,
-    limit: int = 20,
-) -> list[dict[str, Any]]:
-    return run_coroutine_in_lit_worker(_search_sections_async(query, mode, topic_filter, limit))
+# ── Display form helpers ─────────────────────────────────────────────────
 
 
-# ── Formatting helpers ────────────────────────────────────────────────────
+def _display_form(scope: str | None, subject: str | None, slug: str | None) -> str:
+    """Return the canonical ``u:/a:/t:`` display string for a MEMORY row."""
+    slug_str = slug or "?"
+    if scope == "topic":
+        return f"t:{slug_str}"
+    if scope == "user":
+        return f"u:{subject or '?'}:{slug_str}"
+    if scope == "agent":
+        return f"a:{subject or '?'}:{slug_str}"
+    return slug_str
 
 
-def _format_size(size_bytes: int) -> str:
-    if size_bytes < 1024:
-        return f"{size_bytes} B"
-    if size_bytes < 1024 * 1024:
-        return f"{size_bytes / 1024:.1f} KB"
-    return f"{size_bytes / (1024 * 1024):.1f} MB"
+def _row_key(art: dict[str, Any]) -> str:
+    """Stable widget key for an artifact row in session_state."""
+    scope = art.get("memory_scope") or "?"
+    subject = art.get("memory_scope_subject") or ""
+    slug = art.get("named_slug") or art.get("artifact_id") or ""
+    return f"{scope}|{subject}|{slug}"
 
 
-def _format_time(dt: datetime | str | None) -> str:
+def _format_time(dt: str | datetime | None) -> str:
     if not dt:
-        return "\u2014"
+        return "—"
     if isinstance(dt, str):
-        return dt[:16].replace("T", " ")
+        try:
+            parsed = datetime.fromisoformat(dt)
+        except ValueError:
+            return dt[:16].replace("T", " ")
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.strftime("%Y-%m-%d %H:%M")
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
     return dt.strftime("%Y-%m-%d %H:%M")
 
 
-# ── Compact button styling ───────────────────────────────────────────────
+# ── Index assembly ───────────────────────────────────────────────────────
+
+
+def _group_by_scope(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Bucket rows by ``memory_scope`` (topic/user/agent), dropping non-MEMORY."""
+    buckets: dict[str, list[dict[str, Any]]] = {"topic": [], "user": [], "agent": []}
+    for r in rows:
+        scope = r.get("memory_scope")
+        if scope in buckets:
+            buckets[scope].append(r)
+    # Stable ordering: most recently created first within each bucket.
+    for bucket in buckets.values():
+        bucket.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+    return buckets
+
+
+def _distinct_subjects(rows: list[dict[str, Any]]) -> list[str]:
+    """Distinct, alphabetically sorted ``memory_scope_subject`` values."""
+    subjects = {r.get("memory_scope_subject") for r in rows if r.get("memory_scope_subject")}
+    return sorted(s for s in subjects if isinstance(s, str))
+
+
+# ── Compact button styling (matches the legacy viewer's left-pane look) ─
+
 
 st.markdown(
     """
     <style>
-    /* Left-panel topic buttons: compact, left-aligned, link-like */
-    div[data-testid="stVerticalBlockBorderWrapper"] div.stButton > button {
+    /* Sidebar memory list buttons: compact, left-aligned, link-like */
+    section[data-testid="stSidebar"] div.stButton > button {
         text-align: left;
         justify-content: flex-start;
         padding: 4px 8px;
@@ -226,7 +228,7 @@ st.markdown(
         background: transparent;
         width: 100%;
     }
-    div[data-testid="stVerticalBlockBorderWrapper"] div.stButton > button:hover {
+    section[data-testid="stSidebar"] div.stButton > button:hover {
         background: #e8e8e8;
     }
     </style>
@@ -235,191 +237,259 @@ st.markdown(
 )
 
 
-def _render_topic_detail(selected_file: MemoryFileInfo, topic_stats: dict[str, dict[str, Any]]) -> None:
-    """Render the right-panel detail view for a selected topic."""
-    st.subheader(selected_file.topic)
-    st.caption(
-        f"{_format_size(selected_file.size_bytes)} · "
-        f"created {_format_time(selected_file.created_at)} · "
-        f"updated {_format_time(selected_file.updated_at)}"
-    )
+# ── Cache version nonce ──────────────────────────────────────────────────
+#
+# Bumped by the sidebar Refresh button. Threaded through every cached
+# helper so we can bust just this page's caches without nuking the global
+# Streamlit cache.
 
-    # Index status bar
-    stats = topic_stats.get(selected_file.topic)
-    if stats:
-        cols = st.columns(4)
-        cols[0].metric("Sections", stats["section_count"])
-        cols[1].metric("With Embeddings", f"{stats['with_embeddings']}/{stats['section_count']}")
-        cols[2].metric("Last Indexed", _format_time(stats.get("last_indexed")))
-        gen = stats.get("source_generation")
-        cols[3].metric("Generation", gen if gen is not None else "\u2014")
-    else:
-        st.info("Not indexed in DB yet.")
+_cache_ver: int = st.session_state.get("memory_cache_ver", 0)
 
-    # Load GCS content
-    try:
-        content = _read_memory_file_cached(selected_file.blob_name)
-    except Exception as exc:
-        st.error(f"Failed to read file: {exc}")
+
+# ── Detail / content rendering ───────────────────────────────────────────
+
+
+def _render_memory_detail(art: dict[str, Any]) -> None:
+    """Right-panel: render a single MEMORY artifact with rendered/raw/versions tabs."""
+    scope = art.get("memory_scope")
+    subject = art.get("memory_scope_subject")
+    slug = art.get("named_slug")
+    artifact_id = art.get("artifact_id")
+    title = _display_form(scope, subject, slug)
+
+    st.subheader(title)
+    meta_parts: list[str] = []
+    if art.get("version") is not None:
+        meta_parts.append(f"version {art['version']}")
+    meta_parts.append(f"created {_format_time(art.get('created_at'))}")
+    if art.get("creator_user_name"):
+        meta_parts.append(f"user {art['creator_user_name']}")
+    elif art.get("creator_user_id"):
+        meta_parts.append(f"user {art['creator_user_id']}")
+    if art.get("creator_agent_name"):
+        meta_parts.append(f"agent {art['creator_agent_name']}")
+    st.caption(" · ".join(p for p in meta_parts if p))
+
+    if not artifact_id:
+        st.error("Artifact has no id — cannot fetch content.")
         return
 
-    # Sub-tabs: Rendered / Sections / Raw
-    sub_rendered, sub_sections, sub_raw = st.tabs(["Rendered", "Sections", "Raw"])
+    try:
+        content = _load_artifact_content(artifact_id, _cache_ver=_cache_ver)
+    except _AHSError as exc:
+        st.error(f"Failed to fetch content: {exc}")
+        return
 
-    with sub_rendered:
-        rendered = re.sub(r"\A---\n.*?\n---\n*", "", content, count=1, flags=re.DOTALL)
-        st.markdown(rendered)
+    tab_rendered, tab_raw, tab_versions = st.tabs(["Rendered", "Raw", "Versions"])
 
-    with sub_sections:
-        try:
-            sections = _list_sections_for_topic(selected_file.topic)
-        except Exception:
-            sections = []
-            st.error("Failed to load sections from DB.")
-        if not sections:
-            st.caption("No indexed sections found for this topic.")
-        else:
-            st.caption(f"{len(sections)} sections")
-            for sec in sections:
-                title = sec["section_title"] or sec["section_key"]
-                emb_badge = " [emb]" if sec["has_embedding"] else ""
-                with st.expander(f"{title}{emb_badge}"):
-                    c1, c2, c3 = st.columns(3)
-                    c1.caption(f"Key: `{sec['section_key']}`")
-                    c2.caption(f"Length: {sec['content_length']} chars")
-                    c3.caption(f"Indexed: {_format_time(sec.get('last_indexed_at'))}")
-                    if sec.get("source_generation") is not None:
-                        st.caption(f"Generation: {sec['source_generation']}")
+    with tab_rendered:
+        st.markdown(content)
 
-    with sub_raw:
+    with tab_raw:
         st.code(content, language="markdown")
 
+    with tab_versions:
+        if slug is None:
+            st.caption("This artifact has no slug, so there is no version history.")
+            return
+        try:
+            versions = _load_versions(slug, scope or "", subject, _cache_ver=_cache_ver)
+        except _AHSError as exc:
+            st.error(f"Failed to fetch versions: {exc}")
+            return
+        if not versions:
+            st.caption("No version history.")
+            return
+        st.caption(f"{len(versions)} version(s)")
+        # Newest first.
+        for v in sorted(versions, key=lambda r: r.get("version") or 0, reverse=True):
+            v_num = v.get("version")
+            label = f"v{v_num} · {_format_time(v.get('created_at'))}"
+            with st.expander(label, expanded=False):
+                cols = st.columns(3)
+                cols[0].caption(f"id: `{v.get('artifact_id')}`")
+                if v.get("creator_user_name") or v.get("creator_user_id"):
+                    cols[1].caption(f"user: {v.get('creator_user_name') or v.get('creator_user_id')}")
+                if v.get("creator_agent_name"):
+                    cols[2].caption(f"agent: {v['creator_agent_name']}")
+                if st.button(
+                    "Load this version",
+                    key=f"load_version_{v.get('artifact_id')}",
+                ):
+                    st.session_state["selected_artifact_id"] = v.get("artifact_id")
+                    st.rerun()
 
-# ── Load data ────────────────────────────────────────────────────────────
 
-with st.spinner("Loading memory files from GCS..."):
+# ── Sidebar: scope-grouped picker ────────────────────────────────────────
+
+
+def _sidebar_topic_section(rows: list[dict[str, Any]]) -> None:
+    """Render the Topics section."""
+    st.sidebar.markdown(f"### Topics ({len(rows)})")
+    if not rows:
+        st.sidebar.caption("No topic memories yet.")
+        return
+    selected_id = st.session_state.get("selected_artifact_id")
+    for r in rows:
+        is_selected = r.get("artifact_id") == selected_id
+        prefix = "» " if is_selected else ""
+        if st.sidebar.button(
+            f"{prefix}t:{r.get('named_slug') or '?'}",
+            key=f"sb_topic_{_row_key(r)}",
+            use_container_width=True,
+        ):
+            st.session_state["selected_artifact_id"] = r.get("artifact_id")
+            st.rerun()
+
+
+def _sidebar_subject_section(
+    label: str,
+    scope: str,
+    rows: list[dict[str, Any]],
+    state_key: str,
+) -> None:
+    """Shared rendering for the Users / Agents sidebar sections."""
+    subjects = _distinct_subjects(rows)
+    st.sidebar.markdown(f"### {label} ({len(subjects)})")
+    if not subjects:
+        st.sidebar.caption(f"No {scope} memories yet.")
+        return
+
+    options = ["(select)"] + subjects
+    current = st.session_state.get(state_key, "(select)")
+    if current not in options:
+        current = "(select)"
+    chosen = st.sidebar.selectbox(
+        f"{label[:-1]} subject",
+        options=options,
+        index=options.index(current),
+        key=f"{state_key}_picker",
+        label_visibility="collapsed",
+    )
+    st.session_state[state_key] = chosen
+    if chosen == "(select)":
+        return
+
+    subject_rows = [r for r in rows if r.get("memory_scope_subject") == chosen]
+    if not subject_rows:
+        st.sidebar.caption(f"No memories under {chosen!r}.")
+        return
+
+    prefix_letter = "u" if scope == "user" else "a"
+    selected_id = st.session_state.get("selected_artifact_id")
+    for r in subject_rows:
+        is_selected = r.get("artifact_id") == selected_id
+        marker = "» " if is_selected else ""
+        if st.sidebar.button(
+            f"{marker}{prefix_letter}:{chosen}:{r.get('named_slug') or '?'}",
+            key=f"sb_{scope}_{_row_key(r)}",
+            use_container_width=True,
+        ):
+            st.session_state["selected_artifact_id"] = r.get("artifact_id")
+            st.rerun()
+
+
+# ── Page entry ───────────────────────────────────────────────────────────
+
+
+with st.spinner("Loading agent memories…"):
     try:
-        raw_files = _list_memory_files_cached()
-    except Exception as exc:
-        st.error(f"Failed to list memory files: {exc}")
+        all_rows = _load_memory_index(_cache_ver=_cache_ver)
+    except _AHSError as exc:
+        st.error(f"Failed to list MEMORY artifacts: {exc}")
         st.stop()
 
-files = _to_models(raw_files)
-try:
-    topic_stats = _get_topic_stats()
-except Exception:
-    topic_stats = {}
-    st.warning("Failed to load index stats from DB.")
+buckets = _group_by_scope(all_rows)
 
-# ── Top-level tabs ───────────────────────────────────────────────────────
+if st.sidebar.button("🔄 Refresh", key="memory_refresh"):
+    st.session_state["memory_cache_ver"] = _cache_ver + 1
+    st.rerun()
+
+st.sidebar.caption(
+    f"{len(all_rows)} memories total · "
+    f"{len(buckets['topic'])} topic / {len(buckets['user'])} user / {len(buckets['agent'])} agent"
+)
+
+_sidebar_topic_section(buckets["topic"])
+st.sidebar.divider()
+_sidebar_subject_section("Users", "user", buckets["user"], "memory_user_subject")
+st.sidebar.divider()
+_sidebar_subject_section("Agents", "agent", buckets["agent"], "memory_agent_subject")
+
+
+# ── Main pane: Browse vs Search tabs ─────────────────────────────────────
+
 
 tab_browse, tab_search = st.tabs(["Browse", "Search"])
 
-# ── Browse tab ───────────────────────────────────────────────────────────
-
 with tab_browse:
-    if not files:
-        st.info("No memory files found in gs://yupp-agents/memory/")
+    selected_id = st.session_state.get("selected_artifact_id")
+    selected_row: dict[str, Any] | None = None
+    if selected_id:
+        selected_row = next((r for r in all_rows if r.get("artifact_id") == selected_id), None)
+    if not selected_row:
+        st.markdown(
+            "<div style='color:#999; padding-top:80px; text-align:center;'>"
+            "Pick a memory from the sidebar — Topics, Users, or Agents."
+            "</div>",
+            unsafe_allow_html=True,
+        )
     else:
-        left_col, right_col = st.columns([1, 3], gap="large")
+        _render_memory_detail(selected_row)
 
-        # ── Left panel: filter + topic list ───────────────────────────────
-
-        with left_col:
-            search = st.text_input(
-                "Filter", placeholder="Filter topics...", label_visibility="collapsed", key="browse_filter"
-            )
-
-            if search:
-                filtered = [f for f in files if search.lower() in f.topic.lower()]
-            else:
-                filtered = files
-
-            if not filtered:
-                st.caption("No topics matched.")
-            else:
-                st.caption(f"{len(filtered)} topics")
-
-                for f in filtered:
-                    is_selected = st.session_state.get("selected_topic") == f.topic
-                    prefix = ">> " if is_selected else ""
-                    stats = topic_stats.get(f.topic)
-                    section_info = f" | {stats['section_count']}s" if stats else ""
-                    if st.button(
-                        f"{prefix}**{f.topic}**\n\n"
-                        f"{_format_time(f.updated_at)} · {_format_size(f.size_bytes)}{section_info}",
-                        key=f"topic_{f.topic}",
-                        use_container_width=True,
-                    ):
-                        st.session_state["selected_topic"] = f.topic
-                        st.rerun()
-
-            if st.button("🔄 Refresh", help="Refresh", key="browse_refresh"):
-                _list_memory_files_cached.clear()
-                _read_memory_file_cached.clear()
-                _get_topic_stats.clear()
-                _list_sections_for_topic.clear()
-                st.rerun()
-
-        # ── Right panel: content view ─────────────────────────────────────
-
-        with right_col:
-            selected_topic: str | None = st.session_state.get("selected_topic")
-            if not selected_topic:
-                st.markdown(
-                    "<div style='color:#999; padding-top:80px; text-align:center;'>Select a topic from the list</div>",
-                    unsafe_allow_html=True,
-                )
-            else:
-                selected_file = next((f for f in files if f.topic == selected_topic), None)
-                if not selected_file:
-                    st.warning(f"Topic '{selected_topic}' no longer exists.")
-                else:
-                    _render_topic_detail(selected_file, topic_stats)
-
-# ── Search tab ───────────────────────────────────────────────────────────
 
 with tab_search:
-    col_query, col_mode, col_topic, col_btn = st.columns([3, 1, 1, 0.5])
+    col_query, col_scope, col_btn = st.columns([4, 1, 1])
     with col_query:
-        search_query = st.text_input("Search query", placeholder="Search across all agent memories...", key="search_q")
-    with col_mode:
-        search_mode = st.selectbox("Mode", ["hybrid", "keyword", "semantic"], key="search_mode")
-    with col_topic:
-        topic_names = ["(all topics)"] + [f.topic for f in files]
-        search_topic = st.selectbox("Topic filter", topic_names, key="search_topic_filter")
+        search_query = st.text_input(
+            "Search query",
+            placeholder="Substring search across MEMORY artifacts…",
+            key="memory_search_q",
+        )
+    with col_scope:
+        scope_choice = st.selectbox(
+            "Scope filter",
+            options=["(any)", "topic", "user", "agent"],
+            key="memory_search_scope",
+        )
     with col_btn:
         st.markdown("<div style='padding-top:28px'></div>", unsafe_allow_html=True)
-        do_search = st.button("Search", key="search_btn")
+        do_search = st.button("Search", key="memory_search_btn")
 
-    if do_search and search_query:
-        topic_f = None if search_topic == "(all topics)" else search_topic
+    if do_search and search_query.strip():
+        scope_param = None if scope_choice == "(any)" else scope_choice
         try:
-            st.session_state["search_results"] = _search_sections(search_query, mode=search_mode, topic_filter=topic_f)
-            st.session_state["search_error"] = None
-        except Exception as exc:
-            st.session_state["search_results"] = []
-            st.session_state["search_error"] = str(exc)
+            st.session_state["memory_search_results"] = _search_memory(search_query.strip(), scope_param)
+            st.session_state["memory_search_error"] = None
+        except _AHSError as exc:
+            st.session_state["memory_search_results"] = []
+            st.session_state["memory_search_error"] = str(exc)
 
-    if st.session_state.get("search_error"):
-        st.error(f"Search failed: {st.session_state['search_error']}")
+    err = st.session_state.get("memory_search_error")
+    if err:
+        st.error(f"Search failed: {err}")
 
-    results: list[dict[str, Any]] = st.session_state.get("search_results", [])
+    results: list[dict[str, Any]] = st.session_state.get("memory_search_results", [])
     if results:
-        st.caption(f"{len(results)} results")
+        st.caption(f"{len(results)} result(s)")
         for r in results:
-            title = r["section_title"] or r["section_key"]
-            score_str = f"{r['score']:.4f}"
-            snippet = r["content"]
-
-            with st.expander(f"**{r['topic']}** / {title}  (score: {score_str})"):
-                st.caption(f"Modified: {_format_time(r.get('modified_at'))}")
-                st.markdown(snippet)
-                if st.button("Select topic", key=f"goto_{r['topic']}_{r['section_key']}"):
-                    st.session_state["selected_topic"] = r["topic"]
+            scope = r.get("memory_scope")
+            subject = r.get("memory_scope_subject")
+            slug = r.get("named_slug")
+            display = _display_form(scope, subject, slug)
+            v = r.get("version")
+            heading = f"**{display}**" + (f"  (v{v})" if v is not None else "")
+            with st.expander(heading):
+                st.caption(f"created {_format_time(r.get('created_at'))}")
+                if r.get("description"):
+                    st.write(r["description"])
+                if st.button(
+                    "Open in Browse tab",
+                    key=f"memory_search_open_{r.get('artifact_id')}",
+                ):
+                    st.session_state["selected_artifact_id"] = r.get("artifact_id")
                     st.rerun()
-                st.caption("Switch to the Browse tab to view in context.")
-    elif do_search:
-        st.caption("No results found.")
+    elif do_search and search_query.strip():
+        st.caption("No results.")
     else:
-        st.caption("Enter a search query to search across indexed agent memories.")
+        st.caption("Enter a search query to look across MEMORY artifacts.")
