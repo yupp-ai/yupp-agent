@@ -12,21 +12,13 @@ from ypl.agent_harness_service.common.constants import (
     AHS_GCS_SESSION_PREFIX,
     AHS_SESSIONS_DIR,
 )
-from ypl.agent_harness_service.core.gcs_sync import (
-    guess_content_type,
-    sync_dir_to_gcs,
-    upload_file,
-)
+from ypl.agent_harness_service.core.gcs_sync import sync_dir_to_gcs
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
 
 # Subdirectories inside the session workspace that should be synced to GCS.
 _PERSIST_DIRS = ("attachments", "history")
-
-# Re-export for backward compatibility (memory_persistence imported these).
-_guess_content_type = guess_content_type
-_upload_file = upload_file
 
 
 async def sync_session_to_gcs(session_id: str) -> int:

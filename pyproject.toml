@@ -275,7 +275,6 @@ omit = [
     "ypl/agent_harness_service/service/run_task.py",
     "ypl/agent_harness_service/service/session_lifecycle.py",
     "ypl/agent_harness_service/task_executor.py",
-    "ypl/agent_harness_service/core/memory_persistence.py",
     "ypl/agent_harness_service/tools/repo_manager.py",
     "ypl/agent_harness_service/tools/mcp_client.py",
     # Slack SDK orchestration (every function calls Slack API + Redis + Agent Service)

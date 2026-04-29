@@ -52,9 +52,6 @@ AHS_DEFAULT_PROJECT_SLACK_CHANNEL = os.environ.get("AHS_DEFAULT_PROJECT_SLACK_CH
 # distinguish session infrastructure from git worktrees.
 SESSION_INFRA_DIRS = frozenset({"history", "attachments", "agent_memories", "tool-results"})
 
-# Per-agent persistent memory directory (survives across sessions).
-AHS_MEMORIES_DIR = os.environ.get("AHS_MEMORIES_DIR", os.path.join(AHS_DATA_DIR, "memories"))
-
 # ---------------------------------------------------------------------------
 # Bwrapped Command Handler (BCH) settings
 # ---------------------------------------------------------------------------
@@ -72,11 +69,6 @@ AHS_BCH_IDLE_TIMEOUT_SECONDS: int = int(os.environ.get("AHS_BCH_IDLE_TIMEOUT_SEC
 # Note: CodexAppServerRunner spawns per-session servers on dynamic ports;
 # this port is for the C1 supervisord-managed shared sidecar health check.
 CODEX_APP_SERVER_PORT: int = int(os.environ.get("CODEX_APP_SERVER_PORT", "8765"))
-
-# GCS bucket and prefix for persisting agent memory directories.
-# Layout: gs://{bucket}/{prefix}/{agent_name}/...
-AHS_GCS_MEMORY_BUCKET = os.environ.get("AHS_GCS_MEMORY_BUCKET", "yupp-agents")
-AHS_GCS_MEMORY_PREFIX = os.environ.get("AHS_GCS_MEMORY_PREFIX", "agent_memory")
 
 # Agent names that support per-user personalization (mirrors SAG constant).
 PERSONAL_AGENT_PREFIXES: frozenset[str] = frozenset({"yuppclaw"})

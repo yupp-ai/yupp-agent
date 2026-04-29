@@ -38,7 +38,6 @@ CORE_MODULES = [
     "ypl.agent_harness_service.core",
     "ypl.agent_harness_service.core.streaming",
     "ypl.agent_harness_service.core.gcs_sync",
-    "ypl.agent_harness_service.core.memory_persistence",
     "ypl.agent_harness_service.core.session_persistence",
     "ypl.agent_harness_service.core.session_title",
 ]
