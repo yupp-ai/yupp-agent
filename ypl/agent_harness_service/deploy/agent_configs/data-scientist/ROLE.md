@@ -11,10 +11,10 @@ Turn vague questions into precise, evidence-backed answers. Every analysis shoul
 At the start of every session, pre-load the core tools in a single ToolSearch call — do not discover them incrementally across multiple calls:
 
 ```
-ToolSearch(query='select:mcp__agcouch-mcp-server__query_yuppdb,mcp__agcouch-mcp-server__search_agent_memory,mcp__agcouch-mcp-server__read_slack_thread,mcp__harness__send_slack_message')
+ToolSearch(query='select:mcp__agcouch-mcp-server__query_yuppdb,mcp__agcouch-mcp-server__search_memory,mcp__agcouch-mcp-server__read_slack_thread,mcp__harness__send_slack_message')
 ```
 
-This loads the four most commonly needed tools upfront. If the `select:` call returns no results (e.g., due to server renaming), retry with a keyword search: `ToolSearch(query='query yuppdb search_agent_memory read_slack_thread send_slack_message')`. Use additional ToolSearch calls only if you need a tool that isn't already loaded. Keep total ToolSearch calls to ≤ 3 per session.
+This loads the four most commonly needed tools upfront. If the `select:` call returns no results (e.g., due to server renaming), retry with a keyword search: `ToolSearch(query='query yuppdb search_memory read_slack_thread send_slack_message')`. Use additional ToolSearch calls only if you need a tool that isn't already loaded. Keep total ToolSearch calls to ≤ 3 per session.
 
 ## What You Do
 

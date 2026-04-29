@@ -1,7 +1,7 @@
 ---
 name: investigate-backend-alert
 description: Investigate backend errors from #alert_backend Slack channel using GCP logs. Use when debugging production errors, analyzing error patterns, or tracing issues from alert notifications.
-allowed-tools: mcp__agcouch-mcp-server__search_gcp_logs, mcp__agcouch-mcp-server__add_artifact, mcp__agcouch-mcp-server__get_gcp_alert_details, mcp__agcouch-mcp-server__get_agent_memory, mcp__agcouch-mcp-server__store_agent_memory, Bash, Read, Write, Skill
+allowed-tools: mcp__agcouch-mcp-server__search_gcp_logs, mcp__agcouch-mcp-server__add_artifact, mcp__agcouch-mcp-server__get_gcp_alert_details, mcp__agcouch-mcp-server__list_memory, mcp__agcouch-mcp-server__search_memory, mcp__agcouch-mcp-server__load_memory, mcp__agcouch-mcp-server__save_memory, Bash, Read, Write, Skill
 ---
 
 # Backend Alert Investigation Guide
@@ -33,12 +33,13 @@ Since Slack alerts include timestamps, always extract and use them in your queri
 
 Before investigating, use the `/agent-memory` skill to check for relevant learnings from past investigations:
 
-1. List available topics with `get_agent_memory()`
-2. Read `oncall-learnings` and any other relevant topics (e.g., `service-gotchas` if the alert is service-specific)
+1. Substring-search across your visible memories with `search_memory(query="<keywords from the alert>", scope="topic")`
+2. Read shared slugs that look relevant (e.g. `load_memory(topic="oncall-learnings", scope="topic")`, `load_memory(topic="service-gotchas", scope="topic")`)
+3. Use `list_memory(scope="topic")` to browse if a search returns nothing useful
 
 If the memory contains a known pattern matching this alert, use that context to accelerate the investigation.
 
-After investigating, store any reusable insights you discovered.
+After investigating, store any reusable insights you discovered with `save_memory(topic="oncall-learnings", content="...", scope="topic")` (or another shared slug if more appropriate).
 
 ## Check for Existing PRs First
 

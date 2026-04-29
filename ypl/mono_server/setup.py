@@ -248,7 +248,6 @@ SLACK_AGENT_GW_ENCRYPTION_KEY={params.get("slack_enc_key", "")}
 # GCS / Cloud Storage (optional)
 # ---------------------------------------------------------------------------
 GCS_BUCKET_NAME=
-AGENT_MEMORY_BUCKET=
 
 # ---------------------------------------------------------------------------
 # LLM Provider API Keys

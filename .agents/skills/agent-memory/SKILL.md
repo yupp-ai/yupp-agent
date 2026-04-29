@@ -1,53 +1,54 @@
 ---
 name: agent-memory
-description: Read and write shared agent memory for cross-session learnings. Use before investigations to check for known patterns, and after to store reusable insights.
-allowed-tools: mcp__agcouch-mcp-server__get_agent_memory, mcp__agcouch-mcp-server__store_agent_memory
+description: Read and write agent memory for cross-session learnings. Use before investigations to check for known patterns, and after to store reusable insights.
+allowed-tools: mcp__agcouch-mcp-server__list_memory, mcp__agcouch-mcp-server__search_memory, mcp__agcouch-mcp-server__load_memory, mcp__agcouch-mcp-server__save_memory
 ---
 
 # Agent Memory
 
-Shared, persistent memory that agents can read and write across sessions. Stored as topic-based markdown files in GCS with optimistic locking for safe concurrent access.
+Persistent memory backed by `MEMORY` artifacts in the artifact registry. Each entry is addressed by **(scope, subject, slug)**:
+
+| Scope   | Subject               | Visibility                                              |
+| ------- | --------------------- | ------------------------------------------------------- |
+| `agent` | your `agent_name`     | Your private notebook (default for every memory tool)   |
+| `user`  | the caller's user_id  | The current user's notes — only visible to that user    |
+| `topic` | (none)                | Globally shared across all agents and users             |
+
+The DB is the source of truth. There is no GCS, no compare-and-swap, and no `expected_generation`. Each `save_memory` allocates the next version under the same `(scope, subject, slug)` automatically.
 
 ## Reading Memory
 
 ```
-get_agent_memory()                          # List available topics
-get_agent_memory(topic="oncall-learnings")  # Read a specific topic
+list_memory()                                # Everything visible to you (topic + own user + own agent)
+list_memory(scope="topic")                   # Just shared topics
+search_memory(query="oncall")                # Substring search across your visibility
+load_memory(topic="oncall-learnings")        # Defaults to scope="agent" (your own notebook)
+load_memory(topic="oncall-learnings", scope="topic")
 ```
 
-The response includes:
-- `content`: The markdown content (or `null` if topic doesn't exist)
-- `generation`: Version number for optimistic locking (pass to `store_agent_memory`)
-
-**Fallback**: If the memory read fails (GCS outage, permission error), continue your task without blocking. Memory is supplementary context, not a prerequisite.
+**Fallback**: If a memory call fails, continue your task without blocking. Memory is supplementary context, not a prerequisite.
 
 **Trust but verify**: Memory entries may be outdated. Use them to guide investigation direction, but always validate against fresh evidence (logs, code, database) before acting on them.
 
 ## Storing Memory
 
-After completing a task, if you discovered something reusable, store it:
+After completing a task, if you discovered something reusable:
 
-1. Read current content to get the latest `generation`:
-   ```
-   get_agent_memory(topic="oncall-learnings")
-   ```
-2. Merge your learning into the existing content, then write back:
-   ```
-   store_agent_memory(
-       topic="oncall-learnings",
-       content="<existing content with your addition merged in>",
-       expected_generation=<generation from step 1>
-   )
-   ```
+```
+save_memory(topic="oncall-learnings", content="<full markdown body>")                # scope="agent" by default
+save_memory(topic="oncall-learnings", content="<full markdown body>", scope="topic") # team-shared
+```
 
-### Choosing a Topic
+The server rejects cross-scope writes — you can only write into your own agent notebook, the current user's notes, or shared topics.
 
-When storing a learning, first list existing topics with `get_agent_memory()`. Then:
+### Choosing a Slug
 
-1. **Check if an existing topic fits.** If one does, read it, merge your entry, and write back. Prefer adding to an existing topic over creating a new one — fewer topics are easier to discover and maintain.
-2. **Create a new topic only when** the learning doesn't fit any existing topic and represents a distinct, recurring category (not a single entry). Use `expected_generation=0` to create it.
+When storing a learning, first browse with `list_memory()` and `search_memory()`. Then:
 
-#### Suggested Topics (not exhaustive)
+1. **Check if an existing slug fits.** If one does, `load_memory` it, merge your entry into the body, and call `save_memory` again with the same slug — that allocates a new version while keeping the (scope, subject, slug) sequence stable. Prefer adding to an existing slug over creating a new one.
+2. **Create a new slug only when** the learning doesn't fit any existing slug and represents a distinct, recurring category (not a single entry). Just call `save_memory(topic="<new-slug>", content=...)` — there is no separate "create" call.
+
+#### Suggested Slugs (not exhaustive)
 
 - `oncall-learnings` — General investigation patterns and cross-cutting insights (default)
 - `provider-quirks` — Model provider-specific behavior and failure modes
@@ -58,7 +59,7 @@ When in doubt, use `oncall-learnings`.
 
 ### Entry Format
 
-Each entry in a topic file should follow this format:
+Each entry in a memory body should follow this format:
 
 ```markdown
 ### <short description>
@@ -83,21 +84,17 @@ Do **not** store:
 - Obvious issues that any engineer would diagnose immediately
 - Sensitive data (credentials, PII, internal URLs with tokens)
 
-### Optimistic Locking
+### Versioning and Concurrency
 
-The `expected_generation` parameter prevents lost updates when multiple agents write concurrently:
-- Pass `generation` from `get_agent_memory` when updating an existing topic
-- Pass `0` when creating a new topic (fails if topic already exists)
-- On `CONFLICT` error: another agent wrote first. Re-read, merge both changes, retry
+Every save creates a new version. Last-write-wins at the (scope, subject, slug) level — there is no CAS / `expected_generation`. If you and another session both append to the same slug, both versions are preserved in the version history; the "current" content is whichever one wrote last. Reduce conflicts by reading immediately before writing and including all existing content in your save body.
 
-### Size Limits and Compacting
+### Compacting Verbose Entries
 
-Each topic file is capped at 32KB. If `store_agent_memory` rejects your write for exceeding this limit, compact the topic:
+If a slug grows unwieldy, compact it:
 
-1. Read the topic with `get_agent_memory` (note the `generation`)
+1. `load_memory(topic="<slug>")` to read the latest version
 2. Review the content and remove:
    - Entries for issues that have been permanently fixed (look for references to merged PRs)
    - Duplicate or near-duplicate entries (consolidate into one)
    - Low-value entries (one-off transient errors, obvious issues)
-3. Write back the compacted content with `store_agent_memory` using the `generation` from step 1
-4. Then retry storing your new learning
+3. `save_memory(topic="<slug>", content=<compacted body>)` — this writes a new version under the same slug
