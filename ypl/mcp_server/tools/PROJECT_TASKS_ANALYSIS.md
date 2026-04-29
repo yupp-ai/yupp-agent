@@ -440,11 +440,11 @@ set_task_status(task_id="T", status="IN_PROGRESS")
 claim_task(project_id="P", task_id="T")
 ```
 
-### 2. Don't store coordination data in `agent_memory` — use `shared_state`
+### 2. Don't store coordination data in agent memory — use `shared_state`
 
 ```
-# BAD: agent_memory is per-agent, not project-scoped
-store_agent_memory(topic="migration-progress", content="...")
+# BAD: save_memory defaults to scope="agent" (per-agent), not project-scoped
+save_memory(topic="migration-progress", content="...")
 
 # GOOD: project-scoped, visible to all sessions
 set_project_state(project_id="P", key="migration_progress", value='{"completed": ["openai", "anthropic"]}')
@@ -549,7 +549,7 @@ MCP tools only accept flat/primitive parameters (str, int, bool). Complex object
 | `create_agent_schedule` | Schedule a future session to resume a project |
 | `create_recurring_agent_schedule` | Periodic project executor (cron-driven) |
 | `cancel_agent_schedule` | Stop recurring execution when project completes |
-| `store_agent_memory` / `search_agent_memory` | Per-agent learnings (use `shared_state` for project-scoped data) |
+| `save_memory` / `search_memory` | Per-agent learnings (use `shared_state` for project-scoped data) |
 | `add_artifact` | Store large investigation results as TEXT artifacts, link URL in task `result` |
 | `search_slack` / `read_slack_thread` | Reference Slack context in task descriptions |
 | `query_bigquery` / `query_yuppdb` | Data tasks, store query results in task `result` |

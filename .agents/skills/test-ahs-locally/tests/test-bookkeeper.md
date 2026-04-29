@@ -35,7 +35,7 @@ curl -s "http://localhost:8090/ahs/session/<session_id>/history" \
 
 ### Server Logs
 Check the server terminal output (or `/tmp/ahs_server.log` if you started with `| tee`) for:
-- `tool_count=2` for agcouch MCP server (get_agent_memory, search_agent_memory)
+- `tool_count=4` for agcouch MCP server (list_memory, search_memory, load_memory, save_memory)
 - `Agent config loaded for task  agent_name=bookkeeper`
 
 ### Session Response
@@ -43,7 +43,7 @@ Check the server terminal output (or `/tmp/ahs_server.log` if you started with `
 - `messages`: Should contain AGENT response with markdown document listing memory entries or stating none found
 
 ## Validation Criteria
-1. Agent successfully calls `get_agent_memory` and/or `search_agent_memory` tools
+1. Agent successfully calls `list_memory`, `search_memory`, and/or `load_memory` tools
 2. Agent returns structured markdown output
 3. No tool permission errors in logs
 4. No hallucinated `<function_calls>` text (tools should be actual API calls)
@@ -52,6 +52,6 @@ Check the server terminal output (or `/tmp/ahs_server.log` if you started with `
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `tool_count=0` | Wrong tool permission names | Use `get_agent_memory` not `mcp__agcouch-mcp-server__get_agent_memory` |
+| `tool_count=0` | Wrong tool permission names | Use `search_memory` not `mcp__agcouch-mcp-server__search_memory` |
 | `<function_calls>` in output | Model doesn't support tools | Use claude-haiku-4-5 or better |
 | 401 Unauthorized | Bad API key | Check AGENT_HARNESS_SERVICE_API_KEY |

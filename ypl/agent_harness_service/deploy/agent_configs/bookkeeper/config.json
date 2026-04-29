@@ -14,9 +14,10 @@
   },
   "tool_permissions": {
     "*": "deny",
-    "get_agent_memory": "allow",
-    "search_agent_memory": "allow",
-    "store_agent_memory": "allow",
+    "list_memory": "allow",
+    "search_memory": "allow",
+    "load_memory": "allow",
+    "save_memory": "allow",
     "report_security_incident": "allow"
   },
   "allowed_subagents": [],

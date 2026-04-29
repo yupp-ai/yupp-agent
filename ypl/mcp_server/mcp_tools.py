@@ -24,7 +24,6 @@ from fastmcp.tools.tool import ToolResult
 # tool list (as happened after PR #215). Do NOT remove without also deleting
 # the tool module. Covered by tests/mcp_server/test_tool_registration.py.
 import ypl.mcp_server.tools.agent_artifacts
-import ypl.mcp_server.tools.agent_memory
 import ypl.mcp_server.tools.agent_schedules
 import ypl.mcp_server.tools.database
 import ypl.mcp_server.tools.gcp_logs

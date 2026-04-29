@@ -1,95 +1,77 @@
 ---
 name: memory-guide
-description: Full guide to both memory systems (private agent_memories/ and shared GCS). Covers search parameters, writing memories, topic hygiene, and recording tool errors. Trigger when doing more than a basic search_agent_memory() lookup.
+description: Full guide to the unified memory system (MEMORY artifacts in the artifact registry, with a local agent_memories/ working copy). Covers scopes, search parameters, writing memories, slug hygiene, and recording tool errors. Trigger when doing more than a basic search_memory() lookup.
 ---
 
 # Active Memory Management
 
-You have two memory systems. Use them actively — not just when prompted, but as a habit before and after every task.
+You have one memory system, accessed two ways: MCP tools (canonical) and a local `agent_memories/` working copy (cheap grep / cat during a turn). Both are backed by `MEMORY` artifacts in the artifact registry — the database is the source of truth. There is no GCS, no compare-and-swap, and no `expected_generation`.
 
-## Memory Types
+Use memory actively — not just when prompted, but as a habit before and after every task.
 
-### 1. Private Memory (`agent_memories/` directory)
+## Scopes
 
-A **local, writable directory** in your workspace that persists across sessions. Only you (your future sessions) can see it. Synced to GCS automatically.
+Each memory is addressed by **(scope, subject, slug)**:
 
-**What to store here:**
-- User preferences, personal info, communication style
-- Corrections and feedback the user gave you
-- Notes from past conversations ("user prefers X", "project Y decided Z")
-- Anything specific to your relationship with this user
+| Scope   | Subject                | Visibility                                            | Use it for                                              |
+| ------- | ---------------------- | ----------------------------------------------------- | ------------------------------------------------------- |
+| `agent` | your `agent_name`      | Your private notebook (default scope on every tool)   | Things specific to you / your role across sessions      |
+| `user`  | the caller's `user_id` | Only the current user (and you, while serving them)   | User preferences, communication style, prior corrections |
+| `topic` | (none)                 | Globally shared — readable and writable by anyone     | Team-wide knowledge, debugging patterns, system quirks  |
 
-**How to read/write (bash):**
-```bash
-ls agent_memories/                        # List what you have
-cat agent_memories/user_preferences.md    # Read a file
-grep -ri "keyword" agent_memories/        # Search for something
+Cross-scope writes are rejected by the server (you cannot write into another agent's notebook or another user's notes).
 
-# Write a new memory
-cat > agent_memories/user_preferences.md << 'EOF'
-- Prefers concise responses
-- Works on the routing team
-EOF
-```
+### Disk working copy: `agent_memories/`
 
-**How to organize:** Use descriptive filenames (`user_preferences.md`, `project_notes/auth_refactor.md`, `feedback.md`). Create sub-folders as needed.
-
-### 2. Shared Memory (GCS directory accessed via MCP tools)
-
-A **shared memory system** across all agents, stored in GCS. Any agent can read and write. Use this for team-wide knowledge.
-
-**What to store here:**
-- Non-obvious root causes and debugging patterns
-- System quirks and "that's just how it works" behaviors
-- Recurring review findings across PRs
-- Provider/service quirks and workarounds
-- Approaches that worked vs dead ends
-
-**How to read/write:**
-```
-get_agent_memory()                                    # List all topics
-get_agent_memory(topic="sre/streaming-bugs")          # Read a specific topic
-store_agent_memory(topic="sre/streaming-bugs",        # Write to a topic
-    content="...", expected_generation=N)              # (use expected_generation from get_agent_memory)
-```
-
-## Searching Memory (`search_agent_memory`)
-
-Semantic search powered by embeddings — understands meaning, not just keywords. Works well with natural language queries, partial matches, and related concepts (e.g., searching "deployment issues" will find entries about "rollback failures").
-
-One tool searches **both** memory systems. Use the `scope` parameter:
-
-| scope | What it searches | Requires `agent_name`? |
-|-------|-----------------|----------------------|
-| `"public"` (default) | Shared team memory only | No |
-| `"private"` | Your `agent_memories/` only | Yes |
-| `"all"` | Both private and shared | Yes |
+At session start, your visible memories are materialized into:
 
 ```
-# Search both private + shared (recommended before starting any task)
-search_agent_memory(query="<keywords>", scope="all", agent_name="{your_agent_name}")
-
-# Search shared only (default if scope omitted)
-search_agent_memory(query="race condition in provider teardown")
-
-# Search private only
-search_agent_memory(query="user preferences", scope="private", agent_name="{your_agent_name}")
+agent_memories/
+  topic/{slug}.md      ← all scope=topic memories
+  user/{slug}.md       ← scope=user, subject=current user
+  agent/{slug}.md      ← scope=agent, subject=your agent_name
 ```
 
-Other parameters: `mode` ("hybrid" default, "semantic", "keyword"), `top_k` (default 5), `topic` (filter by topic), `full_content` (return full text instead of snippet).
+Treat the directory as a **read-only cache** during a turn — `cat` and `grep` are fine for fast lookups. To **write**, always go through `save_memory` (the tool refreshes the disk copy automatically as a write-through). Editing files directly with bash bypasses the DB and the change will not survive the session.
+
+## Reading Memory
+
+```
+list_memory()                                # Everything visible (topic + own user + own agent)
+list_memory(scope="topic")                   # Just shared topics
+list_memory(scope="agent")                   # Just your own notebook
+
+search_memory(query="<keywords>")            # Substring search across your visibility
+search_memory(query="<keywords>", scope="topic")
+
+load_memory(topic="<slug>")                  # Default scope="agent"
+load_memory(topic="<slug>", scope="topic")
+load_memory(topic="<slug>", scope="user")
+```
+
+## Writing Memory
+
+```
+save_memory(topic="<slug>", content="<full markdown body>")               # scope="agent" by default
+save_memory(topic="<slug>", content="...", scope="user")                  # store in current user's notes
+save_memory(topic="<slug>", content="...", scope="topic")                 # share with the team
+```
+
+Each save creates a new version under the same `(scope, subject, slug)`; the latest non-archived version is what subsequent `load_memory` calls return.
 
 ## Before You Start a Task
 
-Check **both** memory systems for relevant context:
+Search what's already known:
 
-1. **MCP search** (preferred) — searches private and shared in one call:
-   ```
-   search_agent_memory(query="<keywords from user message>", scope="all", agent_name="{your_agent_name}")
-   ```
-2. **Bash** (fallback if MCP unavailable):
-   ```bash
-   ls agent_memories/ 2>/dev/null && grep -ri "<keywords from user message>" agent_memories/ 2>/dev/null
-   ```
+```
+search_memory(query="<keywords from user message>")
+```
+
+That covers your full visibility (your own agent + user + topics). Narrow with `scope="topic"` to focus on shared knowledge, or fall back to bash if the MCP tool isn't responsive:
+
+```bash
+grep -ri "<keywords>" agent_memories/ 2>/dev/null
+```
 
 This is not optional. Skipping it means you will forget things you or other agents already learned.
 
@@ -97,10 +79,16 @@ Don't announce to the user that you're checking memory — just do it silently. 
 
 ## After You Finish a Task
 
-Write down what you learned:
+Write down what you learned. Pick the right scope:
 
-- **Private memory** — personal context, user preferences, feedback. Write immediately with bash — don't wait until end of conversation.
-- **Shared memory** — team-useful patterns, root causes, system quirks. Use `store_agent_memory()`.
+- **`scope="user"`** — personal context, user preferences, feedback
+- **`scope="agent"`** — your own notes for future sessions of the same agent
+- **`scope="topic"`** — team-useful patterns, root causes, system quirks
+
+```
+save_memory(topic="user-preferences", content="<...>", scope="user")
+save_memory(topic="oncall-learnings", content="<...>", scope="topic")
+```
 
 ## What NOT to Store
 
@@ -116,10 +104,10 @@ At the end of a session (or after resolving a tricky tool error), use the `/reco
 /record-tool-error {your_agent_name}
 ```
 
-The skill will search your session for tool failures caused by **incorrect usage** (wrong parameters, invalid arguments, API misunderstandings), present them for confirmation, and store them in your agent-specific shared memory topic (`{agent_name}/tool_use_errors`).
+The skill will search your session for tool failures caused by **incorrect usage** (wrong parameters, invalid arguments, API misunderstandings), present them for confirmation, and store them in your agent-scope memory under the slug `tool-use-errors`.
 
-## Topic Hygiene (Shared Memory)
+## Slug Hygiene
 
-- Prefer adding to an existing topic over creating a new one
-- When a topic grows large, compact it: remove entries for issues that have been permanently fixed, consolidate duplicates, and drop low-value noise
-- See the `agent-memory` skill for the full mechanics (optimistic locking, size limits, entry format)
+- Prefer adding to an existing slug over creating a new one — `load_memory` it, merge your entry into the body, `save_memory` it back
+- When a slug grows large, compact it: drop entries for issues that have been permanently fixed, consolidate duplicates, and remove low-value noise
+- See the `agent-memory` skill for the full mechanics (versioning, entry format, suggested slugs)

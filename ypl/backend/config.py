@@ -378,7 +378,6 @@ class Settings(BaseSettings):
     READ_COMMIT_HISTORY_GITHUB_TOKEN: str = os.getenv("READ_COMMIT_HISTORY_GITHUB_TOKEN", "")
 
     GCS_BUCKET_NAME: str = os.getenv("GCS_BUCKET_NAME", "yupp-data")
-    AGENT_MEMORY_BUCKET: str = os.getenv("AGENT_MEMORY_BUCKET", "yupp-agents")
 
     # Blob store — pluggable storage backend used by the artifact system
     # (``ypl/agent_harness_service/artifact_store.py``). ``local`` writes

@@ -14,6 +14,8 @@ These tests fail loudly instead.
 
 from __future__ import annotations
 
+import pytest
+
 
 def test_agcouch_tools_register_on_import() -> None:
     """Importing mcp_tools must populate the agcouch FastMCP instance.
@@ -44,7 +46,7 @@ def test_critical_agcouch_tools_are_registered() -> None:
     """Name-level check on the tools we rely on most day-to-day.
 
     If any of these go missing, agents can't do their core work — e.g.
-    add_artifact, query_yuppdb, store_agent_memory.
+    add_artifact, query_yuppdb, save_memory.
     """
     import ypl.mcp_server.mcp_tools  # noqa: F401
     from ypl.mcp_server.core import mcp_server
@@ -70,10 +72,11 @@ def test_critical_agcouch_tools_are_registered() -> None:
         # Databases (database.py)
         "query_yuppdb",
         "query_agentdb",
-        # Agent memory (agent_memory.py)
-        "get_agent_memory",
-        "store_agent_memory",
-        "search_agent_memory",
+        # Agent memory (memory_artifacts.py) — DB-backed MEMORY artifacts
+        "save_memory",
+        "load_memory",
+        "search_memory",
+        "list_memory",
     }
     missing = required - tool_names
     assert not missing, (
@@ -81,4 +84,41 @@ def test_critical_agcouch_tools_are_registered() -> None:
         f"Registered: {sorted(tool_names)[:15]}…\n"
         f"This almost always means the corresponding ``import ypl.mcp_server.tools.*`` "
         f"side-effect import is missing from ``ypl/mcp_server/mcp_tools.py``."
+    )
+
+
+def test_legacy_gcs_memory_tools_are_not_registered() -> None:
+    """Regression guard: the GCS-backed memory tools are gone for good.
+
+    Phase [6] of the "unify memory into artifacts" project deleted
+    ``ypl/mcp_server/tools/agent_memory.py`` and removed its side-effect
+    import from ``mcp_tools.py``. The new memory surface is
+    ``save_memory`` / ``load_memory`` / ``search_memory`` / ``list_memory``
+    in ``ypl/mcp_server/tools/memory_artifacts.py``.
+
+    If anyone re-introduces the legacy module (or re-registers any of
+    the legacy tool names from somewhere else), this test fails so the
+    revert is loud.
+    """
+    import importlib
+
+    import ypl.mcp_server.mcp_tools  # noqa: F401
+    from ypl.mcp_server.core import mcp_server
+
+    # The legacy module must not exist as an importable submodule.
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("ypl.mcp_server.tools.agent_memory")
+
+    # And the legacy tool names must not be registered on the server.
+    manager = getattr(mcp_server, "_tool_manager", None)
+    assert manager is not None
+    tools_dict = getattr(manager, "_tools", None)
+    assert tools_dict is not None
+    tool_names = set(tools_dict.keys())
+
+    legacy_names = {"get_agent_memory", "store_agent_memory", "search_agent_memory"}
+    leaked = legacy_names & tool_names
+    assert not leaked, (
+        f"Legacy GCS-backed memory tools must not be re-registered: {sorted(leaked)}.\n"
+        f"Use save_memory / load_memory / search_memory / list_memory instead."
     )

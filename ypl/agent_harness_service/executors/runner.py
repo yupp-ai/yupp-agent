@@ -322,9 +322,10 @@ _TOP_AGCOUCH_TOOLS_PREDECLARED: list[str] = [
     "mcp__agcouch-mcp-server__read_artifact",
     "mcp__agcouch-mcp-server__list_artifacts",
     "mcp__agcouch-mcp-server__search_artifacts",
-    "mcp__agcouch-mcp-server__search_agent_memory",
-    "mcp__agcouch-mcp-server__get_agent_memory",
-    "mcp__agcouch-mcp-server__store_agent_memory",
+    "mcp__agcouch-mcp-server__search_memory",
+    "mcp__agcouch-mcp-server__load_memory",
+    "mcp__agcouch-mcp-server__save_memory",
+    "mcp__agcouch-mcp-server__list_memory",
     "mcp__agcouch-mcp-server__read_slack_thread",
     # Security incident reporting — pre-declared so SECURITY.md instructions work
     # without a ToolSearch round-trip. Fire-and-forget; never blocks a response.
