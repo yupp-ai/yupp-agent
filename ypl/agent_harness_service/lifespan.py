@@ -72,9 +72,31 @@ from ypl.structured_logger import get_logger, setup_asyncio_logging
 
 logger = get_logger()
 
-# Sessions older than this threshold are considered stale on startup (i.e. left
-# ACTIVE from the previous process and not currently being processed).
-_STALE_SESSION_THRESHOLD_MINUTES = 15
+# Wrapper timeout for the shutdown-side Slack courtesy broadcast.  systemd's
+# ``TimeoutStopSec=30`` gives us 30s total before SIGKILL; 25s leaves 5s for
+# the rest of the drain (subprocess teardown, scheduler stop, etc.).  The
+# prior 5s was too tight — a single slow Slack API call (the per-call SAG
+# timeout is 10s) ate the whole budget and the broadcast silently aborted.
+_SHUTDOWN_COURTESY_WRAPPER_TIMEOUT_S = 25.0
+
+
+def _record_shutdown_courtesy_wrapper_failure(*, reason: str) -> None:
+    """Increment ``ahs/courtesy_broadcast`` with ``outcome=wrapper_failed``.
+
+    Distinct from the per-message failure counter emitted by
+    ``_send_slack_courtesy``: this counter fires when the broadcast itself
+    timed out or raised before any per-message bookkeeping happened, so we
+    can alert on the wrapper-level failure mode in isolation.
+    """
+    try:
+        from ypl.backend.utils.monitoring import metric_inc_with_labels
+
+        metric_inc_with_labels(
+            "ahs/courtesy_broadcast",
+            {"event": "shutdown", "outcome": "wrapper_failed", "reason": reason},
+        )
+    except Exception:  # pragma: no cover — metric write must not propagate
+        logger.debug("metric_inc failed for ahs/courtesy_broadcast wrapper failure", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -213,31 +235,48 @@ async def _recover_stale_sessions() -> None:
        AGENT draft).  These are transitioned to STALE so monitoring dashboards can
        detect them.
 
-    Only top-level sessions (parent_session_id IS NULL) older than
-    _STALE_SESSION_THRESHOLD_MINUTES are examined — subagent sessions are managed
-    by the orchestrator which already writes their final status.
-    """
-    stale_threshold = datetime.now(UTC) - timedelta(minutes=_STALE_SESSION_THRESHOLD_MINUTES)
+    Every top-level ``ACTIVE`` session is examined regardless of how recently it
+    was modified.  The previous 15-minute idle threshold was tuned for the
+    auto-stale sweep but did the wrong thing here: a session killed mid-turn
+    by SIGTERM has ``modified_at`` within the last few seconds, so the new
+    instance (booting ~5–10s later under systemd) skipped exactly the
+    sessions that needed recovery.  The classification logic below already
+    distinguishes "completed but unwritten" from "interrupted mid-turn" by
+    walking the message history, so dropping the time filter is safe.
 
+    Subagent sessions (``parent_session_id IS NOT NULL``) are still excluded;
+    the orchestrator already writes their final status.
+    """
     async with get_async_session() as session:
         result = await session.exec(
             select(AgentSession)
             .where(AgentSession.status == AgentSessionStatus.ACTIVE)
-            .where(col(AgentSession.modified_at) < stale_threshold)
             .where(col(AgentSession.parent_session_id).is_(None))
         )
-        stale_sessions = result.all()
+        # Despite the name, this is *every* top-level ACTIVE session, not just
+        # the ones we'll classify as STALE.  We need the full list so we can
+        # broadcast the "back online" ping to all Slack threads that survived
+        # the previous deploy, even ones whose last turn completed cleanly.
+        active_sessions = result.all()
 
-        if not stale_sessions:
+        # Slack session IDs from the recovery scan — populated below.  Used to
+        # send the restart-side courtesy *regardless* of how each session is
+        # classified, so a user whose last turn finished cleanly right before a
+        # deploy still sees a "back online" notice on the next user message.
+        all_slack_session_ids: list[uuid.UUID] = []
+
+        if not active_sessions:
+            # Nothing to recover and no Slack threads to notify; let the rest
+            # of startup proceed.
             return
 
         completed_count = 0
         stale_count = 0
-        # Collect IDs of sessions we classify as STALE so we can send courtesy
-        # messages after the DB commit (outside the session context).
-        stale_session_ids: list[uuid.UUID] = []
 
-        for s in stale_sessions:
+        for s in active_sessions:
+            if s.slack_session_id:
+                all_slack_session_ids.append(s.agent_session_id)
+
             # Find the most recent non-USER (terminal) message for this session.
             # Terminal turns are persisted as AGENT (normal completion) or SYSTEM
             # (config-not-found, runner crash, explicit interruption).  Querying only
@@ -286,8 +325,6 @@ async def _recover_stale_sessions() -> None:
                 # genuine crash leftovers.
                 s.status = AgentSessionStatus.STALE
                 stale_count += 1
-                if s.slack_session_id:
-                    stale_session_ids.append(s.agent_session_id)
             else:
                 # Session's last turn reached a terminal state (SUCCESS, FAILED, or ABORTED)
                 # and all USER turns have corresponding responses — the session completed
@@ -300,16 +337,19 @@ async def _recover_stale_sessions() -> None:
 
     logger.info(
         "Recovered stale sessions on startup",
-        total=len(stale_sessions),
+        total=len(active_sessions),
         completed=completed_count,
         stale=stale_count,
+        slack_in_scope=len(all_slack_session_ids),
     )
 
-    # Send "server is back" courtesy to Slack threads that were interrupted.
-    # Best-effort: errors are logged inside send_slack_restart_courtesy.
-    if stale_session_ids:
+    # Send "server is back" courtesy to every Slack thread we just scanned —
+    # interrupted, completed-but-unwritten, and the few that were already in a
+    # terminal state.  Best-effort: errors are logged inside
+    # send_slack_restart_courtesy.
+    if all_slack_session_ids:
         try:
-            await send_slack_restart_courtesy(stale_session_ids)
+            await send_slack_restart_courtesy(all_slack_session_ids)
         except Exception:
             logger.warning("Failed to send restart courtesy messages", exc_info=True)
 
@@ -554,13 +594,28 @@ async def ahs_shutdown(state: AHSState) -> None:
     Args:
         state: The state object returned by :func:`ahs_startup`.
     """
-    # Notify in-flight Slack sessions that the server is restarting.
-    # Done first, before any processes are killed, so the message reaches
-    # users while their session is still registered in the gateway.
+    # Notify every live Slack thread that the server is restarting.  Done
+    # first, before any processes are killed, so the message reaches users
+    # while their session is still registered in the gateway.  The wrapper
+    # timeout was bumped from 5s to 25s — see
+    # ``_SHUTDOWN_COURTESY_WRAPPER_TIMEOUT_S`` for the rationale.  We log at
+    # error level (not warning) with ``exc_info=True`` so a failure here is
+    # actually visible in production rather than blending into routine noise.
     try:
-        await asyncio.wait_for(send_slack_shutdown_courtesy(), timeout=5.0)
+        await asyncio.wait_for(
+            send_slack_shutdown_courtesy(),
+            timeout=_SHUTDOWN_COURTESY_WRAPPER_TIMEOUT_S,
+        )
+    except TimeoutError:
+        logger.error(
+            "Shutdown courtesy broadcast timed out",
+            timeout_s=_SHUTDOWN_COURTESY_WRAPPER_TIMEOUT_S,
+            exc_info=True,
+        )
+        _record_shutdown_courtesy_wrapper_failure(reason="timeout")
     except Exception:
-        logger.warning("Failed to send shutdown courtesy messages", exc_info=True)
+        logger.error("Failed to send shutdown courtesy messages", exc_info=True)
+        _record_shutdown_courtesy_wrapper_failure(reason="exception")
 
     # Shutdown warm process pool (kills idle pre-warmed processes)
     try:
