@@ -114,7 +114,7 @@ Repo:           ${REPO_URL}
 
 It will do ${TOTAL_STEPS} steps:
 
-  1. Install system packages   — Python ${PYTHON_VERSION}, PostgreSQL 16, Redis 7, Poetry
+  1. Install system packages   — Python ${PYTHON_VERSION}, PostgreSQL 16, Redis 7, Poetry, Bun
   2. Create system user        — '${APP_USER}' and ${INSTALL_DIR}
   3. Clone the repo            — walks you through SSH deploy key setup if needed
   4. Install Python deps       — poetry install (production, no dev extras)
@@ -242,6 +242,20 @@ elif [[ "$INSTALLED_POETRY_VERSION" != "$POETRY_VERSION" ]]; then
     curl -sSL https://install.python-poetry.org | POETRY_HOME=/usr/local POETRY_VERSION="$POETRY_VERSION" python3 - --force
 fi
 info "Poetry: $(poetry --version)"
+
+# Bun (https://bun.sh) — JS runtime + package manager + bundler. Used by the
+# Bun-app deploys in deploy-latest.sh (currently apps/couch). Installed
+# system-wide to /usr/local/bin so the ${APP_USER} can invoke `bun` without
+# any PATH gymnastics. The official installer respects $BUN_INSTALL and lays
+# the binary down at $BUN_INSTALL/bin/bun.
+if ! command -v bun &>/dev/null; then
+    info "Installing Bun system-wide to /usr/local/bin…"
+    curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash \
+        || warn "Bun install failed — continuing. Bun-app deploys (apps/couch) will be skipped until you retry."
+fi
+if command -v bun &>/dev/null; then
+    info "Bun: $(bun --version) (at $(command -v bun))"
+fi
 
 # ---------------------------------------------------------------------------
 # Step 2. App user + directory
@@ -820,7 +834,7 @@ banner "✅ Installation complete!"
 cat <<EOF
 Everything below is now installed and ready:
 
-  ✓ System packages  — Python ${PYTHON_VERSION}, PostgreSQL 16, Redis 7, Poetry ${POETRY_VERSION}
+  ✓ System packages  — Python ${PYTHON_VERSION}, PostgreSQL 16, Redis 7, Poetry ${POETRY_VERSION}, Bun
   ✓ System user      — ${APP_USER} (home: ${INSTALL_DIR})
   ✓ Repo             — ${INSTALL_DIR}
   ✓ Python venv      — ${VENV_DIR}
