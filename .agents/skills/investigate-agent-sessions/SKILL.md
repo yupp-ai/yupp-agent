@@ -1,7 +1,7 @@
 ---
 name: investigate-agent-sessions
 description: Investigate agent harness session performance and failures. Use when debugging why an AHS session failed, hit max turns, was slow, or didn't achieve the desired work. Accepts session IDs, Lit console URLs, or message IDs.
-allowed-tools: mcp__agcouch-mcp-server__query_agentdb, mcp__agcouch-mcp-server__query_yuppdb, mcp__agcouch-mcp-server__search_gcp_logs, mcp__agcouch-mcp-server__add_artifact, mcp__agcouch-mcp-server__get_agent_memory, mcp__agcouch-mcp-server__store_agent_memory, Bash, Read, Glob, Grep, Skill
+allowed-tools: mcp__agcouch-mcp-server__query_agentdb, mcp__agcouch-mcp-server__query_yuppdb, mcp__agcouch-mcp-server__search_gcp_logs, mcp__agcouch-mcp-server__add_artifact, mcp__agcouch-mcp-server__list_memory, mcp__agcouch-mcp-server__search_memory, mcp__agcouch-mcp-server__load_memory, mcp__agcouch-mcp-server__save_memory, Bash, Read, Glob, Grep, Skill
 ---
 
 # Investigate Agent Harness Sessions
@@ -40,10 +40,11 @@ Read("yupp-agent/ypl/db/agent_memory_index.py")    # memory tables
 ## Agent Memory
 
 Before investigating, use the `/agent-memory` skill to check for relevant learnings from past AHS investigations:
-1. List available topics with `get_agent_memory()`
-2. Read `ahs-investigation-learnings` and any other relevant topics
+1. Substring-search shared knowledge with `search_memory(query="<keywords>", scope="topic")`
+2. Read shared slugs that look relevant (e.g. `load_memory(topic="ahs-investigation-learnings", scope="topic")`)
+3. Use `list_memory(scope="topic")` to browse if a search returns nothing useful
 
-After investigating, store any reusable insights you discovered.
+After investigating, store any reusable insights you discovered with `save_memory(topic="ahs-investigation-learnings", content="...", scope="topic")` (or another shared slug if more appropriate).
 
 ---
 

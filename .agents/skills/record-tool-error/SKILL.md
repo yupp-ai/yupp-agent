@@ -1,7 +1,7 @@
 ---
 name: record-tool-error
 description: Record a tool call failure to agent memory so future sessions can avoid the same mistake. Usage /record-tool-error [username]
-allowed-tools: Bash, mcp__agcouch-mcp-server__get_agent_memory, mcp__agcouch-mcp-server__store_agent_memory
+allowed-tools: Bash, mcp__agcouch-mcp-server__load_memory, mcp__agcouch-mcp-server__save_memory
 ---
 
 # Record Tool Error
@@ -46,18 +46,12 @@ If no username is provided, detect the GitHub login using this fallback chain:
 
 3. **Ask the user** if neither method works or if the extracted value looks wrong (contains spaces, special characters, etc.).
 
-## Memory Topic
+## Memory Address
 
-Tool errors are stored in a user/agent-specific topic:
+Tool errors are stored in the caller's **agent scope** (their own notebook), under the slug `tool-use-errors`:
 
-```
-{username}/tool_use_errors
-```
-
-Examples:
-- `sre/tool_use_errors`
-- `data-scientist/tool_use_errors`
-- `lguan/tool_use_errors`
+- For an AHS agent like `sre`, the address is `a:sre:tool-use-errors`. The `save_memory` server-side default already picks `scope="agent"` and the calling agent's name as the subject — you do not need to set `subject` manually.
+- For local Claude Code where there is no agent context, fall back to a shared topic addressed as `t:{username}-tool-use-errors` (use `scope="topic"` and pass the slug verbatim).
 
 ## Procedure
 
@@ -82,9 +76,10 @@ Examples:
    - Show the list of failures found
    - Ask which ones should be recorded (some may be too obvious or one-off)
 
-5. **Read existing memory** to get current content and generation:
+5. **Read existing memory** to get current content (returns `success=False` with a not-found error if the slug doesn't exist yet — that's fine, treat the body as empty):
    ```
-   get_agent_memory(topic="{username}/tool_use_errors")
+   load_memory(topic="tool-use-errors")                            # AHS agent: defaults to scope="agent"
+   load_memory(topic="{username}-tool-use-errors", scope="topic")  # Local Claude Code fallback
    ```
 
 6. **Format each new entry**:
@@ -96,15 +91,12 @@ Examples:
    - **Date**: {YYYY-MM-DD}
    ```
 
-7. **Append to existing content** (or create new if topic doesn't exist)
+7. **Append to existing content** (or use just the new entries if the slug doesn't exist yet)
 
-8. **Store the updated memory**:
+8. **Store the updated memory** (every save creates a new version automatically):
    ```
-   store_agent_memory(
-       topic="{username}/tool_use_errors",
-       content="<merged content>",
-       expected_generation=<generation from read, or 0 if new>
-   )
+   save_memory(topic="tool-use-errors", content="<merged content>")                          # AHS agent
+   save_memory(topic="{username}-tool-use-errors", content="<merged content>", scope="topic") # Local fallback
    ```
 
 9. **Confirm** the entries were recorded
@@ -133,9 +125,11 @@ Examples:
 - Sensitive data (credentials, PII, internal tokens)
 - One-off issues that won't recur
 
-## Topic Maintenance
+## Slug Maintenance
 
-When the topic grows large, consolidate:
+When the slug grows large, consolidate:
 - Remove entries for issues fixed in tool implementations
 - Merge duplicate entries about the same tool/error
 - Keep entries concise and actionable
+
+Each `save_memory` creates a new version under the same `(scope, subject, slug)` — last-write-wins, no compare-and-swap. Read-modify-write back-to-back to keep conflicts unlikely.

@@ -135,7 +135,7 @@ Otherwise, check the terminal where the server is running, or use the Streamlit 
 ## Common Issues
 
 ### `tool_count=0` after filtering
-Tool permission names must match raw MCP tool names (e.g., `get_agent_memory`), not prefixed names.
+Tool permission names must match raw MCP tool names (e.g., `search_memory`, `load_memory`), not prefixed names.
 
 ### `{"detail":"Not Found"}`
 Agent config doesn't exist or server needs restart.
