@@ -215,8 +215,9 @@ async def insert_user(
     name: str | None,
     user_type: UserType,
     status: UserStatus,
+    role_ids: set[uuid.UUID],
 ) -> tuple[bool, str, str | None]:
-    """Insert a new User row. Returns (success, message, user_id)."""
+    """Insert a new User row and assign roles. Returns (success, message, user_id)."""
     normalized_email = email.strip().lower()
     async with get_async_session() as session:
         existing = (
@@ -234,6 +235,8 @@ async def insert_user(
             user_type=user_type,
         )
         session.add(row)
+        for rid in role_ids:
+            session.add(UserRoleAssociation(user_id=new_user_id, role_id=rid))
         try:
             await session.commit()
         except IntegrityError as exc:
@@ -438,12 +441,22 @@ def _render_user_detail(user_id: str) -> None:
 def _render_add_user() -> None:
     st.subheader("Add new user")
     st.caption(
-        "Creates a row in the ``users`` table. Assign roles afterward from the *Browse* tab "
-        "(or from the Roles & Permissions app)."
+        "Creates a row in the ``users`` table and assigns at least one RBAC role. "
+        "You can adjust roles later from the *Browse* tab (or from the Roles & Permissions app)."
     )
 
     user_type_values = [t.value for t in UserType]
     status_values = [s.value for s in UserStatus]
+
+    roles_summary = _cached_roles_summary()
+    role_name_to_id: dict[RoleName, uuid.UUID] = {RoleName(r["name"]): r["role_id"] for r in roles_summary}
+    available_role_names: list[RoleName] = [rn for rn in RoleName if rn in role_name_to_id]
+
+    if not available_role_names:
+        st.error(
+            "No RBAC roles found in the database. Run `seed_roles` (see `ypl/mono_server/db.py`) before adding users."
+        )
+        return
 
     with st.form("add_user_form", clear_on_submit=True):
         email = st.text_input("Email", help="Used as the unique identifier. Stored lowercased.").strip()
@@ -452,6 +465,13 @@ def _render_add_user() -> None:
             "User type", options=user_type_values, index=user_type_values.index(UserType.HUMAN.value)
         )
         status_value = st.selectbox("Status", options=status_values, index=status_values.index(UserStatus.ACTIVE.value))
+        selected_role_names: list[RoleName] = st.multiselect(
+            "Roles",
+            options=available_role_names,
+            default=[],
+            format_func=lambda r: r.value,
+            help="Pick one or more RBAC roles. At least one role must be selected.",
+        )
         submitted = st.form_submit_button("Create user", type="primary")
 
     if not submitted:
@@ -463,6 +483,11 @@ def _render_add_user() -> None:
     if "@" not in email:
         st.error("Email looks malformed.")
         return
+    if not selected_role_names:
+        st.error("At least one role must be assigned.")
+        return
+
+    role_ids = {role_name_to_id[rn] for rn in selected_role_names if rn in role_name_to_id}
 
     success, message, new_user_id = run_coroutine_in_lit_worker(
         insert_user(
@@ -470,13 +495,15 @@ def _render_add_user() -> None:
             name=name or None,
             user_type=UserType(user_type_value),
             status=UserStatus(status_value),
+            role_ids=role_ids,
         ),
         timeout=10,
     )
     if success:
         st.toast(message, icon="✅")
         if new_user_id:
-            st.success(f"Created user_id: `{new_user_id}`")
+            roles_str = ", ".join(rn.value for rn in selected_role_names)
+            st.success(f"Created user_id: `{new_user_id}` with roles: {roles_str}")
         _refresh_and_rerun()
     else:
         st.error(message)

@@ -97,11 +97,30 @@ pages = {
         {
             "name": "Agent Harness Console",
             "link": "agent_harness_console",
+            "emoji": "💬",
+            "description": (
+                "Browse Agent Harness sessions and messages. "
+                "View conversation threads grouped by session and search by agent or session ID."
+            ),
+        },
+        {
+            "name": "Agents",
+            "link": "agents",
             "emoji": "🔮",
             "description": (
-                "Browse Agent Harness sessions, messages, and feedbacks. "
-                "View conversation threads grouped by session, search by agent or session ID, "
-                "and review feedback signals."
+                "Browse and edit registered agents in the database. "
+                "View and modify all DB fields, including additional system prompts, "
+                "executor type, executor model, and config JSON. Add brand-new agents."
+            ),
+        },
+        {
+            "name": "Feedbacks",
+            "link": "feedbacks",
+            "emoji": "⭐",
+            "description": (
+                "Browse user feedback on agent sessions and messages. "
+                "Filter by rating, agent, or session trigger; click through to the "
+                "originating session in the Agent Harness Console."
             ),
         },
         {
@@ -136,16 +155,6 @@ pages = {
             "description": (
                 "Operational analytics for agent sessions, costs, latency, errors, "
                 "feedback, and schedule health. Track usage trends and performance metrics."
-            ),
-        },
-        {
-            "name": "Agent Anomaly Detection",
-            "link": "agent_anomaly_dashboard",
-            "emoji": "🔍",
-            "description": (
-                "Identify agents with high cost and latency variance. "
-                "View coefficient of variation, jitter scores, and variance bands "
-                "over configurable time windows to catch regressions early."
             ),
         },
     ],
