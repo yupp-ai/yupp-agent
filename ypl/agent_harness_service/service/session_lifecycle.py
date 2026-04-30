@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -115,21 +116,102 @@ logger = get_logger()
 # ---------------------------------------------------------------------------
 
 
+# Window for the shutdown-side broadcast.  Sessions that haven't been touched
+# in this many hours are excluded from the "server is restarting" notice — we
+# don't want to wake up Slack threads that the user has long since abandoned.
+_COURTESY_BROADCAST_WINDOW_HOURS = 24
+
+
+def _record_courtesy_metric(event: str, outcome: str, count: int = 1) -> None:
+    """Emit ``ahs/courtesy_broadcast`` Prometheus / structured-log counter.
+
+    ``event`` is ``"shutdown"`` or ``"restart"``; ``outcome`` is ``"sent"``,
+    ``"failed"``, or ``"skipped"``.  Wrapped in a try/except because the
+    metrics layer reaches out to GCP and we never want a metric write to break
+    a courtesy broadcast — the structured log already carries the same
+    information.
+    """
+    try:
+        from ypl.backend.utils.monitoring import metric_inc_by_with_labels
+
+        metric_inc_by_with_labels(
+            "ahs/courtesy_broadcast",
+            count,
+            {"event": event, "outcome": outcome},
+        )
+    except Exception:  # pragma: no cover — monitoring failure must not propagate
+        logger.debug("metric_inc failed for ahs/courtesy_broadcast", exc_info=True)
+
+
+def _is_monolith_mode() -> bool:
+    """Return True iff the current process is running as the AHS+SAG monolith.
+
+    Imported lazily so the AHS package does not require ``ypl.mono_server`` to
+    be importable in standalone-AHS deployments (and to avoid an import cycle:
+    mono_server imports AHS).
+    """
+    try:
+        from ypl.mono_server.runtime import is_monolith_mode
+
+        return is_monolith_mode()
+    except Exception:
+        return False
+
+
+async def _deliver_courtesy_via_callback(slack_session_id: str, text: str) -> bool:
+    """Post a courtesy reply to Slack using the in-process SAG callback.
+
+    Used in monolith mode so the message reaches Slack even when the uvicorn
+    HTTP listener is closed (during shutdown ``__aexit__``) or not yet open
+    (during startup ``__aenter__``) — the two windows when the courtesy
+    helpers run and an HTTP loopback would silently fail.
+    """
+    try:
+        from ypl.slack_agent_gateway.callbacks import add_reply
+        from ypl.slack_agent_gateway.types import AddReplyRequest
+
+        response = await add_reply(AddReplyRequest(session_id=slack_session_id, text=text))
+        if not response.success:
+            logger.warning(
+                "In-process SAG add_reply rejected courtesy",
+                slack_session_id=slack_session_id,
+                error=response.error,
+            )
+            return False
+        return True
+    except Exception:
+        logger.warning(
+            "In-process SAG add_reply raised — courtesy not delivered",
+            slack_session_id=slack_session_id,
+            exc_info=True,
+        )
+        return False
+
+
 async def _send_slack_courtesy(session_ids: list[uuid.UUID], text: str, event: str) -> None:
     """Send a courtesy message to the Slack threads for the given session IDs.
 
-    Silently skips sessions that are not Slack-triggered or have no
-    ``slack_session_id``.  Errors from individual sends are logged but do not
-    propagate — courtesy messages are best-effort.
+    Resolves each ``agent_session_id`` to its ``slack_session_id`` and posts
+    the message.  In monolith mode the SAG callback is invoked in-process so
+    delivery works during shutdown (after uvicorn closes the listener) and
+    during startup (before uvicorn opens the listener).  In standalone mode
+    we fall back to the registered HTTP gateway.
+
+    Errors from individual sends are logged but do not propagate — courtesy
+    messages are best-effort.
     """
     if not session_ids:
         return
 
-    registry = GatewayRegistry.get_instance()
-    gateway = registry.get("slack")
-    if gateway is None:
-        logger.warning("Slack gateway unavailable — skipping courtesy messages", event=event)
-        return
+    monolith = _is_monolith_mode()
+    gateway = None
+    if not monolith:
+        registry = GatewayRegistry.get_instance()
+        gateway = registry.get("slack")
+        if gateway is None:
+            logger.warning("Slack gateway unavailable — skipping courtesy messages", courtesy_event=event)
+            _record_courtesy_metric(event, "skipped", count=len(session_ids))
+            return
 
     async with get_async_session() as db_session:
         result = await db_session.exec(
@@ -140,42 +222,96 @@ async def _send_slack_courtesy(session_ids: list[uuid.UUID], text: str, event: s
         slack_sessions = result.all()
 
     if not slack_sessions:
-        logger.info("No in-scope Slack sessions for courtesy message", event=event)
+        logger.info("No in-scope Slack sessions for courtesy message", courtesy_event=event)
         return
 
-    logger.info("Sending courtesy messages to Slack sessions", event=event, count=len(slack_sessions))
+    logger.info(
+        "Sending courtesy messages to Slack sessions",
+        courtesy_event=event,
+        count=len(slack_sessions),
+        delivery="in_process" if monolith else "http_gateway",
+    )
+
+    async def _deliver(slack_session_id: str) -> bool:
+        if monolith:
+            return await _deliver_courtesy_via_callback(slack_session_id, text)
+        # gateway is non-None on this branch — guaranteed by the early return above.
+        assert gateway is not None
+        return await gateway.send_reply(slack_session_id, text)
 
     results = await asyncio.gather(
-        *[gateway.send_reply(s.slack_session_id, text) for s in slack_sessions if s.slack_session_id],
+        *[_deliver(s.slack_session_id) for s in slack_sessions if s.slack_session_id],
         return_exceptions=True,
     )
 
     sent = sum(1 for r in results if r is True)
     failed = len(results) - sent
-    logger.info("Slack courtesy messages complete", event=event, sent=sent, failed=failed)
+    logger.info(
+        "Slack courtesy messages complete",
+        courtesy_event=event,
+        count=len(results),
+        sent=sent,
+        failed=failed,
+        delivery="in_process" if monolith else "http_gateway",
+    )
+    if sent:
+        _record_courtesy_metric(event, "sent", count=sent)
+    if failed:
+        _record_courtesy_metric(event, "failed", count=failed)
+
+
+async def _query_active_slack_session_ids(window_hours: int) -> list[uuid.UUID]:
+    """Return every top-level ACTIVE Slack session modified within ``window_hours``.
+
+    Used as the audience for the shutdown-side courtesy broadcast: a normal
+    Slack thread spends >90% of its wall-clock idle between turns, so the old
+    ``_active_tasks.keys()`` audience covered almost no real users.  We cap to
+    the recent-activity window so abandoned threads aren't woken on every
+    deploy.
+    """
+    cutoff = datetime.now(UTC) - timedelta(hours=window_hours)
+    async with get_async_session() as db_session:
+        result = await db_session.exec(
+            select(AgentSession.agent_session_id)
+            .where(AgentSession.status == AgentSessionStatus.ACTIVE)
+            .where(col(AgentSession.slack_session_id).is_not(None))
+            .where(col(AgentSession.parent_session_id).is_(None))
+            .where(col(AgentSession.modified_at) > cutoff)
+        )
+        return list(result.all())
 
 
 async def send_slack_shutdown_courtesy() -> None:
-    """Send a courtesy message to all in-flight Slack sessions before shutdown.
+    """Send a courtesy message to every live Slack thread before shutdown.
 
     Called during graceful shutdown (SIGTERM) so users know the server is
     restarting and their session will be available again shortly.
+
+    The audience is now driven by a DB query (every top-level ``ACTIVE`` Slack
+    session modified in the last
+    :data:`_COURTESY_BROADCAST_WINDOW_HOURS` hours) instead of
+    ``_active_tasks.keys()``.  ``_active_tasks`` only contains sessions that
+    are *currently mid-turn*, which excludes the >90% of Slack threads that
+    are idle between turns when SIGTERM lands — exactly the users we most
+    need to notify.
+    """
+    session_ids = await _query_active_slack_session_ids(_COURTESY_BROADCAST_WINDOW_HOURS)
+    if not session_ids:
+        logger.info("No live Slack sessions to notify on shutdown", courtesy_event="shutdown")
+        return
+    await _send_slack_courtesy(session_ids, _SLACK_SHUTDOWN_COURTESY_MSG, "shutdown")
+
+
+async def send_slack_restart_courtesy(slack_session_ids: list[uuid.UUID]) -> None:
+    """Send a courtesy message to Slack sessions after the server restarts.
+
+    Called from ``_recover_stale_sessions`` at startup for every Slack session
+    found in scope by the recovery scan — including sessions whose last turn
+    completed cleanly right before the deploy, so users see a "back online"
+    ping when they next message the bot.
     """
     await _send_slack_courtesy(
-        list(_active_tasks.keys()),
-        _SLACK_SHUTDOWN_COURTESY_MSG,
-        "shutdown",
-    )
-
-
-async def send_slack_restart_courtesy(stale_session_ids: list[uuid.UUID]) -> None:
-    """Send a courtesy message to stale Slack sessions after the server restarts.
-
-    Called from ``_recover_stale_sessions`` at startup for sessions that were
-    interrupted mid-turn by the previous SIGTERM so users know they can continue.
-    """
-    await _send_slack_courtesy(
-        stale_session_ids,
+        slack_session_ids,
         _SLACK_RESTART_COURTESY_MSG,
         "restart",
     )
