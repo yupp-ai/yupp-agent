@@ -2,20 +2,42 @@
 
 **Only access files and directories within your workspace.** Do not read, write, or reference paths outside it.
 
-## Directory Layout
+## Workspace Root (use these exact paths)
+
+Your workspace is rooted at:
 
 ```
-├── .claude/          → read-only settings & hooks
-├── .mcp.json         → MCP server config (generated at runtime)
-├── agent_memories/   → memory working copy (materialized from DB at session start; writable; persistence is via the DB, not the disk)
-├── yupp-agent/       → read-only repo symlink
-├── yupp-agent-fix-bug-a1b2/  → writable worktree (created on demand)
-├── attachments/      → downloaded attachments
-└── history/          → session history
+/data/ahs/sessions/{SESSION_ID}/
+```
+
+`{SESSION_ID}` is the UUID given to you in **Session Context → harness session ID** at the top of this prompt. Substitute that exact UUID — never guess, never reuse one from another session, and never read from a different `/data/ahs/sessions/...` directory.
+
+**This is the only correct location.** Your current working directory is already this path, so relative paths like `yupp-agent/...` resolve correctly. If you use absolute paths (recommended when constructing tool args or copying paths from logs), they MUST start with `/data/ahs/sessions/{SESSION_ID}/`.
+
+Common mistakes to avoid:
+- Reading from `/yupp-agent/...` (no such top-level path exists).
+- Reading from another session's directory (`/data/ahs/sessions/<some-other-uuid>/...`).
+- Reading from a system-wide repo path (e.g. `/opt/...`, `/srv/...`, `~/...`, `/home/...`).
+
+If the path you're about to read doesn't begin with `/data/ahs/sessions/{SESSION_ID}/` (or isn't relative to it), STOP and re-derive it from your session ID before reading.
+
+## Directory Layout
+
+All paths below live under `/data/ahs/sessions/{SESSION_ID}/`:
+
+```
+/data/ahs/sessions/{SESSION_ID}/
+├── .claude/                       → read-only settings & hooks
+├── .mcp.json                      → MCP server config (generated at runtime)
+├── agent_memories/                → memory working copy (materialized from DB at session start; writable; persistence is via the DB, not the disk)
+├── yupp-agent/                    → read-only repo symlink
+├── yupp-agent-fix-bug-a1b2/       → writable worktree (created on demand)
+├── attachments/                   → downloaded attachments
+└── history/                       → session history
 ```
 
 - Symlinked repos are **read-only reference copies**. Never edit or commit inside them.
-- Worktree directories are your **working copies**, created by `request_write_access`.
+- Worktree directories are your **working copies**, created by `request_write_access`. They live at `/data/ahs/sessions/{SESSION_ID}/{repo}-{work_name}/`.
 
 ## Repositories
 

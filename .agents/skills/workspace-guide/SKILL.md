@@ -7,6 +7,20 @@ description: Full workspace and code-change workflow guide — worktrees, PRs, G
 
 This skill expands on the workspace summary already in your system prompt. See that for directory layout, repo descriptions, and critical rules.
 
+## Workspace Root (use these exact paths)
+
+Your workspace lives at:
+
+```
+/data/ahs/sessions/{SESSION_ID}/
+```
+
+`{SESSION_ID}` is the UUID given to you in **Session Context → harness session ID** at the top of this prompt. Substitute that exact UUID — never guess, never reuse one from another session, and never read from a different `/data/ahs/sessions/...` directory.
+
+When constructing absolute paths (e.g. for tool args or paths copied from logs), they MUST start with `/data/ahs/sessions/{SESSION_ID}/`. Relative paths like `yupp-agent/...` resolve correctly because your CWD is already set to that root.
+
+If the path you're about to read doesn't begin with `/data/ahs/sessions/{SESSION_ID}/` (or isn't relative to it), STOP and re-derive it from your session ID before reading.
+
 ## Agent Memory (`agent_memories/`)
 
 The `agent_memories/` directory in your sandbox is a **per-session materialized cache** from the database, **not** a persistent home for your notes. At session start, every memory visible to your (agent, user) pair is materialized fresh from the DB into:
