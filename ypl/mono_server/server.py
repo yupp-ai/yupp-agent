@@ -58,6 +58,7 @@ from ypl.mono_server.config import MonoConfig
 from ypl.mono_server.gateway_plugin import GatewayPlugin
 from ypl.mono_server.plugins.github import GitHubGatewayPlugin
 from ypl.mono_server.plugins.slack import SlackGatewayPlugin
+from ypl.mono_server.runtime import set_monolith_mode
 from ypl.mono_server.unified_mcp import agcouch_mcp_http_app, harness_mcp_http_app
 from ypl.structured_logger import get_logger
 
@@ -149,69 +150,81 @@ async def combined_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     config = MonoConfig()
 
-    # --- 1. AHS startup -------------------------------------------------------
-    # ahs_startup() wires orchestration callbacks, starts the warm process pool,
-    # launches the scheduler, and returns a state object that carries the harness
-    # MCP lifespan context manager (not yet entered).
-    ahs_state: AHSState = await ahs_startup(app, harness_mcp_http_app)
+    # Mark the process as monolith *before* AHS startup so that
+    # _recover_stale_sessions (which fires from inside ahs_startup) can use the
+    # in-process Slack courtesy path. The HTTP listener isn't open yet, so an
+    # HTTP loopback would silently 4xx/timeout.  Reset on exit so repeated
+    # lifespan entries (e.g. in tests) don't leak the flag across runs.
+    set_monolith_mode(True)
+    try:
+        # --- 1. AHS startup ---------------------------------------------------
+        # ahs_startup() wires orchestration callbacks, starts the warm process pool,
+        # launches the scheduler, and returns a state object that carries the harness
+        # MCP lifespan context manager (not yet entered).
+        ahs_state: AHSState = await ahs_startup(app, harness_mcp_http_app)
 
-    # --- 2. Harness MCP lifespan (FastMCP session manager) --------------------
-    # Enter via the unentered context manager stored in ahs_state so real
-    # exception info is forwarded to __aexit__ on a crash (same pattern as the
-    # standalone AHS server).
-    async with ahs_state._mcp_lifespan_ctx:
-        try:
-            # --- 3. Agcouch MCP lifespan --------------------------------
-            # Separate FastMCP instance with its own session manager. Built
-            # inline (not stored on ahs_state) because only the monolith
-            # runs both MCP apps in one process.
-            async with agcouch_mcp_http_app.lifespan(agcouch_mcp_http_app):
-                # --- 4. Yuppster batch-system init ---------------------
-                await mcp_startup()
-                try:
-                    # --- 5. Gateway plugins ----------------------------
-                    # Start each enabled plugin in registration order;
-                    # record (plugin, state) pairs so shutdown runs in
-                    # reverse order. Startup is wrapped so a failure in
-                    # plugin N cleanly tears down plugins 0..N-1 before
-                    # re-raising -- no leaked subsystems.
-                    plugins = discover_plugins(config)
-                    gateway_states: list[tuple[GatewayPlugin, Any]] = []
+        # --- 2. Harness MCP lifespan (FastMCP session manager) ---------------
+        # Enter via the unentered context manager stored in ahs_state so real
+        # exception info is forwarded to __aexit__ on a crash (same pattern as the
+        # standalone AHS server).
+        async with ahs_state._mcp_lifespan_ctx:
+            try:
+                # --- 3. Agcouch MCP lifespan --------------------------------
+                # Separate FastMCP instance with its own session manager. Built
+                # inline (not stored on ahs_state) because only the monolith
+                # runs both MCP apps in one process.
+                async with agcouch_mcp_http_app.lifespan(agcouch_mcp_http_app):
+                    # --- 4. Yuppster batch-system init ---------------------
+                    await mcp_startup()
                     try:
-                        for plugin in plugins:
-                            state = await plugin.startup()
-                            gateway_states.append((plugin, state))
-                    except Exception:
-                        # Clean up already-started plugins before propagating.
-                        for p, s in reversed(gateway_states):
-                            try:
-                                await p.shutdown(s)
-                            except Exception:
-                                logger.exception("Plugin %s shutdown failed during startup cleanup", p.name)
-                        raise
+                        # --- 5. Gateway plugins ----------------------------
+                        # Start each enabled plugin in registration order;
+                        # record (plugin, state) pairs so shutdown runs in
+                        # reverse order. Startup is wrapped so a failure in
+                        # plugin N cleanly tears down plugins 0..N-1 before
+                        # re-raising -- no leaked subsystems.
+                        plugins = discover_plugins(config)
+                        gateway_states: list[tuple[GatewayPlugin, Any]] = []
+                        try:
+                            for plugin in plugins:
+                                state = await plugin.startup()
+                                gateway_states.append((plugin, state))
+                        except Exception:
+                            # Clean up already-started plugins before propagating.
+                            for p, s in reversed(gateway_states):
+                                try:
+                                    await p.shutdown(s)
+                                except Exception:
+                                    logger.exception("Plugin %s shutdown failed during startup cleanup", p.name)
+                            raise
 
-                    try:
-                        yield
+                        try:
+                            yield
+                        finally:
+                            # Shutdown plugins in strict reverse startup order.
+                            # Each call is individually exception-isolated so a
+                            # failure in one plugin does not prevent others
+                            # from being torn down.
+                            for plugin, state in reversed(gateway_states):
+                                try:
+                                    await plugin.shutdown(state)
+                                except Exception:
+                                    logger.exception("Plugin %s shutdown failed", plugin.name)
                     finally:
-                        # Shutdown plugins in strict reverse startup order.
-                        # Each call is individually exception-isolated so a
-                        # failure in one plugin does not prevent others
-                        # from being torn down.
-                        for plugin, state in reversed(gateway_states):
-                            try:
-                                await plugin.shutdown(state)
-                            except Exception:
-                                logger.exception("Plugin %s shutdown failed", plugin.name)
-                finally:
-                    # Yuppster MCP teardown (batch-system flush, Sentry close,
-                    # GCP log flush). The finally block ensures mcp_shutdown
-                    # runs even if a plugin startup raises or the yield
-                    # block raises.
-                    await mcp_shutdown()
-        finally:
-            # AHS teardown -- inside both MCP lifespans so in-flight tasks that
-            # call MCP tools during scheduler drain can still complete.
-            await ahs_shutdown(ahs_state)
+                        # Yuppster MCP teardown (batch-system flush, Sentry close,
+                        # GCP log flush). The finally block ensures mcp_shutdown
+                        # runs even if a plugin startup raises or the yield
+                        # block raises.
+                        await mcp_shutdown()
+            finally:
+                # AHS teardown -- inside both MCP lifespans so in-flight tasks that
+                # call MCP tools during scheduler drain can still complete.
+                # Stays in monolith mode so send_slack_shutdown_courtesy uses the
+                # in-process Slack callback (the HTTP listener has already closed
+                # by the time this finally runs).
+                await ahs_shutdown(ahs_state)
+    finally:
+        set_monolith_mode(False)
 
 
 # ---------------------------------------------------------------------------
