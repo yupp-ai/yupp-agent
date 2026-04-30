@@ -47,6 +47,7 @@ from ypl.agent_harness_service.memory_store import (
 from ypl.db.agent_harness import AgentArtifactType
 from ypl.mcp_server.core import get_ahs_agent_name, get_ahs_session_id, get_requesting_user_id, mcp_server
 from ypl.mcp_server.tools.agent_artifacts import _resolve_caller_context
+from ypl.mcp_server.tools.artifact_notifier import notify_artifact_event
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -189,6 +190,15 @@ async def save_memory(
         artifact_id=str(artifact.agent_artifact_id),
         address=address,
         version=artifact.version,
+    )
+    # Fan out a Slack notification (fire-and-forget; never blocks the tool).
+    # Body content is never echoed; the notifier redacts user-scope subjects.
+    await notify_artifact_event(
+        artifact=artifact,
+        event="created" if create_new else "new_version",
+        agent_name=caller.agent_name,
+        session_id=session_id,
+        user_id=caller.user_id,
     )
 
     # Write-through: refresh the on-disk working copy in the calling
