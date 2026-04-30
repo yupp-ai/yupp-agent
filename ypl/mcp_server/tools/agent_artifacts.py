@@ -47,6 +47,7 @@ from ypl.agent_harness_service.artifact_store import (
 from ypl.backend.db import get_async_session, get_async_session_read_replica, retry_db
 from ypl.db.agent_harness import AgentArtifact, AgentArtifactType
 from ypl.mcp_server.core import get_ahs_agent_name, get_ahs_session_id, get_requesting_user_id, mcp_server
+from ypl.mcp_server.tools.artifact_notifier import notify_artifact_event
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -427,6 +428,16 @@ async def add_artifact(
             slug=artifact.named_slug,
             version=artifact.version,
         )
+        # Fan out a Slack notification (fire-and-forget; never blocks the tool).
+        # ``create_new_slug`` is False for "next version of an existing slug"
+        # — that's a content update, not a brand-new artifact.
+        await notify_artifact_event(
+            artifact=artifact,
+            event="created" if create_new_slug or artifact.version in (None, 1) else "new_version",
+            agent_name=get_ahs_agent_name(),
+            session_id=session_id,
+            user_id=user_id,
+        )
         return {
             "success": True,
             "artifact_id": str(artifact.agent_artifact_id),
@@ -464,6 +475,14 @@ async def add_artifact(
         artifact_type=artifact_type,
         title=title,
         session_linked=session_linked,
+    )
+    # Fan out a Slack notification (fire-and-forget; never blocks the tool).
+    await notify_artifact_event(
+        artifact=artifact,
+        event="created",
+        agent_name=get_ahs_agent_name(),
+        session_id=session_id,
+        user_id=user_id,
     )
 
     message = (
@@ -546,6 +565,18 @@ async def update_artifact(
         return {"success": False, "error": f"Artifact '{artifact_id}' not found or has been deleted."}
 
     logger.info("Artifact updated", artifact_id=artifact_id, agent_name=get_ahs_agent_name())
+    # Fan out a Slack notification (fire-and-forget; never blocks the tool).
+    # ``update_artifact`` only mutates metadata — emit "updated" so the feed
+    # distinguishes it from a brand-new artifact and from a new TEXT version.
+    # We pull session/user from headers directly (no DB round-trip): the
+    # notifier doesn't need the agent_id, only the agent_name.
+    await notify_artifact_event(
+        artifact=artifact,
+        event="updated",
+        agent_name=get_ahs_agent_name(),
+        session_id=_parse_session_id(get_ahs_session_id()),
+        user_id=get_requesting_user_id(),
+    )
 
     return {
         "success": True,
@@ -614,6 +645,14 @@ async def update_artifact_content(
         artifact_id=str(artifact.agent_artifact_id),
         slug=slug,
         version=artifact.version,
+    )
+    # Fan out a Slack notification (fire-and-forget; never blocks the tool).
+    await notify_artifact_event(
+        artifact=artifact,
+        event="new_version",
+        agent_name=get_ahs_agent_name(),
+        session_id=session_id,
+        user_id=user_id,
     )
 
     return {
