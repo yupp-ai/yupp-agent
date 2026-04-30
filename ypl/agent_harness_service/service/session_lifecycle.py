@@ -317,6 +317,133 @@ async def send_slack_restart_courtesy(slack_session_ids: list[uuid.UUID]) -> Non
     )
 
 
+# ---------------------------------------------------------------------------
+# Auto-resume preamble — synthetic context the LLM sees when a user message
+# arrives on a session whose previous turn was killed by a server restart.
+# Produced by ``build_resume_context``; consumed by ``send_message`` (which
+# prepends it to the runner input on the way to the executor) and
+# ``send_slack_restart_courtesy`` (for the user-facing "you were asking
+# about X" polish).
+# ---------------------------------------------------------------------------
+
+
+# How many characters of the prior user request and prior AGENT draft to keep
+# in the preamble.  The LLM already has full conversation history via
+# ``--resume``; the preamble is a hint, not a replacement for context.  We
+# cap aggressively so a long stream-of-consciousness draft doesn't push the
+# real user message out of the model's attention window.
+_RESUME_PREAMBLE_USER_EXCERPT_CHARS = 280
+_RESUME_PREAMBLE_DRAFT_EXCERPT_CHARS = 500
+
+
+def _truncate_for_preamble(text: str | None, limit: int) -> str:
+    """Trim ``text`` to ``limit`` chars, appending an ellipsis if truncated.
+
+    Returns ``""`` for ``None`` / empty inputs.  Single-line representation —
+    newlines are collapsed to spaces because the preamble lives inside a
+    bracketed system note where embedded line breaks would look ragged.
+    """
+    if not text:
+        return ""
+    flat = " ".join(text.split())
+    if len(flat) <= limit:
+        return flat
+    return flat[: max(0, limit - 1)].rstrip() + "…"
+
+
+async def build_resume_context(session_id: uuid.UUID) -> str:
+    """Build the preamble shown to the LLM when a user resumes an interrupted session.
+
+    Reads the most recent USER turn and the most recent AGENT message
+    (whether it's an IN_PROGRESS draft from the killed turn or a successful
+    response that completed before the interruption) and returns a single
+    string suitable for prepending to the next user message.
+
+    Returns ``""`` if there is no useful context to relay (e.g. the session
+    has no messages at all, or DB lookups fail) — callers should fall through
+    to the normal request path in that case rather than emitting an empty
+    "[SYSTEM] previous turn was interrupted by..." note with no detail.
+    """
+    try:
+        async with get_async_session() as db_session:
+            # Latest USER turn — the request the agent was working on when
+            # the previous instance died.
+            user_msg_result = await db_session.exec(
+                select(AgentSessionMessage)
+                .where(AgentSessionMessage.agent_session_id == session_id)
+                .where(col(AgentSessionMessage.role) == AgentSessionMessageRole.USER)
+                .order_by(
+                    col(AgentSessionMessage.turn_number).desc(),
+                    col(AgentSessionMessage.created_at).desc(),
+                )
+                .limit(1)
+            )
+            last_user_msg = user_msg_result.one_or_none()
+
+            # Latest AGENT message — typically the IN_PROGRESS draft written
+            # by the eager-persist path before the interruption, but we also
+            # accept a SUCCESS draft (a turn that completed before the
+            # restart but whose status flag never landed) so the preamble has
+            # *some* anchor text in either path.
+            agent_msg_result = await db_session.exec(
+                select(AgentSessionMessage)
+                .where(AgentSessionMessage.agent_session_id == session_id)
+                .where(col(AgentSessionMessage.role) == AgentSessionMessageRole.AGENT)
+                .order_by(
+                    col(AgentSessionMessage.turn_number).desc(),
+                    col(AgentSessionMessage.created_at).desc(),
+                )
+                .limit(1)
+            )
+            last_agent_msg = agent_msg_result.one_or_none()
+    except Exception:
+        logger.warning(
+            "build_resume_context: DB lookup failed — emitting empty preamble",
+            session_id=str(session_id),
+            exc_info=True,
+        )
+        return ""
+
+    user_excerpt = _truncate_for_preamble(
+        last_user_msg.content if last_user_msg else None,
+        _RESUME_PREAMBLE_USER_EXCERPT_CHARS,
+    )
+    draft_excerpt = ""
+    if last_agent_msg is not None:
+        # Distinguish the genuinely-interrupted IN_PROGRESS draft (the common
+        # case) from a SUCCESS reply that just hadn't been committed before
+        # the restart — the wording we produce for each is different.
+        is_draft = last_agent_msg.completion_status == AgentSessionMessageCompletionStatus.IN_PROGRESS
+        draft_excerpt = _truncate_for_preamble(
+            last_agent_msg.content,
+            _RESUME_PREAMBLE_DRAFT_EXCERPT_CHARS,
+        )
+    else:
+        is_draft = False
+
+    if not user_excerpt and not draft_excerpt:
+        # Nothing concrete to include — caller falls through to plain message.
+        return ""
+
+    parts: list[str] = [
+        "[SYSTEM] The previous turn on this session was interrupted by an "
+        "AHS server restart before you could finish responding.",
+    ]
+    if user_excerpt:
+        parts.append(f'You were responding to the user request: "{user_excerpt}".')
+    if draft_excerpt:
+        if is_draft:
+            parts.append(f'Your partial response so far was: "{draft_excerpt}".')
+        else:
+            parts.append(f'Your last completed response was: "{draft_excerpt}".')
+    parts.append(
+        "The user has now sent a follow-up message (below). "
+        "Either continue from where you left off or ask the user for "
+        "clarification if you need it. The user's new message follows."
+    )
+    return " ".join(parts) + "\n\n---\n\n"
+
+
 async def stop_all_command_handler_managers() -> None:
     """Stop all active BCH managers.
 
@@ -1678,6 +1805,17 @@ async def send_message(request: SessionMessageRequest) -> SessionMessageResponse
         if agent_session.status in (AgentSessionStatus.COMPLETED, AgentSessionStatus.STALE):
             agent_session.status = AgentSessionStatus.ACTIVE
 
+        # Snapshot + clear the auto-resume flag in the same transaction that
+        # records the USER message.  We keep the bool locally because the
+        # ORM object is detached after ``session.commit()`` and the rest of
+        # this function still needs to know whether to prepend the preamble.
+        # Resetting under the FOR UPDATE lock means a concurrent send_message
+        # cannot double-fire the preamble: the second send_message sees the
+        # cleared flag, even if it raced past the first one's read.
+        was_interrupted_by_restart = bool(getattr(agent_session, "was_interrupted_by_restart", False))
+        if was_interrupted_by_restart:
+            agent_session.was_interrupted_by_restart = False
+
         # Store user message (turn_number is safe under FOR UPDATE lock)
         turn_number = await _next_turn_number(session, agent_session.agent_session_id)
         user_msg = AgentSessionMessage(
@@ -1769,6 +1907,33 @@ async def send_message(request: SessionMessageRequest) -> SessionMessageResponse
     if request.attachments and agent_session.workspace:
         attachment_paths = await _download_attachments_to_workspace(request.attachments, agent_session.workspace)
         agent_message = _prepend_attachment_paths(agent_message, attachment_paths)
+
+    # If the previous turn was killed by an AHS restart, prepend a synthetic
+    # system note so the LLM knows it was mid-flight and can either continue
+    # from its draft or ask the user for clarification.  We DO NOT mutate the
+    # stored ``user_msg.content`` — only the runner input — so the persisted
+    # conversation history still shows what the user actually typed.
+    #
+    # The flag was already cleared above under the FOR UPDATE lock, so a
+    # concurrent send_message racing in here will not double-prepend.
+    if was_interrupted_by_restart:
+        try:
+            preamble = await build_resume_context(agent_session.agent_session_id)
+        except Exception:
+            logger.warning(
+                "build_resume_context raised — sending message without resume preamble",
+                session_id=str(agent_session.agent_session_id),
+                exc_info=True,
+            )
+            preamble = ""
+        if preamble:
+            agent_message = preamble + agent_message
+            logger.info(
+                "Prepended auto-resume preamble after restart-interrupted turn",
+                session_id=str(agent_session.agent_session_id),
+                turn_number=turn_number,
+                preamble_chars=len(preamble),
+            )
 
         # Fire-and-forget: persist downloaded attachments to GCS immediately
         # so they survive pod restarts before the agent turn completes.

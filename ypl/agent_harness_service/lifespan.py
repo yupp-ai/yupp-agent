@@ -323,7 +323,16 @@ async def _recover_stale_sessions() -> None:
                 # message was ever persisted, or a USER message was committed but the
                 # agent never responded.  Mark STALE so monitoring can detect
                 # genuine crash leftovers.
+                #
+                # Also flip ``was_interrupted_by_restart`` so the next inbound
+                # USER message picks up a "previous turn was interrupted"
+                # preamble (see ``build_resume_context`` /
+                # ``send_message``).  We deliberately set this only on the
+                # mid-turn-interrupted branch — sessions that finished cleanly
+                # but were never marked COMPLETED, and sessions auto-staled by
+                # the 6-hour idle sweep, must not get the preamble.
                 s.status = AgentSessionStatus.STALE
+                s.was_interrupted_by_restart = True
                 stale_count += 1
             else:
                 # Session's last turn reached a terminal state (SUCCESS, FAILED, or ABORTED)
@@ -340,6 +349,12 @@ async def _recover_stale_sessions() -> None:
         total=len(active_sessions),
         completed=completed_count,
         stale=stale_count,
+        # ``stale_count`` and ``interrupted_count`` are equal today (every
+        # mid-turn-interrupted session is flagged), but logging them
+        # separately leaves room for future classifier branches that mark
+        # sessions STALE without flipping the resume flag (e.g. a future
+        # "abandoned-but-not-crashed" path).
+        interrupted=stale_count,
         slack_in_scope=len(all_slack_session_ids),
     )
 
@@ -359,6 +374,13 @@ async def _run_auto_stale_check() -> None:
 
     Queries all top-level ACTIVE sessions whose modified_at is older than
     AHS_SESSION_STALE_TIMEOUT_HOURS and transitions them to STALE.
+
+    Note: this path intentionally leaves ``was_interrupted_by_restart``
+    untouched.  A 6-hour idle window is not a crash — telling the user
+    "the previous turn was interrupted by a server restart" the next time
+    they ping a long-abandoned thread would be misleading.  Only
+    ``_recover_stale_sessions`` (the SIGTERM/crash recovery path) flips
+    that flag.
     """
     stale_threshold = datetime.now(UTC) - timedelta(hours=AHS_SESSION_STALE_TIMEOUT_HOURS)
 
