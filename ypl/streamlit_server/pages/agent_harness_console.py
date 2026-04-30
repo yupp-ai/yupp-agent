@@ -1,12 +1,15 @@
-"""Agent Harness Console — browse agents, sessions, messages, and feedbacks."""
+"""Agent Harness Console — browse sessions and messages.
+
+Agent definitions live in the *Agents* app and feedback signals in the
+*Feedbacks* app. This page focuses solely on session browsing and the
+chat-thread detail view.
+"""
 
 from __future__ import annotations
 import html
-import json
 import os
 import uuid
 from datetime import UTC, date, datetime, timedelta
-from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -21,8 +24,6 @@ from ypl.db.agent_harness import (
     Agent,
     AgentArtifact,
     AgentArtifactType,
-    AgentExecutorType,
-    AgentFeedback,
     AgentSession,
     AgentSessionMessage,
     AgentSessionTrigger,
@@ -134,41 +135,6 @@ async def fetch_all_agents() -> list[Agent]:
     async with get_async_session_read_replica() as session:
         result = await session.exec(select(Agent).order_by(col(Agent.name)))
         return list(result.all())
-
-
-@retry_db
-async def fetch_agent_stats() -> dict[uuid.UUID, dict[str, Any]]:
-    """Fetch per-agent aggregate stats: total sessions, total messages, last active."""
-    async with get_async_session_read_replica() as session:
-        # Total sessions per agent
-        sess_q = select(
-            col(AgentSession.agent_id),
-            func.count(col(AgentSession.agent_session_id)).label("total_sessions"),
-        ).group_by(col(AgentSession.agent_id))
-        sess_result = await session.exec(sess_q)
-        sess_rows = list(sess_result.all())
-
-        # Total messages + last active per agent
-        msg_q = (
-            select(
-                col(AgentSession.agent_id),
-                func.count(col(AgentSessionMessage.agent_session_message_id)).label("total_messages"),
-                func.max(col(AgentSessionMessage.created_at)).label("last_active"),
-            )
-            .join(AgentSession, col(AgentSessionMessage.agent_session_id) == col(AgentSession.agent_session_id))
-            .group_by(col(AgentSession.agent_id))
-        )
-        msg_result = await session.exec(msg_q)
-        msg_rows = list(msg_result.all())
-
-    stats: dict[uuid.UUID, dict[str, Any]] = {}
-    for agent_id, total_sessions in sess_rows:
-        stats.setdefault(agent_id, {})["total_sessions"] = total_sessions
-    for agent_id, total_messages, last_active in msg_rows:
-        stats.setdefault(agent_id, {})["total_messages"] = total_messages
-        stats.setdefault(agent_id, {})["last_active"] = last_active
-
-    return stats
 
 
 @retry_db
@@ -385,35 +351,6 @@ async def fetch_child_sessions(parent_ids: list[uuid.UUID]) -> list[dict[str, An
                 "slack_agent_name": ctx.get("slack_agent_name"),
                 "parent_session_id": str(s.parent_session_id) if s.parent_session_id else None,
                 "session_id": str(s.agent_session_id),
-            }
-        )
-    return out
-
-
-@retry_db
-async def fetch_feedbacks(limit: int = 100) -> list[dict[str, Any]]:
-    async with get_async_session_read_replica() as session:
-        query = (
-            select(AgentFeedback)
-            .options(
-                selectinload(AgentFeedback.message),  # type: ignore[arg-type]
-                selectinload(AgentFeedback.session),  # type: ignore[arg-type]
-            )
-            .order_by(col(AgentFeedback.created_at).desc())
-            .limit(limit)
-        )
-        result = await session.exec(query)
-        rows = list(result.all())
-
-    out: list[dict[str, Any]] = []
-    for fb in rows:
-        msg_content = fb.message.content[:200] if fb.message and fb.message.content else None
-        out.append(
-            {
-                "feedback": fb,
-                "session_id": str(fb.agent_session_id),
-                "message_id": str(fb.agent_session_message_id) if fb.agent_session_message_id else None,
-                "message_preview": msg_content,
             }
         )
     return out
@@ -1218,25 +1155,7 @@ def _render_chat_thread(agent_session: AgentSession) -> None:
         _render_artifacts_table(_artifacts or [])
 
 
-# ── Agent config from repo ────────────────────────────────────────────────────
-
-_AGENT_CONFIGS_DIR = Path(__file__).resolve().parents[2] / "agent_harness_service" / "deploy" / "agent_configs"
-
-
-@st.cache_data(ttl=300, show_spinner=False)
-def _read_repo_agent_config(agent_name: str) -> dict[str, Any] | None:
-    """Read config.json from the repo for a given agent name. Returns None if not found."""
-    config_path = _AGENT_CONFIGS_DIR / agent_name / "config.json"
-    if not config_path.is_file():
-        return None
-    try:
-        return json.loads(config_path.read_text())  # type: ignore[no-any-return]
-    except Exception:
-        logger.warning("Failed to read repo agent config", agent_name=agent_name, exc_info=True)
-        return None
-
-
-# ── List-view render helper (used in Sessions tab) ──────────────────────────
+# ── List-view render helper ─────────────────────────────────────────────────
 
 
 def _render_session(data: dict[str, Any], indent_level: int = 0) -> None:
@@ -1354,327 +1273,135 @@ agent_names = [a.name for a in agents]
 
 preselect_agent = qp.get("agent", None)
 
-tab_labels = ["💬 Sessions", "🔮 Agents", "⭐ Feedbacks"]
-tabs = st.tabs(tab_labels)
+# ── Sessions ────────────────────────────────────────────────────────────────
 
-# ── Tab 1: Sessions ─────────────────────────────────────────────────────────
-
-with tabs[0]:
-    # Load distinct slack agent names for the filter dropdown
-    if "ahs_slack_agent_names" not in st.session_state:
-        with st.spinner("Loading slack agents…"):
-            st.session_state.ahs_slack_agent_names = run_coroutine_in_lit_worker(
-                fetch_distinct_slack_agent_names(), timeout=30
-            )
-    slack_agent_names: list[str] = st.session_state.ahs_slack_agent_names
-
-    filter_cols = st.columns([2, 1, 1, 2, 1, 1])
-
-    with filter_cols[0]:
-        agent_options = ["(all)"] + agent_names
-        default_idx = 0
-        if preselect_agent and preselect_agent in agent_names:
-            default_idx = agent_names.index(preselect_agent) + 1
-        selected_agent = st.selectbox("Agent", agent_options, index=default_idx, key="sess_agent")
-
-    with filter_cols[1]:
-        trigger_options = ["(all)"] + [t.value for t in AgentSessionTrigger]
-        selected_trigger = st.selectbox("Trigger", trigger_options, key="sess_trigger")
-
-    with filter_cols[2]:
-        slack_agent_options = ["(all)"] + slack_agent_names
-        selected_slack_agent = st.selectbox("Slack Agent", slack_agent_options, key="sess_slack_agent")
-
-    with filter_cols[3]:
-        session_id_input = st.text_input("Session ID", key="sess_id_input")
-
-    with filter_cols[4]:
-        sort_option = st.selectbox("Sort by", ["last_message", "created", "message_count"], key="sess_sort")
-
-    with filter_cols[5]:
-        limit_options = [20, 50, 100, 200, 500]
-        limit = st.selectbox("Limit", limit_options, index=1, key="sess_limit")
-
-    # Date range filter
-    date_cols = st.columns([1, 1, 4])
-    with date_cols[0]:
-        date_from = st.date_input("From date", value=None, key="sess_date_from")
-    with date_cols[1]:
-        date_to = st.date_input("To date", value=None, key="sess_date_to")
-
-    agent_filter = None if selected_agent == "(all)" else selected_agent
-    trigger_filter = None if selected_trigger == "(all)" else selected_trigger
-    slack_agent_filter = None if selected_slack_agent == "(all)" else selected_slack_agent
-
-    st.caption(f"Viewing all sessions (admin: {_current_username or 'local dev'})")
-
-    with st.spinner("Loading sessions…"):
-        try:
-            session_data = run_coroutine_in_lit_worker(
-                fetch_sessions(
-                    agent_name=agent_filter,
-                    session_id_str=session_id_input or None,
-                    sort_by=sort_option,
-                    limit=int(limit),
-                    date_from=date_from,
-                    date_to=date_to,
-                    trigger=trigger_filter,
-                    slack_agent_name=slack_agent_filter,
-                ),
-                timeout=60,
-            )
-        except Exception as e:
-            st.error(f"Error loading sessions: {e}")
-            session_data = []
-
-    st.caption(f"{len(session_data)} session(s) loaded")
-
-    # Group fetched sessions: those with a parent already in the result are children,
-    # the rest are top-level roots.
-    top_level: list[dict[str, Any]] = []
-    children_by_parent: dict[str, list[dict[str, Any]]] = {}
-    session_ids_in_result = {sd["session_id"] for sd in session_data}
-
-    for sd in session_data:
-        parent_id = sd.get("parent_session_id")
-        if parent_id and parent_id in session_ids_in_result:
-            children_by_parent.setdefault(parent_id, []).append(sd)
-        else:
-            top_level.append(sd)
-
-    # Batch-fetch all children level by level to avoid N+1 queries.
-    # Start with top-level IDs, fetch their children in one query, index them,
-    # then repeat for the next level.
-    all_children: dict[str, list[dict[str, Any]]] = dict(children_by_parent)
-    max_depth = 5
-    current_level_ids = [sd["session_id"] for sd in top_level]
-
-    for _depth in range(max_depth):
-        # Always fetch children for all current-level IDs (dedup handles duplicates)
-        ids_to_fetch = current_level_ids
-        if not ids_to_fetch:
-            break
-
-        try:
-            db_children = run_coroutine_in_lit_worker(
-                fetch_child_sessions([uuid.UUID(sid) for sid in ids_to_fetch]), timeout=30
-            )
-            for dc in db_children:
-                parent_id = dc.get("parent_session_id")
-                if parent_id:
-                    all_children.setdefault(parent_id, [])
-                    if not any(c["session_id"] == dc["session_id"] for c in all_children[parent_id]):
-                        all_children[parent_id].append(dc)
-        except Exception:
-            logger.warning("Failed to fetch child sessions for level", depth=_depth, exc_info=True)
-
-        # Next level: all children we just discovered
-        next_ids: list[str] = []
-        for sid in current_level_ids:
-            next_ids.extend(c["session_id"] for c in all_children.get(sid, []))
-        if not next_ids:
-            break
-        current_level_ids = next_ids
-
-    def _render_session_tree(
-        sd: dict[str, Any],
-        level: int = 0,
-    ) -> None:
-        """Render a session and its pre-fetched children recursively."""
-        _render_session(sd, indent_level=level)
-        for child in all_children.get(sd["session_id"], []):
-            _render_session_tree(child, level + 1)
-
-    for sd in top_level:
-        _render_session_tree(sd)
-        st.divider()
-
-# ── Tab 2: Agents ────────────────────────────────────────────────────────────
-
-with tabs[1]:
-    if not agents:
-        st.info("No agents found.")
-    else:
-        # Filters
-        agent_filter_cols = st.columns([1.5, 2, 3])
-        with agent_filter_cols[0]:
-            exec_type_options = ["(all)"] + [t.value for t in AgentExecutorType]
-            selected_exec_type = st.selectbox("Executor type", exec_type_options, key="agent_exec_type")
-        with agent_filter_cols[1]:
-            agent_name_options = ["(all)"] + [a.name for a in agents]
-            selected_agent_name = st.selectbox("Agent", agent_name_options, key="agent_name_filter")
-        with agent_filter_cols[2]:
-            keyword_input = st.text_input(
-                "Keyword", key="agent_keyword", placeholder="Search name, display name, description…"
-            )
-
-        keyword_lower = keyword_input.strip().lower() if keyword_input else ""
-
-        # Fetch aggregate stats
-        with st.spinner("Loading agent stats…"):
-            try:
-                agent_stats = run_coroutine_in_lit_worker(fetch_agent_stats(), timeout=30)
-            except Exception:
-                logger.warning("Failed to fetch agent stats", exc_info=True)
-                agent_stats = {}
-
-        filtered_agents = agents
-        if selected_exec_type != "(all)":
-            filtered_agents = [
-                a for a in filtered_agents if a.executor_type and a.executor_type.value == selected_exec_type
-            ]
-        if selected_agent_name != "(all)":
-            filtered_agents = [a for a in filtered_agents if a.name == selected_agent_name]
-        if keyword_lower:
-            filtered_agents = [
-                a
-                for a in filtered_agents
-                if keyword_lower in (a.display_name or "").lower()
-                or keyword_lower in (a.name or "").lower()
-                or keyword_lower in (a.description or "").lower()
-            ]
-
-        st.caption(f"{len(filtered_agents)} agent(s)")
-
-        # Header row
-        _BLUE_BOLD = 'style="color:#1976d2;font-weight:bold;font-size:0.85em;"'
-        h_exec, h_name, h_desc, h_tools, h_subagents = st.columns([1.5, 1.5, 2, 2.5, 2.5])
-        with h_exec:
-            st.markdown(f"<span {_BLUE_BOLD}>Executor</span>", unsafe_allow_html=True)
-        with h_name:
-            st.markdown(f"<span {_BLUE_BOLD}>Agent</span>", unsafe_allow_html=True)
-        with h_desc:
-            st.markdown(f"<span {_BLUE_BOLD}>Description</span>", unsafe_allow_html=True)
-        with h_tools:
-            st.markdown(f"<span {_BLUE_BOLD}>Tool Permissions</span>", unsafe_allow_html=True)
-        with h_subagents:
-            st.markdown(f"<span {_BLUE_BOLD}>Allowed Subagents</span>", unsafe_allow_html=True)
-        st.divider()
-
-        for a in filtered_agents:
-            stats = agent_stats.get(a.agent_id, {})
-            total_sess = stats.get("total_sessions", 0)
-            total_msgs = stats.get("total_messages", 0)
-            last_active = stats.get("last_active")
-            last_active_str = f"{_to_local(last_active)} ({_time_ago(last_active)})" if last_active else "—"
-
-            db_config = a.config
-            repo_config = _read_repo_agent_config(a.name)
-            config = db_config if db_config is not None else repo_config
-            config_source = "DB" if db_config is not None else "repo"
-
-            # Prefer executor info from config over DB fields
-            exec_config = (config or {}).get("executor_config", {})
-            executor_type = exec_config.get("type") or (a.executor_type.value if a.executor_type else "—")
-            executor_model = exec_config.get("harness") or exec_config.get("model") or a.executor_model or "—"
-
-            # Extract tools/subagents from config, keep the rest
-            tool_permissions: dict[str, str] = {}
-            allowed_subagents: list[str] = []
-            rest_config: dict[str, Any] = {}
-            if config:
-                tool_permissions = config.get("tool_permissions", {})
-                allowed_subagents = config.get("allowed_subagents", [])
-                rest_config = {k: v for k, v in config.items() if k not in ("tool_permissions", "allowed_subagents")}
-
-            desc = a.description or "—"
-
-            # Detect DB <> repo config conflicts
-            conflicts: list[str] = []
-            if repo_config:
-                repo_exec = repo_config.get("executor_config", {})
-                repo_type = repo_exec.get("type", "")
-                repo_model = repo_exec.get("harness") or repo_exec.get("model") or ""
-                db_type = a.executor_type.value.lower() if a.executor_type else ""
-                if repo_type and db_type and repo_type.lower() != db_type:
-                    conflicts.append(f"executor_type: DB=`{db_type}` vs repo=`{repo_type}`")
-                if repo_model and a.executor_model and repo_model != a.executor_model:
-                    conflicts.append(f"executor_model: DB=`{a.executor_model}` vs repo=`{repo_model}`")
-                repo_display = repo_config.get("display_name", "")
-                if repo_display and a.display_name and repo_display != a.display_name:
-                    conflicts.append(f"display_name: DB=`{a.display_name}` vs repo=`{repo_display}`")
-                repo_desc = repo_config.get("description", "")
-                if repo_desc and a.description and repo_desc != a.description:
-                    conflicts.append("description differs")
-
-            # Row 1: executor type+model, name, description, tools, subagents
-            r1_exec, r1_name, r1_desc, r1_tools, r1_subagents = st.columns([1.5, 1.5, 2, 2.5, 2.5])
-            with r1_exec:
-                st.markdown(f"`{executor_type}`<br>`{executor_model}`", unsafe_allow_html=True)
-            with r1_name:
-                st.markdown(
-                    f'<span style="font-size:1.2em;font-weight:bold;">{html.escape(a.display_name)}</span>'
-                    f"<br>`{html.escape(a.name)}`",
-                    unsafe_allow_html=True,
-                )
-            with r1_desc:
-                st.caption(desc)
-            with r1_tools:
-                if tool_permissions:
-                    perms_str = ", ".join(f"`{k}`:`{v}`" for k, v in tool_permissions.items())
-                else:
-                    perms_str = "—"
-                st.markdown(perms_str)
-            with r1_subagents:
-                subs_str = ", ".join(f"`{sub}`" for sub in allowed_subagents) if allowed_subagents else "—"
-                st.markdown(subs_str)
-
-            # Row 2: stats
-            st.caption(f"{total_sess} sessions · {total_msgs} messages · last active {last_active_str}")
-
-            # DB <> repo conflict warning
-            if conflicts:
-                st.warning(f"DB/repo mismatch: {' · '.join(conflicts)}")
-
-            # Row 3: remaining config collapsible
-            if rest_config:
-                with st.expander(f"Full config ({config_source})", expanded=False):
-                    st.json(rest_config)
-            st.divider()
-
-# ── Tab 3: Feedbacks ─────────────────────────────────────────────────────────
-
-with tabs[2]:
-    fb_limit = st.number_input("Limit", min_value=1, max_value=500, value=100, key="fb_limit")
-
-    with st.spinner("Loading feedbacks…"):
-        try:
-            feedbacks = run_coroutine_in_lit_worker(fetch_feedbacks(limit=int(fb_limit)), timeout=60)
-        except Exception as e:
-            st.error(f"Error loading feedbacks: {e}")
-            feedbacks = []
-
-    st.caption(f"{len(feedbacks)} feedback(s) loaded")
-
-    for fb_data in feedbacks:
-        fb: AgentFeedback = fb_data["feedback"]
-        rating_str = fb.rating.value if fb.rating else "—"
-        rating_color = "#388e3c" if rating_str == "POSITIVE" else "#d32f2f" if rating_str == "NEGATIVE" else "#999"
-        rating_badge = (
-            f'<span style="background:{rating_color};color:#fff;padding:2px 8px;'
-            f'border-radius:10px;font-size:0.85em;">{rating_str}</span>'
+# Load distinct slack agent names for the filter dropdown
+if "ahs_slack_agent_names" not in st.session_state:
+    with st.spinner("Loading slack agents…"):
+        st.session_state.ahs_slack_agent_names = run_coroutine_in_lit_worker(
+            fetch_distinct_slack_agent_names(), timeout=30
         )
+slack_agent_names: list[str] = st.session_state.ahs_slack_agent_names
 
-        cols = st.columns([1, 2, 2, 2, 1])
-        with cols[0]:
-            st.markdown(rating_badge, unsafe_allow_html=True)
-        with cols[1]:
-            if st.button(
-                f"Session {fb_data['session_id'][:8]}…",
-                key=f"fb_sess_{fb.agent_feedback_id}",
-            ):
-                st.query_params["session_id"] = fb_data["session_id"]
-                st.rerun()
-        with cols[2]:
-            st.markdown(fb.comment or "—")
-        with cols[3]:
-            if fb_data["message_preview"]:
-                st.caption(fb_data["message_preview"][:120])
-            else:
-                st.caption("(session-level)")
-        with cols[4]:
-            st.caption(_to_local(fb.created_at))
+filter_cols = st.columns([2, 1, 1, 2, 1, 1])
 
-        if fb.structured:
-            with st.expander("Structured data", expanded=False):
-                st.json(fb.structured)
+with filter_cols[0]:
+    agent_options = ["(all)"] + agent_names
+    default_idx = 0
+    if preselect_agent and preselect_agent in agent_names:
+        default_idx = agent_names.index(preselect_agent) + 1
+    selected_agent = st.selectbox("Agent", agent_options, index=default_idx, key="sess_agent")
+
+with filter_cols[1]:
+    trigger_options = ["(all)"] + [t.value for t in AgentSessionTrigger]
+    selected_trigger = st.selectbox("Trigger", trigger_options, key="sess_trigger")
+
+with filter_cols[2]:
+    slack_agent_options = ["(all)"] + slack_agent_names
+    selected_slack_agent = st.selectbox("Slack Agent", slack_agent_options, key="sess_slack_agent")
+
+with filter_cols[3]:
+    session_id_input = st.text_input("Session ID", key="sess_id_input")
+
+with filter_cols[4]:
+    sort_option = st.selectbox("Sort by", ["last_message", "created", "message_count"], key="sess_sort")
+
+with filter_cols[5]:
+    limit_options = [20, 50, 100, 200, 500]
+    limit = st.selectbox("Limit", limit_options, index=1, key="sess_limit")
+
+# Date range filter
+date_cols = st.columns([1, 1, 4])
+with date_cols[0]:
+    date_from = st.date_input("From date", value=None, key="sess_date_from")
+with date_cols[1]:
+    date_to = st.date_input("To date", value=None, key="sess_date_to")
+
+agent_filter = None if selected_agent == "(all)" else selected_agent
+trigger_filter = None if selected_trigger == "(all)" else selected_trigger
+slack_agent_filter = None if selected_slack_agent == "(all)" else selected_slack_agent
+
+st.caption(f"Viewing all sessions (admin: {_current_username or 'local dev'})")
+
+with st.spinner("Loading sessions…"):
+    try:
+        session_data = run_coroutine_in_lit_worker(
+            fetch_sessions(
+                agent_name=agent_filter,
+                session_id_str=session_id_input or None,
+                sort_by=sort_option,
+                limit=int(limit),
+                date_from=date_from,
+                date_to=date_to,
+                trigger=trigger_filter,
+                slack_agent_name=slack_agent_filter,
+            ),
+            timeout=60,
+        )
+    except Exception as e:
+        st.error(f"Error loading sessions: {e}")
+        session_data = []
+
+st.caption(f"{len(session_data)} session(s) loaded")
+
+# Group fetched sessions: those with a parent already in the result are children,
+# the rest are top-level roots.
+top_level: list[dict[str, Any]] = []
+children_by_parent: dict[str, list[dict[str, Any]]] = {}
+session_ids_in_result = {sd["session_id"] for sd in session_data}
+
+for sd in session_data:
+    parent_id = sd.get("parent_session_id")
+    if parent_id and parent_id in session_ids_in_result:
+        children_by_parent.setdefault(parent_id, []).append(sd)
+    else:
+        top_level.append(sd)
+
+# Batch-fetch all children level by level to avoid N+1 queries.
+# Start with top-level IDs, fetch their children in one query, index them,
+# then repeat for the next level.
+all_children: dict[str, list[dict[str, Any]]] = dict(children_by_parent)
+max_depth = 5
+current_level_ids = [sd["session_id"] for sd in top_level]
+
+for _depth in range(max_depth):
+    # Always fetch children for all current-level IDs (dedup handles duplicates)
+    ids_to_fetch = current_level_ids
+    if not ids_to_fetch:
+        break
+
+    try:
+        db_children = run_coroutine_in_lit_worker(
+            fetch_child_sessions([uuid.UUID(sid) for sid in ids_to_fetch]), timeout=30
+        )
+        for dc in db_children:
+            parent_id = dc.get("parent_session_id")
+            if parent_id:
+                all_children.setdefault(parent_id, [])
+                if not any(c["session_id"] == dc["session_id"] for c in all_children[parent_id]):
+                    all_children[parent_id].append(dc)
+    except Exception:
+        logger.warning("Failed to fetch child sessions for level", depth=_depth, exc_info=True)
+
+    # Next level: all children we just discovered
+    next_ids: list[str] = []
+    for sid in current_level_ids:
+        next_ids.extend(c["session_id"] for c in all_children.get(sid, []))
+    if not next_ids:
+        break
+    current_level_ids = next_ids
+
+
+def _render_session_tree(
+    sd: dict[str, Any],
+    level: int = 0,
+) -> None:
+    """Render a session and its pre-fetched children recursively."""
+    _render_session(sd, indent_level=level)
+    for child in all_children.get(sd["session_id"], []):
+        _render_session_tree(child, level + 1)
+
+
+for sd in top_level:
+    _render_session_tree(sd)
+    st.divider()
