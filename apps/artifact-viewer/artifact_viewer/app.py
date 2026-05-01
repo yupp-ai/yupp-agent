@@ -40,8 +40,10 @@ from artifact_viewer.templating import templates
 
 _STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
-# Default page size for the listing page; matches the upstream AHS limit.
-HOME_PAGE_SIZE = 20
+# Default page size for the listing page. The upstream AHS endpoint caps
+# results at 200, so 50 keeps a comfortable margin while showing enough
+# recent work to scan without paging.
+HOME_PAGE_SIZE = 50
 
 # Type filter options shown on the home page. Matches AgentArtifactType enum
 # values upstream — kept duplicated here so the viewer doesn't need to import
@@ -119,7 +121,7 @@ async def home(request: Request) -> Response:
 
     Filter / paging state lives in the URL so links are bookmarkable and the
     Prev/Next anchors round-trip every active filter. Default page size is
-    :data:`HOME_PAGE_SIZE` (20); the upper bound matches the AHS endpoint's
+    :data:`HOME_PAGE_SIZE` (50); the upper bound matches the AHS endpoint's
     cap so a user can't request a giant page accidentally.
 
     Two filters have non-trivial defaults so the landing view is useful
