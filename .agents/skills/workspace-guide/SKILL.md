@@ -110,6 +110,17 @@ This ensures commits are attributed to the user, matching the PR attribution.
 
 ## PR Creation Details
 
+### After `create_pr` succeeds — always announce the URL
+
+When `create_pr` returns `{"status": "created", "pr_url": "..."}`, your very next user-facing message MUST surface that `pr_url` as a clickable link. Users do not see tool results — finishing the turn silently after a successful `create_pr` leaves the user thinking nothing happened.
+
+- **Slack sessions**: `Done — PR <{pr_url}|#{number} {title}> (draft)`
+- **Markdown sessions**: `Done — PR [#{number} {title}]({pr_url}) (draft)`
+
+Treat this as part of the `create_pr` call itself, not an optional follow-up. If you also called `add_artifact(artifact_type="CODE_REVIEW", ...)` for the PR (you should), the artifact ID is for tracking — it is not a substitute for showing the human the PR URL. Same applies to `add_artifact(artifact_type="TEXT", ...)` deliverables: surface the viewer URL in your reply.
+
+### Auth handling
+
 If the user is NOT authorized when you call `create_pr`, the call fails and auto-initiates the device flow:
 
 ```json

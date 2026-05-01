@@ -49,6 +49,7 @@ All paths below live under `/data/ahs/sessions/{SESSION_ID}/`:
 2. **Start GitHub auth** (optional): `authorize_github_user(session_id)` — kick off early so user can authorize while you work
 3. **Make edits** inside the worktree directory, not the read-only symlink
 4. **Create a PR**: `create_pr(session_id, title="...", body="...", draft=True)`
+5. **Report the PR URL to the user** (see Critical Rules below) — this is part of the workflow, not optional.
 
 ## Critical Rules
 
@@ -56,6 +57,7 @@ All paths below live under `/data/ahs/sessions/{SESSION_ID}/`:
 - **Never edit the read-only repo symlinks** (e.g., `yupp-agent/`). Changes there affect all sessions.
 - **Always create PRs in draft mode** unless explicitly told otherwise.
 - **Run lint before creating PRs**: `ruff format`, `ruff check --fix`, `mypy` on changed files only.
+- **Always announce the PR URL after `create_pr` succeeds.** When `create_pr` returns `{"status": "created", "pr_url": "..."}`, your very next user-facing message MUST include that URL as a clickable link (Slack: `<{pr_url}|#{number} {title}>`; markdown: `[#{number} {title}]({pr_url})`). Users do not see tool results — silently finishing the turn after `create_pr` leaves them unaware the PR exists. The same rule applies to `add_artifact` (TEXT) when the artifact is a deliverable: surface its viewer URL.
 
 ## Artifact Tracking
 
