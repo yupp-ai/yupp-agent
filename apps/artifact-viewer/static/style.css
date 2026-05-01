@@ -117,6 +117,15 @@ pre.plain { white-space: pre-wrap; }
 
 .main.narrow { max-width: 560px; }
 
+/* Artifact viewer width modes. Toggled by JS on the <html> element so the
+   choice (read from localStorage) applies before the body renders and
+   doesn't flash. "medium" is the default — no class needed, .main keeps
+   its 1100px cap. "narrow" trims to a comfortable reading column;
+   "wide" releases the cap entirely so the article uses the full
+   viewport (with .main's existing horizontal padding). */
+html.artifact-width-narrow .main { max-width: 760px; }
+html.artifact-width-wide .main { max-width: none; }
+
 h1 { font-size: 22px; margin: 0 0 16px; }
 h2 { font-size: 17px; margin: 24px 0 10px; }
 h3 { font-size: 14px; margin: 20px 0 8px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.5px; }
@@ -169,6 +178,37 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
 }
 .time-toggle-btn:hover { background: var(--bg-alt); }
 .time-toggle-btn.is-active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
+/* --- Width toggle (artifact viewer page) ---
+   Right-aligned strip just below the artifact header. Buttons share the
+   pill / accent-on-active style with the time toggle for a consistent
+   look across the app. */
+.width-toggle {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 6px;
+    margin: -8px 0 16px;
+    font-size: 12px;
+}
+.width-toggle-label {
+    margin-right: 4px;
+}
+.width-toggle-btn {
+    padding: 2px 10px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--bg);
+    color: var(--fg);
+    font: inherit;
+    cursor: pointer;
+}
+.width-toggle-btn:hover { background: var(--bg-alt); }
+.width-toggle-btn.is-active {
     background: var(--accent);
     border-color: var(--accent);
     color: #fff;

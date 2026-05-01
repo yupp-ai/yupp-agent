@@ -1,5 +1,21 @@
 {% extends "base.html" %}
 {% block title %}{{ meta.title or 'Artifact' }} · Artifact Viewer{% endblock %}
+{#- Apply the saved width preference before the body renders so the page
+    doesn't briefly flash at the default "medium" width before snapping
+    to the chosen size. Only ``narrow`` / ``wide`` write a class —
+    ``medium`` is the unstyled default. -#}
+{% block head_extra %}
+<script>
+(function () {
+    try {
+        var w = window.localStorage.getItem('artifactViewerWidth');
+        if (w === 'narrow' || w === 'wide') {
+            document.documentElement.classList.add('artifact-width-' + w);
+        }
+    } catch (_) { /* ignore */ }
+})();
+</script>
+{% endblock %}
 {% block content %}
 <article class="artifact">
     <header class="artifact-header">
@@ -37,6 +53,17 @@
         </dl>
     </header>
 
+    {#- Page-width control. JS toggles a class on <html> and persists the
+        choice in localStorage; the head_extra script above re-applies it
+        on subsequent page loads to avoid a width flash. The default
+        "medium" matches the existing 1100px max-width. -#}
+    <div class="width-toggle" role="group" aria-label="Page width">
+        <span class="width-toggle-label muted small">Width</span>
+        <button type="button" class="width-toggle-btn" data-width="narrow" aria-pressed="false">Narrow</button>
+        <button type="button" class="width-toggle-btn is-active" data-width="medium" aria-pressed="true">Medium</button>
+        <button type="button" class="width-toggle-btn" data-width="wide" aria-pressed="false">Wide</button>
+    </div>
+
     <section class="artifact-body artifact-body-{{ display_mode }}">
         {{ body_html|safe }}
     </section>
@@ -49,4 +76,41 @@
         <a href="/artifacts/{{ meta.artifact_id }}/download" rel="nofollow">Download</a>
     </footer>
 </article>
+<script>
+(function () {
+    var STORAGE_KEY = 'artifactViewerWidth';
+    var WIDTHS = ['narrow', 'medium', 'wide'];
+    function apply(width) {
+        var html = document.documentElement;
+        for (var i = 0; i < WIDTHS.length; i++) {
+            html.classList.toggle('artifact-width-' + WIDTHS[i], WIDTHS[i] === width);
+        }
+        var btns = document.querySelectorAll('.width-toggle-btn');
+        for (var j = 0; j < btns.length; j++) {
+            var pressed = btns[j].getAttribute('data-width') === width;
+            btns[j].setAttribute('aria-pressed', pressed ? 'true' : 'false');
+            btns[j].classList.toggle('is-active', pressed);
+        }
+    }
+    function init() {
+        var saved = null;
+        try { saved = window.localStorage.getItem(STORAGE_KEY); } catch (_) { /* ignore */ }
+        var width = (saved === 'narrow' || saved === 'wide') ? saved : 'medium';
+        apply(width);
+        var btns = document.querySelectorAll('.width-toggle-btn');
+        for (var i = 0; i < btns.length; i++) {
+            btns[i].addEventListener('click', function (ev) {
+                var next = ev.currentTarget.getAttribute('data-width');
+                apply(next);
+                try { window.localStorage.setItem(STORAGE_KEY, next); } catch (_) { /* ignore */ }
+            });
+        }
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
+</script>
 {% endblock %}

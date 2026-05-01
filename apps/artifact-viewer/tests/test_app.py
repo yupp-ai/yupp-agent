@@ -186,7 +186,7 @@ class TestHome:
         assert 'class="filter-bar"' in resp.text
         assert "Apply" in resp.text
 
-    def test_default_page_size_is_20(self, client: TestClient) -> None:
+    def test_default_page_size_is_50(self, client: TestClient) -> None:
         _sign_in(client)
         list_recent = AsyncMock(return_value={"artifacts": [], "total": 0})
         with (
@@ -200,7 +200,7 @@ class TestHome:
         assert resp.status_code == 200
         assert list_recent.await_count == 1
         kwargs = list_recent.await_args.kwargs
-        assert kwargs["limit"] == 20
+        assert kwargs["limit"] == 50
         assert kwargs["offset"] == 0
         assert kwargs["include_total"] is True
         # Default landing view: type=TEXT and "From me" ON (filtered to the
@@ -333,7 +333,9 @@ class TestHome:
         assert "From me" in resp.text
 
     def test_pagination_links(self, client: TestClient) -> None:
-        # Page 2 of 3 (offset=20, total=50) should show both Prev and Next.
+        # Page 2 of 3 (limit=20, offset=20, total=50) should show both Prev
+        # and Next. Pin the limit explicitly so the test isn't coupled to
+        # the default page size — that's covered by ``test_default_page_size_is_50``.
         _sign_in(client)
         with (
             patch(
@@ -350,7 +352,7 @@ class TestHome:
                 new=AsyncMock(return_value={"users": [], "agents": []}),
             ),
         ):
-            resp = client.get("/", params={"offset": 20})
+            resp = client.get("/", params={"offset": 20, "limit": 20})
         assert resp.status_code == 200
         # Pager links round-trip the offset.
         assert "offset=0" in resp.text  # Prev (max(0, 20-20))
