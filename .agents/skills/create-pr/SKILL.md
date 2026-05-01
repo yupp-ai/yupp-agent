@@ -161,7 +161,12 @@ Do NOT include a test plan section by default. Only add it when the human explic
 
    Then use `check_github_auth_status` to programmatically verify authorization before retrying `create_pr`.
 
-7. **Report the PR URL** to the user.
+7. **Report the PR URL to the user — always.** When `create_pr` returns `{"status": "created", "pr_url": "..."}`, your very next user-facing message MUST surface that URL as a clickable link. Users don't see tool results, so silently finishing the turn after `create_pr` leaves them unaware the PR exists. Treat this as part of the `create_pr` call itself, not an optional follow-up.
+
+   - **Slack:** `Done — PR <{pr_url}|#{number} {title}> (draft)`
+   - **Markdown:** `Done — PR [#{number} {title}]({pr_url}) (draft)`
+
+   The `add_artifact` registration is for tracking — it does not replace announcing the URL to the human.
 
 ## Rules
 
