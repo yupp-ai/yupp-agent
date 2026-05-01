@@ -122,9 +122,16 @@ pre.plain { white-space: pre-wrap; }
    doesn't flash. "medium" is the default — no class needed, .main keeps
    its 1100px cap. "narrow" trims to a comfortable reading column;
    "wide" releases the cap entirely so the article uses the full
-   viewport (with .main's existing horizontal padding). */
-html.artifact-width-narrow .main { max-width: 760px; }
-html.artifact-width-wide .main { max-width: none; }
+   viewport (with .main's existing horizontal padding).
+
+   The topbar's inner row mirrors .main's max-width so the search bar
+   and avatar visually align with the article column at every width —
+   otherwise the topbar stays at 1100px and the resize feels
+   half-applied. */
+html.artifact-width-narrow .main,
+html.artifact-width-narrow .topbar-inner { max-width: 760px; }
+html.artifact-width-wide .main,
+html.artifact-width-wide .topbar-inner { max-width: none; }
 
 h1 { font-size: 22px; margin: 0 0 16px; }
 h2 { font-size: 17px; margin: 24px 0 10px; }
