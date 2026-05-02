@@ -466,14 +466,6 @@ class Settings(BaseSettings):
     # from human-user domains so agent identities stay outside human flows.
     AGENT_USER_EMAIL_DOMAIN: str = ""
 
-    # Transactional email sender addresses (Resend). Format:
-    # "Display Name <local@domain.tld>". Required if email sending is enabled.
-    TEAM_FROM_EMAIL_ADDRESS: str = ""
-    SUPPORT_FROM_EMAIL_ADDRESS: str = ""
-    NOTICE_FROM_EMAIL_ADDRESS: str = ""
-    ONBOARDING_FROM_EMAIL_ADDRESS: str = ""
-    PAYMENTS_FROM_EMAIL_ADDRESS: str = ""
-
     # Public base URL for the MCP server, used in emails and docs.
     MCP_SERVER_BASE_URL: str = "http://localhost:8080"
 
