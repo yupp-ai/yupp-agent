@@ -185,6 +185,10 @@ class TestRecoverStaleSessionsNoIdleFilter:
                 "ypl.agent_harness_service.lifespan.send_slack_restart_courtesy",
                 restart_courtesy,
             ),
+            patch(
+                "ypl.agent_harness_service.lifespan.list_resume_pending_session_ids",
+                AsyncMock(return_value=set()),
+            ),
         ):
             await lifespan._recover_stale_sessions()
 
@@ -229,6 +233,10 @@ class TestRecoverStaleSessionsNoIdleFilter:
             patch(
                 "ypl.agent_harness_service.lifespan.send_slack_restart_courtesy",
                 restart_courtesy,
+            ),
+            patch(
+                "ypl.agent_harness_service.lifespan.list_resume_pending_session_ids",
+                AsyncMock(return_value=set()),
             ),
         ):
             await lifespan._recover_stale_sessions()
@@ -286,6 +294,10 @@ class TestRestartCourtesyBroadAudience:
                 "ypl.agent_harness_service.lifespan.send_slack_restart_courtesy",
                 restart_courtesy,
             ),
+            patch(
+                "ypl.agent_harness_service.lifespan.list_resume_pending_session_ids",
+                AsyncMock(return_value=set()),
+            ),
         ):
             await lifespan._recover_stale_sessions()
 
@@ -309,6 +321,10 @@ class TestRestartCourtesyBroadAudience:
             patch(
                 "ypl.agent_harness_service.lifespan.send_slack_restart_courtesy",
                 restart_courtesy,
+            ),
+            patch(
+                "ypl.agent_harness_service.lifespan.list_resume_pending_session_ids",
+                AsyncMock(return_value=set()),
             ),
         ):
             await lifespan._recover_stale_sessions()
@@ -337,6 +353,10 @@ class TestRestartCourtesyBroadAudience:
             patch(
                 "ypl.agent_harness_service.lifespan.send_slack_restart_courtesy",
                 AsyncMock(),
+            ),
+            patch(
+                "ypl.agent_harness_service.lifespan.list_resume_pending_session_ids",
+                AsyncMock(return_value=set()),
             ),
         ):
             await lifespan._recover_stale_sessions()
