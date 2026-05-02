@@ -27,18 +27,35 @@ logger = get_logger()
 
 _USERS_PAGE_SIZE = 50
 
+# Small emoji glyph per UserType — used in the Browse table's first column.
+_USER_TYPE_EMOJI: dict[UserType, str] = {
+    UserType.HUMAN: "👤",
+    UserType.AGENT: "🤖",
+    UserType.SYSTEM: "⚙️",
+}
+
+# Sentinel value for "no user_type filter" in the dropdown.
+_USER_TYPE_FILTER_ALL = "All"
+
 
 # ── DB queries ────────────────────────────────────────────────────────────────
 
 
 @retry_db
-async def fetch_users_page(email_filter: str, offset: int, limit: int) -> tuple[list[dict[str, Any]], int]:
+async def fetch_users_page(
+    email_filter: str,
+    user_type_filter: str,
+    offset: int,
+    limit: int,
+) -> tuple[list[dict[str, Any]], int]:
     """Return a page of users with their roles + effective permissions, plus the total count."""
     normalized = email_filter.strip().lower()
     async with get_async_session_read_replica() as session:
         base = select(User).where(col(User.deleted_at).is_(None))
         if normalized:
             base = base.where(func.lower(User.email).contains(normalized))
+        if user_type_filter and user_type_filter != _USER_TYPE_FILTER_ALL:
+            base = base.where(col(User.user_type) == UserType(user_type_filter))
 
         count_stmt = select(func.count()).select_from(base.subquery())
         total = int((await session.exec(count_stmt)).one())
@@ -249,8 +266,10 @@ async def insert_user(
 
 
 @st.cache_data(ttl=30, show_spinner=False)
-def _cached_users_page(email_filter: str, offset: int, limit: int) -> tuple[list[dict[str, Any]], int]:
-    return run_coroutine_in_lit_worker(fetch_users_page(email_filter, offset, limit), timeout=10)
+def _cached_users_page(
+    email_filter: str, user_type_filter: str, offset: int, limit: int
+) -> tuple[list[dict[str, Any]], int]:
+    return run_coroutine_in_lit_worker(fetch_users_page(email_filter, user_type_filter, offset, limit), timeout=10)
 
 
 @st.cache_data(ttl=30, show_spinner=False)
@@ -296,7 +315,7 @@ def _is_self(user_id: str) -> bool:
 
 
 def _render_browse() -> None:
-    filter_cols = st.columns([4, 1])
+    filter_cols = st.columns([3, 1.5, 1])
     with filter_cols[0]:
         email_filter = st.text_input(
             "Filter by email (substring match)",
@@ -304,6 +323,20 @@ def _render_browse() -> None:
             value=st.session_state.get("user_email_filter", ""),
         )
     with filter_cols[1]:
+        user_type_options = [_USER_TYPE_FILTER_ALL, *(t.value for t in UserType)]
+        default_user_type = st.session_state.get("user_type_filter", UserType.HUMAN.value)
+        if default_user_type not in user_type_options:
+            default_user_type = UserType.HUMAN.value
+        user_type_filter = st.selectbox(
+            "User type",
+            options=user_type_options,
+            index=user_type_options.index(default_user_type),
+            key="user_type_filter",
+            format_func=lambda v: (
+                v if v == _USER_TYPE_FILTER_ALL else f"{_USER_TYPE_EMOJI.get(UserType(v), '')} {v}".strip()
+            ),
+        )
+    with filter_cols[2]:
         st.markdown("&nbsp;")
         if st.button("Refresh", key="users_refresh"):
             _refresh_and_rerun()
@@ -314,7 +347,7 @@ def _render_browse() -> None:
     offset = page * _USERS_PAGE_SIZE
 
     with st.spinner("Loading users..."):
-        users, total = _cached_users_page(email_filter, offset, _USERS_PAGE_SIZE)
+        users, total = _cached_users_page(email_filter, user_type_filter, offset, _USERS_PAGE_SIZE)
 
     if total == 0:
         st.info("No users match the current filter.")
@@ -323,9 +356,9 @@ def _render_browse() -> None:
     total_pages = (total + _USERS_PAGE_SIZE - 1) // _USERS_PAGE_SIZE
     st.caption(f"Showing page {page + 1} of {total_pages} — {total} user(s) total")
 
-    _COL_WIDTHS = [2.2, 3.0, 0.9, 2.2, 3.2, 0.7]
+    _COL_WIDTHS = [0.6, 2.2, 3.0, 0.9, 2.2, 3.2, 0.7]
     hdr = st.columns(_COL_WIDTHS)
-    for i, label in enumerate(("Name", "Email", "Status", "Roles", "Effective permissions", "")):
+    for i, label in enumerate(("Type", "Name", "Email", "Status", "Roles", "Effective permissions", "")):
         with hdr[i]:
             st.markdown(f"**{label}**")
 
@@ -334,26 +367,33 @@ def _render_browse() -> None:
     for user in users:
         row = st.columns(_COL_WIDTHS)
         with row[0]:
+            user_type: UserType = user["user_type"]
+            emoji = _USER_TYPE_EMOJI.get(user_type, "")
+            st.markdown(
+                f"<span title='{user_type.value}' style='font-size: 1.25rem'>{emoji}</span>",
+                unsafe_allow_html=True,
+            )
+        with row[1]:
             name = user["name"] or "—"
             st.markdown(
                 f"<div style='font-size: 1.15rem; font-weight: 600'>{name}</div>",
                 unsafe_allow_html=True,
             )
-        with row[1]:
-            st.markdown(f"`{user['email']}`")
         with row[2]:
-            st.markdown(user["status"].value)
+            st.markdown(f"`{user['email']}`")
         with row[3]:
+            st.markdown(user["status"].value)
+        with row[4]:
             if user["roles"]:
                 st.markdown(", ".join(r.value for r in user["roles"]))
             else:
                 st.caption("—")
-        with row[4]:
+        with row[5]:
             if user["permissions"]:
                 st.markdown(", ".join(p.value for p in user["permissions"]))
             else:
                 st.caption("—")
-        with row[5]:
+        with row[6]:
             if st.button("Edit", key=f"edit_user_{user['user_id']}"):
                 st.session_state["selected_user_id"] = user["user_id"]
                 selected_user_id = user["user_id"]
