@@ -5,6 +5,21 @@ shutdown / restart Slack courtesy *delivery*; this PR makes the restart
 real by giving the LLM enough context on the next user message to pick up
 where it left off.
 
+The "did the previous turn need a resume preamble?" signal lives entirely in
+Redis (no new DB column).  The lifecycle is:
+
+  1. ``_run_agent_task`` enters → ``mark_executor_running`` SETs
+     ``ahs:executor_running:{session_id}`` (TTL 30 min).
+  2. ``_run_agent_task`` exits (success / failure / cancellation / SIGTERM)
+     → ``mark_executor_finished`` DELs the key.  If SIGTERM beats the DEL,
+     the key survives.
+  3. Next AHS startup → ``promote_executor_running_to_resume_pending``
+     SCANs leftover ``executor_running`` keys and renames each to
+     ``ahs:resume_pending:{session_id}`` (TTL 30 days).
+  4. Next ``send_message`` → ``consume_resume_pending`` does a single
+     ``GETDEL``; if non-empty, ``build_resume_context`` produces the
+     preamble and ``send_message`` prepends it to the runner input.
+
 Tests cover:
 
 1. ``build_resume_context`` produces the expected preamble for a session
@@ -12,13 +27,18 @@ Tests cover:
 2. ``build_resume_context`` returns an empty string when the session has
    no useful history (so callers can fall through to the plain message
    path) — and tolerates DB lookup failures.
-3. ``send_message`` on a session with ``was_interrupted_by_restart=True``
+3. ``send_message`` on a session whose ``resume_pending`` Redis key is set
    prepends the preamble to the runner input, leaves the persisted USER
-   message unchanged, and clears the flag.
-4. ``send_message`` on a session with the flag clear behaves exactly as
-   before — no preamble, no DB write to flip the flag.
-5. The auto-stale sweep does NOT flip ``was_interrupted_by_restart`` when
-   it transitions ACTIVE rows to STALE.
+   message unchanged, and clears the key (via GETDEL).
+4. ``send_message`` on a session with no flag behaves exactly as before —
+   no preamble, no Redis SET to flip a flag.
+5. ``consume_resume_pending`` is GETDEL — two concurrent calls cannot both
+   observe the flag set.
+6. ``promote_executor_running_to_resume_pending`` SCANs ``executor_running:*``
+   keys, SETs ``resume_pending:*`` keys with the long TTL, then DELetes the
+   originals.
+7. ``mark_executor_finished`` errors are swallowed — the TTL on the
+   executor_running key self-heals.
 """
 
 from __future__ import annotations
@@ -90,11 +110,10 @@ from ypl.db.agent_harness import (  # noqa: E402
 
 def _make_session(
     *,
-    flag: bool = False,
     status: AgentSessionStatus = AgentSessionStatus.STALE,
     trigger: AgentSessionTrigger = AgentSessionTrigger.SLACK,
 ) -> AgentSession:
-    sess = AgentSession(
+    return AgentSession(
         agent_session_id=uuid.uuid4(),
         agent_id=uuid.uuid4(),
         status=status,
@@ -105,8 +124,6 @@ def _make_session(
         creator_user_id="user-abc",
         workspace="/tmp/ws",
     )
-    sess.was_interrupted_by_restart = flag
-    return sess
 
 
 def _make_msg(
@@ -165,6 +182,66 @@ def _async_session_factory(fake_db: _FakeDBSession) -> Any:
         yield fake_db
 
     return _ctx
+
+
+class _FakeRedis:
+    """Minimal in-memory Redis stand-in covering only the commands the resume
+    helpers use: ``get``, ``set`` (with ``ex`` kwarg), ``delete``, ``getdel``,
+    and ``scan`` (cursor-based).
+
+    Records every method call on ``self.calls`` so tests can assert the exact
+    command sequence (e.g. "SET happened before DEL" for the promote sweep).
+    """
+
+    def __init__(self, initial: dict[str, str] | None = None) -> None:
+        self._store: dict[str, str] = dict(initial or {})
+        self._ttls: dict[str, int] = {}
+        self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
+
+    async def get(self, key: str) -> str | None:
+        self.calls.append(("get", (key,), {}))
+        return self._store.get(key)
+
+    async def set(self, key: str, value: str, *, ex: int | None = None) -> bool:
+        self.calls.append(("set", (key, value), {"ex": ex}))
+        self._store[key] = value
+        if ex is not None:
+            self._ttls[key] = ex
+        return True
+
+    async def delete(self, *keys: str) -> int:
+        self.calls.append(("delete", keys, {}))
+        removed = 0
+        for k in keys:
+            if k in self._store:
+                del self._store[k]
+                self._ttls.pop(k, None)
+                removed += 1
+        return removed
+
+    async def getdel(self, key: str) -> str | None:
+        self.calls.append(("getdel", (key,), {}))
+        value = self._store.pop(key, None)
+        self._ttls.pop(key, None)
+        return value
+
+    async def scan(self, *, cursor: int, match: str, count: int) -> tuple[int, list[str]]:
+        self.calls.append(("scan", (), {"cursor": cursor, "match": match, "count": count}))
+        # Single-shot SCAN: return everything that matches and a cursor of 0
+        # to signal completion.  Real Redis pages, but for a few-hundred-key
+        # recovery sweep this is equivalent.
+        if cursor != 0:
+            return 0, []
+        prefix = match.rstrip("*")
+        keys = [k for k in self._store if k.startswith(prefix)]
+        return 0, keys
+
+    def ttl_of(self, key: str) -> int | None:
+        return self._ttls.get(key)
+
+
+def _patch_redis(client: _FakeRedis) -> Any:
+    return patch.object(session_lifecycle, "get_redis_client", AsyncMock(return_value=client))
 
 
 # ===========================================================================
@@ -329,7 +406,164 @@ class TestTruncateForPreamble:
 
 
 # ===========================================================================
-# Tests: send_message uses the preamble when the flag is set
+# Tests: Redis-backed flag helpers
+# ===========================================================================
+
+
+class TestRedisFlagHelpers:
+    """``mark_executor_running``, ``mark_executor_finished``, and
+    ``consume_resume_pending`` round-trip through Redis exactly as expected."""
+
+    async def test_mark_executor_running_sets_key_with_ttl(self) -> None:
+        session_id = uuid.uuid4()
+        fake = _FakeRedis()
+        with _patch_redis(fake):
+            await session_lifecycle.mark_executor_running(session_id, turn_number=7)
+
+        key = session_lifecycle._executor_running_key(session_id)
+        assert fake._store[key] == "7"
+        # TTL matches the constant so an operator alert cannot flag a stale
+        # key as "permanent".
+        assert fake.ttl_of(key) == session_lifecycle._EXECUTOR_RUNNING_TTL_SECONDS
+
+    async def test_mark_executor_running_swallows_errors(self) -> None:
+        """A Redis hiccup at SET time must never propagate up — the worst
+        outcome is that one user misses the resume preamble."""
+        session_id = uuid.uuid4()
+        broken = AsyncMock(side_effect=RuntimeError("redis down"))
+        with patch.object(session_lifecycle, "get_redis_client", broken):
+            await session_lifecycle.mark_executor_running(session_id, turn_number=1)
+            # No raise = pass.
+
+    async def test_mark_executor_finished_deletes_key(self) -> None:
+        session_id = uuid.uuid4()
+        key = session_lifecycle._executor_running_key(session_id)
+        fake = _FakeRedis(initial={key: "3"})
+
+        with _patch_redis(fake):
+            await session_lifecycle.mark_executor_finished(session_id)
+
+        assert key not in fake._store
+
+    async def test_mark_executor_finished_swallows_errors(self) -> None:
+        session_id = uuid.uuid4()
+        broken = AsyncMock(side_effect=RuntimeError("redis down"))
+        with patch.object(session_lifecycle, "get_redis_client", broken):
+            # Must not raise — TTL self-heals if the DEL is lost.
+            await session_lifecycle.mark_executor_finished(session_id)
+
+    async def test_consume_resume_pending_returns_true_and_clears(self) -> None:
+        session_id = uuid.uuid4()
+        key = session_lifecycle._resume_pending_key(session_id)
+        fake = _FakeRedis(initial={key: "1"})
+
+        with _patch_redis(fake):
+            result = await session_lifecycle.consume_resume_pending(session_id)
+
+        assert result is True
+        # GETDEL cleared the key — second call returns False.
+        assert key not in fake._store
+
+    async def test_consume_resume_pending_returns_false_when_unset(self) -> None:
+        session_id = uuid.uuid4()
+        fake = _FakeRedis()
+
+        with _patch_redis(fake):
+            result = await session_lifecycle.consume_resume_pending(session_id)
+
+        assert result is False
+
+    async def test_consume_resume_pending_is_atomic(self) -> None:
+        """Two back-to-back ``consume_resume_pending`` calls cannot both see
+        the flag set — the second one observes the cleared key.
+
+        This is the property that lets us drop the ``FOR UPDATE`` lock the
+        DB-column version of this code needed.
+        """
+        session_id = uuid.uuid4()
+        key = session_lifecycle._resume_pending_key(session_id)
+        fake = _FakeRedis(initial={key: "1"})
+
+        with _patch_redis(fake):
+            first = await session_lifecycle.consume_resume_pending(session_id)
+            second = await session_lifecycle.consume_resume_pending(session_id)
+
+        assert (first, second) == (True, False)
+
+    async def test_consume_resume_pending_swallows_errors_to_false(self) -> None:
+        """A Redis-side error must be treated as "no flag" — we'd rather skip
+        the preamble than raise into the user message path."""
+        session_id = uuid.uuid4()
+        broken = AsyncMock(side_effect=RuntimeError("redis down"))
+        with patch.object(session_lifecycle, "get_redis_client", broken):
+            assert await session_lifecycle.consume_resume_pending(session_id) is False
+
+
+# ===========================================================================
+# Tests: promote_executor_running_to_resume_pending — startup sweep
+# ===========================================================================
+
+
+class TestPromoteExecutorRunningToResumePending:
+    """The startup sweep converts every leftover ``executor_running`` key
+    into a ``resume_pending`` key with the long TTL, then deletes the
+    original."""
+
+    async def test_promotes_all_keys_with_long_ttl(self) -> None:
+        sid_a = uuid.uuid4()
+        sid_b = uuid.uuid4()
+        running_a = session_lifecycle._executor_running_key(sid_a)
+        running_b = session_lifecycle._executor_running_key(sid_b)
+        # Also drop in an unrelated key — the sweep must not touch it.
+        fake = _FakeRedis(initial={running_a: "5", running_b: "12", "ahs:stream:other": "noise"})
+
+        with _patch_redis(fake):
+            count = await session_lifecycle.promote_executor_running_to_resume_pending()
+
+        assert count == 2
+        # Both executor_running keys are gone; both resume_pending keys are
+        # present with the 30-day TTL.
+        for sid in (sid_a, sid_b):
+            assert session_lifecycle._executor_running_key(sid) not in fake._store
+            pending = session_lifecycle._resume_pending_key(sid)
+            assert fake._store[pending] == "1"
+            assert fake.ttl_of(pending) == session_lifecycle._RESUME_PENDING_TTL_SECONDS
+        # Unrelated key is preserved.
+        assert fake._store["ahs:stream:other"] == "noise"
+
+    async def test_no_keys_is_a_noop(self) -> None:
+        fake = _FakeRedis()
+        with _patch_redis(fake):
+            count = await session_lifecycle.promote_executor_running_to_resume_pending()
+        assert count == 0
+
+    async def test_malformed_key_is_skipped_not_fatal(self) -> None:
+        """A stray ``ahs:executor_running:not-a-uuid`` key must not take down
+        the rest of the sweep."""
+        sid_good = uuid.uuid4()
+        good_key = session_lifecycle._executor_running_key(sid_good)
+        bad_key = "ahs:executor_running:not-a-uuid"
+        fake = _FakeRedis(initial={good_key: "1", bad_key: "x"})
+
+        with _patch_redis(fake):
+            count = await session_lifecycle.promote_executor_running_to_resume_pending()
+
+        # Good one promoted, bad one left in place (logged + skipped).
+        assert count == 1
+        assert good_key not in fake._store
+        assert bad_key in fake._store
+        assert session_lifecycle._resume_pending_key(sid_good) in fake._store
+
+    async def test_redis_failure_does_not_raise(self) -> None:
+        """A Redis-side error must not block AHS startup."""
+        broken = AsyncMock(side_effect=RuntimeError("redis down"))
+        with patch.object(session_lifecycle, "get_redis_client", broken):
+            count = await session_lifecycle.promote_executor_running_to_resume_pending()
+        assert count == 0
+
+
+# ===========================================================================
+# Tests: send_message uses the preamble when the resume_pending flag is set
 # ===========================================================================
 
 
@@ -376,11 +610,15 @@ def _stub_send_message_environment(session: AgentSession) -> dict[str, Any]:
 
 
 class TestSendMessageAutoResume:
-    """``send_message`` prepends the preamble iff the session flag is set."""
+    """``send_message`` prepends the preamble iff the Redis flag is set."""
 
-    async def test_flag_set_prepends_preamble_and_clears_flag(self) -> None:
-        session = _make_session(flag=True, status=AgentSessionStatus.STALE)
+    async def test_flag_set_prepends_preamble_and_clears_key(self) -> None:
+        session = _make_session(status=AgentSessionStatus.STALE)
         env = _stub_send_message_environment(session)
+
+        # Pre-load the resume_pending key — simulates a prior AHS restart that
+        # ran ``promote_executor_running_to_resume_pending``.
+        fake_redis = _FakeRedis(initial={session_lifecycle._resume_pending_key(session.agent_session_id): "1"})
 
         # The preamble we expect to see prepended.
         fake_preamble = "[SYSTEM] interrupted; previous request was X. ---\n\n"
@@ -407,24 +645,24 @@ class TestSendMessageAutoResume:
             ),
             patch.object(session_lifecycle, "set_session_current_user", MagicMock()),
             patch.object(session_lifecycle, "has_permission_by_user_id_cached", AsyncMock(return_value=True)),
+            _patch_redis(fake_redis),
         ):
             await session_lifecycle.send_message(request)
 
-        # Flag cleared on the in-memory session row before the DB commit
-        # that records the USER message.
-        assert session.was_interrupted_by_restart is False
+        # Redis key cleared by the GETDEL inside ``consume_resume_pending``.
+        assert session_lifecycle._resume_pending_key(session.agent_session_id) not in fake_redis._store
         # Preamble was prepended to whatever was passed to _run_agent_task.
-        # ``create_background_task`` consumed the coroutine, so we inspect
-        # the last call's ``message`` kwarg via ``_run_agent_task`` itself.
         env["run_task_mock"].assert_called_once()
         call_kwargs = env["run_task_mock"].call_args.kwargs
         assert call_kwargs["message"].startswith(fake_preamble)
         assert call_kwargs["message"].endswith("please continue")
 
     async def test_flag_unset_skips_preamble(self) -> None:
-        session = _make_session(flag=False, status=AgentSessionStatus.COMPLETED)
+        session = _make_session(status=AgentSessionStatus.COMPLETED)
         env = _stub_send_message_environment(session)
         build_mock = AsyncMock(return_value="should-not-be-seen")
+        # Empty Redis = no flag set = no preamble path.
+        fake_redis = _FakeRedis()
 
         from ypl.agent_harness_service.common.types import SessionMessageRequest
 
@@ -448,10 +686,12 @@ class TestSendMessageAutoResume:
             ),
             patch.object(session_lifecycle, "set_session_current_user", MagicMock()),
             patch.object(session_lifecycle, "has_permission_by_user_id_cached", AsyncMock(return_value=True)),
+            _patch_redis(fake_redis),
         ):
             await session_lifecycle.send_message(request)
 
-        # build_resume_context was NEVER called — the flag short-circuits the path.
+        # build_resume_context was NEVER called — the GETDEL miss short-circuits
+        # the preamble path.
         build_mock.assert_not_awaited()
         # Message reached the runner unchanged.
         env["run_task_mock"].assert_called_once()
@@ -462,8 +702,10 @@ class TestSendMessageAutoResume:
         """If ``build_resume_context`` yields ``""`` (e.g. no messages,
         or a DB hiccup), ``send_message`` must still pass the original
         text — no stray ``---`` or empty bracket."""
-        session = _make_session(flag=True)
+        session = _make_session()
         env = _stub_send_message_environment(session)
+        # Flag set, but preamble builder returns "" — fall-through path.
+        fake_redis = _FakeRedis(initial={session_lifecycle._resume_pending_key(session.agent_session_id): "1"})
 
         from ypl.agent_harness_service.common.types import SessionMessageRequest
 
@@ -487,54 +729,28 @@ class TestSendMessageAutoResume:
             ),
             patch.object(session_lifecycle, "set_session_current_user", MagicMock()),
             patch.object(session_lifecycle, "has_permission_by_user_id_cached", AsyncMock(return_value=True)),
+            _patch_redis(fake_redis),
         ):
             await session_lifecycle.send_message(request)
 
         env["run_task_mock"].assert_called_once()
         call_kwargs = env["run_task_mock"].call_args.kwargs
         assert call_kwargs["message"] == "raw message"
-        assert session.was_interrupted_by_restart is False
+        # GETDEL still cleared the key — we observed it, just produced no preamble.
+        assert session_lifecycle._resume_pending_key(session.agent_session_id) not in fake_redis._store
 
 
 # ===========================================================================
-# Tests: auto-stale sweep does NOT flip the resume flag
+# Tests: lifespan recovery — STALE marking unchanged, no DB-column writes
 # ===========================================================================
 
 
-class TestAutoStaleSweepDoesNotSetResumeFlag:
-    """The 6h idle sweep is not a crash — the flag must stay False."""
+class TestRecoverStaleSessions:
+    """The DB classifier still distinguishes STALE vs COMPLETED, but it no
+    longer writes any "needs preamble" flag — that signal lives in Redis."""
 
-    async def test_auto_stale_leaves_flag_false(self) -> None:
-        # An idle ACTIVE session that the periodic sweep would mark STALE.
-        idle = _make_session(flag=False, status=AgentSessionStatus.ACTIVE)
-        # Force ``modified_at`` far enough in the past to land in the sweep.
-        idle.modified_at = datetime.now(UTC) - timedelta(hours=12)
-
-        fake_db = _FakeDBSession(exec_responses=[[idle]])
-
-        with patch(
-            "ypl.agent_harness_service.lifespan.get_async_session",
-            _async_session_factory(fake_db),
-        ):
-            await lifespan._run_auto_stale_check()
-
-        assert idle.status == AgentSessionStatus.STALE
-        # Critically, the flag was NOT flipped — auto-stale rows must not
-        # trigger a "previous turn was interrupted" preamble next time.
-        assert idle.was_interrupted_by_restart is False
-        assert fake_db.commit_called
-
-
-# ===========================================================================
-# Tests: _recover_stale_sessions sets the flag on mid-turn-interrupted rows
-# ===========================================================================
-
-
-class TestRecoverStaleSessionsSetsResumeFlag:
-    """The startup recovery scan flags only mid-turn-interrupted sessions."""
-
-    async def test_interrupted_session_gets_flag(self) -> None:
-        interrupted = _make_session(flag=False, status=AgentSessionStatus.ACTIVE)
+    async def test_interrupted_session_marked_stale(self) -> None:
+        interrupted = _make_session(status=AgentSessionStatus.ACTIVE)
         # No terminal message AND no USER turn → STALE branch fires.
         fake_db = _FakeDBSession(
             exec_responses=[
@@ -557,12 +773,11 @@ class TestRecoverStaleSessionsSetsResumeFlag:
             await lifespan._recover_stale_sessions()
 
         assert interrupted.status == AgentSessionStatus.STALE
-        assert interrupted.was_interrupted_by_restart is True
 
-    async def test_completed_session_does_not_get_flag(self) -> None:
+    async def test_completed_session_marked_completed(self) -> None:
         """A session whose last turn finished SUCCESS but was never marked
-        COMPLETED is recovered to COMPLETED and must not have the flag set."""
-        completed = _make_session(flag=False, status=AgentSessionStatus.ACTIVE)
+        COMPLETED is recovered to COMPLETED."""
+        completed = _make_session(status=AgentSessionStatus.ACTIVE)
         terminal_msg = _make_msg(
             completed.agent_session_id,
             role=AgentSessionMessageRole.AGENT,
@@ -590,4 +805,40 @@ class TestRecoverStaleSessionsSetsResumeFlag:
             await lifespan._recover_stale_sessions()
 
         assert completed.status == AgentSessionStatus.COMPLETED
-        assert completed.was_interrupted_by_restart is False
+
+
+# ===========================================================================
+# Tests: auto-stale sweep does NOT touch the resume Redis key
+# ===========================================================================
+
+
+class TestAutoStaleSweepDoesNotSetResumeFlag:
+    """The 6h idle sweep is not a crash — no Redis SET should happen.
+
+    The auto-stale path runs purely on the DB side (no Redis call), so this
+    test simply verifies the status transition still works and asserts that
+    nothing in the path imports / calls the Redis client.
+    """
+
+    async def test_auto_stale_marks_stale_without_redis(self) -> None:
+        idle = _make_session(status=AgentSessionStatus.ACTIVE)
+        # Force ``modified_at`` far enough in the past to land in the sweep.
+        idle.modified_at = datetime.now(UTC) - timedelta(hours=12)
+
+        fake_db = _FakeDBSession(exec_responses=[[idle]])
+        # If the sweep ever started touching Redis, this AsyncMock would record
+        # a call.  We assert it did not.
+        redis_mock = AsyncMock(side_effect=AssertionError("auto-stale sweep must not touch Redis"))
+
+        with (
+            patch(
+                "ypl.agent_harness_service.lifespan.get_async_session",
+                _async_session_factory(fake_db),
+            ),
+            patch.object(session_lifecycle, "get_redis_client", redis_mock),
+        ):
+            await lifespan._run_auto_stale_check()
+
+        assert idle.status == AgentSessionStatus.STALE
+        assert fake_db.commit_called
+        redis_mock.assert_not_called()

@@ -302,6 +302,17 @@ async def _run_agent_task(
     """
     was_cancelled = False
     try:
+        # Mark this session's executor as in-flight in Redis.  If this
+        # process is killed before the matching ``mark_executor_finished``
+        # call in the ``finally`` block, the leftover key will be picked up
+        # by ``promote_executor_running_to_resume_pending`` on the next AHS
+        # startup and the user's next message will receive a "previous turn
+        # was interrupted" preamble.  Best-effort — Redis errors are logged
+        # and swallowed inside the helper.
+        from ypl.agent_harness_service.service.session_lifecycle import mark_executor_running
+
+        await mark_executor_running(agent_session_id, turn_number)
+
         # Guard: bail out if stop_session() already wrote [INTERRUPTED] for this
         # turn before the task got a chance to run (sentinel race).
         async with get_async_session() as session:
@@ -1107,6 +1118,20 @@ async def _run_agent_task(
         )
 
     finally:
+        # Clear the in-flight executor marker first so a fast user follow-up
+        # arriving during the rest of the cleanup does not see a stale flag.
+        # Best-effort — failures fall back to the 30-min TTL self-heal.
+        try:
+            from ypl.agent_harness_service.service.session_lifecycle import mark_executor_finished
+
+            await mark_executor_finished(agent_session_id)
+        except Exception:
+            logger.warning(
+                "mark_executor_finished raised in finally — relying on TTL self-heal",
+                session_id=str(agent_session_id),
+                exc_info=True,
+            )
+
         clear_session_sandbox(str(agent_session_id))
         clear_session_websearch_count(str(agent_session_id))
 

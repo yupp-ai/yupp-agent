@@ -242,22 +242,6 @@ class AgentSession(BaseModel, table=True):
         ),
     )
 
-    # True iff the previous turn on this session was killed mid-flight by an
-    # AHS restart (SIGTERM / crash) and the startup recovery sweep classified
-    # it as STALE.  Cleared when the next user message lands and the resume
-    # preamble has been injected.  Kept distinct from the STALE status because
-    # STALE is also produced by the periodic 6-hour idle sweep — those rows
-    # should NOT receive a "previous turn was interrupted" preamble on the
-    # user's next ping.
-    was_interrupted_by_restart: bool = Field(
-        default=False,
-        sa_column=Column(
-            sa.Boolean,
-            nullable=False,
-            server_default=sa.text("false"),
-        ),
-    )
-
     agent: Agent = Relationship(back_populates="sessions")
     messages: list["AgentSessionMessage"] = Relationship(back_populates="session")
     feedbacks: list["AgentFeedback"] = Relationship(back_populates="session")

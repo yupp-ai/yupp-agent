@@ -320,10 +320,32 @@ async def send_slack_restart_courtesy(slack_session_ids: list[uuid.UUID]) -> Non
 # ---------------------------------------------------------------------------
 # Auto-resume preamble — synthetic context the LLM sees when a user message
 # arrives on a session whose previous turn was killed by a server restart.
-# Produced by ``build_resume_context``; consumed by ``send_message`` (which
-# prepends it to the runner input on the way to the executor) and
-# ``send_slack_restart_courtesy`` (for the user-facing "you were asking
-# about X" polish).
+#
+# Backed by two short-lived Redis keys:
+#
+#   ahs:executor_running:{session_id}    SET when ``_run_agent_task`` enters,
+#                                        DEL in its ``finally``.  TTL=30min
+#                                        self-heals if a leak ever happens.
+#                                        On AHS startup any key still present
+#                                        is — by definition — a session whose
+#                                        executor was killed mid-flight.
+#
+#   ahs:resume_pending:{session_id}      SET on startup for every leftover
+#                                        executor_running key (effectively
+#                                        ``RENAME``).  GETDEL'd by the next
+#                                        ``send_message``; if non-empty, the
+#                                        preamble built by
+#                                        ``build_resume_context`` is prepended
+#                                        to the runner input.  TTL=30d so
+#                                        sessions the user never returns to
+#                                        clear themselves up.
+#
+# The choice of Redis (vs. a persistent ``agent_sessions`` column) is
+# deliberate: the flag's useful lifetime is "between AHS restart and the
+# user's next ping", which is exactly what an ephemeral key fits.  A Redis
+# crash between AHS startup and the next user message would lose the flag —
+# tolerable on a rare-rare double event, and avoided ones-of-a-kind schema
+# bloat on the busy ``agent_sessions`` table.
 # ---------------------------------------------------------------------------
 
 
@@ -334,6 +356,175 @@ async def send_slack_restart_courtesy(slack_session_ids: list[uuid.UUID]) -> Non
 # real user message out of the model's attention window.
 _RESUME_PREAMBLE_USER_EXCERPT_CHARS = 280
 _RESUME_PREAMBLE_DRAFT_EXCERPT_CHARS = 500
+
+
+# Redis key prefixes — must stay in sync with ``promote_executor_running_to_resume_pending``.
+_EXECUTOR_RUNNING_KEY_PREFIX = "ahs:executor_running:"
+_RESUME_PENDING_KEY_PREFIX = "ahs:resume_pending:"
+
+# Self-heal TTL for the in-flight executor key.  A turn that legitimately
+# runs longer than this is almost certainly stuck (the per-turn timeout in
+# every agent config we ship is well below it), so letting the key auto-expire
+# avoids a stale preamble being delivered after a missed DEL on shutdown.
+_EXECUTOR_RUNNING_TTL_SECONDS = 30 * 60  # 30 minutes
+
+# How long a "your previous turn was interrupted" flag waits for the user to
+# return.  30 days lets a Slack thread the user revisits the next morning (or
+# the next workweek) still get the preamble; any longer and the context is
+# stale enough that the message-history excerpt is no longer useful anyway.
+_RESUME_PENDING_TTL_SECONDS = 30 * 24 * 3600  # 30 days
+
+
+def _executor_running_key(session_id: uuid.UUID) -> str:
+    return f"{_EXECUTOR_RUNNING_KEY_PREFIX}{session_id}"
+
+
+def _resume_pending_key(session_id: uuid.UUID) -> str:
+    return f"{_RESUME_PENDING_KEY_PREFIX}{session_id}"
+
+
+async def mark_executor_running(session_id: uuid.UUID, turn_number: int) -> None:
+    """Mark this session's executor as in-flight in Redis.
+
+    Called from ``_run_agent_task`` immediately before the runner loop starts.
+    The key carries the ``turn_number`` as its value so an operator running
+    ``redis-cli SCAN`` during an incident can see *which* turn was killed
+    without cross-referencing the DB.
+
+    Failures are swallowed — Redis being temporarily unreachable must never
+    take down an agent turn that would otherwise succeed.  The cost of a
+    swallowed SET is "no resume preamble next time" for this one session,
+    which is the same outcome as the user's old behaviour.
+    """
+    try:
+        client = await get_redis_client()
+        await client.set(
+            _executor_running_key(session_id),
+            str(turn_number),
+            ex=_EXECUTOR_RUNNING_TTL_SECONDS,
+        )
+    except Exception:
+        logger.warning(
+            "mark_executor_running: Redis SET failed — resume preamble disabled for this turn",
+            session_id=str(session_id),
+            turn_number=turn_number,
+            exc_info=True,
+        )
+
+
+async def mark_executor_finished(session_id: uuid.UUID) -> None:
+    """Clear the in-flight executor marker for this session.
+
+    Called from ``_run_agent_task``'s ``finally`` block on every exit path
+    (success, failure, cancellation).  Failures are swallowed; if the DEL is
+    lost, the key auto-expires after ``_EXECUTOR_RUNNING_TTL_SECONDS`` and
+    the next AHS startup either misses it (acceptable) or treats it as a
+    crash (acceptable false positive — the next user message just gets a
+    spurious "previous turn was interrupted" preamble that the LLM can
+    ignore).
+    """
+    try:
+        client = await get_redis_client()
+        await client.delete(_executor_running_key(session_id))
+    except Exception:
+        logger.warning(
+            "mark_executor_finished: Redis DEL failed — relying on TTL self-heal",
+            session_id=str(session_id),
+            exc_info=True,
+        )
+
+
+async def consume_resume_pending(session_id: uuid.UUID) -> bool:
+    """Atomically check-and-clear the "previous turn interrupted" flag.
+
+    Uses ``GETDEL`` so two concurrent ``send_message`` calls for the same
+    session can never both observe the flag set — the one that wins the GETDEL
+    sees it, the other does not, and the preamble fires exactly once.  This
+    replaces the ``FOR UPDATE`` race protection the DB-column version of this
+    code needed.
+
+    Returns ``True`` iff a flag was present.  Returns ``False`` on any Redis
+    error (we'd rather skip the preamble than fail the user message).
+    """
+    try:
+        client = await get_redis_client()
+        value = await client.getdel(_resume_pending_key(session_id))
+        return value is not None
+    except Exception:
+        logger.warning(
+            "consume_resume_pending: Redis GETDEL failed — skipping preamble",
+            session_id=str(session_id),
+            exc_info=True,
+        )
+        return False
+
+
+async def promote_executor_running_to_resume_pending() -> int:
+    """At AHS startup, convert leftover executor_running keys → resume_pending keys.
+
+    Every ``ahs:executor_running:*`` key that survives an AHS restart is, by
+    definition, a session whose runner subprocess was killed before the
+    matching ``finally`` block ran.  We "rename" each one to the
+    ``ahs:resume_pending:*`` namespace so the next inbound user message picks
+    up a preamble.
+
+    Done via SCAN + per-key SET/DEL rather than ``RENAME`` so we can attach a
+    fresh TTL (``RENAME`` would inherit the 30-min self-heal TTL, which is
+    way too short for a flag that needs to wait for the user to return).
+
+    Returns the number of sessions promoted, for the startup log line.  Any
+    Redis-side error is swallowed and logged: a failure here means a user
+    misses one preamble, which we'd rather do than block startup.
+    """
+    promoted = 0
+    try:
+        client = await get_redis_client()
+        cursor: int = 0
+        while True:
+            cursor, keys = await client.scan(
+                cursor=cursor,
+                match=f"{_EXECUTOR_RUNNING_KEY_PREFIX}*",
+                count=200,
+            )
+            for raw_key in keys:
+                key = raw_key.decode() if isinstance(raw_key, bytes) else raw_key
+                session_id_str = key[len(_EXECUTOR_RUNNING_KEY_PREFIX) :]
+                # Defensive: skip malformed session IDs rather than crash the
+                # whole sweep — a stray key from a typo shouldn't take out the
+                # rest of the recovery.
+                try:
+                    sid = uuid.UUID(session_id_str)
+                except ValueError:
+                    logger.warning(
+                        "promote_executor_running_to_resume_pending: skipping malformed key",
+                        key=key,
+                    )
+                    continue
+                # SET first then DEL so a failure between the two leaves the
+                # session in the "needs preamble" state (safe) rather than
+                # losing the signal entirely.
+                await client.set(
+                    _resume_pending_key(sid),
+                    "1",
+                    ex=_RESUME_PENDING_TTL_SECONDS,
+                )
+                await client.delete(key)
+                promoted += 1
+            if cursor == 0:
+                break
+    except Exception:
+        logger.warning(
+            "promote_executor_running_to_resume_pending: Redis sweep failed — some sessions may miss the preamble",
+            promoted_before_error=promoted,
+            exc_info=True,
+        )
+
+    if promoted:
+        logger.info(
+            "Promoted leftover executor_running keys to resume_pending",
+            count=promoted,
+        )
+    return promoted
 
 
 def _truncate_for_preamble(text: str | None, limit: int) -> str:
@@ -1805,17 +1996,6 @@ async def send_message(request: SessionMessageRequest) -> SessionMessageResponse
         if agent_session.status in (AgentSessionStatus.COMPLETED, AgentSessionStatus.STALE):
             agent_session.status = AgentSessionStatus.ACTIVE
 
-        # Snapshot + clear the auto-resume flag in the same transaction that
-        # records the USER message.  We keep the bool locally because the
-        # ORM object is detached after ``session.commit()`` and the rest of
-        # this function still needs to know whether to prepend the preamble.
-        # Resetting under the FOR UPDATE lock means a concurrent send_message
-        # cannot double-fire the preamble: the second send_message sees the
-        # cleared flag, even if it raced past the first one's read.
-        was_interrupted_by_restart = bool(getattr(agent_session, "was_interrupted_by_restart", False))
-        if was_interrupted_by_restart:
-            agent_session.was_interrupted_by_restart = False
-
         # Store user message (turn_number is safe under FOR UPDATE lock)
         turn_number = await _next_turn_number(session, agent_session.agent_session_id)
         user_msg = AgentSessionMessage(
@@ -1908,15 +2088,30 @@ async def send_message(request: SessionMessageRequest) -> SessionMessageResponse
         attachment_paths = await _download_attachments_to_workspace(request.attachments, agent_session.workspace)
         agent_message = _prepend_attachment_paths(agent_message, attachment_paths)
 
+        # Fire-and-forget: persist downloaded attachments to GCS immediately
+        # so they survive pod restarts before the agent turn completes.
+        async def _sync_attachments() -> None:
+            try:
+                await sync_session_to_gcs(str(agent_session.agent_session_id))
+            except Exception:
+                logger.warning(
+                    "GCS session sync failed after attachment download",
+                    session_id=str(agent_session.agent_session_id),
+                    exc_info=True,
+                )
+
+        create_background_task(_sync_attachments())
+
     # If the previous turn was killed by an AHS restart, prepend a synthetic
     # system note so the LLM knows it was mid-flight and can either continue
     # from its draft or ask the user for clarification.  We DO NOT mutate the
     # stored ``user_msg.content`` — only the runner input — so the persisted
     # conversation history still shows what the user actually typed.
     #
-    # The flag was already cleared above under the FOR UPDATE lock, so a
-    # concurrent send_message racing in here will not double-prepend.
-    if was_interrupted_by_restart:
+    # ``consume_resume_pending`` does an atomic GETDEL on the Redis flag, so
+    # two concurrent send_message calls cannot both observe it set: the first
+    # GETDEL clears the key, the second sees nothing.  No DB lock needed.
+    if await consume_resume_pending(agent_session.agent_session_id):
         try:
             preamble = await build_resume_context(agent_session.agent_session_id)
         except Exception:
@@ -1934,20 +2129,6 @@ async def send_message(request: SessionMessageRequest) -> SessionMessageResponse
                 turn_number=turn_number,
                 preamble_chars=len(preamble),
             )
-
-        # Fire-and-forget: persist downloaded attachments to GCS immediately
-        # so they survive pod restarts before the agent turn completes.
-        async def _sync_attachments() -> None:
-            try:
-                await sync_session_to_gcs(str(agent_session.agent_session_id))
-            except Exception:
-                logger.warning(
-                    "GCS session sync failed after attachment download",
-                    session_id=str(agent_session.agent_session_id),
-                    exc_info=True,
-                )
-
-        create_background_task(_sync_attachments())
 
     # Register a placeholder *before* creating the task so that stop_session()
     # cannot land in a gap where the inflight turn exists but no task is tracked.
