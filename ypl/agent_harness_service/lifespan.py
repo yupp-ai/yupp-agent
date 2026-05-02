@@ -323,6 +323,15 @@ async def _recover_stale_sessions() -> None:
                 # message was ever persisted, or a USER message was committed but the
                 # agent never responded.  Mark STALE so monitoring can detect
                 # genuine crash leftovers.
+                #
+                # The "did this session need a resume preamble?" classification
+                # lives separately in Redis: ``promote_executor_running_to_resume_pending``
+                # (called earlier in startup) converts every leftover
+                # ``ahs:executor_running:*`` key into an ``ahs:resume_pending:*``
+                # key, and the next ``send_message`` consumes that flag.  This
+                # decouples the STALE/COMPLETED status decision (which still
+                # needs the message-history walk) from the preamble decision
+                # (which Redis already knows the answer to perfectly).
                 s.status = AgentSessionStatus.STALE
                 stale_count += 1
             else:
@@ -359,6 +368,14 @@ async def _run_auto_stale_check() -> None:
 
     Queries all top-level ACTIVE sessions whose modified_at is older than
     AHS_SESSION_STALE_TIMEOUT_HOURS and transitions them to STALE.
+
+    Note: this path intentionally does NOT touch the Redis resume-pending
+    flag.  A 6-hour idle window is not a crash — telling the user "the
+    previous turn was interrupted by a server restart" the next time they
+    ping a long-abandoned thread would be misleading.  The Redis flag is
+    only ever set by ``promote_executor_running_to_resume_pending`` at
+    startup, off keys whose ``finally`` block never ran (i.e. genuine
+    SIGTERM/crash leftovers).
     """
     stale_threshold = datetime.now(UTC) - timedelta(hours=AHS_SESSION_STALE_TIMEOUT_HOURS)
 
@@ -504,6 +521,26 @@ async def ahs_startup(app: FastAPI, mcp_app: Any) -> AHSState:
     except Exception:
         logger.error(
             "Failed to load agent registry from DB — DB-only agents may not be available as subagents", exc_info=True
+        )
+
+    # Promote leftover ``ahs:executor_running:*`` keys to
+    # ``ahs:resume_pending:*`` so the next inbound user message on each
+    # interrupted session picks up the auto-resume preamble.  Done BEFORE
+    # ``_recover_stale_sessions`` so the resume-pending flags are in place
+    # if a fast user reply lands while the DB classifier is still running
+    # (the two are otherwise independent: the DB walk decides STALE vs
+    # COMPLETED, Redis decides "needs preamble").
+    try:
+        from ypl.agent_harness_service.service.session_lifecycle import (
+            promote_executor_running_to_resume_pending,
+        )
+
+        await promote_executor_running_to_resume_pending()
+    except Exception:
+        logger.error(
+            "Failed to promote executor_running keys to resume_pending — "
+            "continuing startup; some interrupted sessions may miss the preamble",
+            exc_info=True,
         )
 
     # Recover sessions left ACTIVE from the previous process (SIGTERM, crash, or
