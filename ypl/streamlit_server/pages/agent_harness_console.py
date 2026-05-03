@@ -34,7 +34,7 @@ from ypl.structured_logger import get_logger
 
 logger = get_logger()
 
-st.set_page_config(page_title="Agent Harness Console", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="Sessions", page_icon="🤖", layout="wide")
 require_auth()
 
 _current_email = get_current_user_email()
@@ -1237,7 +1237,7 @@ def _render_session(data: dict[str, Any], indent_level: int = 0) -> None:
 
 # ── Main page logic ──────────────────────────────────────────────────────────
 
-st.title("Agent Harness Console")
+st.title("Sessions")
 
 qp = st.query_params
 url_session_id = qp.get("session_id", None)
