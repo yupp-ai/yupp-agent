@@ -45,7 +45,7 @@ list. Every viewer-specific variable is prefixed with `VIEWER_` so the
 sub-app can share the monolith's `.env` file without colliding with
 AHS / SAG / MCP settings.
 
-On the monolith VM the viewer reads `/opt/yupp-agent/.env` directly
+On the monolith VM the viewer reads `/data/ahs/.env` directly
 (via its systemd unit's `EnvironmentFile=`). **You only need to append
 `VIEWER_*` entries to that file.** The shared
 `AGENT_HARNESS_SERVICE_API_KEY` is reused from what AHS already has.
@@ -115,7 +115,7 @@ The viewer is fully wired into the repo's install/deploy scripts:
 
 - **After install, one-time config**:
   ```bash
-  sudo -u ahs nano /opt/yupp-agent/.env   # add VIEWER_* entries
+  sudo -u ahs nano /data/ahs/.env   # add VIEWER_* entries
   sudo systemctl start artifact-viewer
   sudo systemctl status artifact-viewer
   curl http://localhost:8095/healthz      # → {"ok": true}

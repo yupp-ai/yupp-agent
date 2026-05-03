@@ -1,7 +1,7 @@
 """Environment-driven config for the artifact viewer.
 
 The viewer reads the **same .env file as the AHS monolith** (typically
-``/opt/yupp-agent/.env`` in production). Viewer-specific settings are
+``/data/ahs/.env`` in production). Viewer-specific settings are
 namespaced with a ``VIEWER_`` prefix so they don't collide with AHS /
 SAG / MCP variables. The only exception is
 ``AGENT_HARNESS_SERVICE_API_KEY``, which is deliberately shared — the
