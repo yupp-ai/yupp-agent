@@ -1,7 +1,7 @@
 ---
 name: debug-model-streaming
 description: Debug model streaming issues by analyzing completion status, error types, and GCP logs. Use when investigating streaming failures, timeouts, provider errors, or any model response issues for a specific model.
-allowed-tools: mcp__agcouch-mcp-server__search_gcp_logs, mcp__agcouch-mcp-server__query_yuppdb, mcp__agcouch-mcp-server__query_bigquery, mcp__agcouch-mcp-server__add_artifact, mcp__agcouch-mcp-server__search_slack, mcp__agcouch-mcp-server__read_slack_thread, Bash, Read, Write
+allowed-tools: mcp__harness__search_gcp_logs, mcp__harness__query_yuppdb, mcp__harness__query_bigquery, mcp__harness__add_artifact, mcp__harness__search_slack, mcp__harness__read_slack_thread, Bash, Read, Write
 ---
 
 # Model Streaming Debug Guide

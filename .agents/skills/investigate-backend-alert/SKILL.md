@@ -1,7 +1,7 @@
 ---
 name: investigate-backend-alert
 description: Investigate backend errors from #alert_backend Slack channel using GCP logs. Use when debugging production errors, analyzing error patterns, or tracing issues from alert notifications.
-allowed-tools: mcp__agcouch-mcp-server__search_gcp_logs, mcp__agcouch-mcp-server__add_artifact, mcp__agcouch-mcp-server__get_gcp_alert_details, mcp__agcouch-mcp-server__list_memory, mcp__agcouch-mcp-server__search_memory, mcp__agcouch-mcp-server__load_memory, mcp__agcouch-mcp-server__save_memory, Bash, Read, Write, Skill
+allowed-tools: mcp__harness__search_gcp_logs, mcp__harness__add_artifact, mcp__harness__get_gcp_alert_details, mcp__harness__list_memory, mcp__harness__search_memory, mcp__harness__load_memory, mcp__harness__save_memory, Bash, Read, Write, Skill
 ---
 
 # Backend Alert Investigation Guide

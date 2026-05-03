@@ -31,6 +31,7 @@ from ypl.agent_harness_service.common.constants import (
     AHS_DATA_DIR,
     BLOCKED_HARNESS_TOOLS,
     HARNESS_TO_CLI_TOOL_MAP,
+    SHARED_HARNESS_TOOLS_BLOCKED_FOR_RESTRICTED,
 )
 from ypl.agent_harness_service.common.models import RetryConfig, tool_permissions_to_cli_flags
 from ypl.agent_harness_service.common.types import SessionPermissions
@@ -284,8 +285,21 @@ def build_subprocess_env() -> dict[str, str]:
 
 
 # CLI-prefixed versions of BLOCKED_HARNESS_TOOLS for --allowedTools / --disallowedTools.
+#
+# Two groups of denies, both prefixed with ``mcp__harness__``:
+#
+# 1. ``BLOCKED_HARNESS_TOOLS`` — high-privilege harness-internal tools
+#    (request_write_access, create_pr, list_agents, schedule_agent_call …)
+#    that require USE_MCP regardless of where they're mounted.
+# 2. ``SHARED_HARNESS_TOOLS_BLOCKED_FOR_RESTRICTED`` — every shared /
+#    external-data tool that previously lived on the agcouch mount and
+#    was blocked for restricted sessions via the
+#    ``mcp__harness__*`` wildcard. Post phase-2 (PR #300) those
+#    tools live under ``mcp__harness__*`` so the wildcard no longer
+#    matches; we enumerate the harness-prefixed names instead to
+#    preserve the security boundary.
 _BLOCKED_HARNESS_TOOLS_CLI = [f"mcp__harness__{t}" for t in BLOCKED_HARNESS_TOOLS] + [
-    "mcp__agcouch-mcp-server__*",
+    f"mcp__harness__{t}" for t in SHARED_HARNESS_TOOLS_BLOCKED_FOR_RESTRICTED
 ]
 _RESTRICTED_HARNESS_TOOLS_CLI = [
     "mcp__harness__request_feedback",
@@ -318,21 +332,24 @@ _TOP_HARNESS_TOOLS_PREDECLARED: list[str] = [
     "mcp__harness__create_pr",
     "mcp__harness__list_available_repos",
 ]
-_TOP_AGCOUCH_TOOLS_PREDECLARED: list[str] = [
-    "mcp__agcouch-mcp-server__query_yuppdb",
-    "mcp__agcouch-mcp-server__search_gcp_logs",
-    "mcp__agcouch-mcp-server__add_artifact",
-    "mcp__agcouch-mcp-server__read_artifact",
-    "mcp__agcouch-mcp-server__list_artifacts",
-    "mcp__agcouch-mcp-server__search_artifacts",
-    "mcp__agcouch-mcp-server__search_memory",
-    "mcp__agcouch-mcp-server__load_memory",
-    "mcp__agcouch-mcp-server__save_memory",
-    "mcp__agcouch-mcp-server__list_memory",
-    "mcp__agcouch-mcp-server__read_slack_thread",
+# Tools migrated from the agcouch mount to the harness mount via
+# ``@shared_tool`` (PR #300 / phase-2). Pre-declared here so Claude Code
+# loads them eagerly instead of deferring discovery behind ``ToolSearch``.
+_TOP_SHARED_TOOLS_PREDECLARED: list[str] = [
+    "mcp__harness__query_yuppdb",
+    "mcp__harness__search_gcp_logs",
+    "mcp__harness__add_artifact",
+    "mcp__harness__read_artifact",
+    "mcp__harness__list_artifacts",
+    "mcp__harness__search_artifacts",
+    "mcp__harness__search_memory",
+    "mcp__harness__load_memory",
+    "mcp__harness__save_memory",
+    "mcp__harness__list_memory",
+    "mcp__harness__read_slack_thread",
     # Security incident reporting — pre-declared so SECURITY.md instructions work
     # without a ToolSearch round-trip. Fire-and-forget; never blocks a response.
-    "mcp__agcouch-mcp-server__report_security_incident",
+    "mcp__harness__report_security_incident",
 ]
 
 
@@ -671,9 +688,8 @@ class ClaudeCodeRunner(AgentRunner):
                     # (non-deferred). Wildcards follow as catch-alls for the rest.
                     # Explicitly named tools skip ToolSearch discovery; wildcards still defer.
                     allowed.extend(_TOP_HARNESS_TOOLS_PREDECLARED)
-                    allowed.extend(_TOP_AGCOUCH_TOOLS_PREDECLARED)
+                    allowed.extend(_TOP_SHARED_TOOLS_PREDECLARED)
                     allowed.append("mcp__harness__*")
-                    allowed.append("mcp__agcouch-mcp-server__*")
                 else:
                     allowed.extend(_RESTRICTED_HARNESS_TOOLS_CLI)
             # When the allowed list is empty, Claude CLI ignores --allowedTools ""

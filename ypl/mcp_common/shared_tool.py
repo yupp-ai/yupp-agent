@@ -62,6 +62,7 @@ documented as the one and only Layer-0 module that may import from both
 """
 
 from __future__ import annotations
+import os
 from collections.abc import Callable
 from typing import Any
 
@@ -98,25 +99,68 @@ _GATED_INSTANCES: frozenset[FastMCP] = frozenset({harness_mcp})
 
 
 def _missing_settings(names: tuple[str, ...]) -> list[str]:
-    """Return the subset of *names* whose ``settings`` attribute is unset.
+    """Return the subset of *names* that are unset on ``settings`` or in env.
 
-    "Unset" means missing, ``None``, or empty string. Any truthy value is
-    accepted — this is a register-time *probe*, not full validation. The
-    actual tool call may still fail (e.g. wrong format, unreachable host)
-    even when the setting is technically populated; that path is the
-    agcouch tool's responsibility.
+    For each name, the probe order is:
+
+    1. Pydantic-settings attribute on :data:`settings`.
+    2. Raw process environment variable of the same name.
+
+    Either being truthy clears the gate. This lets callers gate on credentials
+    that don't live on ``Settings`` (e.g. ``SLACK_MCP_SERVER_APP_USER_TOKEN``,
+    which the OpsBot client reads directly via ``os.environ.get``) without
+    forcing every external token to first land on the pydantic class.
+
+    "Unset" means missing on both sources or present-but-empty. Any
+    truthy value clears the gate — this is a register-time *probe*, not
+    full validation. The actual tool call may still fail (wrong format,
+    unreachable host, expired credential) even when the setting is
+    technically populated; that path is the tool's responsibility.
     """
     missing: list[str] = []
     for name in names:
-        value = getattr(settings, name, None)
-        if value in (None, ""):
-            missing.append(name)
+        settings_val = getattr(settings, name, None)
+        if settings_val:
+            continue
+        env_val = os.environ.get(name)
+        if env_val:
+            continue
+        missing.append(name)
     return missing
+
+
+_ADC_AVAILABLE_CACHE: bool | None = None
+
+
+def _gcp_adc_available() -> bool:
+    """Return ``True`` when Google Application Default Credentials resolve.
+
+    Probes once per process and caches the result — ``google.auth.default()``
+    is ~1 second on first call (it walks env, gcloud config, metadata server).
+
+    A ``False`` here covers the reviewer's case-3 deployment shape: a host
+    that has ``GCP_PROJECT_ID`` set (e.g. copied from prod) but no usable
+    ADC chain. Without this probe the BigQuery / GCP-logs tools register
+    on harness and fail at call time with an unhelpful auth error.
+    """
+    global _ADC_AVAILABLE_CACHE
+    if _ADC_AVAILABLE_CACHE is not None:
+        return _ADC_AVAILABLE_CACHE
+    try:
+        # Lazy import: google-auth is heavy and not all deployments need it.
+        import google.auth
+
+        google.auth.default()  # type: ignore[no-untyped-call]
+        _ADC_AVAILABLE_CACHE = True
+    except Exception:
+        _ADC_AVAILABLE_CACHE = False
+    return _ADC_AVAILABLE_CACHE
 
 
 def shared_tool(
     *args: Any,
     requires_settings: tuple[str, ...] = (),
+    requires_gcp_adc: bool = False,
     **kwargs: Any,
 ) -> Callable[[Callable[..., Any]], Any]:
     """Register a tool on every MCP instance in :data:`_INSTANCES`.
@@ -128,10 +172,12 @@ def shared_tool(
 
     Args:
         *args: Forwarded to ``FastMCP.tool``.
-        requires_settings: Optional tuple of ``settings`` attribute names
-            that must be truthy in this process for the tool to register on
+        requires_settings: Optional tuple of credential names that must be
+            truthy in this process for the tool to register on
             credential-gated instances (currently just the harness mount).
-            Missing settings cause:
+            For each name we probe (in order) ``getattr(settings, name)``
+            and ``os.environ.get(name)`` — either being truthy clears the
+            gate. Missing creds cause:
 
             - One ``logger.warning`` at startup naming the tool and the
               missing settings, so operators can see why the tool didn't
@@ -141,8 +187,17 @@ def shared_tool(
               still register, so engineer-IDE traffic to the same tool
               fails loudly at call time rather than 404-ing the listing.
 
-            When ``requires_settings`` is empty the gate is a no-op and
-            every instance registers unconditionally.
+            When ``requires_settings`` is empty *and* ``requires_gcp_adc``
+            is ``False`` the gate is a no-op and every instance registers
+            unconditionally.
+        requires_gcp_adc: When ``True``, additionally probe Google
+            Application Default Credentials (``google.auth.default()``)
+            once at first decoration and treat a probe failure as if a
+            named credential were missing. Use for tools that hit
+            BigQuery / Cloud Logging / etc. — a deployment with
+            ``GCP_PROJECT_ID`` set but no usable ADC chain (a fairly
+            common case when copying envs from prod to dev) would
+            otherwise register the tool and have it fail at call time.
         **kwargs: Forwarded to ``FastMCP.tool``.
 
     Returns:
@@ -150,12 +205,27 @@ def shared_tool(
         the resulting ``FunctionTool``. ``FunctionTool.fn`` points back
         at the original callable, so existing test code that pulls the
         raw coroutine via ``module.tool_name.fn`` continues to work
-        unchanged. When registration is fully skipped (every instance
-        gated and missing creds) we return the original ``fn`` so
-        attribute access doesn't crash — that path also has nothing to
-        register against, so the difference is invisible to test code.
+        unchanged.
+
+    Raises:
+        RuntimeError: at decoration time when *every* instance in
+            :data:`_INSTANCES` is gated (i.e. covered by
+            :data:`_GATED_INSTANCES`) **and** any required setting is
+            missing. This is a misconfiguration — the tool would land
+            on no MCP server but the decorator would still return a
+            naked ``fn`` whose ``.fn`` attribute access (the documented
+            pattern in this module's docstring) would crash with
+            ``AttributeError`` later. Crashing loudly at startup is
+            strictly better than the silent listing-disappears tripwire,
+            and it forces phase-3 / phase-4 (which plan to drop agcouch
+            from ``_INSTANCES``) to also revisit every gate.
     """
     missing = _missing_settings(requires_settings)
+    if requires_gcp_adc and not _gcp_adc_available():
+        # Surface the failed probe as a synthetic missing identifier so the
+        # warning output names the failing dependency. Avoids overlapping
+        # with any real env var.
+        missing.append("GCP_APPLICATION_DEFAULT_CREDENTIALS")
 
     def decorator(fn: Callable[..., Any]) -> Any:
         tool_name = kwargs.get("name") or fn.__name__
@@ -179,12 +249,31 @@ def shared_tool(
                 missing_settings=missing,
                 skipped_mounts=skipped,
             )
-            return first_tool if first_tool is not None else fn
+            if first_tool is None:
+                # Every instance is gated and creds are missing — the
+                # tool would register nowhere. Crash loudly so a future
+                # ``_INSTANCES`` shrink (phase-3 / phase-4) cannot
+                # silently de-tooth a tool. Returning a naked ``fn``
+                # would also break ``module.tool_name.fn`` access.
+                raise RuntimeError(
+                    f"shared_tool {tool_name!r} would register on no MCP server: "
+                    f"every instance is gated and required settings are missing "
+                    f"({missing}). Either populate the settings or remove the "
+                    f"requires_settings gate."
+                )
+            return first_tool
 
         for instance in _INSTANCES:
             tool_obj = instance.tool(*args, **kwargs)(fn)
             if first_tool is None:
                 first_tool = tool_obj
-        return first_tool if first_tool is not None else fn
+        if first_tool is None:
+            # ``_INSTANCES`` is empty — likely a misconfiguration during
+            # phase-3 lift-and-shift. Same loud failure as above.
+            raise RuntimeError(
+                f"shared_tool {tool_name!r} has no MCP instance to register on "
+                f"(_INSTANCES is empty); aborting at startup."
+            )
+        return first_tool
 
     return decorator

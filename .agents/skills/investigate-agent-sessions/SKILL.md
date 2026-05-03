@@ -1,7 +1,7 @@
 ---
 name: investigate-agent-sessions
 description: Investigate agent harness session performance and failures. Use when debugging why an AHS session failed, hit max turns, was slow, or didn't achieve the desired work. Accepts session IDs, Lit console URLs, or message IDs.
-allowed-tools: mcp__agcouch-mcp-server__query_agentdb, mcp__agcouch-mcp-server__query_yuppdb, mcp__agcouch-mcp-server__search_gcp_logs, mcp__agcouch-mcp-server__add_artifact, mcp__agcouch-mcp-server__list_memory, mcp__agcouch-mcp-server__search_memory, mcp__agcouch-mcp-server__load_memory, mcp__agcouch-mcp-server__save_memory, Bash, Read, Glob, Grep, Skill
+allowed-tools: mcp__harness__query_agentdb, mcp__harness__query_yuppdb, mcp__harness__search_gcp_logs, mcp__harness__add_artifact, mcp__harness__list_memory, mcp__harness__search_memory, mcp__harness__load_memory, mcp__harness__save_memory, Bash, Read, Glob, Grep, Skill
 ---
 
 # Investigate Agent Harness Sessions

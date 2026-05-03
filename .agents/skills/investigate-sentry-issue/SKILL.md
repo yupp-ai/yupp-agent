@@ -1,7 +1,7 @@
 ---
 name: investigate-sentry-issue
 description: Investigate issues from Sentry using agcouch MCP. Use when asked to investigate or fix Sentry errors, debug frontend/backend production issues, investigate exceptions, or resolve bugs reported by Sentry alerts.
-allowed-tools: mcp__agcouch-mcp-server__get_sentry_issue_details, mcp__agcouch-mcp-server__get_sentry_issue_tag_values, mcp__agcouch-mcp-server__get_sentry_trace_details, mcp__agcouch-mcp-server__get_sentry_breadcrumbs, Read, Glob, Grep, Bash
+allowed-tools: mcp__harness__get_sentry_issue_details, mcp__harness__get_sentry_issue_tag_values, mcp__harness__get_sentry_trace_details, mcp__harness__get_sentry_breadcrumbs, Read, Glob, Grep, Bash
 ---
 
 # Investigate Sentry Issue

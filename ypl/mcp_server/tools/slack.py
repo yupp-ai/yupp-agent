@@ -32,6 +32,10 @@ logger = get_logger()
         "Bot and email-forwarded messages are identified by their `username` field. "
         "Email content appears in `attachments_text`; rich layout content appears in `blocks`."
     ),
+    # OpsBot user token is read directly from env via os.environ.get;
+    # fail loudly at registration in deployments that don't ship it
+    # rather than 500-ing on first agent call.
+    requires_settings=("SLACK_MCP_SERVER_APP_USER_TOKEN",),
 )
 async def read_slack_thread(
     channel: str,
@@ -198,6 +202,8 @@ async def read_slack_thread(
         "NOTE: Requires the Slack app to have the search:read scope on a user token; "
         "if the bot token lacks this scope, the API will return a token-type error."
     ),
+    # Same OpsBot user token gate as read_slack_thread.
+    requires_settings=("SLACK_MCP_SERVER_APP_USER_TOKEN",),
 )
 async def search_slack(
     query: str,

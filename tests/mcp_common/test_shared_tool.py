@@ -174,3 +174,109 @@ async def test_skip_path_still_returns_function_tool(fresh_instances: tuple[Fast
     # its FunctionTool so call sites can still pull ``.fn``.
     assert hasattr(gated, "fn")
     assert await gated.fn(3) == 6
+
+
+async def test_env_var_clears_gate(
+    fresh_instances: tuple[FastMCP, FastMCP],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A required cred set in ``os.environ`` (not on ``settings``) clears the gate.
+
+    Pins the post-review extension that lets callers gate on env-only
+    creds (e.g. ``SLACK_MCP_SERVER_APP_USER_TOKEN``,
+    ``LINEAR_API_KEY``) without first promoting them onto ``Settings``.
+    """
+    harness, agcouch = fresh_instances
+
+    monkeypatch.setenv("SOME_ENV_TOKEN", "value-from-env")
+    with patch.object(shared_tool_mod, "settings") as mock_settings:
+        # Settings doesn't carry the env-only token.
+        mock_settings.SOME_ENV_TOKEN = None
+
+        @shared_tool(name="env_gated", requires_settings=("SOME_ENV_TOKEN",))
+        async def env_gated() -> dict[str, Any]:
+            return {"ok": True}
+
+    harness_tools = await _registered_tool_names(harness)
+    agcouch_tools = await _registered_tool_names(agcouch)
+    assert "env_gated" in harness_tools
+    assert "env_gated" in agcouch_tools
+
+
+async def test_all_skipped_raises_runtime_error(
+    fresh_instances: tuple[FastMCP, FastMCP],
+) -> None:
+    """When every instance is gated and creds are missing, decoration crashes.
+
+    Pins the loud-failure contract introduced in the round-1 review fix:
+    a tool that would land on no MCP server raises ``RuntimeError`` so a
+    future ``_INSTANCES`` shrink (phase-3 / phase-4) cannot silently
+    de-tooth a tool.
+    """
+    harness, _agcouch = fresh_instances
+
+    # Make EVERY instance gated.
+    with (
+        patch.object(shared_tool_mod, "_GATED_INSTANCES", frozenset({harness, _agcouch})),
+        patch.object(shared_tool_mod, "settings") as mock_settings,
+    ):
+        mock_settings.YUPPDB_URL = ""
+
+        with pytest.raises(RuntimeError, match="register on no MCP server"):
+
+            @shared_tool(name="all_gated", requires_settings=("YUPPDB_URL",))
+            async def all_gated() -> dict[str, Any]:
+                return {"ok": True}
+
+
+async def test_empty_instances_raises_runtime_error(
+    fresh_instances: tuple[FastMCP, FastMCP],
+) -> None:
+    """Empty ``_INSTANCES`` (config error) crashes loudly at decoration time."""
+    with patch.object(shared_tool_mod, "_INSTANCES", []), pytest.raises(RuntimeError, match="no MCP instance"):
+
+        @shared_tool(name="orphan")
+        async def orphan() -> dict[str, Any]:
+            return {"ok": True}
+
+
+async def test_requires_gcp_adc_skips_when_probe_fails(
+    fresh_instances: tuple[FastMCP, FastMCP],
+) -> None:
+    """``requires_gcp_adc=True`` adds a synthetic missing-cred when ADC probe fails."""
+    harness, agcouch = fresh_instances
+
+    with (
+        patch.object(shared_tool_mod, "_gcp_adc_available", return_value=False),
+        patch.object(shared_tool_mod, "logger") as mock_logger,
+    ):
+
+        @shared_tool(name="gcp_dependent", requires_gcp_adc=True)
+        async def gcp_dependent() -> dict[str, Any]:
+            return {"ok": True}
+
+    harness_tools = await _registered_tool_names(harness)
+    agcouch_tools = await _registered_tool_names(agcouch)
+    assert "gcp_dependent" not in harness_tools
+    assert "gcp_dependent" in agcouch_tools
+    # Warning surfaces the synthetic identifier so operators can tell ADC
+    # is the failing dependency, not a missing env var.
+    mock_logger.warning.assert_called_once()
+    _args, kwargs = mock_logger.warning.call_args
+    assert "GCP_APPLICATION_DEFAULT_CREDENTIALS" in kwargs["missing_settings"]
+
+
+async def test_requires_gcp_adc_clears_when_probe_succeeds(
+    fresh_instances: tuple[FastMCP, FastMCP],
+) -> None:
+    """When ADC is available, ``requires_gcp_adc=True`` is a no-op."""
+    harness, agcouch = fresh_instances
+
+    with patch.object(shared_tool_mod, "_gcp_adc_available", return_value=True):
+
+        @shared_tool(name="gcp_ok", requires_gcp_adc=True)
+        async def gcp_ok() -> dict[str, Any]:
+            return {"ok": True}
+
+    assert "gcp_ok" in await _registered_tool_names(harness)
+    assert "gcp_ok" in await _registered_tool_names(agcouch)

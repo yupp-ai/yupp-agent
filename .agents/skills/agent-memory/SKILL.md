@@ -1,7 +1,7 @@
 ---
 name: agent-memory
 description: Save and recall scoped memories (agent / user / topic) backed by MEMORY artifacts. Use to capture cross-session learnings — your own notebook, the current user's notes, or shared topics — and to look them up before doing similar work again.
-allowed-tools: mcp__agcouch-mcp-server__list_memory, mcp__agcouch-mcp-server__search_memory, mcp__agcouch-mcp-server__load_memory, mcp__agcouch-mcp-server__save_memory
+allowed-tools: mcp__harness__list_memory, mcp__harness__search_memory, mcp__harness__load_memory, mcp__harness__save_memory
 ---
 
 # Agent Memory (Scoped MEMORY Artifacts)

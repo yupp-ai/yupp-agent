@@ -1,7 +1,7 @@
 ---
 name: debug-routing
 description: Debug model routing issues using GCP logs and database queries. Use when investigating why specific models were chosen, routing failures, or unexpected routing behavior, such as a model appearing or not showing up unexpectedly, or seeing duplicate models or similar models that are not fit the context or following the user request or frontend instructions.
-allowed-tools: mcp__agcouch-mcp-server__search_gcp_logs, mcp__agcouch-mcp-server__query_yuppdb, mcp__agcouch-mcp-server__query_bigquery, mcp__agcouch-mcp-server__add_artifact, Bash, Read, Write
+allowed-tools: mcp__harness__search_gcp_logs, mcp__harness__query_yuppdb, mcp__harness__query_bigquery, mcp__harness__add_artifact, Bash, Read, Write
 ---
 
 # Model Routing Debug Guide

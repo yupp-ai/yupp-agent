@@ -140,6 +140,7 @@ def _fetch_gcp_log_entries(
 
 @shared_tool(
     requires_settings=("GCP_PROJECT_ID",),
+    requires_gcp_adc=True,
     name="search_gcp_logs",
     description=(
         "Search Google Cloud Logging for Yupp MIND production logs. Use this to debug errors, "
@@ -265,6 +266,7 @@ async def search_gcp_logs(
 
 @shared_tool(
     requires_settings=("GCP_PROJECT_ID",),
+    requires_gcp_adc=True,
     name="search_vercel_logs",
     description=(
         "Search Vercel logs imported via vercel-log-drain to GCP logging. Use this to debug frontend issues, "
@@ -323,6 +325,7 @@ async def search_vercel_logs(
 
 @shared_tool(
     requires_settings=("GCP_PROJECT_ID",),
+    requires_gcp_adc=True,
     name="get_gcp_alert_details",
     description=(
         "Fetch GCP Monitoring alert (incident) metadata. "

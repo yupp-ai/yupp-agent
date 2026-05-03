@@ -1,7 +1,7 @@
 ---
 name: record-tool-error
 description: Record a tool call failure to your agent-scope memory so future sessions can avoid the same mistake. Usage /record-tool-error
-allowed-tools: mcp__agcouch-mcp-server__load_memory, mcp__agcouch-mcp-server__save_memory
+allowed-tools: mcp__harness__load_memory, mcp__harness__save_memory
 ---
 
 # Record Tool Error

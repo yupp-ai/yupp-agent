@@ -1,7 +1,7 @@
 ---
 name: analyze-ai-reviews
 description: Analyze AI code review patterns across merged PRs in any GitHub repo. Auto-detects repo from git remote. Examines reviewer comments from AI bots (gemini-code-assist, yupp-reviews, copilot, etc.), resolution patterns, AI-fixer vs human-fixer behaviors, and generates a detailed summary report with charts. Posts the final report to artifact for sharing. Use for retrospectives, review quality assessment, and identifying common AI code-generation blind spots.
-allowed-tools: Bash, Read, Write, Glob, Grep, Task, mcp__agcouch-mcp-server__add_artifact
+allowed-tools: Bash, Read, Write, Glob, Grep, Task, mcp__harness__add_artifact
 ---
 
 # Analyze AI Reviews

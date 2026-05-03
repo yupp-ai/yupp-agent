@@ -360,6 +360,7 @@ async def query_agentdb(
         "Queries are subject to a configurable data processing limit (default: 200 GB)."
     ),
     requires_settings=("GCP_PROJECT_ID",),
+    requires_gcp_adc=True,
 )
 async def query_bigquery(sql: str, max_rows: int = 100) -> dict[str, Any]:
     """Execute read-only SQL query on Yupp BigQuery analytics data.
@@ -388,6 +389,7 @@ async def query_bigquery(sql: str, max_rows: int = 100) -> dict[str, Any]:
         "Prefer query_bigquery for most queries."
     ),
     requires_settings=("GCP_PROJECT_ID",),
+    requires_gcp_adc=True,
 )
 async def query_bigquery_expensive(sql: str, max_rows: int = 1000) -> dict[str, Any]:
     """Execute read-only SQL query on Yupp BigQuery analytics data with higher limits.
