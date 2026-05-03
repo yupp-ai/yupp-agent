@@ -210,6 +210,44 @@ class TestExtractAgentDirective:
         assert name is None
         assert "/agent" in text
 
+    def test_bang_alias_with_space_after_mention(self) -> None:
+        """``@raccoon !sre rest`` → ("sre", "rest")."""
+        name, text = extract_agent_directive("<@U123> !sre what's firing?")
+        assert name == "sre"
+        assert text == "what's firing?"
+
+    def test_bang_alias_no_space_after_mention(self) -> None:
+        """``@raccoon!sre rest`` → ("sre", "rest"). MENTION_PATTERN strips the
+        ``<@...>`` whether or not whitespace follows, so this collapses to the
+        same input as the spaced form.
+        """
+        name, text = extract_agent_directive("<@U123>!sre what's firing?")
+        assert name == "sre"
+        assert text == "what's firing?"
+
+    def test_bang_alias_with_hyphenated_name(self) -> None:
+        name, text = extract_agent_directive("<@U123> !data-scientist run a query")
+        assert name == "data-scientist"
+        assert text == "run a query"
+
+    def test_bang_alias_only_no_remaining_text(self) -> None:
+        name, text = extract_agent_directive("<@U123> !sre")
+        assert name == "sre"
+        assert text == ""
+
+    def test_bare_bang_not_a_directive(self) -> None:
+        """A lone ``!`` (with whitespace before the name) is not a directive."""
+        name, text = extract_agent_directive("<@U123> ! sre hello")
+        assert name is None
+        # The bare ``!`` survives as plain text in the cleaned output.
+        assert text.startswith("!")
+
+    def test_bang_alias_only_first_word_matters(self) -> None:
+        """``!name`` later in the message is not a directive."""
+        name, text = extract_agent_directive("<@U123> hello !sre do stuff")
+        assert name is None
+        assert "!sre" in text
+
 
 # ---------------------------------------------------------------------------
 # extract_leading_directives
@@ -262,6 +300,36 @@ class TestExtractLeadingDirectives:
         assert agent == "sre"
         assert model == "anthropic/claude-sonnet-4-6"
         assert cleaned == ""
+
+    def test_bang_alias_only(self) -> None:
+        """``!sre rest`` is parsed as agent=sre with no model directive."""
+        agent, model, cleaned = extract_leading_directives("<@U1> !sre what alerts")
+        assert agent == "sre"
+        assert model is None
+        assert cleaned == "what alerts"
+
+    def test_bang_alias_no_space_after_mention(self) -> None:
+        """``@raccoon!sre`` (no space) parses the same as ``@raccoon !sre``."""
+        agent, model, cleaned = extract_leading_directives("<@U1>!sre what alerts")
+        assert agent == "sre"
+        assert model is None
+        assert cleaned == "what alerts"
+
+    def test_bang_alias_then_model(self) -> None:
+        agent, model, cleaned = extract_leading_directives(
+            "<@U1> !sre /model anthropic/claude-sonnet-4-6 what's firing?"
+        )
+        assert agent == "sre"
+        assert model == "anthropic/claude-sonnet-4-6"
+        assert cleaned == "what's firing?"
+
+    def test_model_then_bang_alias(self) -> None:
+        agent, model, cleaned = extract_leading_directives(
+            "<@U1> /model anthropic/claude-sonnet-4-6 !sre what's firing?"
+        )
+        assert agent == "sre"
+        assert model == "anthropic/claude-sonnet-4-6"
+        assert cleaned == "what's firing?"
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +397,8 @@ class TestFormatAgentsList:
     def test_usage_hint_included(self) -> None:
         result = format_agents_list([{"name": "x", "display_name": "X"}])
         assert "/agent" in result
+        # The bang-form shorthand is also documented.
+        assert "!AGENT_NAME" in result
 
     def test_description_truncated_when_long(self) -> None:
         long_desc = "a" * 200
