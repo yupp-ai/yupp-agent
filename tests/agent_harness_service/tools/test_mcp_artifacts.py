@@ -9,6 +9,7 @@ from contextlib import ExitStack
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from ypl.mcp_common.auth_context import RequestContext
 from ypl.mcp_server.tools.agent_artifacts import (
     _parse_session_id,
     add_artifact,
@@ -30,6 +31,21 @@ from ypl.mcp_server.tools.memory_artifacts import (
 FAKE_SESSION_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 FAKE_ARTIFACT_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 FAKE_TASK_ID = uuid.UUID("66666666-7777-8888-9999-000000000000")
+
+
+def _make_ctx(
+    *,
+    session_id: str | None = FAKE_SESSION_ID,
+    agent_name: str | None = "sre",
+    user_id: str | None = "user-123",
+) -> RequestContext:
+    """Construct a typed :class:`RequestContext` for tests."""
+    return RequestContext(
+        auth_kind="agent_secret",
+        requesting_user_id=user_id,
+        ahs_session_id=session_id,
+        ahs_agent_name=agent_name,
+    )
 
 
 def _make_artifact(
@@ -85,9 +101,8 @@ class TestParseSessionId:
 
 def _enter_caller_ctx(stack: ExitStack) -> None:
     """Apply the standard MCP-header patches via ``ExitStack``."""
-    stack.enter_context(patch("ypl.mcp_server.tools.agent_artifacts.get_ahs_session_id", return_value=FAKE_SESSION_ID))
-    stack.enter_context(patch("ypl.mcp_server.tools.agent_artifacts.get_ahs_agent_name", return_value="sre"))
-    stack.enter_context(patch("ypl.mcp_server.tools.agent_artifacts.get_requesting_user_id", return_value="user-123"))
+    ctx = _make_ctx()
+    stack.enter_context(patch("ypl.mcp_server.tools.agent_artifacts.current_request_context", return_value=ctx))
     stack.enter_context(patch("ypl.mcp_server.tools.agent_artifacts._resolve_agent_id", AsyncMock(return_value=None)))
 
 
@@ -239,7 +254,7 @@ class TestUpdateArtifact:
     async def test_success(self) -> None:
         artifact = _make_artifact(title="Updated PR")
         with (
-            patch("ypl.mcp_server.tools.agent_artifacts.get_ahs_agent_name", return_value="sre"),
+            patch("ypl.mcp_server.tools.agent_artifacts._caller_agent_name", return_value="sre"),
             patch(
                 "ypl.mcp_server.tools.agent_artifacts._update_artifact",
                 AsyncMock(return_value=artifact),
@@ -263,7 +278,7 @@ class TestUpdateArtifact:
 
     async def test_artifact_not_found(self) -> None:
         with (
-            patch("ypl.mcp_server.tools.agent_artifacts.get_ahs_agent_name", return_value="sre"),
+            patch("ypl.mcp_server.tools.agent_artifacts._caller_agent_name", return_value="sre"),
             patch(
                 "ypl.mcp_server.tools.agent_artifacts._update_artifact",
                 AsyncMock(return_value=None),
@@ -328,14 +343,17 @@ class TestUpdateArtifactContent:
 
 class TestListArtifacts:
     async def test_no_session_returns_empty(self) -> None:
-        with patch("ypl.mcp_server.tools.agent_artifacts.get_ahs_session_id", return_value=None):
+        with patch("ypl.mcp_server.tools.agent_artifacts._caller_session_id", return_value=None):
             result = await list_artifacts.fn()
         assert result["success"] is True
         assert result["artifacts"] == []
         assert result["count"] == 0
 
     async def test_invalid_type_returns_error(self) -> None:
-        with patch("ypl.mcp_server.tools.agent_artifacts.get_ahs_session_id", return_value=FAKE_SESSION_ID):
+        with patch(
+            "ypl.mcp_server.tools.agent_artifacts._caller_session_id",
+            return_value=uuid.UUID(FAKE_SESSION_ID),
+        ):
             result = await list_artifacts.fn(artifact_type="INVALID")
         assert result["success"] is False
         assert "Invalid artifact_type" in result["error"]
@@ -353,7 +371,10 @@ class TestListArtifacts:
         ctx.__aexit__ = AsyncMock(return_value=False)
 
         with (
-            patch("ypl.mcp_server.tools.agent_artifacts.get_ahs_session_id", return_value=FAKE_SESSION_ID),
+            patch(
+                "ypl.mcp_server.tools.agent_artifacts._caller_session_id",
+                return_value=uuid.UUID(FAKE_SESSION_ID),
+            ),
             patch("ypl.mcp_server.tools.agent_artifacts.get_async_session_read_replica", return_value=ctx),
         ):
             result = await list_artifacts.fn()
@@ -516,20 +537,19 @@ def _memory_artifact(
 def _caller_ctx(stack: ExitStack, *, user_id: str | None = "USR_X", agent_name: str | None = "eng-raccoon") -> None:
     """Install MCP caller-context patches inside ``stack``.
 
-    Memory tools live in ``memory_artifacts``; they call ``get_*`` directly
-    for ``_memory_caller_from_context`` *and* call ``_resolve_caller_context``
-    in ``agent_artifacts`` (which has its own bound ``get_ahs_session_id`` /
-    ``_resolve_agent_id``). Patch both module namespaces.
+    Both ``agent_artifacts`` and ``memory_artifacts`` consume the typed
+    :class:`RequestContext` via ``current_request_context()``; we patch
+    that in each tool module's namespace so the tests stay independent of
+    the global ContextVar.
     """
     session_id_value = FAKE_SESSION_ID if user_id or agent_name else None
+    ctx = _make_ctx(session_id=session_id_value, agent_name=agent_name, user_id=user_id)
     # agent_artifacts namespace (used inside _resolve_caller_context).
-    stack.enter_context(patch("ypl.mcp_server.tools.agent_artifacts.get_ahs_session_id", return_value=session_id_value))
-    stack.enter_context(patch("ypl.mcp_server.tools.agent_artifacts.get_ahs_agent_name", return_value=agent_name))
-    stack.enter_context(patch("ypl.mcp_server.tools.agent_artifacts.get_requesting_user_id", return_value=user_id))
+    stack.enter_context(patch("ypl.mcp_server.tools.agent_artifacts.current_request_context", return_value=ctx))
     stack.enter_context(patch("ypl.mcp_server.tools.agent_artifacts._resolve_agent_id", AsyncMock(return_value=None)))
-    # memory_artifacts namespace (used by _memory_caller_from_context).
-    stack.enter_context(patch("ypl.mcp_server.tools.memory_artifacts.get_ahs_agent_name", return_value=agent_name))
-    stack.enter_context(patch("ypl.mcp_server.tools.memory_artifacts.get_requesting_user_id", return_value=user_id))
+    # memory_artifacts namespace (used by _memory_caller_from_context and the
+    # write-through sandbox copy in save_memory).
+    stack.enter_context(patch("ypl.mcp_server.tools.memory_artifacts.current_request_context", return_value=ctx))
 
 
 class TestSaveMemory:

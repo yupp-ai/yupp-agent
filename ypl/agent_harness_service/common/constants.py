@@ -3,10 +3,15 @@
 import os
 import secrets
 import uuid as _uuid
-from contextvars import ContextVar
 from typing import Any
 
 from ypl.backend.config import settings
+
+# Deprecated re-export — the canonical home for ``mcp_session_id_var`` is
+# ``ypl.mcp_common.auth_context``. Tools should read
+# ``current_request_context().ahs_session_id`` instead. Kept here for one
+# release so existing imports keep working.
+from ypl.mcp_common.auth_context import mcp_session_id_var  # noqa: F401
 
 # Filesystem paths (configurable via env vars for local dev)
 # In production: AHS_DATA_DIR=/data/ahs (mounted volume; ahs user's HOME).
@@ -283,10 +288,11 @@ AHS_SESSION_STALE_TIMEOUT_HOURS = float(os.environ.get("AHS_SESSION_STALE_TIMEOU
 # AHS_SCHEDULER_POLL_INTERVAL: Polling interval in seconds (default: 10)
 # AHS_SCHEDULER_BATCH_SIZE: Max calls to process per poll (default: 10)
 
-# ContextVar: propagates the calling agent's session ID from HTTP headers to MCP tool handlers.
-# Set by the auth middleware from the X-AHS-Session-ID header. MCP tools (new_task) read this
-# to enforce allowed_subagents without relying on the LLM to pass session_id.
-mcp_session_id_var: ContextVar[str] = ContextVar("mcp_session_id", default="")
+# ``mcp_session_id_var`` (which propagates the calling agent's AHS session
+# ID through HTTP headers to MCP tool handlers) lives in
+# ``ypl.mcp_common.auth_context`` and is re-exported at the top of this
+# module for backwards compatibility. New code should read
+# ``current_request_context().ahs_session_id`` instead.
 
 
 # ---------------------------------------------------------------------------

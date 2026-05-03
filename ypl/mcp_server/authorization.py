@@ -3,50 +3,25 @@
 Two concepts:
 
 - **Caller identity.** The ``user_id`` on whose behalf this request is being
-  made. Resolved from the ``X-User-ID`` header when the middleware trusted it
-  (see ``auth_dev_token.create_request_context``), otherwise from the MCP-
-  authenticated email.
+  made. Populated once by the auth middleware (harness, agcouch OAuth, or
+  agcouch DevToken) on the typed
+  :class:`~ypl.mcp_common.auth_context.RequestContext`. Tools read it via
+  :func:`ypl.mcp_common.auth_context.require_caller_user_id`; the legacy
+  email-fallback layer is gone.
 
-- **Ownership check.** A resource may be mutated if the caller is the creator
-  OR the caller holds a resource-scoped admin permission
+- **Ownership check.** A resource may be mutated if the caller is the
+  creator OR holds a resource-scoped admin permission
   (``MANAGE_AGENT_SCHEDULES``, ``MANAGE_AGENT_PROJECTS``,
   ``MANAGE_AGENT_SESSIONS``).
 
-These helpers centralize that pattern so individual tools don't reinvent it.
+These helpers centralize the ownership pattern so individual tools don't
+reinvent it.
 """
 
 from __future__ import annotations
 
 from ypl.backend.utils.soul_utils import has_permission_by_user_id_cached
 from ypl.db.rbac import Permission
-from ypl.mcp_common.scheduled_agent_call_helpers import resolve_user_id_from_email
-from ypl.mcp_server.core import get_requesting_user_id
-
-
-async def resolve_caller_user_id(auth_email: str) -> tuple[str | None, str | None]:
-    """Resolve the effective caller ``user_id`` for the current request.
-
-    Prefers the ``X-User-ID`` header (which the middleware only populates
-    when the token owner is authorized to assert user identity). Falls back
-    to resolving the token's ``auth_email`` to a ``user_id``.
-
-    Args:
-        auth_email: The MCP-authenticated email (usually from
-            ``get_authenticated_user_email()``).
-
-    Returns:
-        ``(caller_user_id, error)`` — on success ``error`` is ``None``. On
-        failure ``caller_user_id`` is ``None`` and ``error`` describes the
-        failure.
-    """
-    caller_user_id = get_requesting_user_id()
-    if caller_user_id:
-        return caller_user_id, None
-
-    caller_user_id, err = await resolve_user_id_from_email(auth_email)
-    if err:
-        return None, err
-    return caller_user_id, None
 
 
 async def ensure_owner_or_permission(

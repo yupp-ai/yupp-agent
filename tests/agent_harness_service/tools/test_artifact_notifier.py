@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from slack_sdk.errors import SlackApiError
 from ypl.db.agent_harness import AgentArtifactType
+from ypl.mcp_common.auth_context import RequestContext
 from ypl.mcp_server.tools import artifact_notifier
 from ypl.mcp_server.tools.artifact_notifier import (
     _build_attribution,
@@ -32,6 +33,21 @@ from ypl.mcp_server.tools.artifact_notifier import (
 
 FAKE_ARTIFACT_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 FAKE_SESSION_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+
+
+def _agent_artifacts_ctx(
+    *,
+    session_id: str | None = str(FAKE_SESSION_ID),
+    agent_name: str | None = "eng-raccoon",
+    user_id: str | None = "user-1",
+) -> RequestContext:
+    """Build a RequestContext suitable for patching ``current_request_context``."""
+    return RequestContext(
+        auth_kind="agent_secret",
+        requesting_user_id=user_id,
+        ahs_session_id=session_id,
+        ahs_agent_name=agent_name,
+    )
 
 
 def _make_artifact(
@@ -523,15 +539,9 @@ class TestArtifactToolsHookNotifier:
         with ExitStack() as stack:
             stack.enter_context(
                 patch(
-                    "ypl.mcp_server.tools.agent_artifacts.get_ahs_session_id",
-                    return_value=str(FAKE_SESSION_ID),
+                    "ypl.mcp_server.tools.agent_artifacts.current_request_context",
+                    return_value=_agent_artifacts_ctx(),
                 )
-            )
-            stack.enter_context(
-                patch("ypl.mcp_server.tools.agent_artifacts.get_ahs_agent_name", return_value="eng-raccoon")
-            )
-            stack.enter_context(
-                patch("ypl.mcp_server.tools.agent_artifacts.get_requesting_user_id", return_value="user-1")
             )
             stack.enter_context(
                 patch("ypl.mcp_server.tools.agent_artifacts._resolve_agent_id", AsyncMock(return_value=None))
@@ -566,17 +576,15 @@ class TestArtifactToolsHookNotifier:
         artifact = _make_artifact(title="Updated title")
         with ExitStack() as stack:
             stack.enter_context(
-                patch("ypl.mcp_server.tools.agent_artifacts.get_ahs_agent_name", return_value="eng-raccoon")
+                patch("ypl.mcp_server.tools.agent_artifacts._caller_agent_name", return_value="eng-raccoon")
             )
             stack.enter_context(
-                patch("ypl.mcp_server.tools.agent_artifacts.get_ahs_session_id", return_value=str(FAKE_SESSION_ID))
+                patch(
+                    "ypl.mcp_server.tools.agent_artifacts._caller_session_id",
+                    return_value=FAKE_SESSION_ID,
+                )
             )
-            stack.enter_context(
-                patch("ypl.mcp_server.tools.agent_artifacts.get_requesting_user_id", return_value="user-1")
-            )
-            stack.enter_context(
-                patch("ypl.mcp_server.tools.agent_artifacts._resolve_agent_id", AsyncMock(return_value=None))
-            )
+            stack.enter_context(patch("ypl.mcp_server.tools.agent_artifacts._caller_user_id", return_value="user-1"))
             stack.enter_context(
                 patch(
                     "ypl.mcp_server.tools.agent_artifacts._update_artifact",
@@ -602,15 +610,9 @@ class TestArtifactToolsHookNotifier:
         with ExitStack() as stack:
             stack.enter_context(
                 patch(
-                    "ypl.mcp_server.tools.agent_artifacts.get_ahs_session_id",
-                    return_value=str(FAKE_SESSION_ID),
+                    "ypl.mcp_server.tools.agent_artifacts.current_request_context",
+                    return_value=_agent_artifacts_ctx(),
                 )
-            )
-            stack.enter_context(
-                patch("ypl.mcp_server.tools.agent_artifacts.get_ahs_agent_name", return_value="eng-raccoon")
-            )
-            stack.enter_context(
-                patch("ypl.mcp_server.tools.agent_artifacts.get_requesting_user_id", return_value="user-1")
             )
             stack.enter_context(
                 patch("ypl.mcp_server.tools.agent_artifacts._resolve_agent_id", AsyncMock(return_value=None))
