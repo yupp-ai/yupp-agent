@@ -584,9 +584,7 @@ class TestArtifactToolsHookNotifier:
                     return_value=FAKE_SESSION_ID,
                 )
             )
-            stack.enter_context(
-                patch("ypl.mcp_server.tools.agent_artifacts._caller_user_id", return_value="user-1")
-            )
+            stack.enter_context(patch("ypl.mcp_server.tools.agent_artifacts._caller_user_id", return_value="user-1"))
             stack.enter_context(
                 patch(
                     "ypl.mcp_server.tools.agent_artifacts._update_artifact",

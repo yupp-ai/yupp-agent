@@ -79,9 +79,7 @@ def _grant_project_admin_by_default() -> Any:
 
 def _set_auth_context(user_id: str = USER_ID, email: str = "test@example.com") -> None:
     """Set up a valid authenticated request context."""
-    request_context.set(
-        RequestContext(auth_kind="oauth_user", requesting_user_id=user_id, audit_email=email)
-    )
+    request_context.set(RequestContext(auth_kind="oauth_user", requesting_user_id=user_id, audit_email=email))
 
 
 def _set_no_auth_context() -> None:

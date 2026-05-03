@@ -153,15 +153,25 @@ class ToolCallLoggingMiddleware(Middleware):
         ctx = current_request_context()
 
         # Lazy import: ``auth_dev_token`` pulls in DB modules, and not
-        # every deployment loads it (e.g. OAuth-only). The transitional
-        # var defaults to ``None`` outside DevToken middleware paths.
+        # every deployment loads it (e.g. OAuth-only). Only ``ImportError``
+        # is a legitimate reason to swallow here — every other exception
+        # would silently zero out ``MCPAuditLog.mcp_dev_token_id`` for
+        # every DevToken request, which is an audit regression.
         token: MCPDevToken | None = None
         try:
             from ypl.mcp_server.auth_dev_token import current_devtoken_for_audit
-
-            token = current_devtoken_for_audit()
-        except Exception:
+        except ImportError:
+            # OAuth-only deployment — no DevToken machinery is loaded.
             token = None
+        else:
+            try:
+                token = current_devtoken_for_audit()
+            except Exception:
+                # ContextVar reads cannot ordinarily fail; if they do,
+                # log loudly so the failure is visible in audit-trail
+                # gaps rather than silently swallowed.
+                logger.exception("Failed to read DevToken audit context")
+                token = None
 
         # In DEV_TOKEN mode the middleware MUST have populated context;
         # if not, fail loudly so the misconfiguration is obvious.
@@ -169,11 +179,16 @@ class ToolCallLoggingMiddleware(Middleware):
             logger.error("DevToken authentication is required, but no context was set")
             raise PermissionError("DevToken authentication is required")
 
+        # Identity for the audit log. The OAuth and DevToken middlewares
+        # populate the typed context with both the verified email and
+        # the OAuth ``callback_url`` (the OAuth client identifier);
+        # tools cannot inject either.
+        oauth_email: str | None = ctx.audit_email if ctx else None
+        callback_url: str | None = ctx.callback_url if ctx else None
+
         # OAuth fallback: if FastMCP somehow processed the request
         # without going through verify_token (shouldn't happen, but
         # defensive), reach into the access token directly.
-        oauth_email: str | None = ctx.audit_email if ctx else None
-        callback_url: str | None = None
         if token is None and oauth_email is None and settings.MCP_SERVER_MODE == "OAUTH":
             try:
                 access_token = get_access_token()

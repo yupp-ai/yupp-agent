@@ -31,7 +31,7 @@ from ypl.db.agent_harness import (
     AgentTaskStatus,
 )
 from ypl.db.rbac import Permission
-from ypl.mcp_common.auth_context import require_caller_user_id
+from ypl.mcp_common.auth_context import require_caller_user_id, require_principal_user_id
 from ypl.mcp_server.core import mcp_server
 from ypl.structured_logger import get_logger
 
@@ -51,15 +51,30 @@ logger = get_logger()
 async def _resolve_caller_for_project_auth() -> tuple[str, bool]:
     """Return ``(caller_user_id, is_project_admin)`` for the current request.
 
-    ``is_project_admin`` is True iff the caller holds
-    ``MANAGE_AGENT_PROJECTS`` — meaning they may mutate any project.
-    Otherwise, per-resource mutation is limited to resources they own.
+    ``is_project_admin`` is True iff the credential holder for the
+    request holds ``MANAGE_AGENT_PROJECTS`` — meaning they may mutate
+    any project. Otherwise, per-resource mutation is limited to
+    resources owned by the impersonated (caller) user.
+
+    On the dev-token impersonation path the caller and principal differ:
+    the caller is the impersonated user (used for ownership checks),
+    the principal is the admin token holder (used for the admin gate).
+    On every other path the two are equal and the second lookup is
+    elided. This mirrors the pre-typed-context behaviour where
+    ``MANAGE_AGENT_PROJECTS`` was checked against the credential
+    holder's email.
 
     Raises ``PermissionError`` (via :func:`require_caller_user_id`) when
     no authenticated identity is in the request context.
     """
     caller_user_id = require_caller_user_id()
+    principal_user_id = require_principal_user_id()
     is_admin = await has_permission_by_user_id_cached(caller_user_id, Permission.MANAGE_AGENT_PROJECTS)
+    # On the impersonation path, fall back to the credential holder for
+    # the admin elevation: an admin acting on behalf of a regular user
+    # should not lose admin powers because the regular user lacks them.
+    if not is_admin and principal_user_id != caller_user_id:
+        is_admin = await has_permission_by_user_id_cached(principal_user_id, Permission.MANAGE_AGENT_PROJECTS)
     return caller_user_id, is_admin
 
 

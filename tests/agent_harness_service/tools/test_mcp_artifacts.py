@@ -102,9 +102,7 @@ class TestParseSessionId:
 def _enter_caller_ctx(stack: ExitStack) -> None:
     """Apply the standard MCP-header patches via ``ExitStack``."""
     ctx = _make_ctx()
-    stack.enter_context(
-        patch("ypl.mcp_server.tools.agent_artifacts.current_request_context", return_value=ctx)
-    )
+    stack.enter_context(patch("ypl.mcp_server.tools.agent_artifacts.current_request_context", return_value=ctx))
     stack.enter_context(patch("ypl.mcp_server.tools.agent_artifacts._resolve_agent_id", AsyncMock(return_value=None)))
 
 
@@ -547,15 +545,11 @@ def _caller_ctx(stack: ExitStack, *, user_id: str | None = "USR_X", agent_name: 
     session_id_value = FAKE_SESSION_ID if user_id or agent_name else None
     ctx = _make_ctx(session_id=session_id_value, agent_name=agent_name, user_id=user_id)
     # agent_artifacts namespace (used inside _resolve_caller_context).
-    stack.enter_context(
-        patch("ypl.mcp_server.tools.agent_artifacts.current_request_context", return_value=ctx)
-    )
+    stack.enter_context(patch("ypl.mcp_server.tools.agent_artifacts.current_request_context", return_value=ctx))
     stack.enter_context(patch("ypl.mcp_server.tools.agent_artifacts._resolve_agent_id", AsyncMock(return_value=None)))
     # memory_artifacts namespace (used by _memory_caller_from_context and the
     # write-through sandbox copy in save_memory).
-    stack.enter_context(
-        patch("ypl.mcp_server.tools.memory_artifacts.current_request_context", return_value=ctx)
-    )
+    stack.enter_context(patch("ypl.mcp_server.tools.memory_artifacts.current_request_context", return_value=ctx))
 
 
 class TestSaveMemory:

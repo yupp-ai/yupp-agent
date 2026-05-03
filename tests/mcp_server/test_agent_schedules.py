@@ -207,6 +207,7 @@ class TestCreateAgentScheduleTool:
             patch("ypl.mcp_server.tools.agent_schedules.parse_execute_at", return_value=(execute_at_utc, None)),
             patch("ypl.mcp_server.tools.agent_schedules.parse_schedule_context", return_value=({}, None)),
             patch("ypl.mcp_server.tools.agent_schedules.require_caller_user_id", return_value=user_id),
+            patch("ypl.mcp_server.tools.agent_schedules.require_principal_user_id", return_value=user_id),
             patch(
                 "ypl.mcp_server.tools.agent_schedules.create_agent_schedule",
                 new=AsyncMock(return_value=expected_result),
@@ -312,6 +313,7 @@ class TestCreateRecurringAgentScheduleTool:
             patch("ypl.mcp_server.tools.agent_schedules.validate_cron_expression", return_value=None),
             patch("ypl.mcp_server.tools.agent_schedules.parse_schedule_context", return_value=({}, None)),
             patch("ypl.mcp_server.tools.agent_schedules.require_caller_user_id", return_value=user_id),
+            patch("ypl.mcp_server.tools.agent_schedules.require_principal_user_id", return_value=user_id),
             patch("ypl.mcp_server.tools.agent_schedules.compute_next_run_for_cron", return_value=next_run),
             patch("ypl.mcp_server.tools.agent_schedules.create_agent_schedule", new=AsyncMock(return_value=expected)),
         ):
@@ -350,6 +352,7 @@ class TestCancelAgentSchedule:
         caller_id = str(uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
         with (
             patch("ypl.mcp_server.tools.agent_schedules.require_caller_user_id", return_value=caller_id),
+            patch("ypl.mcp_server.tools.agent_schedules.require_principal_user_id", return_value=caller_id),
             patch(
                 "ypl.mcp_server.tools.agent_schedules.has_permission_by_user_id_cached",
                 new=AsyncMock(return_value=False),
@@ -371,6 +374,7 @@ class TestCancelAgentSchedule:
         permission_mock = AsyncMock(side_effect=[True, False])
         with (
             patch("ypl.mcp_server.tools.agent_schedules.require_caller_user_id", return_value=caller_id),
+            patch("ypl.mcp_server.tools.agent_schedules.require_principal_user_id", return_value=caller_id),
             patch(
                 "ypl.mcp_server.tools.agent_schedules.has_permission_by_user_id_cached",
                 new=permission_mock,
@@ -395,6 +399,7 @@ class TestCancelAgentSchedule:
 
         with (
             patch("ypl.mcp_server.tools.agent_schedules.require_caller_user_id", return_value=caller_id),
+            patch("ypl.mcp_server.tools.agent_schedules.require_principal_user_id", return_value=caller_id),
             patch(
                 "ypl.mcp_server.tools.agent_schedules.has_permission_by_user_id_cached",
                 new=AsyncMock(return_value=True),  # USE_MCP and MANAGE_AGENT_SCHEDULES both granted
@@ -429,6 +434,7 @@ class TestEditAgentSchedule:
         caller_id = str(uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
         with (
             patch("ypl.mcp_server.tools.agent_schedules.require_caller_user_id", return_value=caller_id),
+            patch("ypl.mcp_server.tools.agent_schedules.require_principal_user_id", return_value=caller_id),
             patch(
                 "ypl.mcp_server.tools.agent_schedules.has_permission_by_user_id_cached",
                 new=AsyncMock(return_value=False),
@@ -449,6 +455,7 @@ class TestEditAgentSchedule:
         permission_mock = AsyncMock(side_effect=[True, False])
         with (
             patch("ypl.mcp_server.tools.agent_schedules.require_caller_user_id", return_value=caller_id),
+            patch("ypl.mcp_server.tools.agent_schedules.require_principal_user_id", return_value=caller_id),
             patch(
                 "ypl.mcp_server.tools.agent_schedules.has_permission_by_user_id_cached",
                 new=permission_mock,
@@ -473,6 +480,7 @@ class TestEditAgentSchedule:
 
         with (
             patch("ypl.mcp_server.tools.agent_schedules.require_caller_user_id", return_value=caller_id),
+            patch("ypl.mcp_server.tools.agent_schedules.require_principal_user_id", return_value=caller_id),
             patch(
                 "ypl.mcp_server.tools.agent_schedules.has_permission_by_user_id_cached",
                 new=AsyncMock(return_value=True),  # USE_MCP and MANAGE_AGENT_SCHEDULES both granted
@@ -493,6 +501,7 @@ class TestEditAgentSchedule:
 
         with (
             patch("ypl.mcp_server.tools.agent_schedules.require_caller_user_id", return_value=caller_id),
+            patch("ypl.mcp_server.tools.agent_schedules.require_principal_user_id", return_value=caller_id),
             patch(
                 "ypl.mcp_server.tools.agent_schedules.has_permission_by_user_id_cached",
                 new=AsyncMock(return_value=True),
@@ -531,6 +540,7 @@ class TestListAgentSchedules:
         caller_id = str(uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
         with (
             patch("ypl.mcp_server.tools.agent_schedules.require_caller_user_id", return_value=caller_id),
+            patch("ypl.mcp_server.tools.agent_schedules.require_principal_user_id", return_value=caller_id),
             patch(
                 "ypl.mcp_server.tools.agent_schedules.has_permission_by_user_id_cached",
                 new=AsyncMock(return_value=False),
@@ -545,6 +555,7 @@ class TestListAgentSchedules:
         caller_id = str(uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
         with (
             patch("ypl.mcp_server.tools.agent_schedules.require_caller_user_id", return_value=caller_id),
+            patch("ypl.mcp_server.tools.agent_schedules.require_principal_user_id", return_value=caller_id),
             patch(
                 "ypl.mcp_server.tools.agent_schedules.has_permission_by_user_id_cached",
                 new=AsyncMock(return_value=True),
@@ -559,6 +570,7 @@ class TestListAgentSchedules:
         caller_id = str(uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
         with (
             patch("ypl.mcp_server.tools.agent_schedules.require_caller_user_id", return_value=caller_id),
+            patch("ypl.mcp_server.tools.agent_schedules.require_principal_user_id", return_value=caller_id),
             patch(
                 "ypl.mcp_server.tools.agent_schedules.has_permission_by_user_id_cached",
                 new=AsyncMock(return_value=True),
@@ -584,6 +596,7 @@ class TestListAgentSchedules:
 
         with (
             patch("ypl.mcp_server.tools.agent_schedules.require_caller_user_id", return_value=caller_id),
+            patch("ypl.mcp_server.tools.agent_schedules.require_principal_user_id", return_value=caller_id),
             patch(
                 "ypl.mcp_server.tools.agent_schedules.has_permission_by_user_id_cached",
                 new=AsyncMock(return_value=True),
@@ -611,6 +624,7 @@ class TestListAgentSchedules:
 
         with (
             patch("ypl.mcp_server.tools.agent_schedules.require_caller_user_id", return_value=caller_id),
+            patch("ypl.mcp_server.tools.agent_schedules.require_principal_user_id", return_value=caller_id),
             patch(
                 "ypl.mcp_server.tools.agent_schedules.has_permission_by_user_id_cached",
                 new=AsyncMock(return_value=True),
@@ -628,6 +642,7 @@ class TestListAgentSchedules:
         caller_id = str(uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
         with (
             patch("ypl.mcp_server.tools.agent_schedules.require_caller_user_id", return_value=caller_id),
+            patch("ypl.mcp_server.tools.agent_schedules.require_principal_user_id", return_value=caller_id),
             patch(
                 "ypl.mcp_server.tools.agent_schedules.has_permission_by_user_id_cached",
                 new=AsyncMock(return_value=True),
@@ -658,6 +673,7 @@ class TestListAgentSchedules:
 
         with (
             patch("ypl.mcp_server.tools.agent_schedules.require_caller_user_id", return_value=caller_id),
+            patch("ypl.mcp_server.tools.agent_schedules.require_principal_user_id", return_value=caller_id),
             patch(
                 "ypl.mcp_server.tools.agent_schedules.has_permission_by_user_id_cached",
                 new=AsyncMock(return_value=True),
@@ -683,6 +699,7 @@ class TestListAgentSchedules:
         permission_mock = AsyncMock(side_effect=[True, False])
         with (
             patch("ypl.mcp_server.tools.agent_schedules.require_caller_user_id", return_value=caller_id),
+            patch("ypl.mcp_server.tools.agent_schedules.require_principal_user_id", return_value=caller_id),
             patch(
                 "ypl.mcp_server.tools.agent_schedules.has_permission_by_user_id_cached",
                 new=permission_mock,
@@ -714,6 +731,7 @@ class TestListAgentSchedules:
 
         with (
             patch("ypl.mcp_server.tools.agent_schedules.require_caller_user_id", return_value=caller_id),
+            patch("ypl.mcp_server.tools.agent_schedules.require_principal_user_id", return_value=caller_id),
             patch(
                 "ypl.mcp_server.tools.agent_schedules.has_permission_by_user_id_cached",
                 new=AsyncMock(return_value=True),  # USE_MCP and MANAGE_AGENT_SCHEDULES both granted

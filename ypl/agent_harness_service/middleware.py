@@ -8,6 +8,7 @@ Houses the two ASGI middleware classes used by the AHS server:
   carry the process-local secret token.
 """
 
+import hmac
 import json
 import re
 from collections.abc import Awaitable, Callable
@@ -159,10 +160,10 @@ class McpTokenAuthMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
-        token = request.headers.get("x-ahs-token")
+        token = request.headers.get("x-ahs-token", "")
         session_id = request.headers.get("x-ahs-session-id", "")
 
-        if token != AHS_MCP_SECRET:
+        if not hmac.compare_digest(token, AHS_MCP_SECRET):
             # Fallback: Accept Bearer token in format "<secret>:<session_id>".
             # Codex CLI only supports bearer_token_env_var for MCP auth, so we
             # encode both the secret and session ID into a single Bearer token.
@@ -171,11 +172,11 @@ class McpTokenAuthMiddleware(BaseHTTPMiddleware):
                 bearer = auth_header[7:]
                 if ":" in bearer:
                     bearer_secret, bearer_session_id = bearer.split(":", 1)
-                    if bearer_secret == AHS_MCP_SECRET:
+                    if hmac.compare_digest(bearer_secret, AHS_MCP_SECRET):
                         token = bearer_secret
                         session_id = bearer_session_id
 
-        if token != AHS_MCP_SECRET:
+        if not hmac.compare_digest(token, AHS_MCP_SECRET):
             return JSONResponse(content={"detail": "Unauthorized"}, status_code=401)
 
         # Publish identity. AHS-runner-injected headers are tamper-proof

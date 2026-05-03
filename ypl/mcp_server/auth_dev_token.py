@@ -36,8 +36,7 @@ from ypl.backend.db import get_async_session, retry_db
 from ypl.backend.utils.soul_utils import has_permission_cached
 from ypl.db.mcp import MCPDevToken, MCPTokenStatus, MCPTokenType
 from ypl.db.rbac import Permission
-from ypl.mcp_common.auth_context import RequestContext, request_context
-from ypl.mcp_server.auth_oauth import _resolve_user_id_from_email
+from ypl.mcp_common.auth_context import RequestContext, lookup_user_id_by_email, request_context
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -276,11 +275,11 @@ async def build_request_context(
     and returns the immutable context the audit middleware and tools will
     consume.
 
-    Per the design doc, the dev-token path uses ``auth_kind="oauth_user"``
-    — the "oauth-resolved user" branch — and the dev-token DB row is
-    surfaced separately on :data:`_devtoken_audit_var` so the audit log
-    can keep stamping ``mcp_dev_token_id`` until phase 5b removes the
-    column.
+    The dev-token path emits ``auth_kind="dev_token"`` so future tool
+    code can distinguish a verified-Google-identity caller from a
+    token-holder caller. The dev-token DB row is surfaced separately on
+    :data:`_devtoken_audit_var` so the audit log can keep stamping
+    ``mcp_dev_token_id`` until phase 5b removes the column.
     """
     can_impersonate = await _can_assert_user_identity(db_token)
 
@@ -288,7 +287,22 @@ async def build_request_context(
     # once here so tools never have to re-resolve. ``None`` means the
     # token holder isn't bound to an active platform user — the audit
     # trail still records the email for review.
-    own_user_id: str | None = await _resolve_user_id_from_email(db_token.email)
+    #
+    # Mirror the OAuth path's defensive ``try/except``: a transient DB
+    # blip, a case-insensitive email collision, or any other failure
+    # downgrades to ``own_user_id=None`` and surfaces a clean
+    # ``PermissionError`` via ``require_caller_user_id()`` rather than
+    # a 500 from the middleware. Non-impersonating callers without an
+    # active platform user end up with ``requesting_user_id=None`` and
+    # tools refuse politely.
+    try:
+        own_user_id: str | None = await lookup_user_id_by_email(db_token.email)
+    except Exception:
+        logger.exception(
+            "DevToken user_id lookup failed; falling back to audit-only email",
+            email_local_part=db_token.email.split("@")[0],
+        )
+        own_user_id = None
 
     # Optional impersonation: privileged callers (AHS service principal,
     # admins) can override the user_id and AHS identity headers. Regular
@@ -314,8 +328,14 @@ async def build_request_context(
         ahs_session_id = request.headers.get("x-ahs-session-id") or None
 
     return RequestContext(
-        auth_kind="oauth_user",
+        auth_kind="dev_token",
         requesting_user_id=requesting_user_id,
+        # Credential holder is always the token owner — even when
+        # impersonating. Tools that gate on USE_MCP / similar
+        # credential-level permissions check against this so an admin
+        # acting on behalf of a regular user isn't blocked by the
+        # regular user's missing permissions.
+        principal_user_id=own_user_id,
         ahs_session_id=ahs_session_id,
         ahs_agent_name=ahs_agent_name,
         audit_email=db_token.email,

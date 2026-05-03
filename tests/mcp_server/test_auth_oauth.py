@@ -163,7 +163,7 @@ class TestAllowedDomainsGoogleProviderVerifyToken:
                 new=AsyncMock(return_value=True),
             ),
             patch(
-                "ypl.mcp_server.auth_oauth._resolve_user_id_from_email",
+                "ypl.mcp_server.auth_oauth.lookup_user_id_by_email",
                 new=AsyncMock(return_value=None),
             ),
         ):
@@ -193,7 +193,7 @@ class TestAllowedDomainsGoogleProviderVerifyToken:
                 new=AsyncMock(return_value=True),
             ),
             patch(
-                "ypl.mcp_server.auth_oauth._resolve_user_id_from_email",
+                "ypl.mcp_server.auth_oauth.lookup_user_id_by_email",
                 new=AsyncMock(return_value="user-resolved-1"),
             ),
         ):
@@ -205,6 +205,54 @@ class TestAllowedDomainsGoogleProviderVerifyToken:
         assert ctx.audit_email == "dev@example.com"
         assert ctx.auth_kind == "oauth_user"
         assert ctx.requesting_user_id == "user-resolved-1"
+        # Regression: the OAuth ``client_id`` must be carried on the typed
+        # context so ToolCallLoggingMiddleware can persist it on
+        # ``MCPAuditLog.callback_url``. Without this, every OAuth-
+        # authenticated audit row has callback_url=NULL.
+        assert ctx.callback_url == "https://callback.example.com"
+        # OAuth has no impersonation: principal mirrors caller.
+        assert ctx.principal_user_id == "user-resolved-1"
+
+    async def test_user_id_lookup_failure_falls_back_to_audit_only(self) -> None:
+        """Transient DB blip during email→user_id lookup degrades to None
+        rather than escaping as an unhandled 500. The audit trail still
+        records the email; tools that need an attributable user surface a
+        clean PermissionError via require_caller_user_id().
+        """
+        provider = _make_provider()
+        mock_token = MagicMock()
+        mock_token.claims = {"email": "dev@example.com"}
+        mock_token.client_id = "https://callback.example.com"
+
+        from ypl.mcp_common.auth_context import RequestContext, request_context
+
+        request_context.set(None)
+
+        with (
+            patch(
+                "fastmcp.server.auth.providers.google.GoogleProvider.verify_token",
+                new=AsyncMock(return_value=mock_token),
+            ),
+            patch("ypl.mcp_server.auth_oauth.settings") as s,
+            patch(
+                "ypl.mcp_server.auth_oauth.has_permission_cached",
+                new=AsyncMock(return_value=True),
+            ),
+            patch(
+                "ypl.mcp_server.auth_oauth.lookup_user_id_by_email",
+                new=AsyncMock(side_effect=RuntimeError("DB blip")),
+            ),
+        ):
+            s.ALLOWED_MCP_EMAIL_DOMAINS = ["example.com"]
+            result = await AllowedDomainsGoogleProvider.verify_token(provider, "valid-token")
+
+        # The token still verifies (the DB failure isn't fatal), but
+        # requesting_user_id is None.
+        assert result is mock_token
+        ctx = request_context.get()
+        assert isinstance(ctx, RequestContext)
+        assert ctx.audit_email == "dev@example.com"
+        assert ctx.requesting_user_id is None
 
     async def test_none_claims_treated_as_missing_email(self) -> None:
         provider = _make_provider()

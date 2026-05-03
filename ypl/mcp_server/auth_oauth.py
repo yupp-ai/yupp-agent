@@ -18,18 +18,14 @@ from fastmcp.server.auth.providers.google import GoogleProvider
 from key_value.aio.stores.redis import RedisStore
 from key_value.aio.wrappers.encryption import FernetEncryptionWrapper
 from key_value.aio.wrappers.prefix_collections import PrefixCollectionsWrapper
-from sqlalchemy import func
-from sqlmodel import select
 
 # Import all models to ensure SQLAlchemy mappers are fully configured before any query.
 # This avoids lazy initialization errors when models have cross-references (e.g. Memory -> ChatMessage).
 import ypl.db.all_models  # noqa: F401
 from ypl.backend.config import settings
-from ypl.backend.db import get_async_session
 from ypl.backend.utils.soul_utils import has_permission_cached
 from ypl.db.rbac import Permission
-from ypl.db.users import User
-from ypl.mcp_common.auth_context import RequestContext, request_context
+from ypl.mcp_common.auth_context import RequestContext, lookup_user_id_by_email, request_context
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -42,27 +38,6 @@ def is_allowed_email_domain(email: str) -> bool:
     email_domain = email.split("@")[-1].lower()
     allowed_domains = [d.lower() for d in settings.ALLOWED_MCP_EMAIL_DOMAINS]
     return email_domain in allowed_domains
-
-
-async def _resolve_user_id_from_email(email: str) -> str | None:
-    """Best-effort email → ``user_id`` lookup for OAuth callers.
-
-    Private helper for the OAuth middleware: tools no longer perform this
-    resolution themselves — the typed
-    :class:`~ypl.mcp_common.auth_context.RequestContext` we publish here
-    carries ``requesting_user_id`` directly.
-
-    Returns ``None`` when the email isn't bound to an active platform
-    user (deleted account, or new OAuth user not yet provisioned). The
-    middleware records the email under ``audit_email`` either way so the
-    audit trail still attributes the call to a human.
-    """
-    async with get_async_session() as session:
-        result = await session.execute(select(User).where(func.lower(User.email) == func.lower(email)))
-        user = result.scalar_one_or_none()
-        if user is None or user.deleted_at is not None:
-            return None
-        return str(user.user_id)
 
 
 class AllowedDomainsGoogleProvider(GoogleProvider):
@@ -125,7 +100,7 @@ class AllowedDomainsGoogleProvider(GoogleProvider):
         # attributable user will get a clean PermissionError via
         # require_caller_user_id() instead of an "unknown email" string.
         try:
-            requesting_user_id = await _resolve_user_id_from_email(email)
+            requesting_user_id = await lookup_user_id_by_email(email)
         except Exception:
             logger.exception(
                 "OAuth user_id lookup failed; falling back to audit-only email",
@@ -139,6 +114,12 @@ class AllowedDomainsGoogleProvider(GoogleProvider):
             user_id_resolved=requesting_user_id is not None,
         )
 
+        # The OAuth client identifier (the OAuth-2.0 ``client_id`` claim
+        # the access token was issued to). Audit-only — surfaces in
+        # ``MCPAuditLog.callback_url`` so security review can attribute
+        # calls to the OAuth client that obtained the token.
+        callback_url = getattr(access_token, "client_id", None)
+
         # Populate the typed request context so ToolCallLoggingMiddleware
         # and tools see one shape regardless of which mount the request
         # arrived on. ContextVar is scoped to the current asyncio task
@@ -147,7 +128,10 @@ class AllowedDomainsGoogleProvider(GoogleProvider):
             RequestContext(
                 auth_kind="oauth_user",
                 requesting_user_id=requesting_user_id,
+                # OAuth has no impersonation: principal == requesting_user.
+                principal_user_id=requesting_user_id,
                 audit_email=email,
+                callback_url=callback_url,
                 # IP / UA are not available from the OAuth provider layer.
                 # The harness path enriches them at the ASGI middleware.
                 ip_address=None,

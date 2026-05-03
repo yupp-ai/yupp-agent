@@ -163,9 +163,11 @@ class AgcouchMcpAuthMiddleware(BaseHTTPMiddleware):
 
         # Lazy import: yuppdb may not be configured in one-box mode.
         try:
+            from ypl.backend.utils.soul_utils import has_permission_cached
             from ypl.db.mcp import MCPTokenStatus
+            from ypl.db.rbac import Permission
             from ypl.mcp_server.auth_dev_token import _devtoken_audit_var, build_request_context, validate_token
-        except Exception as exc:
+        except ImportError as exc:
             logger.error(
                 "yuppdb not configured — developer token auth unavailable",
                 error=str(exc),
@@ -196,7 +198,40 @@ class AgcouchMcpAuthMiddleware(BaseHTTPMiddleware):
                 detail = "Invalid token"
             return JSONResponse(content={"detail": detail}, status_code=401)
 
-        ctx = await build_request_context(db_token, request)
+        # Mirror the standalone ``DevTokenAuthMiddleware`` USE_MCP gate
+        # (auth_dev_token.py:429-437). Without this, an active token
+        # whose owner has lost ``USE_MCP`` would still be accepted on
+        # ``/mcp/agcouch`` here while being rejected on the standalone
+        # MCP server — a security boundary mismatch.
+        if not await has_permission_cached(db_token.email, Permission.USE_MCP):
+            logger.warning(
+                "DevToken authentication rejected - user lacks USE_MCP permission",
+                email_local_part=db_token.email.split("@")[0],
+            )
+            return JSONResponse(
+                content={
+                    "detail": "User does not have permission to use MCP. Please contact your TLM to add the permission."
+                },
+                status_code=403,
+            )
+
+        # ``build_request_context`` does a fresh DB lookup
+        # (email → user_id). Treat any failure the same way the OAuth
+        # path treats it: degrade to ``requesting_user_id=None`` rather
+        # than surfacing an unhandled 500. ``build_request_context``
+        # itself already wraps the lookup in try/except, so this is
+        # belt-and-suspenders against future regressions.
+        try:
+            ctx = await build_request_context(db_token, request)
+        except Exception:
+            logger.exception(
+                "build_request_context failed — yuppdb may be unavailable",
+                email_local_part=db_token.email.split("@")[0],
+            )
+            return JSONResponse(
+                content={"detail": "Token validation failed — yuppdb may not be configured"},
+                status_code=503,
+            )
         ctx_token = request_context.set(ctx)
         audit_token = _devtoken_audit_var.set(db_token)
         try:

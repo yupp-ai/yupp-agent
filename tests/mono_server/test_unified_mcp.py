@@ -170,3 +170,34 @@ class TestAgcouchAuth:
         assert r.status_code == 503, f"got {r.status_code}: {r.text}"
         body = r.json()
         assert isinstance(body, dict) and "detail" in body
+
+    def test_dev_token_without_use_mcp_returns_403(self) -> None:
+        """Mono ``AgcouchMcpAuthMiddleware`` must enforce ``USE_MCP``,
+        matching the standalone ``DevTokenAuthMiddleware`` behavior. An
+        active token whose owner has lost ``USE_MCP`` is rejected here
+        with 403 — same as on the standalone server.
+        """
+        from unittest.mock import MagicMock
+
+        from ypl.db.mcp import MCPTokenStatus
+
+        db_token = MagicMock()
+        db_token.email = "engineer@example.com"
+        db_token.mcp_dev_token_id = "test-token-uuid"
+
+        client = TestClient(_make_agcouch_app(), raise_server_exceptions=False)
+        with (
+            patch(
+                "ypl.mcp_server.auth_dev_token.validate_token",
+                new=AsyncMock(return_value=(db_token, MCPTokenStatus.ACTIVE)),
+            ),
+            patch(
+                "ypl.backend.utils.soul_utils.has_permission_cached",
+                new=AsyncMock(return_value=False),
+            ),
+        ):
+            r = client.get("/ping", headers={"authorization": "Bearer yupp_dev_XXXXXXXXXXXXXXXXXXXX"})
+
+        assert r.status_code == 403, f"got {r.status_code}: {r.text}"
+        body = r.json()
+        assert "permission" in body["detail"].lower()

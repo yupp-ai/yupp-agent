@@ -31,8 +31,9 @@ def _set_devtoken_request(email: str = "dev@example.com", **extra: object) -> Ma
     """
     request_context.set(
         RequestContext(
-            auth_kind="oauth_user",
+            auth_kind="dev_token",
             requesting_user_id=str(extra.get("user_id", "user-abc-123")),
+            principal_user_id=str(extra.get("user_id", "user-abc-123")),
             audit_email=email,
             ip_address=str(extra.get("ip_address", "1.2.3.4")),
             user_agent=str(extra.get("user_agent", "pytest")),
@@ -47,13 +48,17 @@ def _set_devtoken_request(email: str = "dev@example.com", **extra: object) -> Ma
     return mock_token
 
 
-def _set_oauth_request(email: str = "oauth@example.com") -> None:
+def _set_oauth_request(
+    email: str = "oauth@example.com",
+    callback_url: str | None = None,
+) -> None:
     """Publish a typed OAuth-style RequestContext."""
     request_context.set(
         RequestContext(
             auth_kind="oauth_user",
             requesting_user_id=None,
             audit_email=email,
+            callback_url=callback_url,
         )
     )
     from ypl.mcp_server.auth_dev_token import _devtoken_audit_var
@@ -241,6 +246,34 @@ class TestToolCallLoggingMiddleware:
         assert call_kwargs["status"] == MCPAuditLogStatus.SUCCESS
         assert call_kwargs["token_type"] == MCPTokenType.OAUTH
         assert call_kwargs["email"] == "oauthuser@example.com"
+
+    async def test_oauth_audit_carries_callback_url_from_typed_context(self) -> None:
+        """Regression: ``MCPAuditLog.callback_url`` must be sourced from
+        the typed ``RequestContext.callback_url`` populated at OAuth
+        verify time. Previously the typed context dropped the field, so
+        every OAuth-authenticated audit row silently wrote ``NULL``.
+        """
+        from ypl.mcp_server.core import ToolCallLoggingMiddleware
+
+        middleware = ToolCallLoggingMiddleware()
+        _set_oauth_request(
+            "oauthuser@example.com",
+            callback_url="https://callback.example.com",
+        )
+
+        mock_ctx = _make_middleware_context()
+        mock_result = MagicMock()
+        call_next = AsyncMock(return_value=mock_result)
+
+        with (
+            patch("ypl.mcp_server.core.settings") as mock_settings,
+            patch("ypl.mcp_server.core.log_tool_call", new=AsyncMock()) as mock_log,
+        ):
+            mock_settings.MCP_SERVER_MODE = "OAUTH"
+            await middleware.on_call_tool(mock_ctx, call_next)
+
+        mock_log.assert_called_once()
+        assert mock_log.call_args.kwargs["callback_url"] == "https://callback.example.com"
 
 
 # ---------------------------------------------------------------------------

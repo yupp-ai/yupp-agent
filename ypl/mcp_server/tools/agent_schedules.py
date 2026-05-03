@@ -18,7 +18,7 @@ from ypl.db.agent_harness import (
     AgentScheduleType,
 )
 from ypl.db.rbac import Permission
-from ypl.mcp_common.auth_context import require_caller_user_id
+from ypl.mcp_common.auth_context import require_caller_user_id, require_principal_user_id
 from ypl.mcp_common.scheduled_agent_call_helpers import (
     cancel_agent_schedule_by_id,
     compute_next_run_for_cron,
@@ -237,10 +237,15 @@ async def cancel_agent_schedule(
     try:
         try:
             caller_user_id = require_caller_user_id()
+            principal_user_id = require_principal_user_id()
         except PermissionError:
             return {"success": False, "error": "Authentication required to cancel agent schedules"}
 
-        if not await has_permission_by_user_id_cached(caller_user_id, Permission.USE_MCP):
+        # USE_MCP gates the *credential holder*, not the impersonated
+        # user: an admin acting on behalf of a regular user (X-User-ID
+        # impersonation) isn't blocked by the regular user's missing
+        # permission. On non-impersonation paths the two ids are equal.
+        if not await has_permission_by_user_id_cached(principal_user_id, Permission.USE_MCP):
             return {"success": False, "error": "You do not have permission to use MCP tools"}
 
         # Admin bypass: a caller holding MANAGE_AGENT_SCHEDULES may cancel any
@@ -305,10 +310,12 @@ async def edit_agent_schedule(
     try:
         try:
             caller_user_id = require_caller_user_id()
+            principal_user_id = require_principal_user_id()
         except PermissionError:
             return {"success": False, "error": "Authentication required to edit agent schedules"}
 
-        if not await has_permission_by_user_id_cached(caller_user_id, Permission.USE_MCP):
+        # USE_MCP gates the credential holder (see `cancel_agent_schedule`).
+        if not await has_permission_by_user_id_cached(principal_user_id, Permission.USE_MCP):
             return {"success": False, "error": "You do not have permission to use MCP tools"}
 
         # Admin bypass: a caller holding MANAGE_AGENT_SCHEDULES may edit any
@@ -387,13 +394,15 @@ async def list_agent_schedules(
             return {"success": False, "error": "limit must be between 1 and 200"}
         limit = min(limit, 200)
 
-        # Verify caller has USE_MCP permission
+        # Verify caller has USE_MCP permission (credential holder, not
+        # the impersonated user — see `cancel_agent_schedule`).
         try:
             caller_user_id = require_caller_user_id()
+            principal_user_id = require_principal_user_id()
         except PermissionError:
             return {"success": False, "error": "Authentication required to list agent schedules"}
 
-        if not await has_permission_by_user_id_cached(caller_user_id, Permission.USE_MCP):
+        if not await has_permission_by_user_id_cached(principal_user_id, Permission.USE_MCP):
             return {"success": False, "error": "You do not have permission to use MCP tools"}
 
         # Validate status if provided

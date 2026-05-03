@@ -25,7 +25,19 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Literal
 
-#: One of the three trust models a request can carry:
+from sqlalchemy import func
+from sqlmodel import select
+
+# Import all models to ensure SQLAlchemy mappers are fully configured before any query.
+# This avoids lazy initialization errors when models have cross-references (e.g. Memory -> ChatMessage).
+import ypl.db.all_models  # noqa: F401
+from ypl.backend.db import get_async_session
+from ypl.db.users import User
+from ypl.structured_logger import get_logger
+
+logger = get_logger()
+
+#: One of the four trust models a request can carry:
 #:
 #: - ``agent_secret``: harness MCP — the AHS runner (or Codex CLI) sent
 #:   ``AHS_MCP_SECRET``. The runner injects ``X-User-ID`` /
@@ -34,12 +46,15 @@ from typing import Literal
 #: - ``oauth_user``: agcouch MCP — the request carried a Google OAuth bearer
 #:   token whose email is in ``ALLOWED_MCP_EMAIL_DOMAINS``. The OAuth
 #:   provider resolves the email to a ``user_id`` once at verify time.
-#:   (The legacy ``yupp_dev_*`` token path also lands here during the
-#:   phase-5 deprecation window — same shape, ``audit_email`` carries the
-#:   token's email, ``requesting_user_id`` is resolved at middleware time.)
+#: - ``dev_token``: agcouch MCP — the request carried a legacy
+#:   ``yupp_dev_*`` Bearer token. Emitted only during the phase-5
+#:   deprecation window. Tools that must distinguish a verified Google
+#:   identity from a token-holder impersonation should branch on this.
+#:   ``audit_email`` carries the token owner's email; the dev-token DB
+#:   row is stashed separately for audit logging.
 #: - ``proxy``: reserved for future MCP mounts behind a trusted proxy
 #:   (e.g. Runlayer) that forwards an already-verified user identity.
-AuthKind = Literal["agent_secret", "oauth_user", "proxy"]
+AuthKind = Literal["agent_secret", "oauth_user", "dev_token", "proxy"]
 
 
 @dataclass(frozen=True)
@@ -57,10 +72,20 @@ class RequestContext:
             care about this directly — the auth middleware has already
             applied the trust model to populate the remaining fields.
         requesting_user_id: The platform ``user_id`` (UUID string) the
-            caller is acting as. ``None`` is allowed only for internal
-            agent_secret callers that did not stamp ``X-User-ID``; tools
-            that need an attributable user must call
+            caller is acting *as*. On the dev-token impersonation path
+            this is the impersonated user (the ``X-User-ID`` header
+            value), not the credential holder. ``None`` is allowed only
+            for internal ``agent_secret`` callers that did not stamp
+            ``X-User-ID``; tools that need an attributable user must call
             :func:`require_caller_user_id`.
+        principal_user_id: The platform ``user_id`` of the credential
+            holder — the OAuth-verified user, the dev-token owner, or
+            (for ``agent_secret``) the same as ``requesting_user_id``.
+            Used for credential-level gates like ``USE_MCP``: when an
+            admin acts on behalf of a user who lacks ``USE_MCP``, the
+            admin's permission still authorizes the call. ``None``
+            mirrors ``requesting_user_id``. Tools that need an
+            attributable principal call :func:`require_principal_user_id`.
         ahs_session_id: The AHS session UUID the caller is running inside.
             Tamper-proof for ``agent_secret`` (set from ``X-AHS-Session-ID``
             injected by the runner). Usually ``None`` for ``oauth_user``.
@@ -72,15 +97,23 @@ class RequestContext:
             persisted in ``MCPAuditLog.email`` so security review can
             attribute calls to a human. Tool code MUST NOT use this for
             identity decisions.
+        callback_url: The OAuth client identifier (``access_token.client_id``)
+            for ``oauth_user`` requests, or ``None`` otherwise. **Audit
+            logging only** — persisted in ``MCPAuditLog.callback_url`` so
+            security review can attribute calls to the OAuth client that
+            obtained the token. Tool code MUST NOT use this for identity
+            decisions.
         ip_address: Best-effort source IP for audit logging.
         user_agent: Source user-agent string for audit logging.
     """
 
     auth_kind: AuthKind
     requesting_user_id: str | None
+    principal_user_id: str | None = None
     ahs_session_id: str | None = None
     ahs_agent_name: str | None = None
     audit_email: str | None = None
+    callback_url: str | None = None
     ip_address: str | None = None
     user_agent: str | None = None
 
@@ -131,6 +164,14 @@ def require_caller_user_id() -> str:
     attributable user call this once at the top and pass the result
     downstream.
 
+    On the dev-token impersonation path this returns the *impersonated*
+    user — the ``X-User-ID`` the privileged token holder asserted. Use
+    this for ownership / scoping decisions ("show me this user's
+    schedules"). For credential-level permission gates like ``USE_MCP``
+    use :func:`require_principal_user_id` instead so an admin acting on
+    behalf of a regular user isn't blocked by the regular user's missing
+    permissions.
+
     Raises:
         PermissionError: when no :class:`RequestContext` is set, or the
             context's ``requesting_user_id`` is ``None`` (e.g. an internal
@@ -141,3 +182,66 @@ def require_caller_user_id() -> str:
     if ctx is None or ctx.requesting_user_id is None:
         raise PermissionError("Authentication required")
     return ctx.requesting_user_id
+
+
+def require_principal_user_id() -> str:
+    """Return the credential holder's ``user_id`` or raise ``PermissionError``.
+
+    Tools enforcing credential-level permissions (``USE_MCP`` and similar)
+    call this instead of :func:`require_caller_user_id`. On
+    non-impersonation paths the two return the same value; on the
+    dev-token impersonation path the principal is the privileged token
+    owner, not the impersonated user.
+
+    Falls back to ``requesting_user_id`` when ``principal_user_id`` is
+    unset, which is correct for every middleware that publishes a
+    typed context today.
+
+    Raises:
+        PermissionError: when no :class:`RequestContext` is set, or
+            neither ``principal_user_id`` nor ``requesting_user_id`` is
+            populated.
+    """
+    ctx = request_context.get()
+    if ctx is None:
+        raise PermissionError("Authentication required")
+    principal = ctx.principal_user_id or ctx.requesting_user_id
+    if principal is None:
+        raise PermissionError("Authentication required")
+    return principal
+
+
+# ---------------------------------------------------------------------------
+# Email → user_id resolution (shared by OAuth + DevToken middlewares)
+# ---------------------------------------------------------------------------
+
+
+async def lookup_user_id_by_email(email: str) -> str | None:
+    """Best-effort email → ``user_id`` lookup for credential-bearing callers.
+
+    Shared helper for the OAuth and DevToken middlewares: tools no longer
+    perform this resolution themselves — the typed
+    :class:`RequestContext` we publish carries ``requesting_user_id``
+    (and ``principal_user_id``) directly.
+
+    Returns ``None`` when the email isn't bound to an active platform
+    user (deleted account, or new OAuth user not yet provisioned). The
+    middleware records the email under ``audit_email`` either way so the
+    audit trail still attributes the call to a human.
+
+    This helper lives in :mod:`ypl.mcp_common.auth_context` rather than
+    :mod:`ypl.mcp_server.auth_oauth` because both the OAuth and DevToken
+    middlewares consume it — keeping it here avoids cross-module imports
+    of a private symbol.
+
+    Distinct from
+    :func:`ypl.mcp_common.scheduled_agent_call_helpers.resolve_user_id_from_email`,
+    which is a tool-facing helper that returns a ``(user_id, error_message)``
+    tuple for surfacing back to the caller.
+    """
+    async with get_async_session() as session:
+        result = await session.execute(select(User).where(func.lower(User.email) == func.lower(email)))
+        user = result.scalar_one_or_none()
+        if user is None or user.deleted_at is not None:
+            return None
+        return str(user.user_id)

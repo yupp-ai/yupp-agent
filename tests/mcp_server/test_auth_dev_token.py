@@ -226,7 +226,7 @@ class TestCreateRequestContext:
                 new=AsyncMock(return_value=True),
             ),
             patch(
-                "ypl.mcp_server.auth_dev_token._resolve_user_id_from_email",
+                "ypl.mcp_server.auth_dev_token.lookup_user_id_by_email",
                 new=AsyncMock(return_value=None),
             ),
         ):
@@ -246,7 +246,7 @@ class TestCreateRequestContext:
                 new=AsyncMock(return_value=True),
             ),
             patch(
-                "ypl.mcp_server.auth_dev_token._resolve_user_id_from_email",
+                "ypl.mcp_server.auth_dev_token.lookup_user_id_by_email",
                 new=AsyncMock(return_value=None),
             ),
         ):
@@ -264,7 +264,7 @@ class TestCreateRequestContext:
                 new=AsyncMock(return_value=False),
             ),
             patch(
-                "ypl.mcp_server.auth_dev_token._resolve_user_id_from_email",
+                "ypl.mcp_server.auth_dev_token.lookup_user_id_by_email",
                 new=AsyncMock(return_value=None),
             ),
         ):
@@ -287,7 +287,7 @@ class TestCreateRequestContext:
                 new=AsyncMock(return_value=True),
             ),
             patch(
-                "ypl.mcp_server.auth_dev_token._resolve_user_id_from_email",
+                "ypl.mcp_server.auth_dev_token.lookup_user_id_by_email",
                 new=AsyncMock(return_value=None),
             ),
         ):
@@ -311,7 +311,7 @@ class TestCreateRequestContext:
                 new=AsyncMock(return_value=False),
             ),
             patch(
-                "ypl.mcp_server.auth_dev_token._resolve_user_id_from_email",
+                "ypl.mcp_server.auth_dev_token.lookup_user_id_by_email",
                 new=AsyncMock(return_value=None),
             ),
         ):
@@ -331,13 +331,73 @@ class TestCreateRequestContext:
                 new=AsyncMock(return_value=False),
             ),
             patch(
-                "ypl.mcp_server.auth_dev_token._resolve_user_id_from_email",
+                "ypl.mcp_server.auth_dev_token.lookup_user_id_by_email",
                 new=AsyncMock(return_value=None),
             ),
         ):
             ctx = await create_request_context(db_token, request)
 
         assert ctx["ip_address"] is None
+
+    async def test_email_lookup_failure_falls_back_to_none(self) -> None:
+        """A transient DB blip during email→user_id lookup must not
+        escape as an unhandled 500. The OAuth path catches and degrades
+        to None; the DevToken path must mirror that.
+        """
+        from ypl.mcp_common.auth_context import RequestContext
+        from ypl.mcp_server.auth_dev_token import build_request_context
+
+        db_token = _make_db_token()
+        request = self._make_request()
+
+        with (
+            patch(
+                "ypl.mcp_server.auth_dev_token.has_permission_cached",
+                new=AsyncMock(return_value=True),
+            ),
+            patch(
+                "ypl.mcp_server.auth_dev_token.lookup_user_id_by_email",
+                new=AsyncMock(side_effect=RuntimeError("DB blip")),
+            ),
+        ):
+            ctx = await build_request_context(db_token, request)
+
+        assert isinstance(ctx, RequestContext)
+        # Lookup failed → both ids degrade to None instead of raising.
+        assert ctx.requesting_user_id is None
+        assert ctx.principal_user_id is None
+        # Audit trail still keeps the email.
+        assert ctx.audit_email == "dev@example.com"
+
+    async def test_dev_token_emits_dev_token_auth_kind(self) -> None:
+        """DevToken paths emit ``auth_kind='dev_token'``, distinct from
+        ``oauth_user``, so future tools can tell verified-Google identity
+        apart from token-holder impersonation.
+        """
+        from ypl.mcp_common.auth_context import RequestContext
+        from ypl.mcp_server.auth_dev_token import build_request_context
+
+        db_token = _make_db_token(email="admin@example.com")
+        request = self._make_request(headers={"x-user-id": "user-impersonated-1"})
+
+        with (
+            patch(
+                "ypl.mcp_server.auth_dev_token.has_permission_cached",
+                new=AsyncMock(return_value=True),
+            ),
+            patch(
+                "ypl.mcp_server.auth_dev_token.lookup_user_id_by_email",
+                new=AsyncMock(return_value="user-admin-1"),
+            ),
+        ):
+            ctx = await build_request_context(db_token, request)
+
+        assert isinstance(ctx, RequestContext)
+        assert ctx.auth_kind == "dev_token"
+        # On the impersonation path requesting_user_id is the
+        # impersonated user; principal_user_id is the credential holder.
+        assert ctx.requesting_user_id == "user-impersonated-1"
+        assert ctx.principal_user_id == "user-admin-1"
 
 
 # ---------------------------------------------------------------------------
@@ -469,7 +529,7 @@ class TestDevTokenAuthMiddleware:
                 new=AsyncMock(return_value=True),
             ),
             patch(
-                "ypl.mcp_server.auth_dev_token._resolve_user_id_from_email",
+                "ypl.mcp_server.auth_dev_token.lookup_user_id_by_email",
                 new=AsyncMock(return_value=None),
             ),
         ):
