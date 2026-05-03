@@ -1,12 +1,23 @@
-"""Core MCP server components.
+"""Core agcouch MCP server: FastMCP instance + audit logging middleware.
 
-This module provides:
-- FastMCP server instance with mode-based authentication
-- Request context for passing auth info between middleware layers
-- Audit logging for tool calls
-- Tool call logging middleware
+The legacy per-field accessors (``get_authenticated_user_email``,
+``get_requesting_user_id``, ``get_ahs_agent_name``, ``get_ahs_session_id``)
+are gone — tools now consume identity through the typed
+:class:`~ypl.mcp_common.auth_context.RequestContext` published by the auth
+middleware. See :mod:`ypl.mcp_common.auth_context`.
+
+This module:
+
+- Constructs the FastMCP server based on ``MCP_SERVER_MODE``
+  (``DEV_TOKEN`` vs ``OAUTH``).
+- Defines :class:`ToolCallLoggingMiddleware`, which writes one
+  ``MCPAuditLog`` row per tool call. The middleware reads identity from
+  the typed :class:`RequestContext` and the transitional DevToken
+  audit var (:data:`ypl.mcp_server.auth_dev_token._devtoken_audit_var`)
+  to keep ``MCPAuditLog.mcp_dev_token_id`` populated until phase 5b.
 """
 
+from __future__ import annotations
 import time
 import traceback
 from typing import Any
@@ -20,76 +31,11 @@ from mcp import types as mcp_types
 from ypl.backend.config import settings
 from ypl.backend.db import get_async_session, retry_db
 from ypl.db.mcp import MCPAuditLog, MCPAuditLogStatus, MCPDevToken, MCPTokenType
-from ypl.mcp_server.context_vars import request_context
+from ypl.mcp_common.auth_context import current_request_context
 from ypl.structured_logger import get_logger
 from ypl.utils import maybe_truncate
 
 logger = get_logger()
-
-
-def get_authenticated_user_email() -> str:
-    """Get the authenticated user's email from request context or OAuth token.
-
-    Works with both DevToken and OAuth authentication modes:
-    - DevToken: Gets email from request_context["token"].email (set by DevTokenAuthMiddleware)
-    - OAuth: Gets email from request_context["email"] (set by AllowedDomainsGoogleProvider)
-
-    Returns:
-        The authenticated user's email, or "unknown" if not available.
-    """
-    req_ctx = request_context.get() or {}
-
-    # DevToken: email comes from the MCPDevToken DB record stored in context
-    token = req_ctx.get("token")
-    if token:
-        return str(token.email)
-
-    # OAuth: email is stored directly after verify_token() succeeds
-    email = req_ctx.get("email")
-    if isinstance(email, str) and email:
-        return email
-
-    return "unknown"
-
-
-def get_requesting_user_id() -> str | None:
-    """Get the requesting user's user_id from request context.
-
-    Checks the X-User-ID header first (injected by AHS or other callers
-    that forward user identity). Returns None if not available — callers
-    should fall back to resolving from the authenticated email.
-
-    Returns:
-        The requesting user's user_id string, or None if not set.
-    """
-    req_ctx = request_context.get() or {}
-    return req_ctx.get("requesting_user_id")
-
-
-def get_ahs_agent_name() -> str | None:
-    """Get the AHS agent name from request context.
-
-    Set from the X-AHS-Agent-Name header injected by the AHS runner into
-    the session's .mcp.json. This header is tamper-proof: the runner writes
-    the config file in a sandboxed workspace that the agent cannot modify.
-
-    Returns:
-        The agent name string (e.g. 'eng-raccoon'), or None if not set.
-    """
-    req_ctx = request_context.get() or {}
-    return req_ctx.get("ahs_agent_name")
-
-
-def get_ahs_session_id() -> str | None:
-    """Get the AHS session ID from request context.
-
-    Set from the X-AHS-Session-ID header injected by the AHS runner.
-
-    Returns:
-        The session ID string (UUID), or None if not set.
-    """
-    req_ctx = request_context.get() or {}
-    return req_ctx.get("ahs_session_id")
 
 
 def _create_mcp_server() -> FastMCP:
@@ -184,9 +130,14 @@ async def log_tool_call(
 class ToolCallLoggingMiddleware(Middleware):
     """Middleware to log all MCP tool calls to the audit log.
 
-    Works with both DEV_TOKEN and OAUTH modes:
-    - DEV_TOKEN: Gets auth info from request_context (set by DevTokenAuthMiddleware)
-    - OAUTH: Gets auth info from request_context (set by AllowedDomainsGoogleProvider.verify_token)
+    Reads identity off the unified
+    :class:`~ypl.mcp_common.auth_context.RequestContext` published by
+    each mount's auth middleware:
+
+    - ``DEV_TOKEN`` mode: ``DevTokenAuthMiddleware`` populates the
+      context plus the transitional DevToken audit var.
+    - ``OAUTH`` mode: ``AllowedDomainsGoogleProvider.verify_token``
+      populates the context.
     """
 
     async def on_call_tool(
@@ -199,24 +150,31 @@ class ToolCallLoggingMiddleware(Middleware):
         tool_name = context.message.name
         arguments = context.message.arguments or {}
 
-        # Both auth modes populate request_context before the tool call:
-        #   DEV_TOKEN: DevTokenAuthMiddleware.dispatch() sets {"token": MCPDevToken, ...}
-        #   OAUTH:     AllowedDomainsGoogleProvider.verify_token() sets {"email": str, ...}
-        req_ctx = request_context.get() or {}
-        token: MCPDevToken | None = req_ctx.get("token")
+        ctx = current_request_context()
 
-        # For OAuth, email and callback_url are stored directly in request_context by verify_token()
-        oauth_email: str | None = req_ctx.get("email")
-        callback_url: str | None = req_ctx.get("callback_url")
+        # Lazy import: ``auth_dev_token`` pulls in DB modules, and not
+        # every deployment loads it (e.g. OAuth-only). The transitional
+        # var defaults to ``None`` outside DevToken middleware paths.
+        token: MCPDevToken | None = None
+        try:
+            from ypl.mcp_server.auth_dev_token import current_devtoken_for_audit
 
-        if not token and settings.MCP_SERVER_MODE == "DEV_TOKEN":
-            # should never happen, but add a check to be safe
-            logger.error("DevToken authentication is required, but no token was found")
+            token = current_devtoken_for_audit()
+        except Exception:
+            token = None
+
+        # In DEV_TOKEN mode the middleware MUST have populated context;
+        # if not, fail loudly so the misconfiguration is obvious.
+        if token is None and ctx is None and settings.MCP_SERVER_MODE == "DEV_TOKEN":
+            logger.error("DevToken authentication is required, but no context was set")
             raise PermissionError("DevToken authentication is required")
 
-        if not token and settings.MCP_SERVER_MODE == "OAUTH" and not oauth_email:
-            # Fallback: request_context wasn't set (shouldn't happen after the fix, but
-            # provides a safety net for unexpected FastMCP internals)
+        # OAuth fallback: if FastMCP somehow processed the request
+        # without going through verify_token (shouldn't happen, but
+        # defensive), reach into the access token directly.
+        oauth_email: str | None = ctx.audit_email if ctx else None
+        callback_url: str | None = None
+        if token is None and oauth_email is None and settings.MCP_SERVER_MODE == "OAUTH":
             try:
                 access_token = get_access_token()
                 if access_token and access_token.claims:
@@ -244,20 +202,21 @@ class ToolCallLoggingMiddleware(Middleware):
         finally:
             execution_time_ms = int((time.time() - start_time) * 1000)
 
-            # Determine email and token type
+            # Determine email and token type for the audit log row.
             email: str | None = None
             token_type: MCPTokenType
 
             if token:
-                # DevToken authentication
+                # DevToken — phase-5 deprecation window. Token row is
+                # what makes ``mcp_dev_token_id`` populate.
                 email = token.email
                 token_type = MCPTokenType.DEV_TOKEN
             elif oauth_email:
-                # OAuth authentication
                 email = oauth_email
                 token_type = MCPTokenType.OAUTH
             else:
-                # No authentication context - log warning but don't fail
+                # No auth context — log a warning unless we already
+                # have an exception in flight (which logs its own info).
                 if not err:
                     logger.warning("MCP tool call without authentication context", tool=tool_name)
                 email = None
@@ -283,8 +242,8 @@ class ToolCallLoggingMiddleware(Middleware):
                     token_type=token_type,
                     token=token,
                     callback_url=callback_url,
-                    ip_address=req_ctx.get("ip_address"),
-                    user_agent=req_ctx.get("user_agent"),
+                    ip_address=ctx.ip_address if ctx else None,
+                    user_agent=ctx.user_agent if ctx else None,
                 )
 
 

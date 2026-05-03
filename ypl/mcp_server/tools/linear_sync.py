@@ -65,8 +65,8 @@ from ypl.agent_harness_service.tools.linear_sync.types import LinearProjectRef
 from ypl.backend.db import get_async_session, retry_db
 from ypl.backend.utils.linear import LinearClient
 from ypl.db.agent_harness import AgentProject, AgentTask
-from ypl.mcp_common.scheduled_agent_call_helpers import resolve_user_id_from_email
-from ypl.mcp_server.core import get_authenticated_user_email, get_requesting_user_id, mcp_server
+from ypl.mcp_common.auth_context import require_caller_user_id
+from ypl.mcp_server.core import mcp_server
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -78,24 +78,18 @@ logger = get_logger()
 
 
 async def _resolve_auth() -> tuple[str | None, dict[str, Any] | None]:
-    """Resolve the authenticated user ID, falling back to e-mail lookup.
+    """Return ``(user_id, None)`` for authenticated callers, or ``(None, err)``.
 
-    Returns ``(user_id_str, None)`` on success or ``(None, error_dict)`` on
-    failure.
+    Tools downstream consume identity directly from
+    :func:`~ypl.mcp_common.auth_context.require_caller_user_id`; this thin
+    wrapper preserves the existing tuple-return shape used by
+    ``export_project_to_linear`` etc. so the call sites don't need a
+    bigger rewrite.
     """
-    user_id = get_requesting_user_id()
-    if user_id:
-        return str(user_id), None
-
-    auth_email = get_authenticated_user_email()
-    if auth_email == "unknown":
-        return None, {"success": False, "error": "Authentication required"}
-
-    resolved_id, user_error = await resolve_user_id_from_email(auth_email)
-    if user_error:
-        return None, {"success": False, "error": user_error}
-
-    return str(resolved_id), None
+    try:
+        return require_caller_user_id(), None
+    except PermissionError as exc:
+        return None, {"success": False, "error": str(exc)}
 
 
 # ---------------------------------------------------------------------------
@@ -260,15 +254,10 @@ async def import_project_from_linear(
         Dictionary with the created project details and sync stats.
     """
     try:
-        creator_user_id = get_requesting_user_id()
-        if not creator_user_id:
-            auth_email = get_authenticated_user_email()
-            if auth_email == "unknown":
-                return {"success": False, "error": "Authentication required"}
-            resolved_user_id, user_error = await resolve_user_id_from_email(auth_email)
-            if user_error or not resolved_user_id:
-                return {"success": False, "error": user_error or "Could not resolve user"}
-            creator_user_id = resolved_user_id
+        try:
+            creator_user_id = require_caller_user_id()
+        except PermissionError as exc:
+            return {"success": False, "error": str(exc)}
 
         project, sync_result = await linear_import_project(
             linear_project_id=linear_project_id,
@@ -339,9 +328,10 @@ async def link_project_to_linear(
         Dictionary with the updated project details.
     """
     try:
-        auth_email = get_authenticated_user_email()
-        if auth_email == "unknown":
-            return {"success": False, "error": "Authentication required"}
+        try:
+            require_caller_user_id()
+        except PermissionError as exc:
+            return {"success": False, "error": str(exc)}
 
         try:
             proj_uuid = uuid.UUID(project_id)

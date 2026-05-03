@@ -46,7 +46,8 @@ from ypl.agent_harness_service.artifact_store import (
 )
 from ypl.backend.db import get_async_session, get_async_session_read_replica, retry_db
 from ypl.db.agent_harness import AgentArtifact, AgentArtifactType
-from ypl.mcp_server.core import get_ahs_agent_name, get_ahs_session_id, get_requesting_user_id, mcp_server
+from ypl.mcp_common.auth_context import current_request_context
+from ypl.mcp_server.core import mcp_server
 from ypl.mcp_server.tools.artifact_notifier import notify_artifact_event
 from ypl.structured_logger import get_logger
 
@@ -295,13 +296,34 @@ def _decode_attachments_arg(raw: str | None) -> list[Attachment]:
     return result
 
 
+def _caller_agent_name() -> str | None:
+    """Return the calling agent's name from the typed RequestContext, or ``None``."""
+    ctx = current_request_context()
+    return ctx.ahs_agent_name if ctx is not None else None
+
+
+def _caller_session_id() -> uuid.UUID | None:
+    """Return the calling AHS session UUID, or ``None``."""
+    ctx = current_request_context()
+    if ctx is None:
+        return None
+    return _parse_session_id(ctx.ahs_session_id)
+
+
+def _caller_user_id() -> str | None:
+    """Return the calling ``user_id``, or ``None`` if not stamped."""
+    ctx = current_request_context()
+    return ctx.requesting_user_id if ctx is not None else None
+
+
 async def _resolve_caller_context() -> tuple[uuid.UUID | None, str | None, uuid.UUID | None]:
-    """Return (session_id, requesting_user_id, creator_agent_id) from MCP headers."""
-    session_id = _parse_session_id(get_ahs_session_id())
-    user_id = get_requesting_user_id()
-    agent_name = get_ahs_agent_name()
-    agent_id = await _resolve_agent_id(agent_name) if agent_name else None
-    return session_id, user_id, agent_id
+    """Return (session_id, requesting_user_id, creator_agent_id) from the typed RequestContext."""
+    ctx = current_request_context()
+    if ctx is None:
+        return None, None, None
+    session_id = _parse_session_id(ctx.ahs_session_id)
+    agent_id = await _resolve_agent_id(ctx.ahs_agent_name) if ctx.ahs_agent_name else None
+    return session_id, ctx.requesting_user_id, agent_id
 
 
 # ---------------------------------------------------------------------------
@@ -434,7 +456,7 @@ async def add_artifact(
         await notify_artifact_event(
             artifact=artifact,
             event="created" if create_new_slug or artifact.version in (None, 1) else "new_version",
-            agent_name=get_ahs_agent_name(),
+            agent_name=_caller_agent_name(),
             session_id=session_id,
             user_id=user_id,
         )
@@ -480,7 +502,7 @@ async def add_artifact(
     await notify_artifact_event(
         artifact=artifact,
         event="created",
-        agent_name=get_ahs_agent_name(),
+        agent_name=_caller_agent_name(),
         session_id=session_id,
         user_id=user_id,
     )
@@ -564,7 +586,7 @@ async def update_artifact(
     if artifact is None:
         return {"success": False, "error": f"Artifact '{artifact_id}' not found or has been deleted."}
 
-    logger.info("Artifact updated", artifact_id=artifact_id, agent_name=get_ahs_agent_name())
+    logger.info("Artifact updated", artifact_id=artifact_id, agent_name=_caller_agent_name())
     # Fan out a Slack notification (fire-and-forget; never blocks the tool).
     # ``update_artifact`` only mutates metadata — emit "updated" so the feed
     # distinguishes it from a brand-new artifact and from a new TEXT version.
@@ -573,9 +595,9 @@ async def update_artifact(
     await notify_artifact_event(
         artifact=artifact,
         event="updated",
-        agent_name=get_ahs_agent_name(),
-        session_id=_parse_session_id(get_ahs_session_id()),
-        user_id=get_requesting_user_id(),
+        agent_name=_caller_agent_name(),
+        session_id=_caller_session_id(),
+        user_id=_caller_user_id(),
     )
 
     return {
@@ -650,7 +672,7 @@ async def update_artifact_content(
     await notify_artifact_event(
         artifact=artifact,
         event="new_version",
-        agent_name=get_ahs_agent_name(),
+        agent_name=_caller_agent_name(),
         session_id=session_id,
         user_id=user_id,
     )
@@ -689,7 +711,7 @@ async def list_artifacts(
     from ypl.db.agent_harness import AgentArtifact
 
     limit = min(max(limit, 1), 100)
-    agent_session_id = _parse_session_id(get_ahs_session_id())
+    agent_session_id = _caller_session_id()
     if agent_session_id is None:
         return {"success": True, "artifacts": [], "count": 0}
 

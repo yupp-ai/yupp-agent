@@ -147,7 +147,7 @@ class TestAllowedDomainsGoogleProviderVerifyToken:
         mock_token.claims = {"email": "dev@example.com"}
         mock_token.client_id = "https://callback.example.com"
 
-        from ypl.mcp_server.context_vars import request_context
+        from ypl.mcp_common.auth_context import request_context
 
         # Reset context before test
         request_context.set(None)
@@ -162,6 +162,10 @@ class TestAllowedDomainsGoogleProviderVerifyToken:
                 "ypl.mcp_server.auth_oauth.has_permission_cached",
                 new=AsyncMock(return_value=True),
             ),
+            patch(
+                "ypl.mcp_server.auth_oauth._resolve_user_id_from_email",
+                new=AsyncMock(return_value=None),
+            ),
         ):
             s.ALLOWED_MCP_EMAIL_DOMAINS = ["example.com"]
             result = await AllowedDomainsGoogleProvider.verify_token(provider, "valid-token")
@@ -174,8 +178,7 @@ class TestAllowedDomainsGoogleProviderVerifyToken:
         mock_token.claims = {"email": "dev@example.com"}
         mock_token.client_id = "https://callback.example.com"
 
-        from ypl.db.mcp import MCPTokenType
-        from ypl.mcp_server.context_vars import request_context
+        from ypl.mcp_common.auth_context import RequestContext, request_context
 
         request_context.set(None)
 
@@ -189,15 +192,19 @@ class TestAllowedDomainsGoogleProviderVerifyToken:
                 "ypl.mcp_server.auth_oauth.has_permission_cached",
                 new=AsyncMock(return_value=True),
             ),
+            patch(
+                "ypl.mcp_server.auth_oauth._resolve_user_id_from_email",
+                new=AsyncMock(return_value="user-resolved-1"),
+            ),
         ):
             s.ALLOWED_MCP_EMAIL_DOMAINS = ["example.com"]
             await AllowedDomainsGoogleProvider.verify_token(provider, "valid-token")
 
         ctx = request_context.get()
-        assert ctx is not None
-        assert ctx["email"] == "dev@example.com"
-        assert ctx["token_type"] == MCPTokenType.OAUTH
-        assert ctx["callback_url"] == "https://callback.example.com"
+        assert isinstance(ctx, RequestContext)
+        assert ctx.audit_email == "dev@example.com"
+        assert ctx.auth_kind == "oauth_user"
+        assert ctx.requesting_user_id == "user-resolved-1"
 
     async def test_none_claims_treated_as_missing_email(self) -> None:
         provider = _make_provider()

@@ -1,130 +1,64 @@
 """Unit tests for ypl/mcp_server/core.py.
 
 Covers:
-  - get_authenticated_user_email() — DevToken path, OAuth path, fallback
-  - get_requesting_user_id() — from context, missing context
-  - get_ahs_agent_name() — present, absent
-  - get_ahs_session_id() — present, absent
   - _create_mcp_server() — DEV_TOKEN vs OAUTH mode
   - ToolCallLoggingMiddleware.on_call_tool():
-      - Successful tool call logs SUCCESS
+      - Successful tool call logs SUCCESS with the typed RequestContext
       - Failed tool call logs FAILED and re-raises
-      - No-context in DEV_TOKEN mode raises PermissionError
-      - No-context in OAUTH mode logs warning and skips audit
+      - DEV_TOKEN mode without context raises PermissionError
+      - OAuth-mode no-context logs warning and skips audit
 
-All tests run without a live database.
+The legacy per-field accessors (``get_authenticated_user_email`` etc.)
+are gone — tools read identity from the typed
+:class:`~ypl.mcp_common.auth_context.RequestContext` directly. The
+tests below exercise the audit middleware against that typed shape.
 """
 
 from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from ypl.mcp_server.context_vars import request_context
-from ypl.mcp_server.core import (
-    get_ahs_agent_name,
-    get_ahs_session_id,
-    get_authenticated_user_email,
-    get_requesting_user_id,
-)
-
-# ---------------------------------------------------------------------------
-# get_authenticated_user_email
-# ---------------------------------------------------------------------------
+from ypl.mcp_common.auth_context import RequestContext, request_context
 
 
-class TestGetAuthenticatedUserEmail:
-    def test_dev_token_path(self) -> None:
-        mock_token = MagicMock()
-        mock_token.email = "dev@example.com"
-        request_context.set({"token": mock_token})
+def _set_devtoken_request(email: str = "dev@example.com", **extra: object) -> MagicMock:
+    """Set up a typed RequestContext + DevToken audit row for a "DevToken" request.
 
-        assert get_authenticated_user_email() == "dev@example.com"
+    Mirrors what ``DevTokenAuthMiddleware`` does in production: publishes
+    the typed context AND stashes a DevToken row on the transitional
+    audit ContextVar so the audit middleware can populate
+    ``MCPAuditLog.mcp_dev_token_id``.
+    """
+    request_context.set(
+        RequestContext(
+            auth_kind="oauth_user",
+            requesting_user_id=str(extra.get("user_id", "user-abc-123")),
+            audit_email=email,
+            ip_address=str(extra.get("ip_address", "1.2.3.4")),
+            user_agent=str(extra.get("user_agent", "pytest")),
+        )
+    )
+    mock_token = MagicMock()
+    mock_token.email = email
+    mock_token.mcp_dev_token_id = MagicMock()
+    from ypl.mcp_server.auth_dev_token import _devtoken_audit_var
 
-    def test_oauth_path(self) -> None:
-        request_context.set({"email": "oauthuser@example.com"})
-
-        assert get_authenticated_user_email() == "oauthuser@example.com"
-
-    def test_empty_context_returns_unknown(self) -> None:
-        request_context.set(None)
-
-        assert get_authenticated_user_email() == "unknown"
-
-    def test_empty_dict_returns_unknown(self) -> None:
-        request_context.set({})
-
-        assert get_authenticated_user_email() == "unknown"
-
-    def test_oauth_empty_string_falls_through(self) -> None:
-        """Email key present but empty string → returns unknown."""
-        request_context.set({"email": ""})
-
-        assert get_authenticated_user_email() == "unknown"
-
-    def test_token_takes_precedence_over_email(self) -> None:
-        """DevToken context wins even if 'email' key is also present."""
-        mock_token = MagicMock()
-        mock_token.email = "token@example.com"
-        request_context.set({"token": mock_token, "email": "other@example.com"})
-
-        assert get_authenticated_user_email() == "token@example.com"
+    _devtoken_audit_var.set(mock_token)
+    return mock_token
 
 
-# ---------------------------------------------------------------------------
-# get_requesting_user_id
-# ---------------------------------------------------------------------------
+def _set_oauth_request(email: str = "oauth@example.com") -> None:
+    """Publish a typed OAuth-style RequestContext."""
+    request_context.set(
+        RequestContext(
+            auth_kind="oauth_user",
+            requesting_user_id=None,
+            audit_email=email,
+        )
+    )
+    from ypl.mcp_server.auth_dev_token import _devtoken_audit_var
 
-
-class TestGetRequestingUserId:
-    def test_present(self) -> None:
-        request_context.set({"requesting_user_id": "user-abc-123"})
-        assert get_requesting_user_id() == "user-abc-123"
-
-    def test_absent(self) -> None:
-        request_context.set({})
-        assert get_requesting_user_id() is None
-
-    def test_none_context(self) -> None:
-        request_context.set(None)
-        assert get_requesting_user_id() is None
-
-
-# ---------------------------------------------------------------------------
-# get_ahs_agent_name
-# ---------------------------------------------------------------------------
-
-
-class TestGetAhsAgentName:
-    def test_present(self) -> None:
-        request_context.set({"ahs_agent_name": "eng-raccoon"})
-        assert get_ahs_agent_name() == "eng-raccoon"
-
-    def test_absent(self) -> None:
-        request_context.set({})
-        assert get_ahs_agent_name() is None
-
-    def test_none_context(self) -> None:
-        request_context.set(None)
-        assert get_ahs_agent_name() is None
-
-
-# ---------------------------------------------------------------------------
-# get_ahs_session_id
-# ---------------------------------------------------------------------------
-
-
-class TestGetAhsSessionId:
-    def test_present(self) -> None:
-        request_context.set({"ahs_session_id": "sess-uuid-1234"})
-        assert get_ahs_session_id() == "sess-uuid-1234"
-
-    def test_absent(self) -> None:
-        request_context.set({})
-        assert get_ahs_session_id() is None
-
-    def test_none_context(self) -> None:
-        request_context.set(None)
-        assert get_ahs_session_id() is None
+    _devtoken_audit_var.set(None)
 
 
 # ---------------------------------------------------------------------------
@@ -184,11 +118,13 @@ def _make_middleware_context(tool_name: str = "test_tool", arguments: dict | Non
 
 class TestToolCallLoggingMiddleware:
     async def test_dev_token_no_context_raises_permission_error(self) -> None:
-        """In DEV_TOKEN mode, missing request_context raises PermissionError."""
+        """In DEV_TOKEN mode, missing context raises PermissionError."""
+        from ypl.mcp_server.auth_dev_token import _devtoken_audit_var
         from ypl.mcp_server.core import ToolCallLoggingMiddleware
 
         middleware = ToolCallLoggingMiddleware()
-        request_context.set(None)  # no context
+        request_context.set(None)
+        _devtoken_audit_var.set(None)
 
         mock_ctx = _make_middleware_context()
         call_next = AsyncMock(return_value=MagicMock())
@@ -204,10 +140,7 @@ class TestToolCallLoggingMiddleware:
         from ypl.mcp_server.core import ToolCallLoggingMiddleware
 
         middleware = ToolCallLoggingMiddleware()
-
-        mock_token = MagicMock()
-        mock_token.email = "dev@example.com"
-        request_context.set({"token": mock_token, "ip_address": "1.2.3.4", "user_agent": "pytest"})
+        _set_devtoken_request()
 
         mock_ctx = _make_middleware_context()
         mock_result = MagicMock()
@@ -227,16 +160,17 @@ class TestToolCallLoggingMiddleware:
 
         assert call_kwargs["status"] == MCPAuditLogStatus.SUCCESS
         assert call_kwargs["token_type"] == MCPTokenType.DEV_TOKEN
+        # The typed context exposes IP / UA on the typed RequestContext;
+        # the audit middleware threads them through unchanged.
+        assert call_kwargs["ip_address"] == "1.2.3.4"
+        assert call_kwargs["user_agent"] == "pytest"
 
     async def test_failed_tool_call_logs_failure_and_reraises(self) -> None:
         """Exception in tool call is logged as FAILED and then re-raised."""
         from ypl.mcp_server.core import ToolCallLoggingMiddleware
 
         middleware = ToolCallLoggingMiddleware()
-
-        mock_token = MagicMock()
-        mock_token.email = "dev@example.com"
-        request_context.set({"token": mock_token, "ip_address": "1.2.3.4", "user_agent": "pytest"})
+        _set_devtoken_request()
 
         mock_ctx = _make_middleware_context()
         error = RuntimeError("tool exploded")
@@ -260,10 +194,12 @@ class TestToolCallLoggingMiddleware:
 
     async def test_oauth_no_context_logs_warning_and_skips_audit(self) -> None:
         """In OAUTH mode with no context, tool call completes but audit is skipped."""
+        from ypl.mcp_server.auth_dev_token import _devtoken_audit_var
         from ypl.mcp_server.core import ToolCallLoggingMiddleware
 
         middleware = ToolCallLoggingMiddleware()
         request_context.set(None)
+        _devtoken_audit_var.set(None)
 
         mock_ctx = _make_middleware_context()
         mock_result = MagicMock()
@@ -280,3 +216,65 @@ class TestToolCallLoggingMiddleware:
         assert result is mock_result
         # No email → audit log should NOT be called
         mock_log.assert_not_called()
+
+    async def test_oauth_with_typed_context_logs_audit(self) -> None:
+        """When OAuth middleware populated the typed context, audit emits OAUTH row."""
+        from ypl.db.mcp import MCPAuditLogStatus, MCPTokenType
+        from ypl.mcp_server.core import ToolCallLoggingMiddleware
+
+        middleware = ToolCallLoggingMiddleware()
+        _set_oauth_request("oauthuser@example.com")
+
+        mock_ctx = _make_middleware_context()
+        mock_result = MagicMock()
+        call_next = AsyncMock(return_value=mock_result)
+
+        with (
+            patch("ypl.mcp_server.core.settings") as mock_settings,
+            patch("ypl.mcp_server.core.log_tool_call", new=AsyncMock()) as mock_log,
+        ):
+            mock_settings.MCP_SERVER_MODE = "OAUTH"
+            await middleware.on_call_tool(mock_ctx, call_next)
+
+        mock_log.assert_called_once()
+        call_kwargs = mock_log.call_args.kwargs
+        assert call_kwargs["status"] == MCPAuditLogStatus.SUCCESS
+        assert call_kwargs["token_type"] == MCPTokenType.OAUTH
+        assert call_kwargs["email"] == "oauthuser@example.com"
+
+
+# ---------------------------------------------------------------------------
+# require_caller_user_id (the new tool-facing accessor)
+# ---------------------------------------------------------------------------
+
+
+class TestRequireCallerUserId:
+    def test_returns_user_id(self) -> None:
+        from ypl.mcp_common.auth_context import require_caller_user_id
+
+        request_context.set(
+            RequestContext(
+                auth_kind="agent_secret",
+                requesting_user_id="user-xyz",
+            )
+        )
+        assert require_caller_user_id() == "user-xyz"
+
+    def test_raises_when_no_context(self) -> None:
+        from ypl.mcp_common.auth_context import require_caller_user_id
+
+        request_context.set(None)
+        with pytest.raises(PermissionError, match="Authentication required"):
+            require_caller_user_id()
+
+    def test_raises_when_user_id_is_none(self) -> None:
+        from ypl.mcp_common.auth_context import require_caller_user_id
+
+        request_context.set(
+            RequestContext(
+                auth_kind="agent_secret",
+                requesting_user_id=None,
+            )
+        )
+        with pytest.raises(PermissionError, match="Authentication required"):
+            require_caller_user_id()

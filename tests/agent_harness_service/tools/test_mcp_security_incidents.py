@@ -4,6 +4,7 @@ from __future__ import annotations
 import uuid
 from unittest.mock import AsyncMock, patch
 
+from ypl.mcp_common.auth_context import RequestContext
 from ypl.mcp_server.tools.security_incidents import report_security_incident
 
 # ---------------------------------------------------------------------------
@@ -22,6 +23,19 @@ FAKE_SESSION_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 FAKE_INCIDENT_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 
 
+def _ctx(
+    session_id: str | None = FAKE_SESSION_ID,
+    agent_name: str | None = "sre",
+) -> RequestContext:
+    """Build a typed RequestContext for an agent_secret caller."""
+    return RequestContext(
+        auth_kind="agent_secret",
+        requesting_user_id=None,
+        ahs_session_id=session_id,
+        ahs_agent_name=agent_name,
+    )
+
+
 # ---------------------------------------------------------------------------
 # report_security_incident
 # ---------------------------------------------------------------------------
@@ -30,8 +44,7 @@ FAKE_INCIDENT_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 class TestReportSecurityIncident:
     async def test_success_returns_incident_id(self) -> None:
         with (
-            patch("ypl.mcp_server.tools.security_incidents.get_ahs_session_id", return_value=FAKE_SESSION_ID),
-            patch("ypl.mcp_server.tools.security_incidents.get_ahs_agent_name", return_value="sre"),
+            patch("ypl.mcp_server.tools.security_incidents.current_request_context", return_value=_ctx()),
             patch(
                 "ypl.mcp_server.tools.security_incidents._store_incident",
                 AsyncMock(return_value=FAKE_INCIDENT_ID),
@@ -44,10 +57,7 @@ class TestReportSecurityIncident:
         assert "message" in result
 
     async def test_invalid_incident_type_returns_error(self) -> None:
-        with (
-            patch("ypl.mcp_server.tools.security_incidents.get_ahs_session_id", return_value=FAKE_SESSION_ID),
-            patch("ypl.mcp_server.tools.security_incidents.get_ahs_agent_name", return_value="sre"),
-        ):
+        with patch("ypl.mcp_server.tools.security_incidents.current_request_context", return_value=_ctx()):
             result = await report_security_incident.fn(
                 incident_type="INVALID_TYPE",
                 severity="HIGH",
@@ -60,10 +70,7 @@ class TestReportSecurityIncident:
         assert "Invalid incident_type" in result["error"]
 
     async def test_invalid_severity_returns_error(self) -> None:
-        with (
-            patch("ypl.mcp_server.tools.security_incidents.get_ahs_session_id", return_value=FAKE_SESSION_ID),
-            patch("ypl.mcp_server.tools.security_incidents.get_ahs_agent_name", return_value="sre"),
-        ):
+        with patch("ypl.mcp_server.tools.security_incidents.current_request_context", return_value=_ctx()):
             result = await report_security_incident.fn(
                 incident_type="SECRETS_PROBE",
                 severity="CRITICAL",  # not valid
@@ -80,8 +87,7 @@ class TestReportSecurityIncident:
 
         for incident_type in valid_types:
             with (
-                patch("ypl.mcp_server.tools.security_incidents.get_ahs_session_id", return_value=FAKE_SESSION_ID),
-                patch("ypl.mcp_server.tools.security_incidents.get_ahs_agent_name", return_value="sre"),
+                patch("ypl.mcp_server.tools.security_incidents.current_request_context", return_value=_ctx()),
                 patch(
                     "ypl.mcp_server.tools.security_incidents._store_incident",
                     AsyncMock(return_value=FAKE_INCIDENT_ID),
@@ -99,8 +105,7 @@ class TestReportSecurityIncident:
     async def test_all_severity_levels_accepted(self) -> None:
         for severity in ["HIGH", "MEDIUM", "LOW"]:
             with (
-                patch("ypl.mcp_server.tools.security_incidents.get_ahs_session_id", return_value=FAKE_SESSION_ID),
-                patch("ypl.mcp_server.tools.security_incidents.get_ahs_agent_name", return_value="sre"),
+                patch("ypl.mcp_server.tools.security_incidents.current_request_context", return_value=_ctx()),
                 patch(
                     "ypl.mcp_server.tools.security_incidents._store_incident",
                     AsyncMock(return_value=FAKE_INCIDENT_ID),
@@ -118,8 +123,10 @@ class TestReportSecurityIncident:
     async def test_missing_session_id_proceeds(self) -> None:
         """Missing session ID should not block — incident is still stored."""
         with (
-            patch("ypl.mcp_server.tools.security_incidents.get_ahs_session_id", return_value=None),
-            patch("ypl.mcp_server.tools.security_incidents.get_ahs_agent_name", return_value="sre"),
+            patch(
+                "ypl.mcp_server.tools.security_incidents.current_request_context",
+                return_value=_ctx(session_id=None),
+            ),
             patch(
                 "ypl.mcp_server.tools.security_incidents._store_incident",
                 AsyncMock(return_value=FAKE_INCIDENT_ID),
@@ -132,8 +139,10 @@ class TestReportSecurityIncident:
     async def test_invalid_session_id_handled_gracefully(self) -> None:
         """Malformed UUID in session header should not crash."""
         with (
-            patch("ypl.mcp_server.tools.security_incidents.get_ahs_session_id", return_value="not-a-uuid"),
-            patch("ypl.mcp_server.tools.security_incidents.get_ahs_agent_name", return_value="sre"),
+            patch(
+                "ypl.mcp_server.tools.security_incidents.current_request_context",
+                return_value=_ctx(session_id="not-a-uuid"),
+            ),
             patch(
                 "ypl.mcp_server.tools.security_incidents._store_incident",
                 AsyncMock(return_value=FAKE_INCIDENT_ID),
@@ -145,8 +154,7 @@ class TestReportSecurityIncident:
 
     async def test_store_exception_returns_error(self) -> None:
         with (
-            patch("ypl.mcp_server.tools.security_incidents.get_ahs_session_id", return_value=FAKE_SESSION_ID),
-            patch("ypl.mcp_server.tools.security_incidents.get_ahs_agent_name", return_value="sre"),
+            patch("ypl.mcp_server.tools.security_incidents.current_request_context", return_value=_ctx()),
             patch(
                 "ypl.mcp_server.tools.security_incidents._store_incident",
                 AsyncMock(side_effect=RuntimeError("db error")),
@@ -160,8 +168,7 @@ class TestReportSecurityIncident:
     async def test_turn_number_extracted_from_evidence(self) -> None:
         """turn_number in evidence is extracted and passed to _store_incident."""
         with (
-            patch("ypl.mcp_server.tools.security_incidents.get_ahs_session_id", return_value=FAKE_SESSION_ID),
-            patch("ypl.mcp_server.tools.security_incidents.get_ahs_agent_name", return_value="sre"),
+            patch("ypl.mcp_server.tools.security_incidents.current_request_context", return_value=_ctx()),
             patch(
                 "ypl.mcp_server.tools.security_incidents._store_incident",
                 AsyncMock(return_value=FAKE_INCIDENT_ID),
@@ -181,8 +188,10 @@ class TestReportSecurityIncident:
 
     async def test_unknown_agent_name_still_stores(self) -> None:
         with (
-            patch("ypl.mcp_server.tools.security_incidents.get_ahs_session_id", return_value=FAKE_SESSION_ID),
-            patch("ypl.mcp_server.tools.security_incidents.get_ahs_agent_name", return_value=None),
+            patch(
+                "ypl.mcp_server.tools.security_incidents.current_request_context",
+                return_value=_ctx(agent_name=None),
+            ),
             patch(
                 "ypl.mcp_server.tools.security_incidents._store_incident",
                 AsyncMock(return_value=FAKE_INCIDENT_ID),

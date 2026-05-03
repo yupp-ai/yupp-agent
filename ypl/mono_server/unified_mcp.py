@@ -7,14 +7,15 @@ prefix:
 * ``/mcp/harness`` — agent tools. Only accepts ``x-ahs-token`` (or the
   Codex-CLI fallback ``Authorization: Bearer <secret>:<session_id>``).
   Validated in-process against ``AHS_MCP_SECRET``; no DB round-trip.
-  Populates :data:`mcp_session_id_var` so harness tools can identify the
-  session.
+  Publishes a typed
+  :class:`~ypl.mcp_common.auth_context.RequestContext` so harness tools
+  see one shape regardless of mount.
 
 * ``/mcp/agcouch`` — developer/product tools. Only accepts
-  ``Authorization: Bearer yupp_dev_*``. Validated against yuppdb; populates
-  :data:`request_context` so agcouch tools can identify the caller. Returns
-  HTTP 503 when yuppdb is unavailable (one-box deployments without the
-  product database).
+  ``Authorization: Bearer yupp_dev_*``. Validated against yuppdb;
+  publishes the same :class:`RequestContext`. Returns HTTP 503 when
+  yuppdb is unavailable (one-box deployments without the product
+  database).
 
 Any request that does not match the expected auth for its path is rejected
 with HTTP 401. Tool sets are **never merged** — a yupp_dev token on the
@@ -35,9 +36,9 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from ypl.agent_harness_service.common.constants import AHS_MCP_SECRET, mcp_session_id_var
+from ypl.agent_harness_service.common.constants import AHS_MCP_SECRET
 from ypl.agent_harness_service.tools.local_mcp_server import mcp as harness_mcp
-from ypl.mcp_server.context_vars import request_context
+from ypl.mcp_common.auth_context import RequestContext, mcp_session_id_var, request_context
 from ypl.mcp_server.core import mcp_server as agcouch_mcp
 from ypl.structured_logger import get_logger
 
@@ -62,6 +63,13 @@ class HarnessMcpAuthMiddleware(BaseHTTPMiddleware):
     Developer tokens (``Bearer yupp_dev_*``) are explicitly rejected — they
     belong on the ``/mcp/agcouch`` mount. All secret comparisons use
     :func:`hmac.compare_digest` to avoid timing side channels.
+
+    On success, publishes a typed
+    :class:`~ypl.mcp_common.auth_context.RequestContext` with
+    ``auth_kind="agent_secret"`` and the AHS identity headers
+    (``X-User-ID`` / ``X-AHS-Agent-Name`` / ``X-AHS-Session-ID``) the
+    runner injects into the sandboxed ``.mcp.json``. These headers are
+    tamper-proof inside the sandbox.
 
     Rejects all requests with 503 when ``AHS_MCP_SECRET`` is unset (an empty
     secret would make every request succeed, collapsing the boundary).
@@ -97,11 +105,30 @@ class HarnessMcpAuthMiddleware(BaseHTTPMiddleware):
         if not hmac.compare_digest(token, AHS_MCP_SECRET):
             return JSONResponse(content={"detail": "Unauthorized"}, status_code=401)
 
-        cv_token = mcp_session_id_var.set(session_id)
+        # Build the typed context from the AHS runner's tamper-proof
+        # headers. ``X-User-ID`` is the user the agent is acting on
+        # behalf of; ``X-AHS-Agent-Name`` and ``X-AHS-Session-ID`` are
+        # the agent's own identity. None of these are inferred from the
+        # secret alone.
+        ctx = RequestContext(
+            auth_kind="agent_secret",
+            requesting_user_id=request.headers.get("x-user-id") or None,
+            ahs_session_id=session_id or None,
+            ahs_agent_name=request.headers.get("x-ahs-agent-name") or None,
+            audit_email=None,  # agent_secret callers have no audit email
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
+        ctx_token = request_context.set(ctx)
+        # Mirror the session id on the legacy ContextVar for tools
+        # (e.g. ``new_task``) that haven't migrated to the typed context
+        # yet. Removed once those callers are migrated.
+        legacy_token = mcp_session_id_var.set(session_id)
         try:
             return await call_next(request)
         finally:
-            mcp_session_id_var.reset(cv_token)
+            mcp_session_id_var.reset(legacy_token)
+            request_context.reset(ctx_token)
 
 
 # ---------------------------------------------------------------------------
@@ -137,7 +164,7 @@ class AgcouchMcpAuthMiddleware(BaseHTTPMiddleware):
         # Lazy import: yuppdb may not be configured in one-box mode.
         try:
             from ypl.db.mcp import MCPTokenStatus
-            from ypl.mcp_server.auth_dev_token import create_request_context, validate_token
+            from ypl.mcp_server.auth_dev_token import _devtoken_audit_var, build_request_context, validate_token
         except Exception as exc:
             logger.error(
                 "yuppdb not configured — developer token auth unavailable",
@@ -169,12 +196,14 @@ class AgcouchMcpAuthMiddleware(BaseHTTPMiddleware):
                 detail = "Invalid token"
             return JSONResponse(content={"detail": detail}, status_code=401)
 
-        ctx = await create_request_context(db_token, request)
-        cv_token = request_context.set(ctx)
+        ctx = await build_request_context(db_token, request)
+        ctx_token = request_context.set(ctx)
+        audit_token = _devtoken_audit_var.set(db_token)
         try:
             return await call_next(request)
         finally:
-            request_context.reset(cv_token)
+            request_context.reset(ctx_token)
+            _devtoken_audit_var.reset(audit_token)
 
 
 # ---------------------------------------------------------------------------

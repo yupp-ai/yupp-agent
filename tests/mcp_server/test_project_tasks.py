@@ -22,7 +22,7 @@ from ypl.db.agent_harness import (
     AgentTaskPriority,
     AgentTaskStatus,
 )
-from ypl.mcp_server.context_vars import request_context
+from ypl.mcp_common.auth_context import RequestContext, request_context
 from ypl.mcp_server.tools.project_tasks import (
     _batch_resolve_agent_names,
     _format_project,
@@ -79,7 +79,9 @@ def _grant_project_admin_by_default() -> Any:
 
 def _set_auth_context(user_id: str = USER_ID, email: str = "test@example.com") -> None:
     """Set up a valid authenticated request context."""
-    request_context.set({"requesting_user_id": user_id, "email": email})
+    request_context.set(
+        RequestContext(auth_kind="oauth_user", requesting_user_id=user_id, audit_email=email)
+    )
 
 
 def _set_no_auth_context() -> None:
@@ -403,36 +405,18 @@ class TestAddProject:
         assert result["success"] is False
         assert "Authentication required" in result["error"]
 
-    async def test_resolves_user_from_email_when_no_user_id(self) -> None:
-        request_context.set({"email": "engineer@example.com"})
-
-        mock_session = _make_mock_session()
-
-        with (
-            patch(
-                "ypl.mcp_server.tools.project_tasks.resolve_user_id_from_email",
-                new=AsyncMock(return_value=(USER_ID, None)),
-            ),
-            patch(
-                "ypl.mcp_server.tools.project_tasks.get_async_session",
-                return_value=_make_async_session_ctx(mock_session),
-            ),
-        ):
-            result = await add_project("Email Project")
-
-        assert result["success"] is True
-
-    async def test_user_resolution_error(self) -> None:
-        request_context.set({"email": "engineer@example.com"})
-
-        with patch(
-            "ypl.mcp_server.tools.project_tasks.resolve_user_id_from_email",
-            new=AsyncMock(return_value=(None, "User not found")),
-        ):
-            result = await add_project("Test")
-
+    async def test_no_requesting_user_id_returns_error(self) -> None:
+        """An auth context with ``requesting_user_id=None`` is no longer a
+        valid identity at the tool layer — the OAuth/DevToken middleware
+        resolves the email to a user_id at verify time. Tools that need an
+        attributable caller raise ``PermissionError`` via
+        ``require_caller_user_id``."""
+        request_context.set(
+            RequestContext(auth_kind="oauth_user", requesting_user_id=None, audit_email="engineer@example.com")
+        )
+        result = await add_project("Test")
         assert result["success"] is False
-        assert "User not found" in result["error"]
+        assert "Authentication required" in result["error"]
 
     async def test_exception_returns_error(self) -> None:
         _set_auth_context()

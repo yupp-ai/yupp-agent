@@ -220,9 +220,15 @@ class TestCreateRequestContext:
         db_token = _make_db_token()
         request = self._make_request(headers={"user-agent": "test-agent/1.0"})
 
-        with patch(
-            "ypl.mcp_server.auth_dev_token.has_permission_cached",
-            new=AsyncMock(return_value=True),
+        with (
+            patch(
+                "ypl.mcp_server.auth_dev_token.has_permission_cached",
+                new=AsyncMock(return_value=True),
+            ),
+            patch(
+                "ypl.mcp_server.auth_dev_token._resolve_user_id_from_email",
+                new=AsyncMock(return_value=None),
+            ),
         ):
             ctx = await create_request_context(db_token, request)
 
@@ -234,9 +240,15 @@ class TestCreateRequestContext:
         db_token = _make_db_token(email="admin@example.com")
         request = self._make_request(headers={"x-user-id": "user-abc-123"})
 
-        with patch(
-            "ypl.mcp_server.auth_dev_token.has_permission_cached",
-            new=AsyncMock(return_value=True),
+        with (
+            patch(
+                "ypl.mcp_server.auth_dev_token.has_permission_cached",
+                new=AsyncMock(return_value=True),
+            ),
+            patch(
+                "ypl.mcp_server.auth_dev_token._resolve_user_id_from_email",
+                new=AsyncMock(return_value=None),
+            ),
         ):
             ctx = await create_request_context(db_token, request)
 
@@ -246,9 +258,15 @@ class TestCreateRequestContext:
         db_token = _make_db_token(email="engineer@example.com")
         request = self._make_request(headers={"x-user-id": "user-abc-123"})
 
-        with patch(
-            "ypl.mcp_server.auth_dev_token.has_permission_cached",
-            new=AsyncMock(return_value=False),
+        with (
+            patch(
+                "ypl.mcp_server.auth_dev_token.has_permission_cached",
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
+                "ypl.mcp_server.auth_dev_token._resolve_user_id_from_email",
+                new=AsyncMock(return_value=None),
+            ),
         ):
             ctx = await create_request_context(db_token, request)
 
@@ -263,9 +281,15 @@ class TestCreateRequestContext:
             }
         )
 
-        with patch(
-            "ypl.mcp_server.auth_dev_token.has_permission_cached",
-            new=AsyncMock(return_value=True),
+        with (
+            patch(
+                "ypl.mcp_server.auth_dev_token.has_permission_cached",
+                new=AsyncMock(return_value=True),
+            ),
+            patch(
+                "ypl.mcp_server.auth_dev_token._resolve_user_id_from_email",
+                new=AsyncMock(return_value=None),
+            ),
         ):
             ctx = await create_request_context(db_token, request)
 
@@ -281,9 +305,15 @@ class TestCreateRequestContext:
             }
         )
 
-        with patch(
-            "ypl.mcp_server.auth_dev_token.has_permission_cached",
-            new=AsyncMock(return_value=False),
+        with (
+            patch(
+                "ypl.mcp_server.auth_dev_token.has_permission_cached",
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
+                "ypl.mcp_server.auth_dev_token._resolve_user_id_from_email",
+                new=AsyncMock(return_value=None),
+            ),
         ):
             ctx = await create_request_context(db_token, request)
 
@@ -295,9 +325,15 @@ class TestCreateRequestContext:
         request = self._make_request()
         request.client = None
 
-        with patch(
-            "ypl.mcp_server.auth_dev_token.has_permission_cached",
-            new=AsyncMock(return_value=False),
+        with (
+            patch(
+                "ypl.mcp_server.auth_dev_token.has_permission_cached",
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
+                "ypl.mcp_server.auth_dev_token._resolve_user_id_from_email",
+                new=AsyncMock(return_value=None),
+            ),
         ):
             ctx = await create_request_context(db_token, request)
 
@@ -431,6 +467,10 @@ class TestDevTokenAuthMiddleware:
             patch(
                 "ypl.mcp_server.auth_dev_token.has_permission_cached",
                 new=AsyncMock(return_value=True),
+            ),
+            patch(
+                "ypl.mcp_server.auth_dev_token._resolve_user_id_from_email",
+                new=AsyncMock(return_value=None),
             ),
         ):
             r = client.get(

@@ -1,13 +1,24 @@
-"""DevToken authentication for MCP server.
+"""DevToken authentication for the agcouch MCP server.
 
-This module handles authentication via developer tokens (yupp_dev_* format).
-Used when MCP_SERVER_MODE is set to "DEV_TOKEN".
+Authenticates ``yupp_dev_*`` Bearer tokens against the ``mcp_dev_token``
+table. Used when ``MCP_SERVER_MODE=DEV_TOKEN`` and (during the phase-5
+deprecation window) when the agcouch mount in mono mode receives a dev
+token.
+
+Identity emitted to tools is the typed
+:class:`~ypl.mcp_common.auth_context.RequestContext` — same shape as the
+OAuth path. The DevToken row reference is kept on a private ContextVar
+(:data:`_devtoken_audit_var`) consulted by the audit middleware to
+populate ``MCPAuditLog.mcp_dev_token_id`` until dev tokens are deleted in
+phase 5b.
 """
 
+from __future__ import annotations
 import hashlib
 import secrets
 import string
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 
@@ -25,6 +36,8 @@ from ypl.backend.db import get_async_session, retry_db
 from ypl.backend.utils.soul_utils import has_permission_cached
 from ypl.db.mcp import MCPDevToken, MCPTokenStatus, MCPTokenType
 from ypl.db.rbac import Permission
+from ypl.mcp_common.auth_context import RequestContext, request_context
+from ypl.mcp_server.auth_oauth import _resolve_user_id_from_email
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -35,6 +48,27 @@ TOKEN_LENGTH = 32  # Length of the random suffix
 
 # Paths that skip authentication
 PUBLIC_PATHS = {"/health", "/healthz"}
+
+
+# ---------------------------------------------------------------------------
+# Transitional DevToken audit metadata
+# ---------------------------------------------------------------------------
+#: Per-request DevToken DB row, used solely to populate
+#: ``MCPAuditLog.mcp_dev_token_id`` during the phase-5 deprecation window.
+#: ``None`` for OAuth and harness-MCP requests. Removed alongside the rest
+#: of the DevToken machinery in phase 5b.
+_devtoken_audit_var: ContextVar[MCPDevToken | None] = ContextVar("mcp_devtoken_audit", default=None)
+
+
+def current_devtoken_for_audit() -> MCPDevToken | None:
+    """Return the active DevToken DB row, if the request used one.
+
+    Read by ``ToolCallLoggingMiddleware`` to populate
+    ``MCPAuditLog.mcp_dev_token_id``. Tools must not depend on this — they
+    consume identity from
+    :func:`~ypl.mcp_common.auth_context.current_request_context` only.
+    """
+    return _devtoken_audit_var.get()
 
 
 def generate_token() -> str:
@@ -231,44 +265,84 @@ async def _can_assert_user_identity(db_token: MCPDevToken) -> bool:
     return await has_permission_cached(db_token.email, Permission.MANAGE_AGENT_SESSIONS)
 
 
-async def create_request_context(
+async def build_request_context(
     db_token: MCPDevToken,
     request: Request,
-) -> dict[str, Any]:
-    """Create request context for MCP middleware."""
+) -> RequestContext:
+    """Build the typed :class:`RequestContext` for a DevToken request.
+
+    Resolves the token's email to a platform ``user_id`` once, applies
+    the ``MANAGE_AGENT_SESSIONS`` gate to optional impersonation headers,
+    and returns the immutable context the audit middleware and tools will
+    consume.
+
+    Per the design doc, the dev-token path uses ``auth_kind="oauth_user"``
+    — the "oauth-resolved user" branch — and the dev-token DB row is
+    surfaced separately on :data:`_devtoken_audit_var` so the audit log
+    can keep stamping ``mcp_dev_token_id`` until phase 5b removes the
+    column.
+    """
     can_impersonate = await _can_assert_user_identity(db_token)
 
-    # Only trust X-User-ID when the token owner holds MANAGE_AGENT_SESSIONS.
-    # This prevents regular DevToken holders from impersonating other users.
-    requesting_user_id: str | None = None
-    raw_header = request.headers.get("x-user-id")
-    if raw_header:
+    # Default identity: the token owner. We resolve the email → user_id
+    # once here so tools never have to re-resolve. ``None`` means the
+    # token holder isn't bound to an active platform user — the audit
+    # trail still records the email for review.
+    own_user_id: str | None = await _resolve_user_id_from_email(db_token.email)
+
+    # Optional impersonation: privileged callers (AHS service principal,
+    # admins) can override the user_id and AHS identity headers. Regular
+    # token holders are silently downgraded to acting as themselves.
+    requesting_user_id: str | None = own_user_id
+    raw_user_header = request.headers.get("x-user-id")
+    if raw_user_header:
         if can_impersonate:
-            requesting_user_id = raw_header
+            requesting_user_id = raw_user_header
         else:
             logger.warning(
                 "Ignoring X-User-ID from non-privileged token",
                 token_email=db_token.email.split("@")[0],
             )
 
-    # AHS identity headers are injected by the AHS runner into .mcp.json and
-    # are tamper-proof within the sandbox. Trust them under the same gate so
-    # audit records (security incidents, artifact attribution, etc.) can't
-    # be spoofed by non-privileged DevToken holders.
+    # AHS identity headers (X-AHS-Agent-Name / X-AHS-Session-ID) follow
+    # the same gate. Tamper-proof inside the AHS sandbox; trusted only
+    # when MANAGE_AGENT_SESSIONS is held.
     ahs_agent_name: str | None = None
     ahs_session_id: str | None = None
     if can_impersonate:
         ahs_agent_name = request.headers.get("x-ahs-agent-name") or None
         ahs_session_id = request.headers.get("x-ahs-session-id") or None
 
+    return RequestContext(
+        auth_kind="oauth_user",
+        requesting_user_id=requesting_user_id,
+        ahs_session_id=ahs_session_id,
+        ahs_agent_name=ahs_agent_name,
+        audit_email=db_token.email,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+
+
+# Backward-compatible alias for callers that still expect the old dict
+# return type. The dict shape is preserved enough for ``unified_mcp.py``
+# and the tests during the deprecation window; it will be deleted with
+# the rest of the DevToken machinery in phase 5b.
+async def create_request_context(db_token: MCPDevToken, request: Request) -> dict[str, Any]:  # pragma: no cover - shim
+    """Deprecated: returns the legacy dict shape, retained for callers.
+
+    New code should call :func:`build_request_context` and use the typed
+    :class:`RequestContext` directly.
+    """
+    ctx = await build_request_context(db_token, request)
     return {
         "token": db_token,
         "token_type": MCPTokenType.DEV_TOKEN,
-        "ip_address": request.client.host if request.client else None,
-        "user_agent": request.headers.get("user-agent"),
-        "requesting_user_id": requesting_user_id,
-        "ahs_agent_name": ahs_agent_name,
-        "ahs_session_id": ahs_session_id,
+        "ip_address": ctx.ip_address,
+        "user_agent": ctx.user_agent,
+        "requesting_user_id": ctx.requesting_user_id,
+        "ahs_agent_name": ctx.ahs_agent_name,
+        "ahs_session_id": ctx.ahs_session_id,
     }
 
 
@@ -279,10 +353,20 @@ class DevTokenAuthMiddleware(BaseHTTPMiddleware):
     It validates yupp_dev_* tokens against the database.
     """
 
-    def __init__(self, app: Any, request_context_var: Any) -> None:
-        """Initialize middleware with the request context variable."""
+    def __init__(self, app: Any, request_context_var: Any | None = None) -> None:
+        """Initialize middleware.
+
+        Args:
+            app: ASGI app.
+            request_context_var: Deprecated. Retained for binary
+                compatibility with callers that pass the legacy dict
+                ``ContextVar`` — ignored. The typed
+                :data:`ypl.mcp_common.auth_context.request_context` is
+                always used.
+        """
         super().__init__(app)
-        self.request_context_var = request_context_var
+        # Keep the attribute around so tests inspecting it don't break.
+        self.request_context_var = request_context_var or request_context
 
     async def dispatch(self, request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
         """Validate Bearer token before processing request."""
@@ -357,13 +441,18 @@ class DevTokenAuthMiddleware(BaseHTTPMiddleware):
         request.state.engineer_email = db_token.email
         request.state.token_type = MCPTokenType.DEV_TOKEN
 
-        # Set context variable for MCP middleware to access
-        ctx = await create_request_context(db_token, request)
-        ctx_token = self.request_context_var.set(ctx)
+        # Publish the typed RequestContext + the per-request DevToken
+        # row reference (for audit logging only). Both are scoped to the
+        # current asyncio task so resets at the end of the request take
+        # care of cleanup.
+        ctx = await build_request_context(db_token, request)
+        ctx_token = request_context.set(ctx)
+        audit_token = _devtoken_audit_var.set(db_token)
 
         logger.debug("DevToken authenticated", engineer=email_local_part, path=request.url.path)
 
         try:
             return await call_next(request)
         finally:
-            self.request_context_var.reset(ctx_token)
+            request_context.reset(ctx_token)
+            _devtoken_audit_var.reset(audit_token)
