@@ -184,31 +184,11 @@ async def add_reply(request: AddReplyRequest) -> AddReplyResponse:
                 error=str(e),
             )
 
-        # When a real (non-status) reply is posted:
-        # 1. If a tool cluster is active, edit it to show a compact summary so
-        #    the live tool cluster is left in place (showing the last couple of
-        #    tool entries) — no compact-summary rewrite any more.
-        # 2. Clear tool entries so the next cluster starts fresh.
-        # 3. Reset status_message_ts so future tool events post a new message.
-        # 4. Clear any pending status text and scheduled flush.
-        if request.reply_type != "thinking":
-            try:
-                # Re-fetch a fresh session — record_reply already updated it
-                # and we must not overwrite those changes with our stale copy.
-                fresh_session = await get_session(request.session_id)
-                await remove_from_status_flush_schedule(request.session_id)
-                await get_and_clear_tool_cluster_pending(request.session_id)
-                await clear_tool_entries(request.session_id)
-                if fresh_session and fresh_session.status_message_ts:
-                    # Nullify status_message_ts so the next tool cluster posts fresh.
-                    fresh_session.status_message_ts = None
-                    await save_session(fresh_session)
-            except Exception as e:
-                logger.warning(
-                    "Failed to clear status state after real reply",
-                    session_id=request.session_id,
-                    error=str(e),
-                )
+        # NOTE: tool-cluster state intentionally persists across text replies.
+        # Within one turn we want a single tool-cluster block that updates in
+        # place ("scrolling" effect) regardless of how many text replies the
+        # agent emits — see ``reset_turn_state`` which is called by AHS at
+        # turn boundaries to start the next turn with a fresh cluster.
 
         # Store reply-to-session mapping for reaction-based feedback
         try:
@@ -723,6 +703,68 @@ def _render_tool_cluster(entries: list[ToolUseEntry]) -> str:
     if total > _TOOL_CLUSTER_DISPLAY_COUNT:
         text += f"\n_{total} tools used_"
     return text
+
+
+# ---------------------------------------------------------------------------
+# Turn boundary
+# ---------------------------------------------------------------------------
+
+
+async def reset_turn_state(session_id: str) -> bool:
+    """Drop in-turn buffered/cluster state at a turn boundary.
+
+    Called by AHS at the end of each turn (after the runner emits its terminal
+    ``result`` event) so the next turn starts with a fresh tool cluster and
+    no carry-over text buffer.
+
+    Within a turn, the same ``status_message_ts`` is reused across tool events
+    and text replies — that gives the user one tool-cluster block per turn
+    that updates in place.  At the turn boundary we want to leave the previous
+    cluster *frozen* in Slack (it's not deleted — it just stops receiving
+    updates) and ensure any subsequent tool call starts a fresh message.
+
+    Concretely we:
+    - Clear the tool entries list (so the next cluster doesn't inherit them).
+    - Null out ``status_message_ts`` (so the next ``handle_tool_event`` posts
+      a brand-new message instead of editing the previous turn's frozen one).
+    - Drop the pending-cluster signal and any scheduled flushes.
+    - Discard any in-flight text buffer (no aggregation across turns).
+
+    Idempotent — calling on a session with nothing to clean up is a no-op.
+
+    Args:
+        session_id: The session ID.
+
+    Returns:
+        True if the cleanup ran (or there was nothing to do), False if the
+        session is unknown.
+    """
+    session = await get_session(session_id)
+    if not session:
+        return False
+
+    try:
+        await remove_from_status_flush_schedule(session_id)
+        await get_and_clear_tool_cluster_pending(session_id)
+        await clear_tool_entries(session_id)
+        if session.status_message_ts:
+            # Re-fetch a fresh session to avoid clobbering concurrent edits.
+            fresh_session = await get_session(session_id)
+            if fresh_session and fresh_session.status_message_ts:
+                fresh_session.status_message_ts = None
+                await save_session(fresh_session)
+        # Drop any pending text buffer — turn boundary means no carry-over.
+        await discard_buffer(session_id)
+    except Exception as exc:
+        logger.warning(
+            "Failed to reset turn state",
+            session_id=session_id,
+            error=str(exc),
+        )
+        return True  # Best-effort; don't gate AHS on this.
+
+    logger.debug("Reset turn state", session_id=session_id)
+    return True
 
 
 # ---------------------------------------------------------------------------

@@ -301,6 +301,12 @@ async def _run_agent_task(
     so the next turn can --resume, and calls the gateway to push the reply.
     """
     was_cancelled = False
+    # Pre-declared so the ``finally`` block can call ``gateway.turn_end()``
+    # even on early-exit paths that bail before the proper gateway resolution
+    # below (e.g. agent_config not found).  Re-bound to the real values
+    # inside the try block once trigger/session context is loaded.
+    gateway: Gateway | None = None
+    gateway_session_id: str | None = None
     try:
         # Mark this session's executor as in-flight in Redis.  If this
         # process is killed before the matching ``mark_executor_finished``
@@ -452,7 +458,6 @@ async def _run_agent_task(
                 session_id=str(agent_session_id),
                 trigger=trigger,
             )
-        gateway: Gateway | None = None
         if gateway_name and gateway_session_id:
             registry = GatewayRegistry.get_instance()
             gateway = registry.get_for_session(gateway_name, agent_config)
@@ -464,15 +469,6 @@ async def _run_agent_task(
         final_text = ""
         seen_outlet_tool_ids: set[str] = set()  # dedup outlet tool extraction across event types
         last_gateway_reply_time = 0.0  # monotonic; 0 ensures first block always creates a new message
-        # Tracks whether at least one tool_use has been emitted since the last
-        # gateway text reply was posted. When True, the next text reply must
-        # use send_reply (new Slack message) instead of append_reply.  The
-        # append path edits the original text-1 message via chat_update, which
-        # is currently dropped silently after a tool cluster has rendered (the
-        # SAG flush_buffer self-gates and infinitely defers — see SAG bug
-        # tracked separately).  Posting a fresh message is the safe path: it
-        # always reaches Slack and visually separates pre- vs post-tool text.
-        tool_use_since_last_text_reply = False
         had_error = False
         error_text = ""
         result_llm_session_id: str | None = None
@@ -548,9 +544,6 @@ async def _run_agent_task(
                 tool_names_in_event = [b.get("name", "unknown") for b in tool_start_blocks_in_event]
 
                 if tool_names_in_event:
-                    # Force the next text reply onto a new Slack message — see
-                    # comment on tool_use_since_last_text_reply for why.
-                    tool_use_since_last_text_reply = True
                     eager.tool_call_count += len(tool_names_in_event)
                     eager.pending_tool_names.extend(tool_names_in_event)
                     should_persist = (
@@ -740,16 +733,9 @@ async def _run_agent_task(
                     if undelivered and gateway and gateway_session_id:
                         relay_text = "\n\n".join(vc.text for vc in undelivered)
                         now = time.monotonic()
-                        # Append (chat.update of the previous text message) is
-                        # only safe when no tool cluster rendered between the
-                        # previous text and this one. Otherwise the SAG buffer
-                        # flush silently drops the append and the user never
-                        # sees the post-tool summary. Force send_reply (a new
-                        # Slack message) when a tool_use has been seen.
                         use_append = (
                             last_gateway_reply_time > 0
                             and (now - last_gateway_reply_time) < _GATEWAY_APPEND_THRESHOLD_SECONDS
-                            and not tool_use_since_last_text_reply
                         )
                         try:
                             if use_append:
@@ -760,7 +746,6 @@ async def _run_agent_task(
                                 ok = await gateway.send_reply(gateway_session_id, relay_text, username=gateway_username)
                             if ok:
                                 last_gateway_reply_time = now
-                                tool_use_since_last_text_reply = False
                         except Exception:
                             logger.error("Failed to send reply to gateway", session_id=str(agent_session_id))
                     elif undelivered:
@@ -1138,6 +1123,21 @@ async def _run_agent_task(
         )
 
     finally:
+        # Signal turn boundary to the gateway so any in-turn buffered/cluster
+        # state is dropped before the next turn starts.  Best-effort — runs
+        # before the executor marker is cleared so an immediate follow-up
+        # turn sees a fresh gateway state.  No-op for gateways without
+        # in-turn state (everything except Slack today).
+        if gateway is not None and gateway_session_id:
+            try:
+                await gateway.turn_end(gateway_session_id)
+            except Exception:
+                logger.warning(
+                    "gateway.turn_end raised in finally",
+                    session_id=str(agent_session_id),
+                    exc_info=True,
+                )
+
         # Clear the in-flight executor marker first so a fast user follow-up
         # arriving during the rest of the cleanup does not see a stale flag.
         # Best-effort — failures fall back to the 30-min TTL self-heal.

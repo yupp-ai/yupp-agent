@@ -27,6 +27,7 @@ from ypl.slack_agent_gateway.callbacks import (
     add_reply,
     handle_tool_event,
     request_feedback,
+    reset_turn_state,
     send_message,
     send_questionnaire,
     update_reply,
@@ -50,6 +51,8 @@ from ypl.slack_agent_gateway.types import (
     SendToolEventRequest,
     SendToolEventResponse,
     SlackSessionInfoResponse,
+    TurnEndRequest,
+    TurnEndResponse,
     UpdateReplyRequest,
     UpdateReplyResponse,
 )
@@ -141,6 +144,29 @@ async def post_reply_update(request_body: UpdateReplyRequest) -> UpdateReplyResp
         UpdateReplyResponse with success status
     """
     return await update_reply(request_body)
+
+
+@router.post("/sessions/turn-end", dependencies=[Depends(verify_api_key)])
+async def post_turn_end(request_body: TurnEndRequest) -> TurnEndResponse:
+    """Drop in-turn buffered/cluster state at a turn boundary.
+
+    AHS calls this once per turn (after the runner emits its terminal
+    ``result`` event) so the next turn starts with a fresh tool cluster
+    and no carried-over text buffer.  Idempotent — safe to call on a
+    session that has nothing pending.
+
+    Requires X-API-Key header for authentication.
+
+    Args:
+        request_body: Request containing session_id
+
+    Returns:
+        TurnEndResponse with success status
+    """
+    ok = await reset_turn_state(request_body.session_id)
+    if not ok:
+        return TurnEndResponse(success=False, error="Session not found")
+    return TurnEndResponse(success=True)
 
 
 @router.post("/slack/interactions")

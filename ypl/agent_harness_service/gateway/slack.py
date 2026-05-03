@@ -432,3 +432,49 @@ class SlackGateway(Gateway):
         except Exception:
             logger.warning("Error calling gateway /sessions/tool", session_id=session_id, exc_info=True)
             return False
+
+    # ------------------------------------------------------------------
+    # turn_end
+    # ------------------------------------------------------------------
+
+    async def turn_end(self, session_id: str) -> bool:
+        """Tell SAG that the current agent turn ended.
+
+        SAG drops in-turn buffered/cluster state so the next turn starts
+        fresh.  Best-effort: failures are logged but do not propagate —
+        worst case is one duplicate tool block in Slack.
+        """
+        if session_id in self._dead_session_ids:
+            return False
+
+        url = f"{self._base_url}/slack-agent-gateway/sessions/turn-end"
+        payload = {"session_id": session_id}
+
+        try:
+            resp = await self._get_client().post(url, json=payload, headers=self._headers())
+            resp.raise_for_status()
+            data = resp.json()
+            if not data.get("success"):
+                error = data.get("error", "")
+                if error == "Session not found":
+                    self._dead_session_ids.add(session_id)
+                else:
+                    logger.warning("Gateway rejected turn-end", session_id=session_id, error=error)
+                return False
+            return True
+        except httpx.TimeoutException:
+            logger.warning("Timeout calling gateway /sessions/turn-end", session_id=session_id)
+            return False
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                self._dead_session_ids.add(session_id)
+            else:
+                logger.warning(
+                    "HTTP error calling gateway /sessions/turn-end",
+                    session_id=session_id,
+                    status_code=e.response.status_code,
+                )
+            return False
+        except Exception:
+            logger.warning("Error calling gateway /sessions/turn-end", session_id=session_id, exc_info=True)
+            return False

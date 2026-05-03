@@ -223,6 +223,19 @@ class UpdateReplyResponse(BaseModel):
     error: str | None = Field(None, description="Error message if failed")
 
 
+class TurnEndRequest(BaseModel):
+    """Request body for POST /sessions/turn-end (called by AHS at turn boundary)."""
+
+    session_id: str = Field(..., description="Session identifier")
+
+
+class TurnEndResponse(BaseModel):
+    """Response for POST /sessions/turn-end."""
+
+    success: bool = Field(..., description="Whether the cleanup ran (False only if session is unknown)")
+    error: str | None = Field(None, description="Error message if failed")
+
+
 class RequestFeedbackRequest(BaseModel):
     """Request body for POST /sessions/request-feedback (called by AHS)."""
 

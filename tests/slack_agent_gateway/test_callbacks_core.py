@@ -22,6 +22,7 @@ from ypl.slack_agent_gateway.callbacks import (
     add_reply,
     handle_tool_event,
     request_feedback,
+    reset_turn_state,
     send_message,
     send_questionnaire,
     update_reply,
@@ -915,3 +916,114 @@ class TestHandleToolEvent:
         mock_pending.assert_not_called()
         mock_ratelimit.assert_not_called()
         mock_flush.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# add_reply: tool-cluster state must persist across text replies (within turn)
+# ---------------------------------------------------------------------------
+
+
+class TestAddReplyDoesNotResetToolCluster:
+    """Within a single turn the tool cluster persists so subsequent tool calls
+    keep updating the same Slack message ("scrolling" effect).  Reset is the
+    job of ``reset_turn_state`` at turn boundaries — NOT of every text reply.
+    """
+
+    @pytest.mark.asyncio
+    async def test_real_reply_does_not_clear_tool_entries(self) -> None:
+        session = _make_session(status_message_ts="55555.000")
+        app_config = _make_app_config()
+        mock_client = AsyncMock()
+        mock_client.chat_postMessage.return_value = _make_slack_response("9999.000")
+
+        clear_entries = AsyncMock()
+        clear_pending = AsyncMock()
+        remove_status_flush = AsyncMock()
+        save = AsyncMock()
+
+        with (
+            patch("ypl.slack_agent_gateway.callbacks.get_session", return_value=session),
+            patch("ypl.slack_agent_gateway.callbacks.get_agent_config_by_app_id", return_value=app_config),
+            patch("ypl.slack_agent_gateway.callbacks.build_slack_client", return_value=mock_client),
+            patch("ypl.slack_agent_gateway.callbacks.record_reply", new_callable=AsyncMock),
+            patch("ypl.slack_agent_gateway.callbacks.store_reply_mapping", new_callable=AsyncMock),
+            patch("ypl.slack_agent_gateway.callbacks.clear_tool_entries", clear_entries),
+            patch("ypl.slack_agent_gateway.callbacks.get_and_clear_tool_cluster_pending", clear_pending),
+            patch("ypl.slack_agent_gateway.callbacks.remove_from_status_flush_schedule", remove_status_flush),
+            patch("ypl.slack_agent_gateway.callbacks.save_session", save),
+        ):
+            request = AddReplyRequest(session_id=session.session_id, text="Intermediate text", reply_type=None)
+            result = await add_reply(request)
+
+        assert result.success is True
+        # Critical: cluster state must NOT be reset on a real reply.
+        clear_entries.assert_not_called()
+        clear_pending.assert_not_called()
+        remove_status_flush.assert_not_called()
+        # Session.status_message_ts stays put (no reset to None).
+        assert session.status_message_ts == "55555.000"
+
+
+# ---------------------------------------------------------------------------
+# reset_turn_state — turn-boundary cleanup
+# ---------------------------------------------------------------------------
+
+
+class TestResetTurnState:
+    """``reset_turn_state`` is called by AHS at each turn boundary to drop
+    in-turn buffered/cluster state so the next turn starts fresh.
+    """
+
+    @pytest.mark.asyncio
+    async def test_returns_false_when_session_unknown(self) -> None:
+        with patch("ypl.slack_agent_gateway.callbacks.get_session", AsyncMock(return_value=None)):
+            assert await reset_turn_state("unknown-sess") is False
+
+    @pytest.mark.asyncio
+    async def test_clears_cluster_and_buffer_state(self) -> None:
+        session = _make_session(status_message_ts="55555.000")
+        clear_entries = AsyncMock()
+        clear_pending = AsyncMock()
+        remove_status_flush = AsyncMock()
+        save = AsyncMock()
+        discard = AsyncMock(return_value="")
+
+        with (
+            patch("ypl.slack_agent_gateway.callbacks.get_session", AsyncMock(return_value=session)),
+            patch("ypl.slack_agent_gateway.callbacks.clear_tool_entries", clear_entries),
+            patch("ypl.slack_agent_gateway.callbacks.get_and_clear_tool_cluster_pending", clear_pending),
+            patch("ypl.slack_agent_gateway.callbacks.remove_from_status_flush_schedule", remove_status_flush),
+            patch("ypl.slack_agent_gateway.callbacks.save_session", save),
+            patch("ypl.slack_agent_gateway.callbacks.discard_buffer", discard),
+        ):
+            ok = await reset_turn_state(session.session_id)
+
+        assert ok is True
+        clear_entries.assert_awaited_once_with(session.session_id)
+        clear_pending.assert_awaited_once_with(session.session_id)
+        remove_status_flush.assert_awaited_once_with(session.session_id)
+        # status_message_ts was reset to None and saved.
+        assert session.status_message_ts is None
+        save.assert_awaited_once()
+        # Buffer dropped — no carry-over text across turns.
+        discard.assert_awaited_once_with(session.session_id)
+
+    @pytest.mark.asyncio
+    async def test_idempotent_when_nothing_pending(self) -> None:
+        session = _make_session(status_message_ts=None)  # nothing to reset
+        save = AsyncMock()
+        discard = AsyncMock(return_value="")
+
+        with (
+            patch("ypl.slack_agent_gateway.callbacks.get_session", AsyncMock(return_value=session)),
+            patch("ypl.slack_agent_gateway.callbacks.clear_tool_entries", AsyncMock()),
+            patch("ypl.slack_agent_gateway.callbacks.get_and_clear_tool_cluster_pending", AsyncMock()),
+            patch("ypl.slack_agent_gateway.callbacks.remove_from_status_flush_schedule", AsyncMock()),
+            patch("ypl.slack_agent_gateway.callbacks.save_session", save),
+            patch("ypl.slack_agent_gateway.callbacks.discard_buffer", discard),
+        ):
+            ok = await reset_turn_state(session.session_id)
+
+        assert ok is True
+        # save_session is skipped when status_message_ts is already None.
+        save.assert_not_awaited()

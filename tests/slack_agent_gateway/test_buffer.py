@@ -438,7 +438,6 @@ class TestFlushBuffer:
             patch("ypl.slack_agent_gateway.buffer.record_reply", AsyncMock()),
             # First call (fast-path check) sees content; second (post-flush cleanup) sees empty.
             patch("ypl.slack_agent_gateway.buffer.get_buffer_size", AsyncMock(side_effect=[5, 0])),
-            patch("ypl.slack_agent_gateway.buffer.try_acquire_slack_ratelimit", AsyncMock(return_value=True)),
             patch("ypl.slack_agent_gateway.buffer.remove_from_flush_schedule", AsyncMock()),
             patch("ypl.slack_agent_gateway.buffer.clear_buffer_type", AsyncMock()),
         ):
@@ -478,46 +477,57 @@ class TestFlushBuffer:
             ),
             patch("ypl.slack_agent_gateway.buffer.append_to_buffer", AsyncMock(return_value=10)),
             patch("ypl.slack_agent_gateway.buffer.get_buffer_size", AsyncMock(return_value=5)),
-            patch("ypl.slack_agent_gateway.buffer.try_acquire_slack_ratelimit", AsyncMock(return_value=True)),
         ):
             result = await flush_buffer("sess-1")
 
         assert result is False
 
-    async def test_rate_limit_gate_denied_reschedules_without_clearing_buffer(self) -> None:
-        """When the gate denies, the buffer must NOT be cleared — text keeps
-        accumulating so the next flush sends a single bigger chat.update."""
+    async def test_rate_limit_deferred_by_wrapper_rebuffers_and_reschedules(self) -> None:
+        """When the universal Slack gate is held by another caller, the
+        ``RateLimitedSlackClient`` wrapper raises ``RateLimitDeferred`` and
+        ``flush_buffer`` re-queues the cleared content + reschedules.  The
+        outer rate-limit gate that previously also lived inside ``flush_buffer``
+        was removed (it self-deadlocked against the wrapper's gate on the
+        same key) — gating now lives entirely in the wrapper."""
+        from ypl.slack_agent_gateway.slack_client import RateLimitDeferred
+
         mock_session = MagicMock()
         mock_session.last_reply_ts = "12345.0"
+        mock_session.channel_id = "C123"
         mock_session.app_id = "A123"
+        mock_session.last_reply_content = ""
 
         mock_app_config = MagicMock()
         mock_app_config.app_id = "A123"
         mock_app_config.bot_token = "bot-token-123"
 
-        clear = AsyncMock(return_value="should-not-be-called")
+        # Wrapper denies the inner acquire → raises RateLimitDeferred(0.0).
+        mock_slack_client = AsyncMock()
+        mock_slack_client.chat_update = AsyncMock(side_effect=RateLimitDeferred(method="chat_update", retry_after=0.0))
+
+        append = AsyncMock(return_value=10)
         schedule = AsyncMock()
 
         with (
             patch("ypl.slack_agent_gateway.buffer.get_session", AsyncMock(return_value=mock_session)),
             patch("ypl.slack_agent_gateway.buffer.get_buffer_size", AsyncMock(return_value=5)),
+            patch("ypl.slack_agent_gateway.buffer.get_buffer_type", AsyncMock(return_value="text")),
+            patch("ypl.slack_agent_gateway.buffer.clear_buffer", AsyncMock(return_value="content")),
             patch(
                 "ypl.slack_agent_gateway.buffer.get_agent_config_by_app_id",
                 AsyncMock(return_value=mock_app_config),
             ),
-            patch(
-                "ypl.slack_agent_gateway.buffer.try_acquire_slack_ratelimit",
-                AsyncMock(return_value=False),
-            ),
-            patch("ypl.slack_agent_gateway.buffer.clear_buffer", clear),
+            patch("ypl.slack_agent_gateway.buffer.build_slack_client", return_value=mock_slack_client),
+            patch("ypl.slack_agent_gateway.buffer.render_reply_blocks", return_value=None),
+            patch("ypl.slack_agent_gateway.buffer.append_to_buffer", append),
             patch("ypl.slack_agent_gateway.buffer.schedule_flush", schedule),
         ):
             result = await flush_buffer("sess-1")
 
         assert result is False
-        # Critical: buffer was NOT cleared — content stays for the next flush.
-        clear.assert_not_called()
-        # And the flush was rescheduled, not dropped.
+        # Critical: cleared content was re-added so it's not lost.
+        append.assert_awaited_once_with("sess-1", "content")
+        # And we rescheduled rather than dropping the flush.
         schedule.assert_awaited_once()
 
     async def test_rate_limit_deferred_on_429_rebufffers_and_honors_retry_after(self) -> None:
@@ -550,7 +560,6 @@ class TestFlushBuffer:
                 "ypl.slack_agent_gateway.buffer.get_agent_config_by_app_id",
                 AsyncMock(return_value=mock_app_config),
             ),
-            patch("ypl.slack_agent_gateway.buffer.try_acquire_slack_ratelimit", AsyncMock(return_value=True)),
             patch("ypl.slack_agent_gateway.buffer.build_slack_client", return_value=mock_slack_client),
             patch("ypl.slack_agent_gateway.buffer.render_reply_blocks", return_value=None),
             patch("ypl.slack_agent_gateway.buffer.append_to_buffer", append),
