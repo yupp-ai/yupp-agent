@@ -769,6 +769,10 @@ class TestRecoverStaleSessions:
                 "ypl.agent_harness_service.lifespan.send_slack_restart_courtesy",
                 AsyncMock(),
             ),
+            patch(
+                "ypl.agent_harness_service.lifespan.list_resume_pending_session_ids",
+                AsyncMock(return_value=set()),
+            ),
         ):
             await lifespan._recover_stale_sessions()
 
@@ -800,6 +804,10 @@ class TestRecoverStaleSessions:
             patch(
                 "ypl.agent_harness_service.lifespan.send_slack_restart_courtesy",
                 AsyncMock(),
+            ),
+            patch(
+                "ypl.agent_harness_service.lifespan.list_resume_pending_session_ids",
+                AsyncMock(return_value=set()),
             ),
         ):
             await lifespan._recover_stale_sessions()

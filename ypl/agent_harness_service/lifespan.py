@@ -49,6 +49,8 @@ from ypl.agent_harness_service.service import (
     create_agent as service_create_agent,
 )
 from ypl.agent_harness_service.service import (
+    dispatch_resume_turn,
+    list_resume_pending_session_ids,
     send_slack_restart_courtesy,
     send_slack_shutdown_courtesy,
 )
@@ -352,15 +354,61 @@ async def _recover_stale_sessions() -> None:
         slack_in_scope=len(all_slack_session_ids),
     )
 
-    # Send "server is back" courtesy to every Slack thread we just scanned —
-    # interrupted, completed-but-unwritten, and the few that were already in a
-    # terminal state.  Best-effort: errors are logged inside
-    # send_slack_restart_courtesy.
-    if all_slack_session_ids:
+    if not all_slack_session_ids:
+        return
+
+    # Partition the Slack-in-scope set into two buckets via the Redis
+    # ``ahs:resume_pending:*`` key namespace (set by
+    # ``promote_executor_running_to_resume_pending``, which ran earlier in
+    # startup):
+    #
+    # * ``interrupted_ids`` — previous turn killed mid-flight.  Send the
+    #   "picking up where we left off" courtesy and auto-fire a synthetic
+    #   continuation turn so the user does not have to send a message.
+    # * ``idle_ids`` — previous turn finished cleanly.  Send the bare
+    #   "back online" courtesy; do nothing else.
+    #
+    # ``list_resume_pending_session_ids`` returns ``set()`` on any Redis
+    # error, so partitioning falls through to "everything is idle" — the
+    # exact behaviour we had before this PR.  No regression on Redis
+    # outages, just no auto-resume that day.
+    pending = await list_resume_pending_session_ids()
+    interrupted_ids = [sid for sid in all_slack_session_ids if sid in pending]
+    idle_ids = [sid for sid in all_slack_session_ids if sid not in pending]
+
+    logger.info(
+        "Partitioned Slack restart-courtesy audience by resume-pending state",
+        interrupted=len(interrupted_ids),
+        idle=len(idle_ids),
+    )
+
+    # Send the interrupted-bucket courtesy *before* dispatching the
+    # synthetic turn so the user sees "picking up where we left off"
+    # arrive in Slack ahead of the auto-continued AGENT reply.
+    if interrupted_ids:
         try:
-            await send_slack_restart_courtesy(all_slack_session_ids)
+            await send_slack_restart_courtesy(interrupted_ids, interrupted=True)
         except Exception:
-            logger.warning("Failed to send restart courtesy messages", exc_info=True)
+            logger.warning(
+                "Failed to send interrupted-bucket restart courtesy",
+                exc_info=True,
+            )
+
+        # Fire each ``dispatch_resume_turn`` as an independent background
+        # task so a single slow / failing session cannot stall the rest of
+        # startup.  ``dispatch_resume_turn`` swallows its own exceptions
+        # (logs + emits ``ahs/courtesy_broadcast{event=auto_resume,outcome=failed}``).
+        for sid in interrupted_ids:
+            asyncio.create_task(dispatch_resume_turn(sid), name=f"auto-resume-{sid}")
+
+    if idle_ids:
+        try:
+            await send_slack_restart_courtesy(idle_ids, interrupted=False)
+        except Exception:
+            logger.warning(
+                "Failed to send idle-bucket restart courtesy",
+                exc_info=True,
+            )
 
 
 async def _run_auto_stale_check() -> None:

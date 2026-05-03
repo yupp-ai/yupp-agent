@@ -74,7 +74,8 @@ from ypl.agent_harness_service.service.resolvers import (
 from ypl.agent_harness_service.service.run_task import _run_agent_task
 from ypl.agent_harness_service.service.state import (
     _MAX_PENDING_MESSAGES,
-    _SLACK_RESTART_COURTESY_MSG,
+    _SLACK_RESTART_COURTESY_MSG_IDLE,
+    _SLACK_RESTART_COURTESY_MSG_INTERRUPTED,
     _SLACK_SHUTDOWN_COURTESY_MSG,
     PERSONAL_AGENT_PREFIXES,
     PendingMessage,
@@ -125,11 +126,14 @@ _COURTESY_BROADCAST_WINDOW_HOURS = 24
 def _record_courtesy_metric(event: str, outcome: str, count: int = 1) -> None:
     """Emit ``ahs/courtesy_broadcast`` Prometheus / structured-log counter.
 
-    ``event`` is ``"shutdown"`` or ``"restart"``; ``outcome`` is ``"sent"``,
-    ``"failed"``, or ``"skipped"``.  Wrapped in a try/except because the
-    metrics layer reaches out to GCP and we never want a metric write to break
-    a courtesy broadcast — the structured log already carries the same
-    information.
+    ``event`` is ``"shutdown"``, ``"restart"``, or ``"auto_resume"``;
+    ``outcome`` is one of ``"sent"`` / ``"failed"`` / ``"skipped"`` for
+    courtesy broadcasts, or ``"dispatched"`` / ``"skipped"`` / ``"failed"``
+    for the auto-resume hook fired from ``dispatch_resume_turn``.
+
+    Wrapped in a try/except because the metrics layer reaches out to GCP
+    and we never want a metric write to break a courtesy broadcast — the
+    structured log already carries the same information.
     """
     try:
         from ypl.backend.utils.monitoring import metric_inc_by_with_labels
@@ -302,17 +306,29 @@ async def send_slack_shutdown_courtesy() -> None:
     await _send_slack_courtesy(session_ids, _SLACK_SHUTDOWN_COURTESY_MSG, "shutdown")
 
 
-async def send_slack_restart_courtesy(slack_session_ids: list[uuid.UUID]) -> None:
+async def send_slack_restart_courtesy(
+    slack_session_ids: list[uuid.UUID],
+    *,
+    interrupted: bool = False,
+) -> None:
     """Send a courtesy message to Slack sessions after the server restarts.
 
-    Called from ``_recover_stale_sessions`` at startup for every Slack session
-    found in scope by the recovery scan — including sessions whose last turn
-    completed cleanly right before the deploy, so users see a "back online"
-    ping when they next message the bot.
+    Called from ``_recover_stale_sessions`` at startup, once per bucket:
+
+    * ``interrupted=True`` — the previous turn was killed mid-flight and a
+      synthetic resume turn is about to fire via ``dispatch_resume_turn``.
+      The wording reflects "picking up where we left off".
+    * ``interrupted=False`` (default) — the previous turn finished cleanly
+      before the restart.  The wording is a bare informational notice and
+      no follow-up turn is dispatched.
+
+    Both wordings deliberately drop the "send me a message" ask: PR 3 made
+    the auto-resume path real, so the user does not need to take any action.
     """
+    text = _SLACK_RESTART_COURTESY_MSG_INTERRUPTED if interrupted else _SLACK_RESTART_COURTESY_MSG_IDLE
     await _send_slack_courtesy(
         slack_session_ids,
-        _SLACK_RESTART_COURTESY_MSG,
+        text,
         "restart",
     )
 
@@ -432,6 +448,49 @@ async def mark_executor_finished(session_id: uuid.UUID) -> None:
             session_id=str(session_id),
             exc_info=True,
         )
+
+
+async def list_resume_pending_session_ids() -> set[uuid.UUID]:
+    """Return every session ID that currently has an ``ahs:resume_pending:*`` key.
+
+    Used at startup by ``_recover_stale_sessions`` to partition Slack sessions
+    into the "interrupted" bucket (got auto-continued via ``dispatch_resume_turn``
+    and a "picking up where we left off" courtesy) versus the "idle" bucket
+    (purely informational "back online" notice, no follow-up turn).
+
+    Best-effort: returns an empty set on any Redis error — the caller falls
+    through to treating every session as idle, which is the same behaviour
+    the user already sees today.
+    """
+    out: set[uuid.UUID] = set()
+    try:
+        client = await get_redis_client()
+        cursor: int = 0
+        while True:
+            cursor, keys = await client.scan(
+                cursor=cursor,
+                match=f"{_RESUME_PENDING_KEY_PREFIX}*",
+                count=200,
+            )
+            for raw_key in keys:
+                key = raw_key.decode() if isinstance(raw_key, bytes) else raw_key
+                sid_str = key[len(_RESUME_PENDING_KEY_PREFIX) :]
+                try:
+                    out.add(uuid.UUID(sid_str))
+                except ValueError:
+                    logger.warning(
+                        "list_resume_pending_session_ids: skipping malformed key",
+                        key=key,
+                    )
+                    continue
+            if cursor == 0:
+                break
+    except Exception:
+        logger.warning(
+            "list_resume_pending_session_ids: Redis SCAN failed — partition will fall through to idle bucket",
+            exc_info=True,
+        )
+    return out
 
 
 async def consume_resume_pending(session_id: uuid.UUID) -> bool:
@@ -633,6 +692,241 @@ async def build_resume_context(session_id: uuid.UUID) -> str:
         "clarification if you need it. The user's new message follows."
     )
     return " ".join(parts) + "\n\n---\n\n"
+
+
+# ---------------------------------------------------------------------------
+# Auto-resume dispatch — fire a synthetic continuation turn at startup so the
+# user does not have to send a message just to nudge the agent back to life.
+# ---------------------------------------------------------------------------
+
+
+# Marker stored on the synthetic USER row written by ``dispatch_resume_turn``.
+# Carried in ``raw_events`` so the console / war-room frontends can render it
+# differently from a user-typed message and ops can grep / filter on it.
+_AUTO_RESUME_USER_CONTENT = "[AUTO-RESUME] AHS server restart — auto-continuing."
+
+
+async def dispatch_resume_turn(session_id: uuid.UUID) -> None:
+    """Auto-fire a synthetic continuation turn for an interrupted session.
+
+    Called at startup from ``_recover_stale_sessions`` for every Slack session
+    whose ``ahs:resume_pending:*`` Redis flag was set by
+    ``promote_executor_running_to_resume_pending``.
+
+    Behaviour:
+
+    1. Resolve the session + agent from the DB (and bail with ``skipped`` if
+       either is missing — the courtesy already fired so degrading to a no-op
+       is fine).
+    2. Build the auto-resume preamble (the same ``build_resume_context``
+       call that ``send_message`` uses).  If the preamble is empty we have
+       nothing useful to say — bail with ``skipped``; the Redis flag is left
+       intact so the user's eventual reply still picks up the (admittedly
+       empty) preamble path.
+    3. Atomically claim the Redis flag with ``consume_resume_pending``.  If
+       the GETDEL races with a real user message that already drained the
+       flag, bail with ``skipped`` — that path will run the resume preamble
+       on the user's behalf.
+    4. Inside a single DB transaction (``FOR UPDATE`` on the session row to
+       serialise with concurrent ``send_message``):
+
+       * Re-activate the session if it is in a terminal-but-resumable state.
+       * Bump ``turn_number``.
+       * Insert a synthetic ``USER`` row whose content is a clear
+         ``[AUTO-RESUME]`` marker and whose ``raw_events`` payload carries
+         ``is_system_continuation=True``.  The row exists *only* so the
+         queue/dedupe path (``_has_inflight_turn``) sees a real inbound
+         turn and routes any racing user message into ``_pending_messages``
+         instead of starting a parallel turn — its ``content`` is **never**
+         the runner input.
+
+    5. Register a sentinel in ``_active_tasks`` and fire ``_run_agent_task``
+       as a background task.  The runner input is the preamble (no
+       ``[AUTO-RESUME]`` marker text) so the LLM sees the same shape it
+       would see on a normal ``send_message`` resume path.
+
+    Failure handling: any exception after we have committed to the run is
+    logged and emits ``ahs/courtesy_broadcast{event=auto_resume,outcome=failed}``.
+    The Redis flag is consumed only when we have everything else lined up,
+    so transient DB failures earlier in the prep phase still leave the
+    safety-net "preamble fires on the next user message" behaviour intact.
+    """
+    # Local import: ``_run_agent_task`` is already imported at module load,
+    # but ``create_session`` etc. expect ``session_lifecycle`` to be fully
+    # initialised before they pull in run_task — keep the symbol available
+    # via the existing module-level import (no change here).
+
+    # 1. Resolve session metadata.
+    try:
+        async with get_async_session() as db_session:
+            agent_session = await db_session.get(AgentSession, session_id)
+            if agent_session is None:
+                logger.warning(
+                    "dispatch_resume_turn: session not found — skipping",
+                    session_id=str(session_id),
+                )
+                _record_courtesy_metric("auto_resume", "skipped", count=1)
+                return
+            agent_obj = await db_session.get(Agent, agent_session.agent_id)
+            if agent_obj is None:
+                logger.warning(
+                    "dispatch_resume_turn: agent missing for session — skipping",
+                    session_id=str(session_id),
+                    agent_id=str(agent_session.agent_id),
+                )
+                _record_courtesy_metric("auto_resume", "skipped", count=1)
+                return
+            # Snapshot the fields we'll need outside the transaction.
+            agent_name = agent_obj.name
+            workspace = agent_session.workspace
+            llm_session_id = agent_session.llm_session_id
+            extra_dirs = list(agent_session.extra_dirs or [])
+            slack_session_id = agent_session.slack_session_id
+            session_context = dict(agent_session.context) if agent_session.context else {}
+            trigger_val = agent_session.trigger.value if agent_session.trigger else None
+            creator_user_id = agent_session.creator_user_id
+            is_slack = agent_session.trigger == AgentSessionTrigger.SLACK
+            is_task = agent_session.trigger == AgentSessionTrigger.TASK
+    except Exception:
+        logger.error(
+            "dispatch_resume_turn: failed to load session metadata",
+            session_id=str(session_id),
+            exc_info=True,
+        )
+        _record_courtesy_metric("auto_resume", "failed", count=1)
+        return
+
+    # 2. Build the preamble before claiming the Redis flag — if the session
+    # has nothing useful to anchor on, the auto-resume turn would just be an
+    # awkward "[SYSTEM] previous turn was interrupted." with no detail; let
+    # the next user message handle it instead.
+    try:
+        preamble = await build_resume_context(session_id)
+    except Exception:
+        logger.warning(
+            "dispatch_resume_turn: build_resume_context raised — skipping",
+            session_id=str(session_id),
+            exc_info=True,
+        )
+        _record_courtesy_metric("auto_resume", "skipped", count=1)
+        return
+
+    if not preamble:
+        logger.info(
+            "dispatch_resume_turn: empty preamble — skipping",
+            session_id=str(session_id),
+        )
+        _record_courtesy_metric("auto_resume", "skipped", count=1)
+        return
+
+    # 3. Atomic claim — if a racing send_message already cleared the flag,
+    # bail without firing a parallel turn; the user-message path will run the
+    # preamble itself.
+    if not await consume_resume_pending(session_id):
+        logger.info(
+            "dispatch_resume_turn: resume_pending flag already cleared — skipping (race with user message)",
+            session_id=str(session_id),
+        )
+        _record_courtesy_metric("auto_resume", "skipped", count=1)
+        return
+
+    # 4. Persist the synthetic USER row + status flip in a single committed
+    # transaction so a racing send_message either (a) sees the row and queues,
+    # or (b) finds the session genuinely idle.  We hold ``FOR UPDATE`` to
+    # serialise with concurrent ``send_message`` calls on the same session.
+    try:
+        async with get_async_session() as db_session:
+            await db_session.exec(
+                select(AgentSession).where(AgentSession.agent_session_id == session_id).with_for_update()
+            )
+
+            # Re-activate the session if it's in a terminal-but-resumable
+            # state so status-based monitoring shows ACTIVE during the turn
+            # rather than STALE/COMPLETED.
+            agent_session_for_update = await db_session.get(AgentSession, session_id)
+            if agent_session_for_update is None:
+                logger.warning(
+                    "dispatch_resume_turn: session disappeared between metadata load and FOR UPDATE",
+                    session_id=str(session_id),
+                )
+                _record_courtesy_metric("auto_resume", "failed", count=1)
+                return
+            if agent_session_for_update.status in (AgentSessionStatus.COMPLETED, AgentSessionStatus.STALE):
+                agent_session_for_update.status = AgentSessionStatus.ACTIVE
+
+            turn_number = await _next_turn_number(db_session, session_id)
+            synthetic_user_msg = AgentSessionMessage(
+                agent_session_id=session_id,
+                turn_number=turn_number,
+                role=AgentSessionMessageRole.USER,
+                content=_AUTO_RESUME_USER_CONTENT,
+                creator_user_id=creator_user_id,
+                # Marked so the war-room / couch frontends can render this as
+                # a system event rather than a real user utterance.
+                raw_events=[
+                    {
+                        "type": "auto_resume",
+                        "is_system_continuation": True,
+                    }
+                ],
+            )
+            db_session.add(synthetic_user_msg)
+            await db_session.commit()
+    except Exception:
+        logger.error(
+            "dispatch_resume_turn: failed to persist synthetic USER row",
+            session_id=str(session_id),
+            exc_info=True,
+        )
+        _record_courtesy_metric("auto_resume", "failed", count=1)
+        return
+
+    # 5. Fire the runner.  Identity is inherited from the session creator;
+    # we deliberately do not look up `slack_user_id` from any in-flight
+    # request payload because the synthetic turn is system-initiated, not
+    # user-initiated, and must not escalate beyond the session's existing
+    # permission baseline.
+    try:
+        # Sentinel so a concurrent ``stop_session`` cannot land in a gap
+        # where the inflight turn exists but no task is tracked.
+        _active_tasks[session_id] = None  # type: ignore[assignment]
+        task = create_background_task(
+            _run_agent_task(
+                agent_session_id=session_id,
+                turn_number=turn_number,
+                message=preamble,
+                agent_config_name=agent_name,
+                workspace=workspace,
+                llm_session_id=llm_session_id,
+                extra_dirs=extra_dirs,
+                slack_session_id=slack_session_id,
+                is_slack=is_slack,
+                is_task=is_task,
+                session_context=session_context,
+                trigger=trigger_val,
+            )
+        )
+        _active_tasks[session_id] = task
+    except Exception:
+        # Pop the sentinel so a later send_message isn't blocked thinking a
+        # ghost task is in-flight.
+        _active_tasks.pop(session_id, None)
+        logger.error(
+            "dispatch_resume_turn: failed to fire _run_agent_task",
+            session_id=str(session_id),
+            exc_info=True,
+        )
+        _record_courtesy_metric("auto_resume", "failed", count=1)
+        return
+
+    logger.info(
+        "Auto-resume turn dispatched after AHS restart",
+        session_id=str(session_id),
+        turn_number=turn_number,
+        agent_name=agent_name,
+        preamble_chars=len(preamble),
+    )
+    _record_courtesy_metric("auto_resume", "dispatched", count=1)
 
 
 async def stop_all_command_handler_managers() -> None:
