@@ -13,7 +13,7 @@ import streamlit as st
 from sqlalchemy import func
 from sqlalchemy.orm import selectinload
 from sqlmodel import col, select
-from ypl.agent_harness_service.common.constants import AHS_WAR_ROOM_BASE_URL
+from ypl.agent_harness_service.common.constants import AHS_WAR_ROOM_BASE_URL, SLACK_WORKSPACE_DOMAIN_NAME
 from ypl.agent_harness_service.projects.task_utils import TERMINAL_TASK_STATUSES, complete_task, restart_task
 from ypl.agent_harness_service.task_executor import (
     RESUMABLE_ERROR_SUBTYPES,
@@ -21,6 +21,7 @@ from ypl.agent_harness_service.task_executor import (
     resume_task,
 )
 from ypl.backend.db import get_async_session, get_async_session_read_replica, retry_db
+from ypl.backend.utils.slack_utils import create_slack_link
 from ypl.backend.utils.streamlit_utils import run_coroutine_in_lit_worker
 from ypl.db.agent_harness import (
     Agent,
@@ -29,7 +30,9 @@ from ypl.db.agent_harness import (
     AgentProject,
     AgentProjectStatus,
     AgentSession,
+    AgentSessionMessage,
     AgentSessionStatus,
+    AgentSessionTrigger,
     AgentTask,
     AgentTaskPriority,
     AgentTaskStatus,
@@ -264,6 +267,81 @@ async def fetch_attention_tasks(creator_email: str) -> list[dict[str, Any]]:
         }
         for row in rows
     ]
+
+
+@retry_db
+async def fetch_slack_links_for_sessions(session_ids: list[str]) -> dict[str, str]:
+    """Return a mapping ``{session_id: slack_permalink}`` for SLACK-triggered sessions.
+
+    Builds a deep link to the *latest* message in the thread (from
+    ``AgentSessionMessage.slack_ts``) when available, falling back to the
+    thread root ts in ``AgentSession.context``. Sessions that are not
+    SLACK-triggered, are missing required context, or whose workspace
+    subdomain is not configured (``SLACK_WORKSPACE_DOMAIN_NAME``) are
+    silently omitted from the result.
+    """
+    if not session_ids or not SLACK_WORKSPACE_DOMAIN_NAME:
+        return {}
+
+    # Coerce to UUIDs; tolerate any malformed entries by skipping them.
+    uuids: list[uuid.UUID] = []
+    for sid in session_ids:
+        try:
+            uuids.append(uuid.UUID(sid))
+        except (ValueError, AttributeError):
+            continue
+    if not uuids:
+        return {}
+
+    async with get_async_session_read_replica() as session:
+        sessions_result = await session.exec(
+            select(AgentSession).where(
+                col(AgentSession.agent_session_id).in_(uuids),
+                col(AgentSession.trigger) == AgentSessionTrigger.SLACK,
+            )
+        )
+        slack_sessions = list(sessions_result.all())
+        if not slack_sessions:
+            return {}
+
+        # Fetch the latest slack_ts per session in a single round-trip.
+        slack_session_uuids = [s.agent_session_id for s in slack_sessions]
+        latest_ts_subq = (
+            select(
+                AgentSessionMessage.agent_session_id,
+                func.max(AgentSessionMessage.created_at).label("max_created_at"),
+            )
+            .where(
+                col(AgentSessionMessage.agent_session_id).in_(slack_session_uuids),
+                col(AgentSessionMessage.slack_ts).is_not(None),
+            )
+            .group_by(col(AgentSessionMessage.agent_session_id))
+            .subquery()
+        )
+        latest_msgs_result = await session.exec(
+            select(AgentSessionMessage.agent_session_id, AgentSessionMessage.slack_ts).join(
+                latest_ts_subq,
+                (col(AgentSessionMessage.agent_session_id) == latest_ts_subq.c.agent_session_id)
+                & (col(AgentSessionMessage.created_at) == latest_ts_subq.c.max_created_at),
+            )
+        )
+        last_msg_ts: dict[str, str] = {str(row[0]): row[1] for row in latest_msgs_result.all() if row[1] is not None}
+
+    links: dict[str, str] = {}
+    for s in slack_sessions:
+        ctx = s.context or {}
+        channel = ctx.get("slack_channel_id")
+        thread_ts = ctx.get("slack_thread_ts")
+        if not channel or not thread_ts:
+            continue
+        sid = str(s.agent_session_id)
+        # Prefer linking to the most recent message in the thread; fall back
+        # to the thread root when no per-turn ts has been recorded yet.
+        message_ts = last_msg_ts.get(sid) or thread_ts
+        url = create_slack_link(channel, message_ts, main_thread_ts=thread_ts)
+        if url:
+            links[sid] = url
+    return links
 
 
 @retry_db
@@ -1088,6 +1166,7 @@ def _render_task_list_recursive(
     task_title_map: dict[str, str],
     rank_map: dict[str, str],
     project_id: str,
+    slack_links: dict[str, str],
     depth: int = 0,
 ) -> None:
     """Render tasks grouped by parent, topo-sorted within each sibling group, with columns."""
@@ -1188,7 +1267,10 @@ def _render_task_list_recursive(
                 session_links = []
                 for sid in task.assigned_session_ids:
                     short_id = sid[:8]
-                    session_links.append(f"[{short_id}](/agent_harness_console?session_id={sid})")
+                    parts = [f"[{short_id}](/agent_harness_console?session_id={sid})"]
+                    if slack_url := slack_links.get(sid):
+                        parts.append(f"[💬]({slack_url})")
+                    session_links.append(" ".join(parts))
                 st.caption(", ".join(session_links))
 
         # Recurse into children
@@ -1200,6 +1282,7 @@ def _render_task_list_recursive(
                 task_title_map,
                 rank_map,
                 project_id,
+                slack_links,
                 depth=depth + 1,
             )
 
@@ -1927,6 +2010,25 @@ def _render_project_detail(project_id: uuid.UUID, task_id: str | None) -> None:
             with hdr_cols[8]:
                 st.markdown("**Session**")
 
+            # Pre-fetch Slack permalinks for every session referenced by any
+            # task in this project so we can render the 💬 jump-link without
+            # making N async calls inside the recursive renderer.
+            all_session_ids: list[str] = []
+            seen_session_ids: set[str] = set()
+            for t in tasks:
+                for sid in t.assigned_session_ids or []:
+                    if sid not in seen_session_ids:
+                        seen_session_ids.add(sid)
+                        all_session_ids.append(sid)
+            try:
+                slack_links_map = run_coroutine_in_lit_worker(
+                    fetch_slack_links_for_sessions(all_session_ids),
+                    timeout=30,
+                )
+            except Exception:
+                logger.exception("Failed to load Slack permalinks for project tasks")
+                slack_links_map = {}
+
             _render_task_list_recursive(
                 parent_id=None,
                 children_map=children_map,
@@ -1934,6 +2036,7 @@ def _render_project_detail(project_id: uuid.UUID, task_id: str | None) -> None:
                 task_title_map=task_title_map,
                 rank_map=rank_map,
                 project_id=str(project.agent_project_id),
+                slack_links=slack_links_map,
                 depth=0,
             )
 
@@ -2075,6 +2178,24 @@ def _render_at_a_glance() -> None:
         st.caption("No tasks needing attention.")
         return
 
+    # Pre-fetch Slack permalinks for every session referenced by any
+    # attention task — one async round-trip instead of N inside the loop.
+    all_session_ids: list[str] = []
+    seen_session_ids: set[str] = set()
+    for item in attention_tasks:
+        for sid in item["task"].assigned_session_ids or []:
+            if sid not in seen_session_ids:
+                seen_session_ids.add(sid)
+                all_session_ids.append(sid)
+    try:
+        slack_links_map = run_coroutine_in_lit_worker(
+            fetch_slack_links_for_sessions(all_session_ids),
+            timeout=30,
+        )
+    except Exception:
+        logger.exception("Failed to load Slack permalinks for attention tasks")
+        slack_links_map = {}
+
     # Group by project
     tasks_by_project: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for item in attention_tasks:
@@ -2133,12 +2254,15 @@ def _render_at_a_glance() -> None:
                     session_links = []
                     for sid in task.assigned_session_ids:
                         short_id = sid[:8]
-                        lit_link = _internal_link(f"Lit {short_id}", f"/agent_harness_console?session_id={sid}")
+                        parts = [_internal_link(f"Lit {short_id}", f"/agent_harness_console?session_id={sid}")]
                         if AHS_WAR_ROOM_BASE_URL:
-                            wr_link = f'<a href="{AHS_WAR_ROOM_BASE_URL}/session/{sid}" target="_blank">WR</a>'
-                            session_links.append(f"{lit_link} {wr_link}")
-                        else:
-                            session_links.append(lit_link)
+                            parts.append(f'<a href="{AHS_WAR_ROOM_BASE_URL}/session/{sid}" target="_blank">WR</a>')
+                        if slack_url := slack_links_map.get(sid):
+                            parts.append(
+                                f'<a href="{html.escape(slack_url, quote=True)}" target="_blank" '
+                                f'title="Jump to Slack thread">💬</a>'
+                            )
+                        session_links.append(" ".join(parts))
                     st.caption(" · ".join(session_links), unsafe_allow_html=True)
 
 
