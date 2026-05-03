@@ -464,6 +464,15 @@ async def _run_agent_task(
         final_text = ""
         seen_outlet_tool_ids: set[str] = set()  # dedup outlet tool extraction across event types
         last_gateway_reply_time = 0.0  # monotonic; 0 ensures first block always creates a new message
+        # Tracks whether at least one tool_use has been emitted since the last
+        # gateway text reply was posted. When True, the next text reply must
+        # use send_reply (new Slack message) instead of append_reply.  The
+        # append path edits the original text-1 message via chat_update, which
+        # is currently dropped silently after a tool cluster has rendered (the
+        # SAG flush_buffer self-gates and infinitely defers — see SAG bug
+        # tracked separately).  Posting a fresh message is the safe path: it
+        # always reaches Slack and visually separates pre- vs post-tool text.
+        tool_use_since_last_text_reply = False
         had_error = False
         error_text = ""
         result_llm_session_id: str | None = None
@@ -539,6 +548,9 @@ async def _run_agent_task(
                 tool_names_in_event = [b.get("name", "unknown") for b in tool_start_blocks_in_event]
 
                 if tool_names_in_event:
+                    # Force the next text reply onto a new Slack message — see
+                    # comment on tool_use_since_last_text_reply for why.
+                    tool_use_since_last_text_reply = True
                     eager.tool_call_count += len(tool_names_in_event)
                     eager.pending_tool_names.extend(tool_names_in_event)
                     should_persist = (
@@ -728,9 +740,16 @@ async def _run_agent_task(
                     if undelivered and gateway and gateway_session_id:
                         relay_text = "\n\n".join(vc.text for vc in undelivered)
                         now = time.monotonic()
+                        # Append (chat.update of the previous text message) is
+                        # only safe when no tool cluster rendered between the
+                        # previous text and this one. Otherwise the SAG buffer
+                        # flush silently drops the append and the user never
+                        # sees the post-tool summary. Force send_reply (a new
+                        # Slack message) when a tool_use has been seen.
                         use_append = (
                             last_gateway_reply_time > 0
                             and (now - last_gateway_reply_time) < _GATEWAY_APPEND_THRESHOLD_SECONDS
+                            and not tool_use_since_last_text_reply
                         )
                         try:
                             if use_append:
@@ -741,6 +760,7 @@ async def _run_agent_task(
                                 ok = await gateway.send_reply(gateway_session_id, relay_text, username=gateway_username)
                             if ok:
                                 last_gateway_reply_time = now
+                                tool_use_since_last_text_reply = False
                         except Exception:
                             logger.error("Failed to send reply to gateway", session_id=str(agent_session_id))
                     elif undelivered:
