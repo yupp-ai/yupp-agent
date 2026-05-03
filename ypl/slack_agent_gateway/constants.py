@@ -82,8 +82,13 @@ FEEDBACK_REQUESTED_TTL_SECONDS = 24 * 60 * 60
 # Redis TTL for survey response dedup key (1 hour)
 SURVEY_RESPONSE_TTL_SECONDS = 60 * 60
 
-# Status update rate limit — max one Slack API call per this many seconds
-STATUS_RATELIMIT_SECONDS = 2
+# Tool-cluster flush rate limit — max one chat_update per this many seconds.
+# Intentionally longer than DEFAULT_FLUSH_INTERVAL_SECONDS (text buffer) since
+# tool events typically arrive in fast bursts (e.g. an agent doing a sweep of
+# Read/Edit/Bash calls).  A slower flush groups more entries into each update,
+# so users see fewer "blink" cycles in the cluster.  Text replies stay snappy
+# at 1.2s; tool clusters trade a little latency for less visual churn.
+STATUS_RATELIMIT_SECONDS = 5
 
 # Universal Slack API rate limit interval (per app × method [× channel]).
 # Slack docs: chat.update is Tier 3 (50+/min ≈ 1.2s), chat.postMessage is ~1/sec per channel.
