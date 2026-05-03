@@ -565,42 +565,45 @@ def _linear_project_url(linear_project_id: str) -> str:
 
 @retry_db
 async def fetch_project_sessions(
-    project_id: uuid.UUID,
+    tasks: list[AgentTask],
     status_filter: AgentSessionStatus | None = None,
 ) -> list[dict[str, Any]]:
-    """Fetch all sessions associated with tasks in a project.
+    """Fetch all sessions associated with the given tasks.
+
+    Reuses the tasks list already loaded for the project detail view to avoid
+    re-querying and to guarantee Sessions/Tasks tabs see the same data.
 
     Returns session info with task title for context.
     """
+    # Collect all session IDs and map to task info.
+    # Note: If a session is assigned to multiple tasks, only the last task is shown in the UI.
+    # This is acceptable for the current use case where sessions typically map to one task.
+    session_to_task: dict[str, AgentTask] = {}
+    for task in tasks:
+        if not task.assigned_session_ids:
+            continue
+        for sid in task.assigned_session_ids:
+            session_to_task[sid] = task
+
+    if not session_to_task:
+        return []
+
+    # Build UUID list, skipping anything that isn't a valid UUID
+    session_uuids: list[uuid.UUID] = []
+    for sid in session_to_task:
+        try:
+            session_uuids.append(uuid.UUID(sid))
+        except (ValueError, TypeError):
+            logger.warning("Skipping invalid session ID in assigned_session_ids", session_id=sid)
+
+    if not session_uuids:
+        return []
+
     async with get_async_session_read_replica() as session:
-        # First get all tasks with assigned sessions
-        tasks_query = (
-            select(AgentTask)
-            .where(col(AgentTask.agent_project_id) == project_id)
-            .where(col(AgentTask.deleted_at).is_(None))
-            .where(col(AgentTask.assigned_session_ids).isnot(None))
-        )
-        tasks_result = await session.exec(tasks_query)
-        tasks = list(tasks_result.all())
-
-        # Collect all session IDs and map to task info.
-        # Note: If a session is assigned to multiple tasks, only the last task is shown in the UI.
-        # This is acceptable for the current use case where sessions typically map to one task.
-        session_to_task: dict[str, AgentTask] = {}
-        for task in tasks:
-            if task.assigned_session_ids:
-                for sid in task.assigned_session_ids:
-                    session_to_task[sid] = task
-
-        if not session_to_task:
-            return []
-
-        # Fetch the sessions
-        session_ids = [uuid.UUID(sid) for sid in session_to_task]
         sessions_query = (
             select(AgentSession)
             .options(selectinload(AgentSession.agent))  # type: ignore[arg-type]
-            .where(col(AgentSession.agent_session_id).in_(session_ids))
+            .where(col(AgentSession.agent_session_id).in_(session_uuids))
             .where(col(AgentSession.deleted_at).is_(None))
         )
         if status_filter:
@@ -1869,8 +1872,8 @@ def _render_project_detail(project_id: uuid.UUID, task_id: str | None) -> None:
     children_map, all_task_ids = _build_children_map(tasks)
     rank_map = _compute_unique_ranks(children_map, all_task_ids)
 
-    tab_tasks, tab_sessions, tab_deps, tab_shared_state, tab_budget, tab_settings = st.tabs(
-        ["📋 Tasks", "🖥️ Sessions", "🔗 Dependencies", "🗄️ Shared State", "💰 Budget", "⚙️ Settings"]
+    tab_tasks, tab_sessions, tab_deps, tab_shared_state = st.tabs(
+        ["📋 Tasks", "🖥️ Sessions", "🔗 Dependencies", "🗄️ Shared State"]
     )
 
     with tab_tasks:
@@ -1951,7 +1954,7 @@ def _render_project_detail(project_id: uuid.UUID, task_id: str | None) -> None:
 
         with st.spinner("Loading sessions..."):
             sessions_data = run_coroutine_in_lit_worker(
-                fetch_project_sessions(project.agent_project_id, status_filter),
+                fetch_project_sessions(tasks, status_filter),
                 timeout=60,
             )
 
@@ -2039,47 +2042,15 @@ def _render_project_detail(project_id: uuid.UUID, task_id: str | None) -> None:
                 _render_dependency_dag(tasks, depth_limit)
 
     with tab_shared_state:
-        if project.shared_state:
-            st.json(project.shared_state)
+        # `shared_state` is JSONB; unset is None, but the JSON literal `null`
+        # also deserializes to Python None. Distinguish "no data" from "empty dict".
+        shared_state = project.shared_state
+        if shared_state is None:
+            st.info("No shared state set for this project.")
+        elif not shared_state:
+            st.info("Shared state is empty.")
         else:
-            st.info("No shared state.")
-
-    with tab_budget:
-        if project.budget_usd:
-            spent = project.budget_spent_usd or Decimal(0)
-            remaining = project.budget_usd - spent
-            pct_spent = (spent / project.budget_usd) if project.budget_usd > 0 else Decimal(0)
-            pct_clamped = min(float(pct_spent), 1.0)
-
-            st.progress(pct_clamped, text=f"${spent:.2f} / ${project.budget_usd:.2f}")
-
-            budget_cols = st.columns(3)
-            with budget_cols[0]:
-                st.metric("Budget", f"${project.budget_usd:.2f}")
-            with budget_cols[1]:
-                st.metric("Spent", f"${spent:.2f}")
-            with budget_cols[2]:
-                st.metric("Remaining", f"${remaining:.2f}")
-
-            st.divider()
-
-            st.markdown("### Per-Task Spending")
-            tasks_with_spending = [t for t in tasks if t.actual_spending_usd and t.actual_spending_usd > 0]
-            if tasks_with_spending:
-                for task in sorted(tasks_with_spending, key=lambda t: t.actual_spending_usd or 0, reverse=True):
-                    s_emoji = _TASK_STATUS_EMOJI.get(task.status, "")
-                    st.markdown(f"- {s_emoji} **{html.escape(task.title)}**: ${task.actual_spending_usd:.4f}")
-            else:
-                st.info("No task-level spending recorded yet.")
-        else:
-            st.info("This project has no budget limit configured.")
-
-    with tab_settings:
-        if project.project_data:
-            with st.expander("📥 Project Data", expanded=True):
-                st.json(project.project_data)
-        else:
-            st.info("No project data.")
+            st.json(shared_state)
 
 
 # ── Project list view ────────────────────────────────────────────────────────
