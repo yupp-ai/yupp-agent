@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from sqlmodel import col, select
 
 from ypl.backend.db import get_async_session_read_replica, retry_db
-from ypl.backend.utils.soul_utils import has_permission_by_user_id_cached, has_permission_cached
+from ypl.backend.utils.soul_utils import has_permission_by_user_id_cached
 from ypl.db.agent_harness import (
     Agent,
     AgentSchedule,
@@ -18,6 +18,7 @@ from ypl.db.agent_harness import (
     AgentScheduleType,
 )
 from ypl.db.rbac import Permission
+from ypl.mcp_common.auth_context import require_caller_user_id, require_principal_user_id
 from ypl.mcp_common.scheduled_agent_call_helpers import (
     cancel_agent_schedule_by_id,
     compute_next_run_for_cron,
@@ -25,13 +26,11 @@ from ypl.mcp_common.scheduled_agent_call_helpers import (
     edit_agent_schedule_fields,
     parse_execute_at,
     parse_schedule_context,
-    resolve_user_id,
     resolve_user_id_from_email,
     validate_cron_expression,
     validate_timezone,
 )
-from ypl.mcp_server.authorization import resolve_caller_user_id
-from ypl.mcp_server.core import get_authenticated_user_email, get_requesting_user_id, mcp_server
+from ypl.mcp_server.core import mcp_server
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -126,21 +125,17 @@ async def create_agent_schedule_tool(
         if ctx_error:
             return {"success": False, "error": ctx_error}
 
-        created_by_user = get_requesting_user_id()
-        if not created_by_user:
-            auth_email = get_authenticated_user_email()
-            if auth_email == "unknown":
-                return {"success": False, "error": "Authentication required to create agent schedules"}
-            created_by_user, user_error = await resolve_user_id(email=auth_email)
-            if user_error:
-                return {"success": False, "error": user_error}
+        try:
+            created_by_user = require_caller_user_id()
+        except PermissionError:
+            return {"success": False, "error": "Authentication required to create agent schedules"}
 
         return await create_agent_schedule(
             agent_name=agent_name,
             message=message,
             schedule_type=AgentScheduleType.SCHEDULED,
             context_dict=context_dict,
-            created_by_user=created_by_user,  # type: ignore[arg-type]
+            created_by_user=created_by_user,
             created_by_agent=created_by_agent,
             name=name,
             description=description,
@@ -192,14 +187,10 @@ async def create_recurring_agent_schedule_tool(
         if ctx_error:
             return {"success": False, "error": ctx_error}
 
-        created_by_user = get_requesting_user_id()
-        if not created_by_user:
-            auth_email = get_authenticated_user_email()
-            if auth_email == "unknown":
-                return {"success": False, "error": "Authentication required to create agent schedules"}
-            created_by_user, user_error = await resolve_user_id(email=auth_email)
-            if user_error:
-                return {"success": False, "error": user_error}
+        try:
+            created_by_user = require_caller_user_id()
+        except PermissionError:
+            return {"success": False, "error": "Authentication required to create agent schedules"}
 
         next_run_utc = compute_next_run_for_cron(cron_expression, timezone)
 
@@ -208,7 +199,7 @@ async def create_recurring_agent_schedule_tool(
             message=message,
             schedule_type=AgentScheduleType.RECURRING,
             context_dict=context_dict,
-            created_by_user=created_by_user,  # type: ignore[arg-type]
+            created_by_user=created_by_user,
             created_by_agent=created_by_agent,
             name=name,
             description=description,
@@ -244,16 +235,18 @@ async def cancel_agent_schedule(
         Dictionary with the cancellation result
     """
     try:
-        auth_email = get_authenticated_user_email()
-        if auth_email == "unknown":
+        try:
+            caller_user_id = require_caller_user_id()
+            principal_user_id = require_principal_user_id()
+        except PermissionError:
             return {"success": False, "error": "Authentication required to cancel agent schedules"}
 
-        if not await has_permission_cached(auth_email, Permission.USE_MCP):
+        # USE_MCP gates the *credential holder*, not the impersonated
+        # user: an admin acting on behalf of a regular user (X-User-ID
+        # impersonation) isn't blocked by the regular user's missing
+        # permission. On non-impersonation paths the two ids are equal.
+        if not await has_permission_by_user_id_cached(principal_user_id, Permission.USE_MCP):
             return {"success": False, "error": "You do not have permission to use MCP tools"}
-
-        caller_user_id, err = await resolve_caller_user_id(auth_email)
-        if err or caller_user_id is None:
-            return {"success": False, "error": err or "Could not resolve caller"}
 
         # Admin bypass: a caller holding MANAGE_AGENT_SCHEDULES may cancel any
         # user's schedule. Without it, they may only cancel their own.
@@ -315,16 +308,15 @@ async def edit_agent_schedule(
         Dictionary with the edit result
     """
     try:
-        auth_email = get_authenticated_user_email()
-        if auth_email == "unknown":
+        try:
+            caller_user_id = require_caller_user_id()
+            principal_user_id = require_principal_user_id()
+        except PermissionError:
             return {"success": False, "error": "Authentication required to edit agent schedules"}
 
-        if not await has_permission_cached(auth_email, Permission.USE_MCP):
+        # USE_MCP gates the credential holder (see `cancel_agent_schedule`).
+        if not await has_permission_by_user_id_cached(principal_user_id, Permission.USE_MCP):
             return {"success": False, "error": "You do not have permission to use MCP tools"}
-
-        caller_user_id, err = await resolve_caller_user_id(auth_email)
-        if err or caller_user_id is None:
-            return {"success": False, "error": err or "Could not resolve caller"}
 
         # Admin bypass: a caller holding MANAGE_AGENT_SCHEDULES may edit any
         # user's schedule. Without it, they may only edit their own.
@@ -358,7 +350,7 @@ async def edit_agent_schedule(
         logger.info(
             "Edited agent schedule via MCP",
             agent_schedule_id=agent_schedule_id,
-            edited_by=auth_email,
+            edited_by_user_id=caller_user_id,
         )
 
         return result
@@ -402,12 +394,15 @@ async def list_agent_schedules(
             return {"success": False, "error": "limit must be between 1 and 200"}
         limit = min(limit, 200)
 
-        # Verify caller has USE_MCP permission
-        auth_email = get_authenticated_user_email()
-        if auth_email == "unknown":
+        # Verify caller has USE_MCP permission (credential holder, not
+        # the impersonated user — see `cancel_agent_schedule`).
+        try:
+            caller_user_id = require_caller_user_id()
+            principal_user_id = require_principal_user_id()
+        except PermissionError:
             return {"success": False, "error": "Authentication required to list agent schedules"}
 
-        if not await has_permission_cached(auth_email, Permission.USE_MCP):
+        if not await has_permission_by_user_id_cached(principal_user_id, Permission.USE_MCP):
             return {"success": False, "error": "You do not have permission to use MCP tools"}
 
         # Validate status if provided
@@ -433,14 +428,9 @@ async def list_agent_schedules(
         else:
             schedule_type_enum = None
 
-        # Resolve the caller and determine the effective filter.
         # Default (``created_by`` omitted): filter to the caller's own
         # schedules. Explicit ``created_by=<email>``: must be the caller's
-        # own email OR the caller must hold MANAGE_AGENT_SCHEDULES.
-        caller_user_id, err = await resolve_caller_user_id(auth_email)
-        if err or caller_user_id is None:
-            return {"success": False, "error": err or "Could not resolve caller"}
-
+        # own user OR the caller must hold MANAGE_AGENT_SCHEDULES.
         created_by_user_id: str | None = caller_user_id
         if created_by:
             resolved_id, resolve_error = await resolve_user_id_from_email(created_by)

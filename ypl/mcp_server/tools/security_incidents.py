@@ -16,7 +16,8 @@ from ypl.db.agent_harness import (
     AgentSecurityResolution,  # noqa: F401 — re-exported for import convenience
     AgentSecuritySeverity,
 )
-from ypl.mcp_server.core import get_ahs_agent_name, get_ahs_session_id, mcp_server
+from ypl.mcp_common.auth_context import current_request_context
+from ypl.mcp_server.core import mcp_server
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -92,13 +93,15 @@ async def report_security_incident(
     Returns:
         { incident_id, stored, alerted, message }
     """
-    # Resolve agent identity from tamper-proof request headers.
-    agent_name = get_ahs_agent_name() or "unknown"
+    # Resolve agent identity from the typed RequestContext (populated by
+    # the auth middleware from tamper-proof X-AHS-* headers).
+    ctx = current_request_context()
+    agent_name = (ctx.ahs_agent_name if ctx else None) or "unknown"
     if agent_name == "unknown":
         logger.warning(
             "X-AHS-Agent-Name header missing — incident will be recorded with agent_name='unknown'",
         )
-    raw_session_id = get_ahs_session_id()
+    raw_session_id = ctx.ahs_session_id if ctx else None
 
     agent_session_id: uuid.UUID | None = None
     if raw_session_id:

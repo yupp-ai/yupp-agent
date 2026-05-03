@@ -8,6 +8,7 @@ Houses the two ASGI middleware classes used by the AHS server:
   carry the process-local secret token.
 """
 
+import hmac
 import json
 import re
 from collections.abc import Awaitable, Callable
@@ -18,7 +19,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from structlog.contextvars import bind_contextvars, unbind_contextvars
 
-from ypl.agent_harness_service.common.constants import AHS_MCP_SECRET, mcp_session_id_var
+from ypl.agent_harness_service.common.constants import AHS_MCP_SECRET
+from ypl.mcp_common.auth_context import RequestContext, mcp_session_id_var, request_context
 from ypl.structured_logger import get_logger
 
 _logger = get_logger()
@@ -150,13 +152,18 @@ class McpTokenAuthMiddleware(BaseHTTPMiddleware):
     The token is generated at startup (AHS_MCP_SECRET) and injected into the
     per-session MCP config that the runner writes for Claude CLI. External
     callers won't know the token, so they can't hit the MCP endpoints.
+
+    On success, publishes a typed
+    :class:`~ypl.mcp_common.auth_context.RequestContext` with
+    ``auth_kind="agent_secret"`` for tools to consume — same shape used
+    by the mono-server's ``HarnessMcpAuthMiddleware``.
     """
 
     async def dispatch(self, request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
-        token = request.headers.get("x-ahs-token")
+        token = request.headers.get("x-ahs-token", "")
         session_id = request.headers.get("x-ahs-session-id", "")
 
-        if token != AHS_MCP_SECRET:
+        if not hmac.compare_digest(token, AHS_MCP_SECRET):
             # Fallback: Accept Bearer token in format "<secret>:<session_id>".
             # Codex CLI only supports bearer_token_env_var for MCP auth, so we
             # encode both the secret and session ID into a single Bearer token.
@@ -165,12 +172,28 @@ class McpTokenAuthMiddleware(BaseHTTPMiddleware):
                 bearer = auth_header[7:]
                 if ":" in bearer:
                     bearer_secret, bearer_session_id = bearer.split(":", 1)
-                    if bearer_secret == AHS_MCP_SECRET:
+                    if hmac.compare_digest(bearer_secret, AHS_MCP_SECRET):
                         token = bearer_secret
                         session_id = bearer_session_id
 
-        if token != AHS_MCP_SECRET:
+        if not hmac.compare_digest(token, AHS_MCP_SECRET):
             return JSONResponse(content={"detail": "Unauthorized"}, status_code=401)
-        # Propagate session identity so MCP tools can enforce access control.
-        mcp_session_id_var.set(session_id)
-        return await call_next(request)
+
+        # Publish identity. AHS-runner-injected headers are tamper-proof
+        # inside the sandbox, so we trust them without re-validating.
+        ctx = RequestContext(
+            auth_kind="agent_secret",
+            requesting_user_id=request.headers.get("x-user-id") or None,
+            ahs_session_id=session_id or None,
+            ahs_agent_name=request.headers.get("x-ahs-agent-name") or None,
+            audit_email=None,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
+        ctx_token = request_context.set(ctx)
+        legacy_token = mcp_session_id_var.set(session_id)
+        try:
+            return await call_next(request)
+        finally:
+            mcp_session_id_var.reset(legacy_token)
+            request_context.reset(ctx_token)

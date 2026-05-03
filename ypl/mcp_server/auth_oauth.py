@@ -1,8 +1,16 @@
-"""OAuth authentication for MCP server.
+"""OAuth authentication for the agcouch MCP server.
 
-This module handles authentication via Google OAuth.
-Used when MCP_SERVER_MODE is set to "OAUTH".
+Validates Google OAuth bearer tokens, restricts access to the
+``ALLOWED_MCP_EMAIL_DOMAINS`` allowlist, gates on the ``USE_MCP``
+permission, and resolves the verified email to a platform ``user_id``
+**once** at ``verify_token`` time. Tools downstream consume only the
+typed :class:`~ypl.mcp_common.auth_context.RequestContext` populated
+here — they never see the email.
+
+Used when ``MCP_SERVER_MODE`` is ``OAUTH``.
 """
+
+from __future__ import annotations
 
 from cryptography.fernet import Fernet
 from fastmcp.server.auth import AccessToken
@@ -16,9 +24,8 @@ from key_value.aio.wrappers.prefix_collections import PrefixCollectionsWrapper
 import ypl.db.all_models  # noqa: F401
 from ypl.backend.config import settings
 from ypl.backend.utils.soul_utils import has_permission_cached
-from ypl.db.mcp import MCPTokenType
 from ypl.db.rbac import Permission
-from ypl.mcp_server.context_vars import request_context
+from ypl.mcp_common.auth_context import RequestContext, lookup_user_id_by_email, request_context
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -41,10 +48,19 @@ class AllowedDomainsGoogleProvider(GoogleProvider):
     """
 
     async def verify_token(self, token: str) -> AccessToken | None:
-        """Verify token and validate email domain.
+        """Verify token, gate on domain + USE_MCP, and publish a typed context.
 
-        Calls parent GoogleProvider.verify_token() then checks if the
-        user's email domain is in the allowed list.
+        Calls parent ``GoogleProvider.verify_token()`` then:
+
+        1. Rejects when the email domain isn't in
+           ``ALLOWED_MCP_EMAIL_DOMAINS``.
+        2. Rejects when the user lacks the ``USE_MCP`` permission.
+        3. Resolves the email to a platform ``user_id`` (best-effort —
+           may be ``None`` for users not yet provisioned in
+           ``users``; the audit trail still keeps the email).
+        4. Publishes a :class:`~ypl.mcp_common.auth_context.RequestContext`
+           on the ``request_context`` ContextVar so tools and the audit
+           middleware can read identity off a single typed object.
         """
         access_token = await super().verify_token(token)
 
@@ -79,20 +95,48 @@ class AllowedDomainsGoogleProvider(GoogleProvider):
             )
             return None
 
-        logger.info("OAuth authentication successful", email_local_part=email_local_part)
+        # Resolve email → user_id once. None for unprovisioned users — the
+        # audit trail still records the email; tools that require an
+        # attributable user will get a clean PermissionError via
+        # require_caller_user_id() instead of an "unknown email" string.
+        try:
+            requesting_user_id = await lookup_user_id_by_email(email)
+        except Exception:
+            logger.exception(
+                "OAuth user_id lookup failed; falling back to audit-only email",
+                email_local_part=email_local_part,
+            )
+            requesting_user_id = None
 
-        # Populate request_context so ToolCallLoggingMiddleware can emit audit events
-        # for this OAuth session — mirroring what DevTokenAuthMiddleware does for DevToken
-        # sessions. The ContextVar is scoped to the current asyncio task (one per
-        # stateless HTTP request), so there is no cross-request leakage.
+        logger.info(
+            "OAuth authentication successful",
+            email_local_part=email_local_part,
+            user_id_resolved=requesting_user_id is not None,
+        )
+
+        # The OAuth client identifier (the OAuth-2.0 ``client_id`` claim
+        # the access token was issued to). Audit-only — surfaces in
+        # ``MCPAuditLog.callback_url`` so security review can attribute
+        # calls to the OAuth client that obtained the token.
+        callback_url = getattr(access_token, "client_id", None)
+
+        # Populate the typed request context so ToolCallLoggingMiddleware
+        # and tools see one shape regardless of which mount the request
+        # arrived on. ContextVar is scoped to the current asyncio task
+        # (one per stateless HTTP request), so no cross-request leakage.
         request_context.set(
-            {
-                "email": email,
-                "token_type": MCPTokenType.OAUTH,
-                "ip_address": None,  # not available at the OAuth provider layer
-                "user_agent": None,  # not available at the OAuth provider layer
-                "callback_url": getattr(access_token, "client_id", None),
-            }
+            RequestContext(
+                auth_kind="oauth_user",
+                requesting_user_id=requesting_user_id,
+                # OAuth has no impersonation: principal == requesting_user.
+                principal_user_id=requesting_user_id,
+                audit_email=email,
+                callback_url=callback_url,
+                # IP / UA are not available from the OAuth provider layer.
+                # The harness path enriches them at the ASGI middleware.
+                ip_address=None,
+                user_agent=None,
+            )
         )
 
         return access_token

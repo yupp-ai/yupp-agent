@@ -31,9 +31,8 @@ from ypl.db.agent_harness import (
     AgentTaskStatus,
 )
 from ypl.db.rbac import Permission
-from ypl.mcp_common.scheduled_agent_call_helpers import resolve_user_id_from_email
-from ypl.mcp_server.authorization import resolve_caller_user_id
-from ypl.mcp_server.core import get_authenticated_user_email, get_requesting_user_id, mcp_server
+from ypl.mcp_common.auth_context import require_caller_user_id, require_principal_user_id
+from ypl.mcp_server.core import mcp_server
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -49,18 +48,34 @@ logger = get_logger()
 # ============================================================================
 
 
-async def _resolve_caller_for_project_auth(auth_email: str) -> tuple[str | None, bool, str | None]:
-    """Resolve ``(caller_user_id, is_project_admin, error)``.
+async def _resolve_caller_for_project_auth() -> tuple[str, bool]:
+    """Return ``(caller_user_id, is_project_admin)`` for the current request.
 
-    ``is_project_admin`` is True iff the caller holds
-    ``MANAGE_AGENT_PROJECTS`` — meaning they may mutate any project.
-    Otherwise, per-resource mutation is limited to resources they own.
+    ``is_project_admin`` is True iff the credential holder for the
+    request holds ``MANAGE_AGENT_PROJECTS`` — meaning they may mutate
+    any project. Otherwise, per-resource mutation is limited to
+    resources owned by the impersonated (caller) user.
+
+    On the dev-token impersonation path the caller and principal differ:
+    the caller is the impersonated user (used for ownership checks),
+    the principal is the admin token holder (used for the admin gate).
+    On every other path the two are equal and the second lookup is
+    elided. This mirrors the pre-typed-context behaviour where
+    ``MANAGE_AGENT_PROJECTS`` was checked against the credential
+    holder's email.
+
+    Raises ``PermissionError`` (via :func:`require_caller_user_id`) when
+    no authenticated identity is in the request context.
     """
-    caller_user_id, err = await resolve_caller_user_id(auth_email)
-    if err or caller_user_id is None:
-        return None, False, err or "Could not resolve caller"
+    caller_user_id = require_caller_user_id()
+    principal_user_id = require_principal_user_id()
     is_admin = await has_permission_by_user_id_cached(caller_user_id, Permission.MANAGE_AGENT_PROJECTS)
-    return caller_user_id, is_admin, None
+    # On the impersonation path, fall back to the credential holder for
+    # the admin elevation: an admin acting on behalf of a regular user
+    # should not lose admin powers because the regular user lacks them.
+    if not is_admin and principal_user_id != caller_user_id:
+        is_admin = await has_permission_by_user_id_cached(principal_user_id, Permission.MANAGE_AGENT_PROJECTS)
+    return caller_user_id, is_admin
 
 
 def _check_project_ownership(
@@ -253,14 +268,10 @@ async def add_project(
         Dictionary with project ID and metadata
     """
     try:
-        creator_user_id = get_requesting_user_id()
-        if not creator_user_id:
-            auth_email = get_authenticated_user_email()
-            if auth_email == "unknown":
-                return {"success": False, "error": "Authentication required"}
-            creator_user_id, user_error = await resolve_user_id_from_email(auth_email)
-            if user_error:
-                return {"success": False, "error": user_error}
+        try:
+            creator_user_id = require_caller_user_id()
+        except PermissionError as exc:
+            return {"success": False, "error": str(exc)}
 
         effective_channel = slack_channel.strip() if slack_channel else AHS_DEFAULT_PROJECT_SLACK_CHANNEL
 
@@ -317,9 +328,10 @@ async def add_task_sequence(
         Dictionary with created task IDs and their dependency chain
     """
     try:
-        auth_email = get_authenticated_user_email()
-        if auth_email == "unknown":
-            return {"success": False, "error": "Authentication required"}
+        try:
+            require_caller_user_id()
+        except PermissionError as exc:
+            return {"success": False, "error": str(exc)}
 
         try:
             proj_uuid = uuid.UUID(project_id)
@@ -462,9 +474,10 @@ async def add_tasks(
         Dictionary with created task IDs and resolved dependencies
     """
     try:
-        auth_email = get_authenticated_user_email()
-        if auth_email == "unknown":
-            return {"success": False, "error": "Authentication required"}
+        try:
+            require_caller_user_id()
+        except PermissionError as exc:
+            return {"success": False, "error": str(exc)}
 
         try:
             proj_uuid = uuid.UUID(project_id)
@@ -678,9 +691,10 @@ async def get_ready_tasks(
         Dictionary with ready tasks ordered by priority (URGENT first), then creation time
     """
     try:
-        auth_email = get_authenticated_user_email()
-        if auth_email == "unknown":
-            return {"success": False, "error": "Authentication required"}
+        try:
+            require_caller_user_id()
+        except PermissionError as exc:
+            return {"success": False, "error": str(exc)}
 
         try:
             proj_uuid = uuid.UUID(project_id)
@@ -777,9 +791,10 @@ async def set_task_status(
         Dictionary with updated status and list of any dependent tasks that became READY
     """
     try:
-        auth_email = get_authenticated_user_email()
-        if auth_email == "unknown":
-            return {"success": False, "error": "Authentication required"}
+        try:
+            require_caller_user_id()
+        except PermissionError as exc:
+            return {"success": False, "error": str(exc)}
 
         try:
             task_uuid = uuid.UUID(task_id)
@@ -799,9 +814,7 @@ async def set_task_status(
             except json.JSONDecodeError as e:
                 return {"success": False, "error": f"Invalid result JSON: {e}"}
 
-        caller_user_id, is_admin, auth_err = await _resolve_caller_for_project_auth(auth_email)
-        if auth_err or caller_user_id is None:
-            return {"success": False, "error": auth_err or "Could not authorize"}
+        caller_user_id, is_admin = await _resolve_caller_for_project_auth()
 
         async with get_async_session() as session:
             # Lock the row to serialize concurrent status transitions on the same task
@@ -887,9 +900,10 @@ async def restart_task(
         Dictionary with the reset task details
     """
     try:
-        auth_email = get_authenticated_user_email()
-        if auth_email == "unknown":
-            return {"success": False, "error": "Authentication required"}
+        try:
+            require_caller_user_id()
+        except PermissionError as exc:
+            return {"success": False, "error": str(exc)}
 
         try:
             task_uuid = uuid.UUID(task_id)
@@ -966,9 +980,10 @@ async def set_project_status(
         Dictionary with updated status and task_summary (counts per task status)
     """
     try:
-        auth_email = get_authenticated_user_email()
-        if auth_email == "unknown":
-            return {"success": False, "error": "Authentication required"}
+        try:
+            require_caller_user_id()
+        except PermissionError as exc:
+            return {"success": False, "error": str(exc)}
 
         try:
             proj_uuid = uuid.UUID(project_id)
@@ -981,9 +996,7 @@ async def set_project_status(
             valid = [s.value for s in AgentProjectStatus]
             return {"success": False, "error": f"Invalid status: {status}. Must be one of: {valid}"}
 
-        caller_user_id, is_admin, auth_err = await _resolve_caller_for_project_auth(auth_email)
-        if auth_err or caller_user_id is None:
-            return {"success": False, "error": auth_err or "Could not authorize"}
+        caller_user_id, is_admin = await _resolve_caller_for_project_auth()
 
         async with get_async_session() as session:
             proj_result = await session.execute(
@@ -1355,18 +1368,17 @@ async def update_task(
         Dictionary with updated task details
     """
     try:
-        auth_email = get_authenticated_user_email()
-        if auth_email == "unknown":
-            return {"success": False, "error": "Authentication required"}
+        try:
+            require_caller_user_id()
+        except PermissionError as exc:
+            return {"success": False, "error": str(exc)}
 
         try:
             task_uuid = uuid.UUID(task_id)
         except ValueError:
             return {"success": False, "error": f"Invalid task_id: {task_id}"}
 
-        caller_user_id, is_admin, auth_err = await _resolve_caller_for_project_auth(auth_email)
-        if auth_err or caller_user_id is None:
-            return {"success": False, "error": auth_err or "Could not authorize"}
+        caller_user_id, is_admin = await _resolve_caller_for_project_auth()
 
         async with get_async_session() as session:
             task_result = await session.execute(
@@ -1473,9 +1485,10 @@ async def set_task_dependencies(
         Dictionary with updated task details including new depends_on and status
     """
     try:
-        auth_email = get_authenticated_user_email()
-        if auth_email == "unknown":
-            return {"success": False, "error": "Authentication required"}
+        try:
+            require_caller_user_id()
+        except PermissionError as exc:
+            return {"success": False, "error": str(exc)}
 
         try:
             task_uuid = uuid.UUID(task_id)
@@ -1645,18 +1658,17 @@ async def update_project(
         Dictionary with updated project details
     """
     try:
-        auth_email = get_authenticated_user_email()
-        if auth_email == "unknown":
-            return {"success": False, "error": "Authentication required"}
+        try:
+            require_caller_user_id()
+        except PermissionError as exc:
+            return {"success": False, "error": str(exc)}
 
         try:
             proj_uuid = uuid.UUID(project_id)
         except ValueError:
             return {"success": False, "error": f"Invalid project_id: {project_id}"}
 
-        caller_user_id, is_admin, auth_err = await _resolve_caller_for_project_auth(auth_email)
-        if auth_err or caller_user_id is None:
-            return {"success": False, "error": auth_err or "Could not authorize"}
+        caller_user_id, is_admin = await _resolve_caller_for_project_auth()
 
         async with get_async_session() as session:
             proj_result = await session.execute(
@@ -1757,9 +1769,10 @@ async def claim_task(
         Dictionary with claimed task details, or error if no READY task available
     """
     try:
-        auth_email = get_authenticated_user_email()
-        if auth_email == "unknown":
-            return {"success": False, "error": "Authentication required"}
+        try:
+            require_caller_user_id()
+        except PermissionError as exc:
+            return {"success": False, "error": str(exc)}
 
         try:
             proj_uuid = uuid.UUID(project_id)
@@ -1911,9 +1924,10 @@ async def set_project_state(
         Dictionary with the updated full state
     """
     try:
-        auth_email = get_authenticated_user_email()
-        if auth_email == "unknown":
-            return {"success": False, "error": "Authentication required"}
+        try:
+            require_caller_user_id()
+        except PermissionError as exc:
+            return {"success": False, "error": str(exc)}
 
         try:
             proj_uuid = uuid.UUID(project_id)
@@ -1978,9 +1992,10 @@ async def resume_failed_task(
         Dictionary with success status and session resumption details
     """
     try:
-        auth_email = get_authenticated_user_email()
-        if auth_email == "unknown":
-            return {"success": False, "error": "Authentication required"}
+        try:
+            require_caller_user_id()
+        except PermissionError as exc:
+            return {"success": False, "error": str(exc)}
 
         try:
             task_uuid = uuid.UUID(task_id)

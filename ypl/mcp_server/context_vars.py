@@ -1,42 +1,33 @@
-"""Shared context variables for MCP server request handling.
+"""Context vars for the agcouch MCP server.
 
-This module provides ContextVars that carry per-request state through the
-middleware stack.  It lives in its own module to avoid circular imports between
-core.py (which creates the FastMCP server) and auth_oauth.py (which is imported
-by core.py during server creation).
+The per-request **identity** context (``request_context``) is now defined
+in :mod:`ypl.mcp_common.auth_context` so it can be shared with the harness
+MCP and any future external MCP — see the docstring there for the typed
+:class:`~ypl.mcp_common.auth_context.RequestContext` shape and accessors.
 
-request_context
-  Set by:
-    - DevTokenAuthMiddleware.dispatch() for DEV_TOKEN mode
-    - AllowedDomainsGoogleProvider.verify_token() for OAUTH mode
-  Read by:
-    - ToolCallLoggingMiddleware.on_call_tool() (core.py)
-    - get_authenticated_user_email() (core.py)
-    - get_requesting_user_id() (core.py)
+This module retains :data:`mcp_request_id_var`, an HTTP-request-scoped UUID
+used by ``server.py``'s ``_McpSessionIdFilter`` to correlate stdlib log
+records emitted from inside ``mcp.server.streamable_http``. It is a
+log-correlation concern, not an identity one, and lives outside the typed
+auth context for that reason.
 
-mcp_request_id_var
-  Set by:
-    - McpSessionMiddleware.dispatch() for every inbound MCP request
-  Read by:
-    - _McpSessionIdFilter (server.py) to inject the ID into stdlib log records
-      emitted by mcp.server.streamable_http
-  Note: structlog propagation happens via bind_contextvars, not this var.
+For backwards compatibility this module also re-exports
+:data:`request_context` from :mod:`ypl.mcp_common.auth_context`. New code
+should import directly from there::
+
+    from ypl.mcp_common.auth_context import current_request_context, request_context
 """
 
+from __future__ import annotations
 from contextvars import ContextVar
-from typing import Any
 
-# Dict shape for DEV_TOKEN mode:
-#   {"token": MCPDevToken, "token_type": MCPTokenType.DEV_TOKEN,
-#    "ip_address": str|None, "user_agent": str|None, "requesting_user_id": str|None}
-#
-# Dict shape for OAUTH mode:
-#   {"email": str, "token_type": MCPTokenType.OAUTH,
-#    "ip_address": None, "user_agent": None, "callback_url": str | None}
-request_context: ContextVar[dict[str, Any] | None] = ContextVar("request_context", default=None)
+# Re-exported from the canonical home in ypl.mcp_common.
+from ypl.mcp_common.auth_context import request_context
 
 # UUID assigned by McpSessionMiddleware for every inbound HTTP request.
 # Enables correlation across all log calls within a single MCP session
 # (one stateless_http request = one session).  Set to None outside of an
 # active MCP request.
 mcp_request_id_var: ContextVar[str | None] = ContextVar("mcp_request_id", default=None)
+
+__all__ = ["mcp_request_id_var", "request_context"]

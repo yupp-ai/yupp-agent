@@ -9,9 +9,10 @@ Content lives inline on the row; reads and writes are constrained by
     scope='user',  subject=<user_id>     — per-user notes
     scope='topic', subject=None          — globally shared topics
 
-The caller's identity is threaded from the MCP request context
-(``X-User-ID`` → ``get_requesting_user_id``, ``X-AHS-Agent-Name`` →
-``get_ahs_agent_name``). For user/agent scopes we reject writes where
+The caller's identity is threaded from the typed
+:class:`~ypl.mcp_common.auth_context.RequestContext` published by the auth
+middleware (``X-User-ID`` → ``ctx.requesting_user_id``, ``X-AHS-Agent-Name``
+→ ``ctx.ahs_agent_name``). For user/agent scopes we reject writes where
 the resolved subject doesn't match the caller — an agent can't save
 another agent's memory or another user's memory.
 
@@ -45,7 +46,8 @@ from ypl.agent_harness_service.memory_store import (
     validate_memory_scope_shape,
 )
 from ypl.db.agent_harness import AgentArtifactType
-from ypl.mcp_server.core import get_ahs_agent_name, get_ahs_session_id, get_requesting_user_id, mcp_server
+from ypl.mcp_common.auth_context import current_request_context
+from ypl.mcp_server.core import mcp_server
 from ypl.mcp_server.tools.agent_artifacts import _resolve_caller_context
 from ypl.mcp_server.tools.artifact_notifier import notify_artifact_event
 from ypl.structured_logger import get_logger
@@ -70,10 +72,11 @@ def _default_subject_for_scope(scope: str, caller: MemoryCallerContext) -> str |
 
 
 def _memory_caller_from_context() -> MemoryCallerContext:
-    """Build a :class:`MemoryCallerContext` from MCP request headers."""
+    """Build a :class:`MemoryCallerContext` from the typed RequestContext."""
+    ctx = current_request_context()
     return MemoryCallerContext(
-        user_id=get_requesting_user_id() or None,
-        agent_name=get_ahs_agent_name() or None,
+        user_id=(ctx.requesting_user_id if ctx else None) or None,
+        agent_name=(ctx.ahs_agent_name if ctx else None) or None,
     )
 
 
@@ -206,7 +209,8 @@ async def save_memory(
     # the new content. Strictly best-effort — the DB is authoritative
     # and the next session will re-materialize from the DB. A failure
     # here is logged but does NOT fail the save.
-    session_id_str = get_ahs_session_id()
+    ctx_for_session = current_request_context()
+    session_id_str = ctx_for_session.ahs_session_id if ctx_for_session else None
     if session_id_str:
         try:
             workspace = get_session_dir(session_id_str)
