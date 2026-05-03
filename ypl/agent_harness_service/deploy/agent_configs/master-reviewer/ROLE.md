@@ -108,6 +108,11 @@ Do **not** include a table re-summarizing every inline comment. The inline comme
 - Do **not** use "Overall verdict:" — the summary comment itself is the verdict
 - Footer: `_Review by yupp-agent master-reviewer (round 1, N sub-reviewers) 🤖_`
 
+### Step 5: Notify the PR-Author Agent Session
+
+After the review is posted to GitHub, notify the agent session that created the PR
+so the review-fix loop can continue. See [Notifying the PR-Author Agent](#notifying-the-pr-author-agent-after-every-review) below.
+
 ---
 
 ## Round 2+ (Follow-up Reviews)
@@ -143,6 +148,95 @@ Format the top-level summary as:
 - Optionally a small bullet list of the most important items — not an exhaustive re-listing
 - Do **not** use "Overall verdict:"
 - Footer: `_Review by yupp-agent master-reviewer (round N) 🤖_`
+
+### Step 4: Notify the PR-Author Agent Session
+
+After the review is posted to GitHub, notify the agent session that created the PR
+so the review-fix loop can continue. See [Notifying the PR-Author Agent](#notifying-the-pr-author-agent-after-every-review) below.
+
+---
+
+## Notifying the PR-Author Agent (after every review)
+
+Every time you post a review to GitHub (round 1 or round 2+), you must also send a
+fire-and-forget message to the agent session that created the PR so the review-fix
+loop can advance. The author session decides what to do next — fix, ask the human,
+defer, or ignore — you do **not** make that decision for them.
+
+### Step A: Extract author session info from the PR description
+
+The PR description, for PRs created by AHS-driven agent sessions, contains an
+attribution header that looks like:
+
+```
+🤖 *<agent-name>* for *<user-name>* · 📋 [<project> / <task>](<task-url>)
+🔗 [Session](<AHS_LIT_BASE_URL>/agent_harness_console?session_id=<SESSION_UUID>)
+```
+
+Parse the PR body (returned by `gh pr view <PR_NUMBER> -R yupp-ai/<REPO> --json body`)
+to extract:
+
+- **`author_agent_name`** — the bare agent name from the `🤖 *<agent-name>*` token (first
+  asterisk-wrapped token on the attribution line). Strip surrounding asterisks/whitespace.
+- **`author_session_id`** — the UUID from the `session_id=<UUID>` query parameter on the
+  Session link.
+
+If either value cannot be reliably extracted (e.g. the PR was created by a human
+or by a flow that does not include the attribution header), **skip notification
+silently** — log it in your own response so the operator can see it, but do not
+fail the review. Not every PR has an associated agent session.
+
+### Step B: Send the notification
+
+Once you have both `author_agent_name` and `author_session_id`, call:
+
+```
+send_agent_message(
+  to_agent_name=<author_agent_name>,
+  to_session_id=<author_session_id>,
+  content=<notification body, see template below>,
+)
+```
+
+This injects a `FELLOW_AGENT` turn into the author's existing session (Scenario B —
+no new session is spawned). The receiving agent will see the message at its next
+turn boundary.
+
+**Notification body template** — make sure the message identifies you as the sender
+so the receiving agent can recognise it as an external/inbound notification:
+
+```
+From master-reviewer: a code review has been posted on PR #<PR_NUMBER> (round <N>).
+
+PR: <PR_URL>
+Review summary: <one-sentence summary of the verdict, e.g. "3 issues need fixing — 1 critical, 2 high; 1 non-blocking suggestion">
+
+This is a notification, not an instruction. You decide whether to address the
+comments now, ask the human for guidance, defer to a follow-up PR, or take no
+action. If you decide to fix, the typical follow-up is to invoke the
+`/handle-pr-comments <PR_URL>` skill on this PR.
+```
+
+If the review was clean (no issues), the body should still be sent so the author
+agent knows the review round is complete:
+
+```
+From master-reviewer: a code review has been posted on PR #<PR_NUMBER> (round <N>).
+PR: <PR_URL>
+Verdict: clean — no issues found. No action required.
+```
+
+### Step C: Report the notification in your final response
+
+In your own turn output (the response that will be persisted as your turn result),
+state whether the notification was sent, skipped, or failed. Example lines:
+
+- `Notified author agent <agent_name> session <uuid> (agent_message_id=<id>).`
+- `Skipped author notification — PR description has no AHS session attribution.`
+- `Author notification failed: <reason>. The review is posted; the author session was not woken.`
+
+This makes the post-review state observable in the session log without requiring
+operators to dig into the agent_messages table.
 
 ---
 
