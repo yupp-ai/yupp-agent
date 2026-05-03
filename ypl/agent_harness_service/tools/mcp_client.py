@@ -1,12 +1,18 @@
 """MCP client connections for raw executor tool access.
 
-Manages fastmcp Client instances for the local ``harness`` MCP and the
-first-class ``agcouch`` MCP, providing tool schemas and a unified tool
-executor for the raw executor loop.
+Manages a fastmcp ``Client`` for the local harness MCP, providing tool
+schemas and a unified tool executor for the raw executor loop.
+
+The harness mount is the only MCP that AHS itself talks to: shared
+(AHS-system) and external-data tools that used to live exclusively on the
+agcouch MCP now register on the harness instance via ``@shared_tool``
+(see :mod:`ypl.mcp_common.shared_tool`). AHS no longer needs to open a
+second client to ``/mcp/agcouch`` with ``AGCOUCH_MCP_TOKEN`` — every
+tool the agent can call is reachable via ``AHS_MCP_SECRET``.
 
 TODO(phase-9): once the DB-backed external MCP registry lands, extend
 the session setup loop below to also open clients for any enabled rows
-in ``mcp_servers`` beyond agcouch.
+in ``mcp_servers`` beyond the harness mount.
 """
 
 import asyncio
@@ -22,7 +28,6 @@ from ypl.agent_harness_service.common.constants import (
     ALL_MCP_SERVERS,
     PERM_DENY,
 )
-from ypl.backend.config import settings
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -86,40 +91,27 @@ class MCPToolAccess:
         if self._agent_tools.get("*") == PERM_DENY and len(self._agent_tools) == 1:
             return self
 
-        # 1. Harness MCP (connect if allowed)
+        # Harness MCP — the only mount AHS talks to. Shared and
+        # external-data tools register on it via ``@shared_tool`` so the
+        # agent reaches database / Sentry / GCP-logs tools through this
+        # client without needing a separate agcouch connection.
         if "harness" in self._allowed_servers:
             harness_url = f"{AHS_MCP_BASE_URL}/mcp/harness/"
             harness_headers = {
                 "X-AHS-Token": AHS_MCP_SECRET,
                 "X-AHS-Session-ID": self._session_id,
             }
+            # Forward AHS identity into the harness mount so audit logs
+            # and tools that scope by user/agent (project_tasks,
+            # agent_artifacts, memory_artifacts, etc.) attribute calls
+            # to the right principal. The harness auth middleware
+            # validates the secret then trusts these tamper-proof
+            # headers — the same model agcouch used previously.
+            if self._user_id:
+                harness_headers["X-User-ID"] = self._user_id
+            if self._agent_name:
+                harness_headers["X-AHS-Agent-Name"] = self._agent_name
             await self._connect("harness", harness_url, harness_headers)
-
-        # 2. Agcouch MCP — first-class remote MCP shipped with this repo.
-        # Only connect if: enabled, allowed by the agent's server list, and
-        # a bearer token is configured.
-        if settings.AGCOUCH_MCP_ENABLED and settings.AGCOUCH_MCP_SERVER_NAME in self._allowed_servers:
-            agcouch_mcp_token = settings.AGCOUCH_MCP_TOKEN
-            agcouch_mcp_url = settings.AGCOUCH_MCP_SERVER_URL
-            if not agcouch_mcp_token:
-                logger.warning(
-                    "Agcouch MCP skipped: AGCOUCH_MCP_TOKEN not set",
-                    session_id=self._session_id,
-                )
-            elif not agcouch_mcp_url:
-                logger.warning(
-                    "Agcouch MCP skipped: AGCOUCH_MCP_SERVER_URL not set",
-                    session_id=self._session_id,
-                )
-            else:
-                agcouch_mcp_headers: dict[str, str] = {"Authorization": f"Bearer {agcouch_mcp_token}"}
-                if self._user_id:
-                    agcouch_mcp_headers["X-User-ID"] = self._user_id
-                if self._agent_name:
-                    agcouch_mcp_headers["X-AHS-Agent-Name"] = self._agent_name
-                if self._session_id:
-                    agcouch_mcp_headers["X-AHS-Session-ID"] = self._session_id
-                await self._connect(settings.AGCOUCH_MCP_SERVER_NAME, agcouch_mcp_url, agcouch_mcp_headers)
 
         # TODO(phase-9): iterate DB-registered external MCP servers here
         # and open a client for each enabled row using the same pattern.

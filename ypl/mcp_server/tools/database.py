@@ -16,7 +16,7 @@ from google.cloud import bigquery
 from ypl.backend.config import DbName, settings
 from ypl.backend.db import get_async_session_for, retry_db
 from ypl.backend.utils.dynamic_app_settings import get_mcp_tools_settings
-from ypl.mcp_server.core import mcp_server
+from ypl.mcp_common.shared_tool import shared_tool
 from ypl.structured_logger import get_logger
 from ypl.utils import maybe_truncate
 
@@ -302,13 +302,14 @@ async def _query_postgres_impl(
         return {"success": False, "error": str(e), "sql": sql}
 
 
-@mcp_server.tool(
+@shared_tool(
     name="query_yuppdb",
     description=(
         "Execute read-only SQL query on Yupp production database (yuppdb). Use SELECT queries to "
         "investigate data issues, check user states, or analyze patterns. "
         "IMPORTANT: Only SELECT queries are allowed - no writes/updates."
     ),
+    requires_settings=("POSTGRES_CONNECTION_YUPPDB",),
 )
 @retry_db
 async def query_yuppdb(
@@ -319,7 +320,7 @@ async def query_yuppdb(
     return await _query_postgres_impl(sql, max_rows, "yuppdb")
 
 
-@mcp_server.tool(
+@shared_tool(
     name="query_agentdb",
     description=(
         "Execute read-only SQL query on the Agent database (agentdb / yadb). "
@@ -339,6 +340,7 @@ async def query_yuppdb(
         "  • priority stores enum names ('NORMAL', 'HIGH') not integers\n"
         "  • depends_on is a JSONB array of UUIDs — use @> containment syntax, not equality"
     ),
+    requires_settings=("POSTGRES_CONNECTION_AGENTDB",),
 )
 @retry_db
 async def query_agentdb(
@@ -349,7 +351,7 @@ async def query_agentdb(
     return await _query_postgres_impl(sql, max_rows, "agentdb")
 
 
-@mcp_server.tool(
+@shared_tool(
     name="query_bigquery",
     description=(
         "Execute read-only SQL query on Yupp BigQuery analytics data. Use for analytics queries "
@@ -357,6 +359,7 @@ async def query_agentdb(
         "leaderboard data, etc. IMPORTANT: Only SELECT queries are allowed. "
         "Queries are subject to a configurable data processing limit (default: 200 GB)."
     ),
+    requires_settings=("GCP_PROJECT_ID",),
 )
 async def query_bigquery(sql: str, max_rows: int = 100) -> dict[str, Any]:
     """Execute read-only SQL query on Yupp BigQuery analytics data.
@@ -375,7 +378,7 @@ async def query_bigquery(sql: str, max_rows: int = 100) -> dict[str, Any]:
     return await _query_bigquery_impl(sql, max_rows, check_cost_limit=True)
 
 
-@mcp_server.tool(
+@shared_tool(
     name="query_bigquery_expensive",
     description=(
         "Execute read-only SQL query on Yupp BigQuery analytics data with higher limits. "
@@ -384,6 +387,7 @@ async def query_bigquery(sql: str, max_rows: int = 100) -> dict[str, Any]:
         "(default: 10 TB) for cost protection. IMPORTANT: Only SELECT queries are allowed. "
         "Prefer query_bigquery for most queries."
     ),
+    requires_settings=("GCP_PROJECT_ID",),
 )
 async def query_bigquery_expensive(sql: str, max_rows: int = 1000) -> dict[str, Any]:
     """Execute read-only SQL query on Yupp BigQuery analytics data with higher limits.

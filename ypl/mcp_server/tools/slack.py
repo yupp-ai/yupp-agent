@@ -10,7 +10,7 @@ from typing import Any
 
 from slack_sdk.errors import SlackApiError
 
-from ypl.mcp_server.core import mcp_server
+from ypl.mcp_common.shared_tool import shared_tool
 from ypl.slack_common import get_ops_bot_user_client, resolve_display_name
 from ypl.structured_logger import get_logger
 
@@ -22,7 +22,7 @@ logger = get_logger()
 # ============================================================================
 
 
-@mcp_server.tool(
+@shared_tool(
     name="read_slack_thread",
     description=(
         "Read messages from a Slack thread. Use this to get the full conversation context "
@@ -189,7 +189,7 @@ async def read_slack_thread(
         return {"success": False, "error": str(e)}
 
 
-@mcp_server.tool(
+@shared_tool(
     name="search_slack",
     description=(
         "Search Slack messages across channels. Supports Slack search operators like "

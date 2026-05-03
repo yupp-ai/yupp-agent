@@ -15,7 +15,7 @@ from google.cloud import logging as google_logging
 from ypl.backend.config import settings
 from ypl.backend.utils.parsing_utils import parse_rfc3339_timestamp
 from ypl.backend.utils.redis_utils import RedisRateLimitWatcher
-from ypl.mcp_server.core import mcp_server
+from ypl.mcp_common.shared_tool import shared_tool
 from ypl.mcp_server.tools.gcp_alert_search import get_gcp_alert_metadata
 from ypl.structured_logger import get_logger
 
@@ -138,7 +138,8 @@ def _fetch_gcp_log_entries(
     return results
 
 
-@mcp_server.tool(
+@shared_tool(
+    requires_settings=("GCP_PROJECT_ID",),
     name="search_gcp_logs",
     description=(
         "Search Google Cloud Logging for Yupp MIND production logs. Use this to debug errors, "
@@ -262,7 +263,8 @@ async def search_gcp_logs(
         return {"success": False, "error": str(e), "query": query}
 
 
-@mcp_server.tool(
+@shared_tool(
+    requires_settings=("GCP_PROJECT_ID",),
     name="search_vercel_logs",
     description=(
         "Search Vercel logs imported via vercel-log-drain to GCP logging. Use this to debug frontend issues, "
@@ -319,7 +321,8 @@ async def search_vercel_logs(
         return {"success": False, "error": str(e), "query": query}
 
 
-@mcp_server.tool(
+@shared_tool(
+    requires_settings=("GCP_PROJECT_ID",),
     name="get_gcp_alert_details",
     description=(
         "Fetch GCP Monitoring alert (incident) metadata. "

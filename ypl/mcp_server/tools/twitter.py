@@ -17,7 +17,7 @@ from typing import Any
 import httpx
 
 from ypl.backend.config import settings
-from ypl.mcp_server.core import mcp_server
+from ypl.mcp_common.shared_tool import shared_tool
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -109,7 +109,8 @@ def _cache_user_id(username: str, user_id: str) -> None:
     _USER_ID_CACHE[username.lower()] = (user_id, time.monotonic())
 
 
-@mcp_server.tool(
+@shared_tool(
+    requires_settings=("X_API_BEARER_TOKEN",),
     name="search_twitter",
     description=(
         "Search recent tweets (last 7 days) on X/Twitter using the v2 API. "
@@ -208,7 +209,8 @@ async def search_twitter(
         return {"error": f"Unexpected error: {str(e)}"}
 
 
-@mcp_server.tool(
+@shared_tool(
+    requires_settings=("X_API_BEARER_TOKEN",),
     name="get_user_timeline",
     description=(
         "Fetch recent tweets from a specific X/Twitter user's timeline. "
@@ -340,7 +342,8 @@ def _extract_tweet_id(tweet_id_or_url: str) -> str | None:
     return None
 
 
-@mcp_server.tool(
+@shared_tool(
+    requires_settings=("X_API_BEARER_TOKEN",),
     name="get_tweet",
     description=(
         "Look up a single tweet/post on X/Twitter by its ID or URL. "

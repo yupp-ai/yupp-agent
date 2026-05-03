@@ -32,7 +32,7 @@ from ypl.db.agent_harness import (
 )
 from ypl.db.rbac import Permission
 from ypl.mcp_common.auth_context import require_caller_user_id, require_principal_user_id
-from ypl.mcp_server.core import mcp_server
+from ypl.mcp_common.shared_tool import shared_tool
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -240,7 +240,7 @@ def _parse_priority(value: str, context: str) -> tuple[AgentTaskPriority | None,
 # ============================================================================
 
 
-@mcp_server.tool(
+@shared_tool(
     name="add_project",
     description=(
         "Create a new agent project. Projects group related tasks with dependencies "
@@ -299,7 +299,7 @@ async def add_project(
         return {"success": False, "error": str(e)}
 
 
-@mcp_server.tool(
+@shared_tool(
     name="add_task_sequence",
     description=(
         "Add a linear sequence of tasks to a project where each task depends on the previous one. "
@@ -439,7 +439,7 @@ async def add_task_sequence(
         return {"success": False, "error": str(e)}
 
 
-@mcp_server.tool(
+@shared_tool(
     name="add_tasks",
     description=(
         "Add tasks with arbitrary dependencies to a project. Each task has a local 'name' "
@@ -671,7 +671,7 @@ async def add_tasks(
         return {"success": False, "error": str(e)}
 
 
-@mcp_server.tool(
+@shared_tool(
     name="get_ready_tasks",
     description=(
         "Get all tasks in a project that are ready to be executed. Also automatically promotes "
@@ -759,7 +759,7 @@ async def get_ready_tasks(
         return {"success": False, "error": str(e)}
 
 
-@mcp_server.tool(
+@shared_tool(
     name="set_task_status",
     description=(
         "Update a task's status. Status values: PENDING, BLOCKED, READY, IN_PROGRESS, "
@@ -879,7 +879,7 @@ async def set_task_status(
         return {"success": False, "error": str(e)}
 
 
-@mcp_server.tool(
+@shared_tool(
     name="restart_task",
     description=(
         "Restart a task by resetting it to READY (or PENDING if it has unmet dependencies). "
@@ -957,7 +957,7 @@ async def restart_task(
         return {"success": False, "error": str(e)}
 
 
-@mcp_server.tool(
+@shared_tool(
     name="set_project_status",
     description=(
         "Update a project's status. Status values: ACTIVE, PAUSED, COMPLETED, ARCHIVED. "
@@ -1032,7 +1032,7 @@ async def set_project_status(
         return {"success": False, "error": str(e)}
 
 
-@mcp_server.tool(
+@shared_tool(
     name="get_project",
     description=(
         "Get project details by ID or name. Includes a task_summary with counts per task status. "
@@ -1122,7 +1122,7 @@ async def get_project(
         return {"success": False, "error": str(e)}
 
 
-@mcp_server.tool(
+@shared_tool(
     name="get_task",
     description=(
         "Get task details by ID or title. If searching by title, returns all matches "
@@ -1199,7 +1199,7 @@ async def get_task(
         return {"success": False, "error": str(e)}
 
 
-@mcp_server.tool(
+@shared_tool(
     name="get_project_tasks",
     description=(
         "Get all tasks in a project with optional status filter. "
@@ -1265,7 +1265,7 @@ async def get_project_tasks(
         return {"success": False, "error": str(e)}
 
 
-@mcp_server.tool(
+@shared_tool(
     name="list_projects",
     description=(
         "List projects with optional filters. Filter values: ACTIVE, PAUSED, COMPLETED, ARCHIVED. "
@@ -1333,7 +1333,7 @@ async def list_projects(
         return {"success": False, "error": str(e)}
 
 
-@mcp_server.tool(
+@shared_tool(
     name="update_task",
     description=(
         "Update a task's mutable fields (title, description, priority, agent, task_data, estimated_effort). "
@@ -1459,7 +1459,7 @@ async def update_task(
         return {"success": False, "error": str(e)}
 
 
-@mcp_server.tool(
+@shared_tool(
     name="set_task_dependencies",
     description=(
         "Set or clear a task's dependency list. Replaces the entire depends_on list with the "
@@ -1625,7 +1625,7 @@ async def set_task_dependencies(
         return {"success": False, "error": str(e)}
 
 
-@mcp_server.tool(
+@shared_tool(
     name="update_project",
     description=(
         "Update a project's mutable fields (name, description, slack_channel, default_agent_name, "
@@ -1745,7 +1745,7 @@ async def update_project(
         return {"success": False, "error": str(e)}
 
 
-@mcp_server.tool(
+@shared_tool(
     name="claim_task",
     description=(
         "Atomically claim a READY task by transitioning it to IN_PROGRESS. "
@@ -1847,7 +1847,7 @@ async def claim_task(
         return {"success": False, "error": str(e)}
 
 
-@mcp_server.tool(
+@shared_tool(
     name="get_project_state",
     description=(
         "Read the project's shared state — a key-value store accessible to all tasks and sessions. "
@@ -1898,7 +1898,7 @@ async def get_project_state(
         return {"success": False, "error": str(e)}
 
 
-@mcp_server.tool(
+@shared_tool(
     name="set_project_state",
     description=(
         "Write to the project's shared state. Sets a single key-value pair, "
@@ -1970,7 +1970,7 @@ async def set_project_state(
         return {"success": False, "error": str(e)}
 
 
-@mcp_server.tool(
+@shared_tool(
     name="resume_failed_task",
     description=(
         "Resume a failed task that can be retried. The task must be in FAILED status with a "

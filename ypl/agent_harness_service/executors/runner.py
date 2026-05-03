@@ -183,8 +183,11 @@ _ALLOWED_EXACT: frozenset[str] = frozenset(
         "LANGUAGE",
         # Claude CLI
         "ANTHROPIC_API_KEY",
-        # MCP tokens (referenced in .mcp.json via ${VAR})
-        "AGCOUCH_MCP_TOKEN",
+        # Note: AHS no longer forwards ``AGCOUCH_MCP_TOKEN`` — agents reach
+        # every shared / external-data tool via the harness MCP using
+        # ``AHS_MCP_SECRET`` (handled inside ``mcp_config.resolve_mcp_servers``,
+        # never exposed to the subprocess env). See
+        # ``ypl/mcp_common/shared_tool.py``.
         # Git / GitHub
         "SSH_AUTH_SOCK",
         "GITHUB_TOKEN",

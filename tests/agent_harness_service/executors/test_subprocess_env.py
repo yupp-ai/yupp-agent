@@ -31,7 +31,6 @@ class TestBuildSubprocessEnv:
             "ANTHROPIC_API_KEY": "sk-ant-xxx",
             "OPENAI_API_KEY": "sk-xxx",
             "ENVIRONMENT": "production",
-            "AGCOUCH_MCP_TOKEN": "tok-123",
             "GITHUB_TOKEN": "ghp_abc",
             "SSH_AUTH_SOCK": "/tmp/ssh.sock",
             "AHS_DATA_DIR": "/data",
@@ -44,6 +43,23 @@ class TestBuildSubprocessEnv:
             if key == "PATH":
                 continue  # checked above with prepended local_bin
             assert result[key] == value, f"{key} should pass through"
+
+    def test_agcouch_mcp_token_not_forwarded(self) -> None:
+        """AHS no longer forwards AGCOUCH_MCP_TOKEN to subprocesses.
+
+        Phase 2 of the mono+MCP unification removed the agcouch detour from
+        the AHS executor: agents reach every shared / external-data tool
+        via the harness MCP using ``AHS_MCP_SECRET``. A regression that
+        re-adds ``AGCOUCH_MCP_TOKEN`` to the allowlist would silently
+        leak that token into agent subprocesses again.
+        """
+        env = {
+            "PATH": "/usr/bin",
+            "HOME": "/home/agent",
+            "AGCOUCH_MCP_TOKEN": "tok-leaked",
+        }
+        result = self._build_with_env(env)
+        assert "AGCOUCH_MCP_TOKEN" not in result
 
     # -- Allowed prefix vars pass through ----------------------------------
 
