@@ -133,12 +133,32 @@ def has_execution_capacity() -> bool:
 
 # ---------------------------------------------------------------------------
 # Slack courtesy messages — SIGTERM shutdown and post-restart notification
+#
+# All three strings deliberately drop the "send me a message" ask: PR 3 made
+# the auto-resume path real, so the *only* thing the user ever needs to do is
+# wait a few seconds.  Keeping the old "ping me to continue" wording would
+# train users to re-prompt unnecessarily even though the system now picks
+# itself back up.
 # ---------------------------------------------------------------------------
 
-_SLACK_SHUTDOWN_COURTESY_MSG = (
-    "🔄 *Server is restarting.* Your session is safe — send me a message to continue when I'm back up."
-)
-_SLACK_RESTART_COURTESY_MSG = "✅ *I'm back online.* Send me a message to continue where we left off."
+_SLACK_SHUTDOWN_COURTESY_MSG = "🔄 *Server is restarting.* I'll be right back — your session is safe."
+
+# Used by ``_recover_stale_sessions`` for sessions whose ``ahs:resume_pending:*``
+# flag was set by ``promote_executor_running_to_resume_pending`` — i.e. the
+# previous turn was killed mid-flight.  Followed immediately by an auto-fired
+# AGENT turn (``dispatch_resume_turn``) so the user sees a real reply, not a
+# placeholder.
+_SLACK_RESTART_COURTESY_MSG_INTERRUPTED = "✅ *I'm back online* — picking up where we left off."
+
+# Used by ``_recover_stale_sessions`` for sessions whose previous turn had
+# already finished cleanly before the restart — purely informational, no
+# follow-up turn fires.
+_SLACK_RESTART_COURTESY_MSG_IDLE = "✅ *I'm back online.*"
+
+# Backward-compatible alias.  Kept so external callers / tests that imported
+# the old name still resolve; ``_recover_stale_sessions`` now uses the two
+# bucketed strings above directly.
+_SLACK_RESTART_COURTESY_MSG = _SLACK_RESTART_COURTESY_MSG_IDLE
 
 
 @dataclass
