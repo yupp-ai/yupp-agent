@@ -23,5 +23,8 @@
     "reviewer-claude",
     "reviewer-codex"
   ],
+  "allowed_to_message": [
+    "eng-raccoon"
+  ],
   "timeout_s": 36000
 }
