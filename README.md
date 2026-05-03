@@ -95,11 +95,10 @@ Run locally: `cd apps/war-room && bun install && bun run dev` (port 3009). See `
 
 ### Streamlit Server
 
-Operational dashboards for monitoring and managing the agent platform. Six pages focused on agent health, performance, and debugging.
+Operational dashboards for monitoring and managing the agent platform. Pages focused on agent health, performance, and debugging.
 
 - **Agent Console** — browse agents, sessions, messages, and feedback signals in a searchable thread view
 - **Agent Dashboard** — operational analytics: session counts, costs, latency percentiles, error rates, feedback trends, schedule health
-- **Agent Memory Viewer** — browse shared agent memory files with metadata, timestamps, and inline content preview
 - **Agent Projects** — view project hierarchies, track task status and dependencies, monitor budget spend
 - **Agent Schedules** — manage recurring agent calls, view run history, check schedule health
 - **Anomaly Detection** — catch cost and latency regressions early with coefficient-of-variation analysis and variance bands
