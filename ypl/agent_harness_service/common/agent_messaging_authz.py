@@ -27,10 +27,18 @@ class AgentAuthorizationError(Exception):
 def check_agent_message_authz(from_config: AgentConfig, to_agent_name: str) -> None:
     """Verify that the agent described by *from_config* is authorized to message *to_agent_name*.
 
-    Authorization is deny-by-default.  The sending agent's ``allowed_to_message``
-    list must explicitly include the recipient's name, or contain ``'*'`` for
-    unrestricted outbound messaging.  Comparison is case-insensitive to avoid
-    silent bypass or unexpected denial from casing inconsistencies.
+    Authorization is deny-by-default for *cross-agent* messaging: the sending
+    agent's ``allowed_to_message`` list must explicitly include the recipient's
+    name, or contain ``'*'`` for unrestricted outbound messaging.  Comparison
+    is case-insensitive to avoid silent bypass or unexpected denial from
+    casing inconsistencies.
+
+    **Self-messaging is always permitted, for every agent, with no config
+    required.**  An agent dispatching a message to a fresh session of itself
+    is a legitimate worker pattern, not an A2A escalation: the agent already
+    has full authority over its own work.  Loop-prevention is the
+    responsibility of higher-level dispatch logic (turn budgets, session
+    limits), not authz.
 
     Accepts both filesystem-loaded and DB-loaded ``AgentConfig`` objects uniformly
     — the check does not require a DB session or an ``Agent`` ORM object.
@@ -45,14 +53,28 @@ def check_agent_message_authz(from_config: AgentConfig, to_agent_name: str) -> N
 
     Example::
 
-        # Raises AgentAuthorizationError if eng-raccoon's config doesn't list sre-james
-        check_agent_message_authz(eng_raccoon_config, "sre-james")
+        # Cross-agent: raises unless from_config.allowed_to_message lists "agent-b"
+        # (or contains "*").
+        check_agent_message_authz(agent_a_config, "agent-b")
+
+        # Self-message: always allowed, regardless of allowed_to_message.
+        check_agent_message_authz(agent_a_config, "agent-a")
     """
     if not to_agent_name:
         raise AgentAuthorizationError("Cannot authorize A2A message: recipient agent name is empty or None")
 
-    allowed: list[str] = from_config.allowed_to_message
     to_lower = to_agent_name.lower()
+
+    # Self-messaging is always permitted — see docstring.
+    if from_config.name.lower() == to_lower:
+        logger.info(
+            "A2A authorization granted (self-message)",
+            from_agent=from_config.name,
+            to_agent=to_agent_name,
+        )
+        return
+
+    allowed: list[str] = from_config.allowed_to_message
     allowed_lower = [a.lower() for a in allowed]
 
     if to_lower not in allowed_lower and "*" not in allowed_lower:
