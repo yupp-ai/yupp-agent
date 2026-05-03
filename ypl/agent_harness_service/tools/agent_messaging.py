@@ -51,7 +51,8 @@ MAX_CONTENT_BYTES = 64 * 1024  # 64 KB
         "this call returns immediately with status='queued' (fire-and-forget). "
         "Use to_session_id to inject into an existing session, or omit it to "
         "let the dispatcher create a new session for the target agent. "
-        "The sending agent must list the recipient in its allowed_to_message config."
+        "The sending agent must list the recipient in its allowed_to_message config "
+        "(self-messaging is always permitted)."
     ),
 )
 async def send_agent_message(
