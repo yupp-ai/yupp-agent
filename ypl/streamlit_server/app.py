@@ -95,7 +95,7 @@ else:
 pages = {
     "Agents": [
         {
-            "name": "Agent Harness Console",
+            "name": "Sessions",
             "link": "agent_harness_console",
             "emoji": "💬",
             "description": (

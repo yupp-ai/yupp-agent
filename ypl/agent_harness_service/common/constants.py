@@ -123,6 +123,13 @@ AHS_LIT_BASE_URL = os.environ.get("AHS_LIT_BASE_URL", "").rstrip("/")
 # When empty, the War Room link is omitted from generated messages.
 AHS_WAR_ROOM_BASE_URL = os.environ.get("AHS_WAR_ROOM_BASE_URL", "").rstrip("/")
 
+# Slack workspace subdomain — used to build Slack permalinks back to threads
+# from Lit (e.g. ``yuppai`` or ``agentic-couch``). The full URL is built as
+# ``https://{SLACK_WORKSPACE_DOMAIN_NAME}.slack.com/archives/<channel>/p<msg_ts>...``.
+# When empty, Slack permalink generation returns None and callers should
+# omit the link.
+SLACK_WORKSPACE_DOMAIN_NAME = os.environ.get("SLACK_WORKSPACE_DOMAIN_NAME", "").strip()
+
 # MCP server base URL (used to generate per-workspace .mcp.json configs)
 AHS_MCP_BASE_URL = os.environ.get("AHS_MCP_BASE_URL", "http://127.0.0.1:8090")
 

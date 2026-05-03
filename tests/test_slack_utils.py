@@ -340,17 +340,35 @@ class TestExtractPlainTextFromSlackBlocks:
 
 class TestCreateSlackLink:
     def test_creates_basic_link(self) -> None:
-        link = create_slack_link("C123", "1234567890.123456")
+        with patch("ypl.agent_harness_service.common.constants.SLACK_WORKSPACE_DOMAIN_NAME", "test-workspace"):
+            link = create_slack_link("C123", "1234567890.123456")
+        assert link is not None
+        assert "test-workspace.slack.com" in link
         assert "C123" in link
         assert "1234567890123456" in link  # dots removed
+        assert "cid=C123" in link  # always includes cid hint for the desktop app
 
     def test_includes_thread_ts_when_provided(self) -> None:
-        link = create_slack_link("C123", "123.456", main_thread_ts="100.200")
+        with patch("ypl.agent_harness_service.common.constants.SLACK_WORKSPACE_DOMAIN_NAME", "test-workspace"):
+            link = create_slack_link("C123", "123.456", main_thread_ts="100.200")
+        assert link is not None
         assert "thread_ts=100.200" in link
 
     def test_no_thread_ts_when_not_provided(self) -> None:
-        link = create_slack_link("C123", "123.456")
+        with patch("ypl.agent_harness_service.common.constants.SLACK_WORKSPACE_DOMAIN_NAME", "test-workspace"):
+            link = create_slack_link("C123", "123.456")
+        assert link is not None
         assert "thread_ts" not in link
+
+    def test_returns_none_when_workspace_unset(self) -> None:
+        with patch("ypl.agent_harness_service.common.constants.SLACK_WORKSPACE_DOMAIN_NAME", ""):
+            link = create_slack_link("C123", "123.456")
+        assert link is None
+
+    def test_returns_none_when_required_arg_missing(self) -> None:
+        with patch("ypl.agent_harness_service.common.constants.SLACK_WORKSPACE_DOMAIN_NAME", "test-workspace"):
+            assert create_slack_link("", "123.456") is None
+            assert create_slack_link("C123", "") is None
 
 
 # ---------------------------------------------------------------------------

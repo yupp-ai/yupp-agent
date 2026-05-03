@@ -663,22 +663,44 @@ def post_to_slack_sync(
         logger.exception("Failed to post message to Slack (sync)")
 
 
-def create_slack_link(channel: str, thread_ts: str, main_thread_ts: str | None = None) -> str:
-    """Create a Slack link to a thread.
+def create_slack_link(channel: str, message_ts: str, main_thread_ts: str | None = None) -> str | None:
+    """Create a Slack permalink that deep-links to a specific message in a thread.
+
+    The workspace subdomain is taken from the ``SLACK_WORKSPACE_DOMAIN_NAME``
+    env var (e.g. ``yuppai`` or ``agentic-couch``). When that env var is unset
+    or any required component is missing, returns ``None`` so callers can
+    cleanly omit the link from their UI.
+
+    URL format::
+
+        https://{workspace}.slack.com/archives/{channel}/p{message_ts_no_dot}
+            [?thread_ts={main_thread_ts}&]cid={channel}
 
     Args:
-        channel: The Slack channel ID
-        thread_ts: The timestamp of the thread to link to (the latest message in the thread)
-        main_thread_ts: The timestamp of the main thread to link to (the first message in the thread)
+        channel: The Slack channel ID (e.g. ``C01ABCDEF``)
+        message_ts: The Slack ts of the message to link to (the ``p<ts>`` part of
+            the URL). Pass the latest message's ts to deep-link to the most
+            recent reply, or the thread root ts to link to the thread itself.
+        main_thread_ts: The thread root ts. When set, included as the
+            ``thread_ts`` query param so Slack opens the thread side-panel.
 
     Returns:
-        A Slack link to the thread
+        Fully-formed Slack permalink, or ``None`` if the workspace domain is
+        not configured or required arguments are missing.
     """
+    # Imported here to avoid a circular import at module load time
+    # (slack_utils is a Layer-0 utility imported broadly).
+    from ypl.agent_harness_service.common.constants import SLACK_WORKSPACE_DOMAIN_NAME
 
-    link = f"https://yuppai.slack.com/archives/{channel}/p{thread_ts.replace('.', '')}"
+    if not SLACK_WORKSPACE_DOMAIN_NAME or not channel or not message_ts:
+        return None
+
+    link = f"https://{SLACK_WORKSPACE_DOMAIN_NAME}.slack.com/archives/{channel}/p{message_ts.replace('.', '')}"
+    params: list[str] = []
     if main_thread_ts:
-        link += f"?thread_ts={main_thread_ts}"
-    return link
+        params.append(f"thread_ts={main_thread_ts}")
+    params.append(f"cid={channel}")
+    return link + "?" + "&".join(params)
 
 
 @async_timed_cache(seconds=300)  # Cache for 5 minutes
