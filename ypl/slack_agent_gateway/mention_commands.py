@@ -33,6 +33,7 @@ Leading directives (first word of a message, prefix for the actual text):
 
     /model <spec>   — override the model for a new session
     /agent <name>   — override the AHS agent for a new session
+    !<name>         — shorthand alias for /agent <name>
 
 Directives are parsed in :mod:`events` (not dispatched here) because they
 interact with the broader session-creation flow; the formatters and parsers
@@ -159,6 +160,12 @@ def _extract_leading_directive(stripped: str, directive: str) -> tuple[str | Non
     for backward compatibility, but the space form is preferred for
     consistency with the bare ``/attach <uuid>`` command.
 
+    Special-case for the ``agent`` directive: ``!<name>`` is also accepted as
+    a shorthand alias, so ``@raccoon !sre`` and ``@raccoon!sre`` both behave
+    like ``@raccoon /agent sre``. Slack collapses zero or one space between
+    the @mention and the next token, and :data:`MENTION_PATTERN` strips that
+    whitespace, so both forms reach this function as the same input.
+
     Returns:
         ``(value, remainder)`` where ``value`` is the directive's argument
         and ``remainder`` is the message text with the directive + value
@@ -170,6 +177,11 @@ def _extract_leading_directive(stripped: str, directive: str) -> tuple[str | Non
     parts = stripped.split(None, 1)
     first = parts[0]
     rest = parts[1].strip() if len(parts) > 1 else ""
+
+    # Bang-form alias for the ``/agent`` directive. ``!sre`` → ("sre", rest).
+    # Bare ``!`` with no value falls through (not a directive).
+    if directive == "agent" and first.startswith("!") and len(first) > 1:
+        return first[1:], rest
 
     prefix_colon = f"/{directive}:"
     if first.lower().startswith(prefix_colon):
@@ -215,6 +227,10 @@ def extract_agent_directive(text: str) -> tuple[str | None, str]:
     Same shape as :func:`extract_model_directive`. Used to override which
     AHS agent handles a newly-created session, regardless of which Slack
     bot was @mentioned. Only takes effect on the first message of a thread.
+
+    A bang shorthand is also accepted: ``!<name>`` is an alias for
+    ``/agent <name>``, so ``@raccoon !sre go`` and ``@raccoon!sre go`` both
+    behave like ``@raccoon /agent sre go``.
     """
     stripped = MENTION_PATTERN.sub("", text).strip()
     return _extract_leading_directive(stripped, "agent")
@@ -284,6 +300,8 @@ HELP_TEXT = (
     "(e.g. `/model anthropic/claude-sonnet-4-6 please review this PR`)\n"
     "• `/agent NAME` — route to a specific agent for this session "
     "(e.g. `/agent sre what alerts are firing?`)\n"
+    "• `!NAME` — shorthand alias for `/agent NAME` "
+    "(e.g. `!sre what alerts are firing?`)\n"
     "• `/attach UUID` — attach this thread to an existing AHS session\n"
     "\n"
     "_Colon syntax (`/model:SPEC`, `/agent:NAME`, `/attach:UUID`) is accepted as an alias._"
@@ -335,7 +353,10 @@ def format_agents_list(agents: list[dict]) -> str:
         else:
             lines.append(header)
     lines.append("")
-    lines.append("_Usage:_ `@agent /agent AGENT_NAME your message here` (first message only)")
+    lines.append(
+        "_Usage:_ `@agent /agent AGENT_NAME your message here` (first message only). "
+        "Shorthand: `@agent !AGENT_NAME your message here`."
+    )
     return "\n".join(lines)
 
 
