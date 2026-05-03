@@ -12,7 +12,7 @@ Group=ahs
 # Starlette/authlib/etc. don't leak into the monolith's dependency graph).
 WorkingDirectory=/opt/yupp-agent/apps/artifact-viewer
 # Reads the same .env as ahs-mono; viewer-specific vars are prefixed VIEWER_.
-EnvironmentFile=/opt/yupp-agent/.env
+EnvironmentFile=/data/ahs/.env
 ExecStart=/opt/yupp-agent/apps/artifact-viewer/.venv/bin/artifact-viewer
 Restart=on-failure
 RestartSec=5
