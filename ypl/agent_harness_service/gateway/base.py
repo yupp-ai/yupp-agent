@@ -99,6 +99,26 @@ class Gateway(ABC):
         """
         return False
 
+    async def turn_end(self, session_id: str) -> bool:
+        """Signal that an agent turn just finished.
+
+        Gateways with in-turn buffered/cluster state (Slack — text buffer
+        and tool cluster) use this signal to reset that state so the next
+        turn starts fresh.  Default no-op implementation returns ``True``
+        for gateways that don't need turn boundaries.
+
+        Idempotent — callers should call once per turn but a duplicate call
+        is harmless.
+
+        Args:
+            session_id: The gateway session identifier.
+
+        Returns:
+            True if the signal was accepted (or the gateway is a no-op),
+            False if a recoverable failure prevented cleanup.
+        """
+        return True
+
     async def send_tool_event(
         self,
         session_id: str,

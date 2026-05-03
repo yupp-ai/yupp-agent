@@ -16,7 +16,6 @@ from ypl.slack_agent_gateway.constants import (
     DEFAULT_FLUSH_INTERVAL_SECONDS,
     MAX_BUFFER_SIZE_CHARS,
     SLACK_MAX_MESSAGE_LENGTH,
-    SLACK_RATELIMIT_INTERVAL_SECONDS,
     STATUS_RATELIMIT_SECONDS,
     get_agent_config_by_app_id,
 )
@@ -36,7 +35,6 @@ from ypl.slack_agent_gateway.redis_client import (
     schedule_flush,
     schedule_status_flush,
     set_buffer_type,
-    try_acquire_slack_ratelimit,
     try_acquire_status_ratelimit,
 )
 from ypl.slack_agent_gateway.sessions import record_reply
@@ -108,10 +106,10 @@ async def append_to_reply(request: AppendToReplyRequest) -> AppendToReplyRespons
         # Type mismatch — flush whatever is buffered, then post as a new message.
         flushed = await flush_buffer(request.session_id)
         if not flushed:
-            # Pre-switch flush failed. Most common cause: the Slack rate-limit
-            # gate was held (see ``try_acquire_slack_ratelimit`` in
-            # ``flush_buffer``), so the pending old-type content was left in
-            # the buffer with a retry scheduled.
+            # Pre-switch flush failed. Most common cause: the wrapper raised
+            # ``RateLimitDeferred`` because the universal Slack rate-limit gate
+            # was held by another caller, so ``flush_buffer`` re-queued the
+            # pending old-type content and rescheduled.
             #
             # We cannot simply "retry later and return success=False" the way
             # the same-type buffered path does, because ``add_reply`` below
@@ -236,32 +234,17 @@ async def flush_buffer(session_id: str) -> bool:
         logger.error("No app config found for flush", session_id=session_id, app_id=session.app_id)
         return False
 
-    # Acquire the rate-limit gate BEFORE clearing the buffer.
-    # If denied, reschedule and return — the buffer keeps accumulating, and the
-    # next flush will grab OLD + NEW content in a single chat.update instead of
-    # producing two back-to-back updates.
-    if not await try_acquire_slack_ratelimit(session.app_id, "chat_update"):
-        next_flush_at = time.time() + SLACK_RATELIMIT_INTERVAL_SECONDS + 0.1
-        await schedule_flush(session_id, next_flush_at)
-        # Debug-level: this fires up to ~1/sec per active streaming session
-        # (gate interval is SLACK_RATELIMIT_INTERVAL_SECONDS), and across many
-        # concurrent sessions the volume drowns out everything else. Operator
-        # visibility for the same event is preserved on the AHS side, where
-        # the buffered=True response surfaces as a WARNING ("Gateway deferred
-        # append (content buffered, will retry)") in gateway/slack.py.
-        logger.debug(
-            "Slack rate limit gate denied, deferring flush to accumulate more content",
-            session_id=session_id,
-            next_flush_in=round(SLACK_RATELIMIT_INTERVAL_SECONDS + 0.1, 2),
-        )
-        return False
-
     # Read buffer type before clearing content — avoids a race where new content
     # with a different type arrives between clear_buffer and get_buffer_type.
     buffer_type = await get_buffer_type(session_id)
 
-    # Get and clear buffer atomically. Anything appended between the gate grab
-    # above and this call is included here — that's the intended behavior.
+    # Get and clear buffer atomically. The reenqueue-mode wrapper (below) gates
+    # the actual chat.update through the universal slack rate-limit gate; if
+    # the gate denies, the wrapper raises RateLimitDeferred and the except
+    # block re-appends the content + reschedules. Doing the gate check at
+    # this layer too (a second SET NX on the same key) would self-deadlock:
+    # the outer SET NX held by THIS call would always block the wrapper's
+    # SET NX inside chat.update, leaving the buffer permanently stuck.
     buffer_content = await clear_buffer(session_id)
     if not buffer_content:
         # Racer beat us to the flush; release the schedule.
