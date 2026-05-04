@@ -1,7 +1,7 @@
 ## Streamlit server — agent guide
 
-This directory hosts the operational dashboards (login, console, memory
-viewer, dashboards, admin pages). The pages share `from ypl.db.all_models
+This directory hosts the operational dashboards (login, console,
+dashboards, admin pages). The pages share `from ypl.db.all_models
 import *` and `from ypl.db.rbac import …` — i.e. they import the **same
 SQLModel `MetaData` singleton** that the rest of the platform binds tables
 to. That fact creates one trap that has bitten us multiple times.
