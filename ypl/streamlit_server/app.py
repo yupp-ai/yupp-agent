@@ -140,15 +140,6 @@ pages = {
             "description": "View and manage scheduled agent calls, recurring schedules, and run history.",
         },
         {
-            "name": "Agent Memory Viewer",
-            "link": "agent_memory_viewer",
-            "emoji": "🗃️",
-            "description": (
-                "Browse shared agent memory files stored in GCS. "
-                "View topic files with metadata, timestamps, sizes, and content."
-            ),
-        },
-        {
             "name": "Agent Harness Dashboard",
             "link": "agent_harness_dashboard",
             "emoji": "📊",
