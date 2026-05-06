@@ -73,6 +73,10 @@
     {% endif %}
 
     <footer class="artifact-footer muted small">
+        {% if can_edit %}
+            <a class="artifact-edit-link" href="/artifacts/{{ meta.artifact_id }}/edit">Edit (creates a new version)</a>
+            <span aria-hidden="true">·</span>
+        {% endif %}
         <a href="/artifacts/{{ meta.artifact_id }}/download" rel="nofollow">Download</a>
     </footer>
 </article>

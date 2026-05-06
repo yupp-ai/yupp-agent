@@ -4,32 +4,49 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light dark">
+    {%- if reason == "not_editable" -%}
+    <title>Cannot edit · Artifact Viewer</title>
+    {%- else -%}
     <title>Access denied · Artifact Viewer</title>
+    {%- endif -%}
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 <main class="main narrow">
-<h1>Access denied</h1>
-{% if reason == "not_a_user" %}
-    <p>The account <code>{{ email }}</code> is not authorized.</p>
+{% if reason == "not_editable" %}
+    <h1>Cannot edit this artifact</h1>
+    <p>This artifact can't be edited from the viewer.</p>
     <p class="muted">
-        Access to the artifact viewer is granted via the AHS user directory.
-        If you should have access, ask an admin to add <code>{{ email }}</code>
-        to the <code>users</code> table.
+        Editing produces a new version of a slugged artifact. We disable
+        the edit form when the artifact has no slug to attach a new
+        version to, or when it's a memory you don't own (per-user and
+        per-agent memories are managed by their owner only — topic
+        memories are open to anyone signed in).
     </p>
-{% elif reason == "ahs_unavailable" %}
-    <p>Could not verify your account — the upstream AHS service is
-       unreachable or returned an error.</p>
-    <p class="muted">Try again in a moment, or contact an admin if it persists.</p>
-{% elif reason == "no_email" %}
-    <p>Google didn't return an email address for your account. Please
-       <a href="/auth/login">try again</a>.</p>
-{% elif reason == "oauth_exchange_failed" %}
-    <p>Google OAuth exchange failed. Please <a href="/auth/login">try again</a>.</p>
+    <p><a href="/">Back to artifacts</a></p>
 {% else %}
-    <p>Authentication error: <code>{{ reason }}</code>.</p>
+    <h1>Access denied</h1>
+    {% if reason == "not_a_user" %}
+        <p>The account <code>{{ email }}</code> is not authorized.</p>
+        <p class="muted">
+            Access to the artifact viewer is granted via the AHS user directory.
+            If you should have access, ask an admin to add <code>{{ email }}</code>
+            to the <code>users</code> table.
+        </p>
+    {% elif reason == "ahs_unavailable" %}
+        <p>Could not verify your account — the upstream AHS service is
+           unreachable or returned an error.</p>
+        <p class="muted">Try again in a moment, or contact an admin if it persists.</p>
+    {% elif reason == "no_email" %}
+        <p>Google didn't return an email address for your account. Please
+           <a href="/auth/login">try again</a>.</p>
+    {% elif reason == "oauth_exchange_failed" %}
+        <p>Google OAuth exchange failed. Please <a href="/auth/login">try again</a>.</p>
+    {% else %}
+        <p>Authentication error: <code>{{ reason }}</code>.</p>
+    {% endif %}
+    <p><a href="/auth/login">Sign in with a different account</a></p>
 {% endif %}
-<p><a href="/auth/login">Sign in with a different account</a></p>
 </main>
 </body>
 </html>

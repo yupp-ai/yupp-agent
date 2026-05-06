@@ -444,3 +444,95 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
     color: var(--fg-muted);
 }
 .filter-clear:hover { color: var(--accent); }
+
+/* --- Footer edit link --- */
+
+/* The artifact footer is muted+small (download link); make the edit
+   action a touch more prominent so users notice it without redesigning
+   the footer row. Inline-styled accent color, no underline by default. */
+.artifact-edit-link {
+    color: var(--accent);
+    font-weight: 500;
+}
+
+/* --- Editor (full-screen edit form) ---
+   Stretches the textarea to most of the viewport so editors can paste
+   in long markdown without wrestling a tiny box. The banner uses an
+   info-blue accent strip so the "this creates a new version" message
+   reads differently from page chrome and isn't easy to skim past. */
+
+.editor {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 8px;
+}
+
+.editor-banner {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 14px;
+    background: var(--bg-alt);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--accent);
+    border-radius: 6px;
+}
+
+.editor-banner-text { font-size: 14px; }
+.editor-banner-help { font-size: 12px; }
+
+.editor-textarea {
+    width: 100%;
+    /* 70vh keeps the textarea dominating the viewport but leaves room
+       for the banner above and the action row below without scrolling
+       on a typical laptop. Resize is allowed so a user with a giant
+       paste can drag it taller. */
+    min-height: 70vh;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.5;
+    resize: vertical;
+    box-sizing: border-box;
+}
+
+.editor-textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.editor-actions {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 12px;
+}
+
+.editor-cancel {
+    color: var(--fg-muted);
+    font-size: 13px;
+}
+.editor-cancel:hover { color: var(--accent); }
+
+.editor-save {
+    padding: 8px 16px;
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    background: var(--accent);
+    color: #fff;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+}
+.editor-save:hover { filter: brightness(1.05); }
+.editor-save:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}

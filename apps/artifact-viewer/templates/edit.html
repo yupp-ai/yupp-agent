@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ meta.title or meta.named_slug or meta.artifact_id }} · Artifact Viewer{% endblock %}
+{% block content %}
+{#- Full-screen editor: a textarea sized to (most of) the viewport so
+    pasting in long markdown isn't cramped, plus a banner that makes the
+    versioning behavior unmissable. Saving always creates a brand-new
+    version at next_version (= max + 1 across the slug's existing
+    versions); even when the user is editing v3 of a v1..v4 slug, the
+    save lands at v5. -#}
+<form class="editor" method="post" action="/artifacts/{{ meta.artifact_id }}/edit">
+    <div class="editor-banner">
+        <div class="editor-banner-text">
+            <strong>Editing v{{ meta.version }}</strong> of
+            {% if meta.named_slug %}
+                <a href="/artifacts/by-slug/{{ meta.named_slug }}">{{ meta.named_slug }}</a>
+            {% else %}
+                <span class="mono">{{ meta.artifact_id }}</span>
+            {% endif %}
+            — saving will create a <strong>new version v{{ next_version }}</strong>.
+        </div>
+        <div class="editor-banner-help muted small">
+            You can edit any version (v1, v2, …); the save always becomes the
+            next version after the current latest. The original version stays
+            untouched in the version history.
+        </div>
+    </div>
+
+    <textarea
+        class="editor-textarea"
+        name="content"
+        spellcheck="false"
+        autocomplete="off"
+        autofocus
+    >{{ raw_text }}</textarea>
+
+    <div class="editor-actions">
+        <a class="editor-cancel" href="/artifacts/{{ meta.artifact_id }}">Cancel</a>
+        <button type="submit" class="editor-save">
+            Save as v{{ next_version }}
+        </button>
+    </div>
+</form>
+{% endblock %}

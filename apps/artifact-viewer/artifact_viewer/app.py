@@ -6,6 +6,8 @@ Mount layout::
     GET /search?q=...                    → search results
     GET /artifacts/{uuid}                → rendered artifact
     GET /artifacts/{uuid}/download       → download raw body as a file
+    GET /artifacts/{uuid}/edit           → full-screen edit form (creates a new version on POST)
+    POST /artifacts/{uuid}/edit          → submit new content; redirects to the new version
     GET /artifacts/{uuid}/attachments/{filename} → stream attachment
     GET /artifacts/by-slug/{slug}        → latest version by slug
     GET /artifacts/by-slug/{slug}/v/{N}  → pinned version
@@ -28,7 +30,7 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
@@ -315,6 +317,152 @@ async def download(request: Request) -> Response:
     )
 
 
+async def edit_artifact_get(request: Request) -> Response:
+    """Show a full-screen edit form pre-filled with the raw artifact body.
+
+    Saves are always "fork the version chain at the top": even when the
+    user is editing v3 of a v1..v4 slug, submitting creates v5 (max + 1).
+    The template surfaces this prominently so nobody mistakes the edit
+    for an in-place mutation. We refuse to render the form for artifacts
+    the caller can't edit (no slug, or MEMORY scope/subject they don't
+    own) so a stray ``/edit`` URL in the wild can't bypass the gating.
+    """
+    artifact_id = request.path_params["artifact_id"]
+    user = _current_user(request)
+    try:
+        meta = await ahs_client.get_artifact_meta(artifact_id)
+        content_bytes, _content_type = await ahs_client.get_artifact_content(artifact_id)
+    except AHSError as exc:
+        return _error_page(request, exc)
+
+    if not _can_edit(meta, user):
+        return templates.TemplateResponse(
+            request,
+            "error.html",
+            {
+                "user": user,
+                "reason": "not_editable",
+                "email": user.get("email", ""),
+            },
+            status_code=403,
+        )
+
+    raw_text = content_bytes.decode("utf-8", errors="replace")
+    next_version = await _resolve_next_version(meta, user)
+    return templates.TemplateResponse(
+        request,
+        "edit.html",
+        {
+            "user": user,
+            "meta": meta,
+            "raw_text": raw_text,
+            "next_version": next_version,
+        },
+    )
+
+
+async def edit_artifact_post(request: Request) -> Response:
+    """Persist edits as a brand-new artifact version.
+
+    Calls AHS ``POST /ahs/artifacts`` with ``create_new_slug=False`` —
+    AHS computes ``next_version = max(version) + 1`` server-side and
+    inserts the row, so two simultaneous edits can't collide on the same
+    integer (the unique key on ``(slug, version)`` would reject the
+    second). On success we redirect to the new version's canonical URL
+    so a refresh-after-save behaves predictably.
+    """
+    artifact_id = request.path_params["artifact_id"]
+    user = _current_user(request)
+    try:
+        meta = await ahs_client.get_artifact_meta(artifact_id)
+    except AHSError as exc:
+        return _error_page(request, exc)
+
+    if not _can_edit(meta, user):
+        return templates.TemplateResponse(
+            request,
+            "error.html",
+            {
+                "user": user,
+                "reason": "not_editable",
+                "email": user.get("email", ""),
+            },
+            status_code=403,
+        )
+
+    form = await request.form()
+    raw_text_value = form.get("content")
+    new_text = raw_text_value if isinstance(raw_text_value, str) else ""
+
+    artifact_type = (meta.get("type") or "TEXT").upper()
+    is_memory = artifact_type == "MEMORY"
+    try:
+        created = await ahs_client.create_new_version(
+            artifact_type=artifact_type,
+            title=str(meta.get("title") or ""),
+            description=meta.get("description"),
+            named_slug=str(meta["named_slug"]),
+            content_type=str(meta.get("content_type") or "text/markdown"),
+            content=None if is_memory else new_text,
+            inline_content=new_text if is_memory else None,
+            memory_scope=meta.get("memory_scope") if is_memory else None,
+            memory_scope_subject=meta.get("memory_scope_subject") if is_memory else None,
+            creator_user_id=user.get("user_id") or None,
+        )
+    except AHSError as exc:
+        return _error_page(request, exc)
+
+    # Redirect to the new version's stable, slug-pinned URL — the response
+    # body's ``slug_url`` from AHS lives on the AHS side; we build the
+    # viewer-side equivalent so the user lands inside the viewer.
+    new_slug = created.get("named_slug") or meta.get("named_slug")
+    new_version = created.get("version")
+    if new_slug and new_version is not None:
+        return RedirectResponse(f"/artifacts/by-slug/{new_slug}/v/{new_version}", status_code=303)
+    # Fallback: redirect to the new artifact id directly. Should be unreachable
+    # for slugged artifacts (which is the only kind we allow to edit) but
+    # keeps the response well-formed if AHS ever omits the version field.
+    new_id = created.get("artifact_id") or artifact_id
+    return RedirectResponse(f"/artifacts/{new_id}", status_code=303)
+
+
+async def _resolve_next_version(meta: dict[str, Any], user: dict[str, str]) -> int:
+    """Best-effort prediction of the next-version number for the edit banner.
+
+    Looks at all visible versions of the slug and returns ``max + 1``.
+    Falls back to ``current + 1`` if the version-list call fails — the
+    fallback is approximate (could undercount when other versions exist
+    that the lookup didn't surface), but the actual version assignment
+    happens server-side at submit time, so a stale banner just means
+    the user sees v5 in the form and lands on v6 after saving.
+    """
+    slug = meta.get("named_slug")
+    current_version = int(meta.get("version") or 0)
+    if not slug:
+        return current_version + 1
+    artifact_type = (meta.get("type") or "TEXT").upper()
+    scope: str | None = None
+    subject: str | None = None
+    type_param: str | None = None
+    if artifact_type == "MEMORY":
+        type_param = "MEMORY"
+        scope = meta.get("memory_scope")
+        subject = meta.get("memory_scope_subject")
+    try:
+        data = await ahs_client.list_versions(
+            str(slug),
+            artifact_type=type_param,
+            scope=scope,
+            subject=subject,
+            user_id=user.get("user_id") or None,
+        )
+    except AHSError:
+        return current_version + 1
+    versions = data.get("versions") or []
+    max_version = max((int(v.get("version") or 0) for v in versions), default=current_version)
+    return max_version + 1
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -359,8 +507,43 @@ async def _render_artifact(request: Request, artifact_id: str, *, meta: dict[str
             "body_html": body_html,
             "display_mode": display_mode,
             "attachments_html": attach_html,
+            "can_edit": _can_edit(meta, _current_user(request)),
         },
     )
+
+
+def _can_edit(meta: dict[str, Any], user: dict[str, str]) -> bool:
+    """Decide whether the signed-in user is allowed to start an edit.
+
+    Editing always means "create a new version", which only makes sense
+    for slugged artifacts — un-slugged TEXT rows have no version chain
+    to extend. For MEMORY rows we additionally enforce the same authz
+    rules AHS applies on write (``caller_can_write_memory``):
+
+    * ``topic`` — anyone signed in can edit (open by design).
+    * ``user`` — only the user matching ``memory_scope_subject``.
+    * ``agent`` — never editable from the viewer; agents write their
+      own memories and a human shouldn't impersonate them. Hide the
+      button rather than show one that always 403s.
+
+    Archived rows are still editable: editing produces a fresh active
+    version, which is a perfectly reasonable way to "un-archive" by
+    rewriting.
+    """
+    if not meta.get("named_slug"):
+        return False
+    artifact_type = (meta.get("type") or "").upper()
+    if artifact_type == "MEMORY":
+        scope = meta.get("memory_scope")
+        subject = meta.get("memory_scope_subject")
+        if scope == "topic":
+            return True
+        if scope == "user":
+            return bool(user.get("user_id")) and subject == user.get("user_id")
+        # Includes scope == "agent" and any unexpected value.
+        return False
+    # Non-MEMORY (TEXT, etc.): a slug is enough.
+    return True
 
 
 def _int_query(request: Request, key: str, default: int, cap: int | None = None) -> int:
@@ -402,6 +585,18 @@ def build_app() -> Starlette:
         Route("/search", search_page, name="search"),
         Route("/artifacts/{artifact_id}", artifact_by_id, name="artifact"),
         Route("/artifacts/{artifact_id}/download", download, name="artifact_download"),
+        Route(
+            "/artifacts/{artifact_id}/edit",
+            edit_artifact_get,
+            methods=["GET"],
+            name="artifact_edit",
+        ),
+        Route(
+            "/artifacts/{artifact_id}/edit",
+            edit_artifact_post,
+            methods=["POST"],
+            name="artifact_edit_submit",
+        ),
         Route(
             "/artifacts/{artifact_id}/attachments/{filename:path}",
             attachment,

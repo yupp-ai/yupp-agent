@@ -3,6 +3,17 @@
 {% block content %}
 <h1>Versions of <a href="/artifacts/by-slug/{{ slug }}">{{ slug }}</a></h1>
 {% if versions %}
+<p class="muted small">
+    Editing any version creates a new version on top of the slug — e.g. with
+    v1..v{{ versions[-1].version }} active, editing v1 (or any other row) saves a
+    fresh v{{ (versions[-1].version or 0) + 1 }}. The version you edited stays
+    untouched in this list.
+</p>
+{#- "Edit" links jump straight into the edit form for that version's
+    artifact_id. The edit handler enforces ownership for MEMORY rows
+    (per-user / per-agent), so a stray click just lands on a 403 page —
+    we keep the link visible to all rows here so the table layout stays
+    uniform. -#}
 <table class="artifacts">
     <thead>
         <tr>
@@ -10,6 +21,7 @@
             <th>Title</th>
             <th>Created (UTC)</th>
             <th>Status</th>
+            <th></th>
             <th></th>
         </tr>
     </thead>
@@ -25,6 +37,9 @@
                 {% else %}
                     <span class="tag active">active</span>
                 {% endif %}
+            </td>
+            <td class="small">
+                <a href="/artifacts/{{ v.artifact_id }}/edit">Edit →</a>
             </td>
             <td class="mono small">{{ v.artifact_id }}</td>
         </tr>
