@@ -482,6 +482,18 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
 .editor-banner-text { font-size: 14px; }
 .editor-banner-help { font-size: 12px; }
 
+/* Inline error shown when the POST handler bounces an invalid submit
+   (e.g. empty body) and re-renders the form. Uses the danger accent so
+   it reads as a stop signal, not chrome. */
+.editor-error {
+    padding: 8px 12px;
+    border: 1px solid var(--danger);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
+    color: var(--danger);
+    font-size: 13px;
+}
+
 .editor-textarea {
     width: 100%;
     /* 70vh keeps the textarea dominating the viewport but leaves room

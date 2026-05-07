@@ -6,7 +6,9 @@
     versioning behavior unmissable. Saving always creates a brand-new
     version at next_version (= max + 1 across the slug's existing
     versions); even when the user is editing v3 of a v1..v4 slug, the
-    save lands at v5. -#}
+    save lands at v5. ``next_version`` may be ``None`` when the version
+    list couldn't be fetched — we fall back to a generic message rather
+    than show a misleading number. -#}
 <form class="editor" method="post" action="/artifacts/{{ meta.artifact_id }}/edit">
     <div class="editor-banner">
         <div class="editor-banner-text">
@@ -16,7 +18,12 @@
             {% else %}
                 <span class="mono">{{ meta.artifact_id }}</span>
             {% endif %}
-            — saving will create a <strong>new version v{{ next_version }}</strong>.
+            —
+            {% if next_version is not none %}
+                saving will create a <strong>new version v{{ next_version }}</strong>.
+            {% else %}
+                saving will create a <strong>new version</strong> (number assigned by the server).
+            {% endif %}
         </div>
         <div class="editor-banner-help muted small">
             You can edit any version (v1, v2, …); the save always becomes the
@@ -25,18 +32,27 @@
         </div>
     </div>
 
+    {% if submit_error %}
+        <div class="editor-error" role="alert">{{ submit_error }}</div>
+    {% endif %}
+
     <textarea
         class="editor-textarea"
         name="content"
         spellcheck="false"
         autocomplete="off"
         autofocus
+        required
     >{{ raw_text }}</textarea>
 
     <div class="editor-actions">
         <a class="editor-cancel" href="/artifacts/{{ meta.artifact_id }}">Cancel</a>
         <button type="submit" class="editor-save">
-            Save as v{{ next_version }}
+            {% if next_version is not none %}
+                Save as v{{ next_version }}
+            {% else %}
+                Save as new version
+            {% endif %}
         </button>
     </div>
 </form>

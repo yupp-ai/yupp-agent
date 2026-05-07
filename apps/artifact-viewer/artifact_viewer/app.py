@@ -26,6 +26,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+import httpx
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -270,13 +271,22 @@ async def versions_page(request: Request) -> Response:
         data = await ahs_client.list_versions(slug)
     except AHSError as exc:
         return _error_page(request, exc)
+    versions = data.get("versions", []) or []
+    user = _current_user(request)
+    # Editability is a property of the slug (type, content_type, scope/subject
+    # are all uniform across versions of the same slug), not of any individual
+    # version, so we compute the gate once and either render the Edit column
+    # for every row or omit it entirely. That keeps non-editable slugs (e.g.
+    # agent-scope MEMORY) from showing per-row Edit links that always 403.
+    can_edit_slug = bool(versions) and _can_edit(versions[0], user)
     return templates.TemplateResponse(
         request,
         "versions.html",
         {
-            "user": _current_user(request),
+            "user": user,
             "slug": slug,
-            "versions": data.get("versions", []),
+            "versions": versions,
+            "can_edit_slug": can_edit_slug,
         },
     )
 
@@ -394,8 +404,50 @@ async def edit_artifact_post(request: Request) -> Response:
     raw_text_value = form.get("content")
     new_text = raw_text_value if isinstance(raw_text_value, str) else ""
 
+    # Empty / whitespace-only submissions: refuse to create a blank
+    # successor. AHS only rejects ``None`` (not empty strings), so without
+    # this guard a user who clears the textarea and clicks Save would
+    # silently wipe the latest visible version. Re-render the form with
+    # the raw text the user typed so they don't lose what they were
+    # working on (which, in this case, is exactly the empty string).
+    if not new_text.strip():
+        next_version = await _resolve_next_version(meta, user)
+        return templates.TemplateResponse(
+            request,
+            "edit.html",
+            {
+                "user": user,
+                "meta": meta,
+                "raw_text": new_text,
+                "next_version": next_version,
+                "submit_error": (
+                    "Refusing to save an empty body. Type something, or click Cancel "
+                    "to leave the existing version untouched."
+                ),
+            },
+            status_code=400,
+        )
+
     artifact_type = (meta.get("type") or "TEXT").upper()
     is_memory = artifact_type == "MEMORY"
+
+    # Provenance: record which version this edit was made from and who
+    # the original creator was. Carrying the original creator forward
+    # (chained via metadata.original_creator_user_id when the source row
+    # was itself an edit) keeps an authorship trail in the artifact
+    # registry even though the new row's ``creator_user_id`` is the
+    # editor — without this, the only audit signal would be the version
+    # chain itself.
+    source_metadata = meta.get("metadata") or {}
+    original_creator = source_metadata.get("original_creator_user_id") or meta.get("creator_user_id")
+    edit_metadata: dict[str, Any] = {
+        "edited_from_artifact_id": str(meta.get("artifact_id") or artifact_id),
+        "edited_from_version": meta.get("version"),
+        "edited_via": "artifact-viewer",
+    }
+    if original_creator:
+        edit_metadata["original_creator_user_id"] = original_creator
+
     try:
         created = await ahs_client.create_new_version(
             artifact_type=artifact_type,
@@ -408,38 +460,51 @@ async def edit_artifact_post(request: Request) -> Response:
             memory_scope=meta.get("memory_scope") if is_memory else None,
             memory_scope_subject=meta.get("memory_scope_subject") if is_memory else None,
             creator_user_id=user.get("user_id") or None,
+            extra_metadata=edit_metadata,
         )
     except AHSError as exc:
         return _error_page(request, exc)
 
-    # Redirect to the new version's stable, slug-pinned URL — the response
-    # body's ``slug_url`` from AHS lives on the AHS side; we build the
-    # viewer-side equivalent so the user lands inside the viewer.
+    # Redirect to the new version. For non-MEMORY artifacts we use the
+    # slug-pinned URL — that's the human-friendly link the version page
+    # also points to. For MEMORY we fall back to the by-id URL: the
+    # slug route's ``read_artifact_by_slug_route`` handler defaults the
+    # ``type`` query param to TEXT and the viewer's ``ahs_client`` doesn't
+    # forward ``type=MEMORY`` / ``scope`` / ``subject`` / ``X-User-ID``,
+    # so a slug-redirect would 404 on a successful MEMORY save and look
+    # like the edit failed. The by-id route doesn't share that pitfall.
+    new_id = created.get("artifact_id") or artifact_id
+    if is_memory:
+        return RedirectResponse(f"/artifacts/{new_id}", status_code=303)
     new_slug = created.get("named_slug") or meta.get("named_slug")
     new_version = created.get("version")
     if new_slug and new_version is not None:
         return RedirectResponse(f"/artifacts/by-slug/{new_slug}/v/{new_version}", status_code=303)
-    # Fallback: redirect to the new artifact id directly. Should be unreachable
-    # for slugged artifacts (which is the only kind we allow to edit) but
-    # keeps the response well-formed if AHS ever omits the version field.
-    new_id = created.get("artifact_id") or artifact_id
+    # Fallback: by-id. Should be unreachable for slugged artifacts (which
+    # is the only kind we allow to edit) but keeps the response well-formed
+    # if AHS ever omits the version field.
     return RedirectResponse(f"/artifacts/{new_id}", status_code=303)
 
 
-async def _resolve_next_version(meta: dict[str, Any], user: dict[str, str]) -> int:
+async def _resolve_next_version(meta: dict[str, Any], user: dict[str, str]) -> int | None:
     """Best-effort prediction of the next-version number for the edit banner.
 
-    Looks at all visible versions of the slug and returns ``max + 1``.
-    Falls back to ``current + 1`` if the version-list call fails — the
-    fallback is approximate (could undercount when other versions exist
-    that the lookup didn't surface), but the actual version assignment
-    happens server-side at submit time, so a stale banner just means
-    the user sees v5 in the form and lands on v6 after saving.
+    Looks at all visible versions of the slug and returns ``max + 1`` so
+    the form can render a concrete "Save as v{N}" CTA. Returns ``None``
+    when we *can't* compute a reliable answer (no slug, AHS unreachable,
+    or transport-level failure). The template falls back to a generic
+    "next version (server-assigned)" message in that case rather than a
+    misleading ``current + 1`` — which can be off by many on a slug
+    where the user is editing an old version.
+
+    The actual version assignment always happens server-side at submit
+    time (``create_new_slug=False`` lets AHS resolve ``max + 1``), so a
+    stale or absent banner is purely cosmetic and the redirect after
+    save still lands on the correct, real version.
     """
     slug = meta.get("named_slug")
-    current_version = int(meta.get("version") or 0)
     if not slug:
-        return current_version + 1
+        return None
     artifact_type = (meta.get("type") or "TEXT").upper()
     scope: str | None = None
     subject: str | None = None
@@ -456,10 +521,18 @@ async def _resolve_next_version(meta: dict[str, Any], user: dict[str, str]) -> i
             subject=subject,
             user_id=user.get("user_id") or None,
         )
-    except AHSError:
-        return current_version + 1
+    except (AHSError, httpx.HTTPError) as exc:
+        # ``AHSError`` covers HTTP-level failures (status >= 400);
+        # ``httpx.HTTPError`` is the umbrella for transport-level issues
+        # (ConnectError, ReadTimeout, RemoteProtocolError, ...). Without
+        # the broader catch, a transient AHS hiccup would 500 the entire
+        # edit GET page even though this is documented as best-effort.
+        _logger().warning("list_versions failed while building edit banner for slug=%r: %s", slug, exc)
+        return None
     versions = data.get("versions") or []
-    max_version = max((int(v.get("version") or 0) for v in versions), default=current_version)
+    if not versions:
+        return None
+    max_version = max(int(v.get("version") or 0) for v in versions)
     return max_version + 1
 
 
@@ -512,23 +585,47 @@ async def _render_artifact(request: Request, artifact_id: str, *, meta: dict[str
     )
 
 
+# Content-types the editor's plain-text textarea can faithfully round-trip.
+# HTML is intentionally excluded — the textarea isn't a structured editor and
+# typing markdown/plain into a slug whose content_type=text/html silently
+# re-stamps the content as HTML, which renders as broken layout in the
+# sandboxed iframe. Restricting at the gate is a cleaner UX than offering an
+# Edit button that mangles your edit on save.
+_EDITABLE_CONTENT_TYPES: frozenset[str] = frozenset({"text/markdown", "text/plain"})
+
+
 def _can_edit(meta: dict[str, Any], user: dict[str, str]) -> bool:
     """Decide whether the signed-in user is allowed to start an edit.
 
     Editing always means "create a new version", which only makes sense
-    for slugged artifacts — un-slugged TEXT rows have no version chain
-    to extend. For MEMORY rows we additionally enforce the same authz
-    rules AHS applies on write (``caller_can_write_memory``):
+    for slugged artifacts of an editable content_type. We restrict by:
 
-    * ``topic`` — anyone signed in can edit (open by design).
-    * ``user`` — only the user matching ``memory_scope_subject``.
-    * ``agent`` — never editable from the viewer; agents write their
-      own memories and a human shouldn't impersonate them. Hide the
-      button rather than show one that always 403s.
+    * **Type** — TEXT and MEMORY only. CODE_REVIEW and OTHER are
+      pointer-only artifacts (no body) so the editor would have nothing
+      to load; un-slugged anything has no version chain to extend.
+    * **Content-type** (TEXT) — only ``text/markdown`` and
+      ``text/plain``. Editing an ``text/html`` artifact in a plain
+      textarea would re-stamp the content as HTML and render through
+      the sandboxed iframe, breaking markdown formatting.
+    * **MEMORY scope** — same rules AHS applies on write
+      (``caller_can_write_memory``):
+
+      - ``topic`` — anyone signed in can edit (open by design).
+      - ``user`` — only the user matching ``memory_scope_subject``.
+      - ``agent`` — never editable from the viewer; agents write
+        their own memories and a human shouldn't impersonate them.
+        Hide the button rather than show one that always 403s.
 
     Archived rows are still editable: editing produces a fresh active
     version, which is a perfectly reasonable way to "un-archive" by
     rewriting.
+
+    The TEXT branch deliberately keeps the "any signed-in user can
+    edit" policy — viewer membership is already gated to the AHS
+    users table, so this is a Google-Docs-style team workspace, not a
+    public surface. We persist the *original* creator on the new
+    version's metadata (see ``edit_artifact_post``) so authorship
+    history stays auditable.
     """
     if not meta.get("named_slug"):
         return False
@@ -542,8 +639,11 @@ def _can_edit(meta: dict[str, Any], user: dict[str, str]) -> bool:
             return bool(user.get("user_id")) and subject == user.get("user_id")
         # Includes scope == "agent" and any unexpected value.
         return False
-    # Non-MEMORY (TEXT, etc.): a slug is enough.
-    return True
+    if artifact_type != "TEXT":
+        # CODE_REVIEW / OTHER / any future pointer-only types: no body to edit.
+        return False
+    content_type = (meta.get("content_type") or "").split(";", 1)[0].strip().lower()
+    return content_type in _EDITABLE_CONTENT_TYPES
 
 
 def _int_query(request: Request, key: str, default: int, cap: int | None = None) -> int:

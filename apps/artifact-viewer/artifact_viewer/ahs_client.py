@@ -185,6 +185,7 @@ async def create_new_version(
     memory_scope: str | None = None,
     memory_scope_subject: str | None = None,
     creator_user_id: str | None = None,
+    extra_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Create a new version of an existing slugged artifact.
 
@@ -219,6 +220,8 @@ async def create_new_version(
         body["memory_scope"] = memory_scope
     if memory_scope_subject is not None:
         body["memory_scope_subject"] = memory_scope_subject
+    if extra_metadata is not None:
+        body["metadata"] = extra_metadata
 
     async with _client(user_id=creator_user_id) as http:
         resp = await http.post("/ahs/artifacts", json=body)
