@@ -16,15 +16,19 @@ from ypl.slack_agent_gateway.buffer import discard_buffer
 from ypl.slack_agent_gateway.callbacks_rendering import render_reply_blocks
 from ypl.slack_agent_gateway.constants import (
     STATUS_RATELIMIT_SECONDS,
+    TOOL_CLUSTER_IDLE_RESET_SECONDS,
     get_agent_config_by_app_id,
     get_agent_config_by_name,
 )
 from ypl.slack_agent_gateway.redis_client import (
     append_tool_entry,
+    clear_cluster_active,
     clear_tool_entries,
     get_and_clear_tool_cluster_pending,
     get_session,
     get_tool_entries,
+    is_cluster_active,
+    mark_cluster_active,
     peek_tool_cluster_pending,
     release_feedback_claim,
     remove_from_status_flush_schedule,
@@ -184,11 +188,23 @@ async def add_reply(request: AddReplyRequest) -> AddReplyResponse:
                 error=str(e),
             )
 
-        # NOTE: tool-cluster state intentionally persists across text replies.
-        # Within one turn we want a single tool-cluster block that updates in
-        # place ("scrolling" effect) regardless of how many text replies the
-        # agent emits — see ``reset_turn_state`` which is called by AHS at
-        # turn boundaries to start the next turn with a fresh cluster.
+        # Freeze the tool cluster on a real (non-thinking) text reply.  The
+        # cluster's Slack message lives at its original chronological position;
+        # if we kept editing it after a text reply landed below it, new tool
+        # calls would visually appear *before* the text — out of order.  So
+        # once a real reply is posted, the next tool event must start a fresh
+        # cluster block below it.  Thinking-typed replies are rendered as
+        # subdued context blocks and are not "real" replies in this sense —
+        # they don't break the cluster.
+        if request.reply_type != "thinking":
+            try:
+                await _freeze_cluster(request.session_id)
+            except Exception as e:
+                logger.warning(
+                    "Failed to freeze tool cluster after real reply (best-effort)",
+                    session_id=request.session_id,
+                    error=str(e),
+                )
 
         # Store reply-to-session mapping for reaction-based feedback
         try:
@@ -706,29 +722,70 @@ def _render_tool_cluster(entries: list[ToolUseEntry]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Turn boundary
+# Cluster freeze / turn boundary
 # ---------------------------------------------------------------------------
 
 
+async def _freeze_cluster(session_id: str) -> None:
+    """Stop editing the current tool cluster and prepare a fresh one.
+
+    Called from three places:
+      - ``add_reply`` after a real (non-thinking) text reply lands, because
+        the next tool burst is chronologically *after* that text and must
+        post a new Slack message below it (we cannot keep editing the
+        previous cluster's message — it lives at its original position).
+      - ``handle_tool_event`` when the previous cluster has been idle for
+        longer than ``TOOL_CLUSTER_IDLE_RESET_SECONDS`` (no tool activity
+        for the whole window) — long-enough quiet means the next burst is
+        a "new" thing the user should see distinctly.
+      - ``reset_turn_state`` defers to this helper only as a side-effect of
+        the turn boundary cleanup; today reset_turn_state itself does *not*
+        freeze (see its docstring) — the gate is a real text reply or idle.
+
+    What it does:
+      - Drop scheduled flushes and the pending-cluster signal.
+      - Clear the tool entries list (next cluster starts empty).
+      - Drop the cluster-active TTL key.
+      - Null out ``status_message_ts`` so the next tool event posts a fresh
+        Slack message instead of editing the previous (now-frozen) one.
+
+    Idempotent — calling on a session with nothing pending is a no-op.
+
+    Args:
+        session_id: The session ID.
+    """
+    await remove_from_status_flush_schedule(session_id)
+    await get_and_clear_tool_cluster_pending(session_id)
+    await clear_tool_entries(session_id)
+    await clear_cluster_active(session_id)
+    # Re-fetch a fresh session before mutating to avoid clobbering concurrent
+    # edits (e.g. flush_status_update racing with a freeze).
+    fresh_session = await get_session(session_id)
+    if fresh_session and fresh_session.status_message_ts:
+        fresh_session.status_message_ts = None
+        await save_session(fresh_session)
+
+
 async def reset_turn_state(session_id: str) -> bool:
-    """Drop in-turn buffered/cluster state at a turn boundary.
+    """Drop in-turn buffered text at a turn boundary.
 
     Called by AHS at the end of each turn (after the runner emits its terminal
-    ``result`` event) so the next turn starts with a fresh tool cluster and
-    no carry-over text buffer.
+    ``result`` event).  Historically this also froze the tool cluster, but we
+    found that fragmented the Slack thread into one tiny cluster per Claude
+    turn whenever the agent emitted brief text between bursts.  Now the
+    cluster is frozen on different signals (see ``_freeze_cluster``):
 
-    Within a turn, the same ``status_message_ts`` is reused across tool events
-    and text replies — that gives the user one tool-cluster block per turn
-    that updates in place.  At the turn boundary we want to leave the previous
-    cluster *frozen* in Slack (it's not deleted — it just stops receiving
-    updates) and ensure any subsequent tool call starts a fresh message.
+      - When a real (non-thinking) text reply is posted between bursts.
+      - When the cluster has been idle for ``TOOL_CLUSTER_IDLE_RESET_SECONDS``
+        (default 3 minutes) — i.e. no tool events for that whole window.
 
-    Concretely we:
-    - Clear the tool entries list (so the next cluster doesn't inherit them).
-    - Null out ``status_message_ts`` (so the next ``handle_tool_event`` posts
-      a brand-new message instead of editing the previous turn's frozen one).
-    - Drop the pending-cluster signal and any scheduled flushes.
-    - Discard any in-flight text buffer (no aggregation across turns).
+    Crucially, ``reset_turn_state`` *does not* freeze the cluster anymore.
+    Two consecutive Claude turns that both emit only tool calls (no text)
+    now scroll into the same Slack message, which matches what users
+    actually want for long sweep / review / babysit-type runs.
+
+    What it still does:
+      - Discard any in-flight text buffer (text never aggregates across turns).
 
     Idempotent — calling on a session with nothing to clean up is a no-op.
 
@@ -744,16 +801,7 @@ async def reset_turn_state(session_id: str) -> bool:
         return False
 
     try:
-        await remove_from_status_flush_schedule(session_id)
-        await get_and_clear_tool_cluster_pending(session_id)
-        await clear_tool_entries(session_id)
-        if session.status_message_ts:
-            # Re-fetch a fresh session to avoid clobbering concurrent edits.
-            fresh_session = await get_session(session_id)
-            if fresh_session and fresh_session.status_message_ts:
-                fresh_session.status_message_ts = None
-                await save_session(fresh_session)
-        # Drop any pending text buffer — turn boundary means no carry-over.
+        # Text buffer — turn boundary means no carry-over of partial text.
         await discard_buffer(session_id)
     except Exception as exc:
         logger.warning(
@@ -763,7 +811,7 @@ async def reset_turn_state(session_id: str) -> bool:
         )
         return True  # Best-effort; don't gate AHS on this.
 
-    logger.debug("Reset turn state", session_id=session_id)
+    logger.debug("Reset turn state (text buffer only; cluster preserved)", session_id=session_id)
     return True
 
 
@@ -803,6 +851,24 @@ async def handle_tool_event(request: SendToolEventRequest) -> SendToolEventRespo
         )
         return SendToolEventResponse(success=True, message_ts=session.status_message_ts)
 
+    # Idle-window check.  If the previous cluster has gone stale (no tool
+    # events for TOOL_CLUSTER_IDLE_RESET_SECONDS), freeze it before we touch
+    # the entry list, so this event lands in a fresh cluster instead of
+    # resurrecting the old one.  We only need to freeze when there *is* a
+    # previous cluster (status_message_ts set); otherwise there's nothing
+    # stale to worry about.
+    if session.status_message_ts and not await is_cluster_active(request.session_id):
+        logger.debug(
+            "Tool cluster idle past TOOL_CLUSTER_IDLE_RESET_SECONDS — freezing",
+            session_id=request.session_id,
+            previous_status_message_ts=session.status_message_ts,
+        )
+        await _freeze_cluster(request.session_id)
+        # Re-fetch to pick up the cleared status_message_ts, otherwise the
+        # downstream flush would use the stale value below.
+        session = await get_session(request.session_id) or session
+        session.status_message_ts = None
+
     if request.kind == ToolEventKind.START:
         entry = ToolUseEntry(
             tool_use_id=request.tool_use_id,
@@ -819,6 +885,12 @@ async def handle_tool_event(request: SendToolEventRequest) -> SendToolEventRespo
             request.error_msg,
             request.result_content,
         )
+
+    # Mark the cluster as still-fresh so the next event within the idle
+    # window keeps editing the same Slack message instead of starting a new
+    # cluster.  The TTL itself is what enforces the idle reset — once it
+    # expires, ``is_cluster_active`` flips to False above.
+    await mark_cluster_active(request.session_id, TOOL_CLUSTER_IDLE_RESET_SECONDS)
 
     # Signal that tool entries were updated so flush_status_update renders the cluster.
     await set_tool_cluster_pending(request.session_id)

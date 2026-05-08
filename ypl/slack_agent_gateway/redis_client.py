@@ -16,6 +16,7 @@ from ypl.slack_agent_gateway.constants import (
     QUEUE_TTL_SECONDS,
     REDIS_KEY_PREFIX_BUFFER,
     REDIS_KEY_PREFIX_BUFFER_TYPE,
+    REDIS_KEY_PREFIX_CLUSTER_ACTIVE,
     REDIS_KEY_PREFIX_EVENT,
     REDIS_KEY_PREFIX_FEEDBACK_REQUESTED,
     REDIS_KEY_PREFIX_FLUSH_SCHEDULE,
@@ -705,6 +706,49 @@ async def clear_tool_entries(session_id: str) -> None:
     """
     redis = await get_redis_client()
     key = f"{REDIS_KEY_PREFIX_TOOL_ENTRIES}:{session_id}"
+    await redis.delete(key)
+
+
+# ---------------------------------------------------------------------------
+# Cluster idle / freshness — presence-only TTL key.
+# ---------------------------------------------------------------------------
+#
+# The cluster-active key is refreshed on every tool event with a TTL of
+# TOOL_CLUSTER_IDLE_RESET_SECONDS.  Its presence means "the cluster is still
+# fresh — keep editing the existing status_message_ts".  Its absence means
+# "no tool events for a while; freeze the previous cluster and post a fresh
+# one for the next event".
+#
+# We use TTL semantics rather than storing a timestamp because the only thing
+# we ever need to ask is "fresh or stale?" — Redis already does that for free.
+
+
+async def mark_cluster_active(session_id: str, ttl_seconds: int) -> None:
+    """Mark the tool cluster as still active.
+
+    Sets a presence-only key (value irrelevant) that auto-expires after
+    ``ttl_seconds`` of inactivity.  Called on every tool event.
+
+    Args:
+        session_id: The session ID
+        ttl_seconds: TTL on the key — typically TOOL_CLUSTER_IDLE_RESET_SECONDS.
+    """
+    redis = await get_redis_client()
+    key = f"{REDIS_KEY_PREFIX_CLUSTER_ACTIVE}:{session_id}"
+    await redis.set(key, "1", ex=ttl_seconds)
+
+
+async def is_cluster_active(session_id: str) -> bool:
+    """Return True iff the cluster-active key exists (cluster is still fresh)."""
+    redis = await get_redis_client()
+    key = f"{REDIS_KEY_PREFIX_CLUSTER_ACTIVE}:{session_id}"
+    return bool(await redis.exists(key))
+
+
+async def clear_cluster_active(session_id: str) -> None:
+    """Drop the cluster-active key — mark the cluster as frozen."""
+    redis = await get_redis_client()
+    key = f"{REDIS_KEY_PREFIX_CLUSTER_ACTIVE}:{session_id}"
     await redis.delete(key)
 
 

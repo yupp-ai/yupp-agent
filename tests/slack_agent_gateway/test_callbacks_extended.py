@@ -124,6 +124,7 @@ class TestAddReplyWithPlaceholder:
             patch(f"{_CALLBACKS_MODULE}.remove_from_status_flush_schedule", new_callable=AsyncMock),
             patch(f"{_CALLBACKS_MODULE}.get_and_clear_tool_cluster_pending", new_callable=AsyncMock),
             patch(f"{_CALLBACKS_MODULE}.clear_tool_entries", new_callable=AsyncMock),
+            patch(f"{_CALLBACKS_MODULE}.clear_cluster_active", new_callable=AsyncMock),
         ):
             req = AddReplyRequest(session_id="C123:1234567890.000:A001", text="Hello!")
             resp = await add_reply(req)
@@ -151,6 +152,7 @@ class TestAddReplyWithPlaceholder:
             patch(f"{_CALLBACKS_MODULE}.remove_from_status_flush_schedule", new_callable=AsyncMock),
             patch(f"{_CALLBACKS_MODULE}.get_and_clear_tool_cluster_pending", new_callable=AsyncMock),
             patch(f"{_CALLBACKS_MODULE}.clear_tool_entries", new_callable=AsyncMock),
+            patch(f"{_CALLBACKS_MODULE}.clear_cluster_active", new_callable=AsyncMock),
         ):
             req = AddReplyRequest(session_id="C123:1234567890.000:A001", text="Hello!")
             resp = await add_reply(req)
@@ -201,6 +203,7 @@ class TestAddReplyWithPlaceholder:
             patch(f"{_CALLBACKS_MODULE}.remove_from_status_flush_schedule", new_callable=AsyncMock),
             patch(f"{_CALLBACKS_MODULE}.get_and_clear_tool_cluster_pending", new_callable=AsyncMock),
             patch(f"{_CALLBACKS_MODULE}.clear_tool_entries", new_callable=AsyncMock),
+            patch(f"{_CALLBACKS_MODULE}.clear_cluster_active", new_callable=AsyncMock),
         ):
             req = AddReplyRequest(session_id="C123:1234567890.000:A001", text="Real reply")
             resp = await add_reply(req)
@@ -770,6 +773,7 @@ class TestHandleToolEvent:
         with (
             patch(f"{_CALLBACKS_MODULE}.get_session", new_callable=AsyncMock, return_value=session),
             patch(f"{_CALLBACKS_MODULE}.append_tool_entry", append_mock),
+            patch(f"{_CALLBACKS_MODULE}.mark_cluster_active", new_callable=AsyncMock),
             patch(f"{_CALLBACKS_MODULE}.set_tool_cluster_pending", new_callable=AsyncMock),
             patch(f"{_CALLBACKS_MODULE}.try_acquire_status_ratelimit", new_callable=AsyncMock, return_value=True),
             patch(
@@ -797,6 +801,7 @@ class TestHandleToolEvent:
         with (
             patch(f"{_CALLBACKS_MODULE}.get_session", new_callable=AsyncMock, return_value=session),
             patch(f"{_CALLBACKS_MODULE}.update_tool_result", update_mock),
+            patch(f"{_CALLBACKS_MODULE}.mark_cluster_active", new_callable=AsyncMock),
             patch(f"{_CALLBACKS_MODULE}.set_tool_cluster_pending", new_callable=AsyncMock),
             patch(f"{_CALLBACKS_MODULE}.try_acquire_status_ratelimit", new_callable=AsyncMock, return_value=True),
             patch(
@@ -818,11 +823,16 @@ class TestHandleToolEvent:
         update_mock.assert_awaited_once()
 
     async def test_rate_limited_defers_flush(self) -> None:
+        # Cluster has an existing status_message_ts AND is still active —
+        # so the idle-window check leaves the cluster alone and we exercise
+        # the rate-limit-deferred path on top of an in-progress cluster.
         session = _make_session(status_message_ts="STATUS_TS")
         schedule_mock = AsyncMock()
 
         with (
             patch(f"{_CALLBACKS_MODULE}.get_session", new_callable=AsyncMock, return_value=session),
+            patch(f"{_CALLBACKS_MODULE}.is_cluster_active", new_callable=AsyncMock, return_value=True),
+            patch(f"{_CALLBACKS_MODULE}.mark_cluster_active", new_callable=AsyncMock),
             patch(f"{_CALLBACKS_MODULE}.append_tool_entry", new_callable=AsyncMock),
             patch(f"{_CALLBACKS_MODULE}.set_tool_cluster_pending", new_callable=AsyncMock),
             patch(f"{_CALLBACKS_MODULE}.try_acquire_status_ratelimit", new_callable=AsyncMock, return_value=False),
@@ -852,3 +862,104 @@ class TestHandleToolEvent:
 
         assert resp.success is False
         assert "not found" in (resp.error or "").lower()
+
+    async def test_idle_cluster_is_frozen_before_appending(self) -> None:
+        """If the previous cluster has gone idle (TTL key absent), freeze it
+        before appending the new event so the new event lands in a fresh
+        cluster rather than resurrecting the stale one.
+        """
+        # First get_session returns the stale-cluster session; _freeze_cluster
+        # then re-fetches via get_session, so we provide a second copy.
+        stale_session = _make_session(status_message_ts="STALE_TS")
+        fresh_for_freeze = _make_session(status_message_ts="STALE_TS")
+
+        clear_entries = AsyncMock()
+        clear_pending = AsyncMock()
+        remove_status_flush = AsyncMock()
+        clear_active = AsyncMock()
+        save = AsyncMock()
+        append_mock = AsyncMock()
+
+        with (
+            patch(
+                f"{_CALLBACKS_MODULE}.get_session",
+                new_callable=AsyncMock,
+                side_effect=[stale_session, fresh_for_freeze, fresh_for_freeze],
+            ),
+            patch(f"{_CALLBACKS_MODULE}.is_cluster_active", new_callable=AsyncMock, return_value=False),
+            patch(f"{_CALLBACKS_MODULE}.clear_tool_entries", clear_entries),
+            patch(f"{_CALLBACKS_MODULE}.get_and_clear_tool_cluster_pending", clear_pending),
+            patch(f"{_CALLBACKS_MODULE}.remove_from_status_flush_schedule", remove_status_flush),
+            patch(f"{_CALLBACKS_MODULE}.clear_cluster_active", clear_active),
+            patch(f"{_CALLBACKS_MODULE}.save_session", save),
+            patch(f"{_CALLBACKS_MODULE}.append_tool_entry", append_mock),
+            patch(f"{_CALLBACKS_MODULE}.mark_cluster_active", new_callable=AsyncMock),
+            patch(f"{_CALLBACKS_MODULE}.set_tool_cluster_pending", new_callable=AsyncMock),
+            patch(f"{_CALLBACKS_MODULE}.try_acquire_status_ratelimit", new_callable=AsyncMock, return_value=True),
+            patch(
+                f"{_CALLBACKS_MODULE}.flush_status_update",
+                new_callable=AsyncMock,
+                return_value=MagicMock(success=True, message_ts="NEW_TS", error=None),
+            ),
+        ):
+            req = SendToolEventRequest(
+                session_id="C123:1234567890.000:A001",
+                kind=ToolEventKind.START,
+                tool_use_id="tu-idle",
+                name="Bash",
+                command="ls",
+            )
+            resp = await handle_tool_event(req)
+
+        assert resp.success is True
+        # Cluster was frozen — all four primitives were exercised.
+        clear_entries.assert_awaited_once()
+        clear_pending.assert_awaited_once()
+        remove_status_flush.assert_awaited_once()
+        clear_active.assert_awaited_once()
+        # The freeze re-fetched the session and saved with status_message_ts cleared.
+        assert fresh_for_freeze.status_message_ts is None
+        save.assert_awaited_once()
+        # The new event still gets appended after the freeze.
+        append_mock.assert_awaited_once()
+
+    async def test_active_cluster_is_not_frozen(self) -> None:
+        """If the cluster is still within its idle window, do NOT freeze —
+        keep editing the existing status_message_ts in place.
+        """
+        session = _make_session(status_message_ts="LIVE_TS")
+        clear_entries = AsyncMock()
+        clear_active = AsyncMock()
+        append_mock = AsyncMock()
+
+        with (
+            patch(f"{_CALLBACKS_MODULE}.get_session", new_callable=AsyncMock, return_value=session),
+            patch(f"{_CALLBACKS_MODULE}.is_cluster_active", new_callable=AsyncMock, return_value=True),
+            patch(f"{_CALLBACKS_MODULE}.clear_tool_entries", clear_entries),
+            patch(f"{_CALLBACKS_MODULE}.clear_cluster_active", clear_active),
+            patch(f"{_CALLBACKS_MODULE}.append_tool_entry", append_mock),
+            patch(f"{_CALLBACKS_MODULE}.mark_cluster_active", new_callable=AsyncMock),
+            patch(f"{_CALLBACKS_MODULE}.set_tool_cluster_pending", new_callable=AsyncMock),
+            patch(f"{_CALLBACKS_MODULE}.try_acquire_status_ratelimit", new_callable=AsyncMock, return_value=True),
+            patch(
+                f"{_CALLBACKS_MODULE}.flush_status_update",
+                new_callable=AsyncMock,
+                return_value=MagicMock(success=True, message_ts="LIVE_TS", error=None),
+            ),
+        ):
+            req = SendToolEventRequest(
+                session_id="C123:1234567890.000:A001",
+                kind=ToolEventKind.START,
+                tool_use_id="tu-live",
+                name="Bash",
+                command="pwd",
+            )
+            resp = await handle_tool_event(req)
+
+        assert resp.success is True
+        # No freeze — none of the freeze primitives ran.
+        clear_entries.assert_not_awaited()
+        clear_active.assert_not_awaited()
+        # status_message_ts still points at the live cluster.
+        assert session.status_message_ts == "LIVE_TS"
+        append_mock.assert_awaited_once()

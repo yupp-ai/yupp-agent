@@ -69,6 +69,10 @@ REDIS_KEY_PREFIX_STATUS_RATELIMIT = "slack_agent_gw:status_ratelimit"
 REDIS_KEY_PREFIX_STATUS_FLUSH_SCHEDULE = "slack_agent_gw:status_flush_schedule"
 REDIS_KEY_PREFIX_TOOL_ENTRIES = "slack_agent_gw:tool_entries"
 REDIS_KEY_PREFIX_TOOL_CLUSTER_PENDING = "slack_agent_gw:tool_cluster_pending"
+# Presence-only key with TTL == TOOL_CLUSTER_IDLE_RESET_SECONDS — refreshed on
+# each tool event.  Used by handle_tool_event to decide whether to reuse the
+# existing status_message_ts or freeze it and post a fresh cluster.
+REDIS_KEY_PREFIX_CLUSTER_ACTIVE = "slack_agent_gw:cluster_active"
 
 # Redis TTL for thread→AHS-session mapping (24 hours, matching session TTL)
 THREAD_SESSION_MAPPING_TTL_SECONDS = 24 * 60 * 60
@@ -89,6 +93,14 @@ SURVEY_RESPONSE_TTL_SECONDS = 60 * 60
 # so users see fewer "blink" cycles in the cluster.  Text replies stay snappy
 # at 1.2s; tool clusters trade a little latency for less visual churn.
 STATUS_RATELIMIT_SECONDS = 5
+
+# Idle window for the live tool-cluster.  If the most recent tool event was
+# more than this many seconds ago, the next event freezes the previous cluster
+# (leaves it intact in Slack but stops editing it) and starts a fresh one.
+# This + "freeze on real text reply" together replace the older "freeze on
+# every turn boundary" behaviour, so consecutive tool bursts within a single
+# user-prompt can scroll into one block instead of fragmenting into many.
+TOOL_CLUSTER_IDLE_RESET_SECONDS = 180
 
 # Universal Slack API rate limit interval (per app × method [× channel]).
 # Slack docs: chat.update is Tier 3 (50+/min ≈ 1.2s), chat.postMessage is ~1/sec per channel.

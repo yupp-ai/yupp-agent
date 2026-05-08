@@ -93,7 +93,9 @@ class AgentSession(BaseModel):
     status_message_ts: str | None = Field(
         None,
         description="Timestamp of the current status context block (tool-use hints). "
-        "Edited in-place for each status update; cleared when a real reply arrives.",
+        "Edited in-place for each status update; cleared when a real (non-thinking) "
+        "text reply is posted between tool bursts, or when the cluster has been idle "
+        "for longer than TOOL_CLUSTER_IDLE_RESET_SECONDS.",
     )
 
     # Presentation preferences (toggled by /verbose and /quiet slash commands)

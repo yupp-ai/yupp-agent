@@ -393,6 +393,8 @@ class TestAddReply:
             patch("ypl.slack_agent_gateway.callbacks.store_reply_mapping", new_callable=AsyncMock),
             patch("ypl.slack_agent_gateway.callbacks.get_tool_entries", return_value=[]),
             patch("ypl.slack_agent_gateway.callbacks.clear_tool_entries", new_callable=AsyncMock),
+            patch("ypl.slack_agent_gateway.callbacks.clear_cluster_active", new_callable=AsyncMock),
+            patch("ypl.slack_agent_gateway.callbacks.save_session", new_callable=AsyncMock),
             patch(
                 "ypl.slack_agent_gateway.callbacks.remove_from_status_flush_schedule",
                 new_callable=AsyncMock,
@@ -428,6 +430,7 @@ class TestAddReply:
             patch("ypl.slack_agent_gateway.callbacks.store_reply_mapping", new_callable=AsyncMock),
             patch("ypl.slack_agent_gateway.callbacks.get_tool_entries", return_value=[]),
             patch("ypl.slack_agent_gateway.callbacks.clear_tool_entries", new_callable=AsyncMock),
+            patch("ypl.slack_agent_gateway.callbacks.clear_cluster_active", new_callable=AsyncMock),
             patch(
                 "ypl.slack_agent_gateway.callbacks.remove_from_status_flush_schedule",
                 new_callable=AsyncMock,
@@ -818,6 +821,7 @@ class TestHandleToolEvent:
         with (
             patch("ypl.slack_agent_gateway.callbacks.get_session", return_value=session),
             patch("ypl.slack_agent_gateway.callbacks.append_tool_entry", new_callable=AsyncMock) as mock_append,
+            patch("ypl.slack_agent_gateway.callbacks.mark_cluster_active", new_callable=AsyncMock),
             patch("ypl.slack_agent_gateway.callbacks.set_tool_cluster_pending", new_callable=AsyncMock),
             patch(
                 "ypl.slack_agent_gateway.callbacks.try_acquire_status_ratelimit",
@@ -847,6 +851,7 @@ class TestHandleToolEvent:
         with (
             patch("ypl.slack_agent_gateway.callbacks.get_session", return_value=session),
             patch("ypl.slack_agent_gateway.callbacks.update_tool_result", new_callable=AsyncMock) as mock_update,
+            patch("ypl.slack_agent_gateway.callbacks.mark_cluster_active", new_callable=AsyncMock),
             patch("ypl.slack_agent_gateway.callbacks.set_tool_cluster_pending", new_callable=AsyncMock),
             patch(
                 "ypl.slack_agent_gateway.callbacks.try_acquire_status_ratelimit",
@@ -919,26 +924,38 @@ class TestHandleToolEvent:
 
 
 # ---------------------------------------------------------------------------
-# add_reply: tool-cluster state must persist across text replies (within turn)
+# add_reply: real text reply freezes the tool cluster
 # ---------------------------------------------------------------------------
 
 
-class TestAddReplyDoesNotResetToolCluster:
-    """Within a single turn the tool cluster persists so subsequent tool calls
-    keep updating the same Slack message ("scrolling" effect).  Reset is the
-    job of ``reset_turn_state`` at turn boundaries — NOT of every text reply.
+class TestAddReplyFreezesToolCluster:
+    """A real (non-thinking) text reply freezes the active tool cluster.
+
+    The cluster's Slack message lives at its original chronological position;
+    once a real text reply is posted below it, continuing to edit that message
+    would produce visually out-of-order content.  So add_reply nukes the
+    cluster state — the next tool event will post a fresh cluster *below* the
+    new text.
+
+    This intentionally inverts the older "one cluster per turn" rule, which
+    fragmented long agent runs that emit brief text between each tool burst
+    into a wall of separate cluster blocks.  See the design discussion that
+    accompanies the change to ``reset_turn_state``.
     """
 
     @pytest.mark.asyncio
-    async def test_real_reply_does_not_clear_tool_entries(self) -> None:
+    async def test_real_reply_freezes_cluster(self) -> None:
         session = _make_session(status_message_ts="55555.000")
         app_config = _make_app_config()
         mock_client = AsyncMock()
         mock_client.chat_postMessage.return_value = _make_slack_response("9999.000")
 
+        # _freeze_cluster re-fetches the session before mutating; return the
+        # same object so the test can observe the mutation.
         clear_entries = AsyncMock()
         clear_pending = AsyncMock()
         remove_status_flush = AsyncMock()
+        clear_active = AsyncMock()
         save = AsyncMock()
 
         with (
@@ -950,18 +967,22 @@ class TestAddReplyDoesNotResetToolCluster:
             patch("ypl.slack_agent_gateway.callbacks.clear_tool_entries", clear_entries),
             patch("ypl.slack_agent_gateway.callbacks.get_and_clear_tool_cluster_pending", clear_pending),
             patch("ypl.slack_agent_gateway.callbacks.remove_from_status_flush_schedule", remove_status_flush),
+            patch("ypl.slack_agent_gateway.callbacks.clear_cluster_active", clear_active),
             patch("ypl.slack_agent_gateway.callbacks.save_session", save),
         ):
             request = AddReplyRequest(session_id=session.session_id, text="Intermediate text", reply_type=None)
             result = await add_reply(request)
 
         assert result.success is True
-        # Critical: cluster state must NOT be reset on a real reply.
-        clear_entries.assert_not_called()
-        clear_pending.assert_not_called()
-        remove_status_flush.assert_not_called()
-        # Session.status_message_ts stays put (no reset to None).
-        assert session.status_message_ts == "55555.000"
+        # The cluster is frozen — entries cleared, pending flag dropped,
+        # scheduled flush removed, and the cluster-active key dropped.
+        clear_entries.assert_awaited_once_with(session.session_id)
+        clear_pending.assert_awaited_once_with(session.session_id)
+        remove_status_flush.assert_awaited_once_with(session.session_id)
+        clear_active.assert_awaited_once_with(session.session_id)
+        # status_message_ts cleared on the re-fetched session, then saved.
+        assert session.status_message_ts is None
+        save.assert_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -970,8 +991,12 @@ class TestAddReplyDoesNotResetToolCluster:
 
 
 class TestResetTurnState:
-    """``reset_turn_state`` is called by AHS at each turn boundary to drop
-    in-turn buffered/cluster state so the next turn starts fresh.
+    """``reset_turn_state`` is called by AHS at each turn boundary.
+
+    Today it only drops the in-turn text buffer.  It does *not* freeze the
+    tool cluster — that decision now belongs to ``add_reply`` (real text
+    reply) and ``handle_tool_event`` (idle-window check).  The change lets
+    consecutive Claude turns of pure tool calls scroll into one cluster.
     """
 
     @pytest.mark.asyncio
@@ -980,11 +1005,12 @@ class TestResetTurnState:
             assert await reset_turn_state("unknown-sess") is False
 
     @pytest.mark.asyncio
-    async def test_clears_cluster_and_buffer_state(self) -> None:
+    async def test_drops_text_buffer_only(self) -> None:
         session = _make_session(status_message_ts="55555.000")
         clear_entries = AsyncMock()
         clear_pending = AsyncMock()
         remove_status_flush = AsyncMock()
+        clear_active = AsyncMock()
         save = AsyncMock()
         discard = AsyncMock(return_value="")
 
@@ -993,20 +1019,23 @@ class TestResetTurnState:
             patch("ypl.slack_agent_gateway.callbacks.clear_tool_entries", clear_entries),
             patch("ypl.slack_agent_gateway.callbacks.get_and_clear_tool_cluster_pending", clear_pending),
             patch("ypl.slack_agent_gateway.callbacks.remove_from_status_flush_schedule", remove_status_flush),
+            patch("ypl.slack_agent_gateway.callbacks.clear_cluster_active", clear_active),
             patch("ypl.slack_agent_gateway.callbacks.save_session", save),
             patch("ypl.slack_agent_gateway.callbacks.discard_buffer", discard),
         ):
             ok = await reset_turn_state(session.session_id)
 
         assert ok is True
-        clear_entries.assert_awaited_once_with(session.session_id)
-        clear_pending.assert_awaited_once_with(session.session_id)
-        remove_status_flush.assert_awaited_once_with(session.session_id)
-        # status_message_ts was reset to None and saved.
-        assert session.status_message_ts is None
-        save.assert_awaited_once()
-        # Buffer dropped — no carry-over text across turns.
+        # Only the text buffer is dropped.  Cluster state is preserved so the
+        # next turn's tool events can scroll into the existing block.
         discard.assert_awaited_once_with(session.session_id)
+        clear_entries.assert_not_awaited()
+        clear_pending.assert_not_awaited()
+        remove_status_flush.assert_not_awaited()
+        clear_active.assert_not_awaited()
+        # Session is not mutated and not saved.
+        assert session.status_message_ts == "55555.000"
+        save.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_idempotent_when_nothing_pending(self) -> None:
@@ -1019,11 +1048,14 @@ class TestResetTurnState:
             patch("ypl.slack_agent_gateway.callbacks.clear_tool_entries", AsyncMock()),
             patch("ypl.slack_agent_gateway.callbacks.get_and_clear_tool_cluster_pending", AsyncMock()),
             patch("ypl.slack_agent_gateway.callbacks.remove_from_status_flush_schedule", AsyncMock()),
+            patch("ypl.slack_agent_gateway.callbacks.clear_cluster_active", AsyncMock()),
             patch("ypl.slack_agent_gateway.callbacks.save_session", save),
             patch("ypl.slack_agent_gateway.callbacks.discard_buffer", discard),
         ):
             ok = await reset_turn_state(session.session_id)
 
         assert ok is True
-        # save_session is skipped when status_message_ts is already None.
+        # save_session is never awaited — reset_turn_state no longer mutates
+        # the session at all (the cluster state, including status_message_ts,
+        # is intentionally preserved across turn boundaries).
         save.assert_not_awaited()

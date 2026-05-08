@@ -17,6 +17,7 @@ from ypl.slack_agent_gateway.constants import (
     MAX_QUEUE_LENGTH,
     REDIS_KEY_PREFIX_BUFFER,
     REDIS_KEY_PREFIX_BUFFER_TYPE,
+    REDIS_KEY_PREFIX_CLUSTER_ACTIVE,
     REDIS_KEY_PREFIX_EVENT,
     REDIS_KEY_PREFIX_FEEDBACK_REQUESTED,
     REDIS_KEY_PREFIX_FLUSH_SCHEDULE,
@@ -591,6 +592,38 @@ class TestToolEntries:
         assert len(eval_args) >= 7  # guard against positional arg changes
         assert eval_args[5] == "1"
         assert eval_args[6] == "Command failed"
+
+
+# ---------------------------------------------------------------------------
+# Cluster-active TTL key (idle window for the live tool cluster)
+# ---------------------------------------------------------------------------
+
+
+class TestClusterActiveKey:
+    async def test_mark_cluster_active_sets_with_ttl(self, patch_get_redis: AsyncMock) -> None:
+        await rc.mark_cluster_active("sess-9", ttl_seconds=180)
+
+        patch_get_redis.set.assert_awaited_once_with(
+            f"{REDIS_KEY_PREFIX_CLUSTER_ACTIVE}:sess-9",
+            "1",
+            ex=180,
+        )
+
+    async def test_is_cluster_active_returns_true_when_key_exists(self, patch_get_redis: AsyncMock) -> None:
+        patch_get_redis.exists.return_value = 1
+
+        assert await rc.is_cluster_active("sess-9") is True
+        patch_get_redis.exists.assert_awaited_once_with(f"{REDIS_KEY_PREFIX_CLUSTER_ACTIVE}:sess-9")
+
+    async def test_is_cluster_active_returns_false_when_absent(self, patch_get_redis: AsyncMock) -> None:
+        patch_get_redis.exists.return_value = 0
+
+        assert await rc.is_cluster_active("sess-9") is False
+
+    async def test_clear_cluster_active_deletes_key(self, patch_get_redis: AsyncMock) -> None:
+        await rc.clear_cluster_active("sess-9")
+
+        patch_get_redis.delete.assert_awaited_once_with(f"{REDIS_KEY_PREFIX_CLUSTER_ACTIVE}:sess-9")
 
 
 # ---------------------------------------------------------------------------
