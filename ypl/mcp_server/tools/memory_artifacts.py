@@ -47,7 +47,7 @@ from ypl.agent_harness_service.memory_store import (
 )
 from ypl.db.agent_harness import AgentArtifactType
 from ypl.mcp_common.auth_context import current_request_context
-from ypl.mcp_server.core import mcp_server
+from ypl.mcp_common.shared_tool import shared_tool
 from ypl.mcp_server.tools.agent_artifacts import _resolve_caller_context
 from ypl.mcp_server.tools.artifact_notifier import notify_artifact_event
 from ypl.structured_logger import get_logger
@@ -95,7 +95,7 @@ def _display_memory_address(scope: str | None, subject: str | None, slug: str | 
 # ---------------------------------------------------------------------------
 
 
-@mcp_server.tool()
+@shared_tool()
 async def save_memory(
     topic: str,
     content: str,
@@ -242,7 +242,7 @@ async def save_memory(
     }
 
 
-@mcp_server.tool()
+@shared_tool()
 async def load_memory(
     topic: str,
     scope: str = "agent",
@@ -324,7 +324,7 @@ async def load_memory(
     }
 
 
-@mcp_server.tool()
+@shared_tool()
 async def search_memory(
     query: str,
     scope: str | None = None,
@@ -401,7 +401,7 @@ async def search_memory(
     return {"success": True, "results": results, "count": len(results)}
 
 
-@mcp_server.tool()
+@shared_tool()
 async def list_memory(
     scope: str | None = None,
     subject: str | None = None,

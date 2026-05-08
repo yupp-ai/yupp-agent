@@ -230,7 +230,13 @@ class TestBuildArgsToolFlags:
         assert tools == ["__none__"]
 
     def test_deny_all_with_mcp_access(self) -> None:
-        """*:deny with MCP and full access appends MCP glob patterns to --allowedTools."""
+        """``*:deny`` with MCP and full access appends harness glob to --allowedTools.
+
+        After phase-2 (PR #300) every shared / external-data tool that
+        used to live on agcouch is reachable via ``mcp__harness__*``, so
+        the agcouch wildcard is gone — full access is described entirely
+        by the harness glob plus the eager-load predeclares.
+        """
         config = _make_config(
             tool_permissions={"*": "deny", "read": "allow"},
             has_mcp=True,
@@ -244,7 +250,14 @@ class TestBuildArgsToolFlags:
         tools = args[idx + 1].split(",")
         assert "Read" in tools
         assert "mcp__harness__*" in tools
-        assert "mcp__agcouch-mcp-server__*" in tools
+        # Regression guard: the dead agcouch wildcard never reappears.
+        assert "mcp__agcouch-mcp-server__*" not in tools
+        # Eager-load fast path: top shared tools are explicitly named so
+        # Claude Code skips the deferred-discovery ToolSearch round-trip.
+        assert "mcp__harness__query_yuppdb" in tools
+        assert "mcp__harness__search_gcp_logs" in tools
+        assert "mcp__harness__add_artifact" in tools
+        assert "mcp__harness__report_security_incident" in tools
 
     def test_deny_all_with_mcp_restricted(self) -> None:
         """*:deny with MCP but restricted access appends only restricted harness tools."""
@@ -262,6 +275,43 @@ class TestBuildArgsToolFlags:
         assert "Read" in tools
         assert "mcp__harness__request_feedback" in tools
         assert "mcp__harness__*" not in tools
+
+    def test_default_allow_restricted_blocks_migrated_shared_tools(self) -> None:
+        """Restricted sessions in default-allow mode cannot reach the migrated shared tools.
+
+        Pre phase-2 these were on the agcouch mount and blocked for
+        restricted sessions via the ``mcp__agcouch-mcp-server__*``
+        wildcard. After PR #300 they live under ``mcp__harness__*``;
+        the deny list enumerates them so the security boundary is
+        preserved.
+        """
+        config = _make_config(
+            tool_permissions={"*": "allow"},  # default-allow mode
+            has_mcp=True,
+        )
+        perms = SessionPermissions.restricted()
+        ctx = _make_context(session_context={"permissions": perms.model_dump(mode="json")})
+        runner = ClaudeCodeRunner(config)
+        with patch("ypl.agent_harness_service.executors.runner.build_system_prompt", return_value=""):
+            args = runner._build_args("test", ctx)
+        idx = args.index("--disallowedTools")
+        denied = args[idx + 1].split(",")
+        # Every shared/external-data tool migrated by PR #300 is denied.
+        for blocked in (
+            "mcp__harness__query_yuppdb",
+            "mcp__harness__query_bigquery_expensive",
+            "mcp__harness__search_gcp_logs",
+            "mcp__harness__get_sentry_issue_details",
+            "mcp__harness__search_twitter",
+            "mcp__harness__read_slack_thread",
+            "mcp__harness__save_memory",
+        ):
+            assert blocked in denied, f"{blocked} should be in restricted deny list"
+        # Regression guard: the dead agcouch wildcard never reappears.
+        assert "mcp__agcouch-mcp-server__*" not in denied
+        # ``report_security_incident`` is intentionally *not* blocked —
+        # SECURITY.md instructs every agent to call it.
+        assert "mcp__harness__report_security_incident" not in denied
 
 
 # ---------------------------------------------------------------------------

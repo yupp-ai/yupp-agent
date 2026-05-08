@@ -1,7 +1,7 @@
 ---
 name: my-sessions
 description: Look up and summarize the current user's recent AHS sessions, grouped by theme, with links to War Room, Lit console, and any artifacts (PRs, artifacts). Use when a user asks "show me my sessions", "what have I been working on", "my recent sessions", or "sessions at a glance".
-allowed-tools: mcp__agcouch-mcp-server__query_agentdb, mcp__agcouch-mcp-server__query_yuppdb, mcp__harness__send_slack_message
+allowed-tools: mcp__harness__query_agentdb, mcp__harness__query_yuppdb, mcp__harness__send_slack_message
 ---
 
 # My Sessions — At a Glance

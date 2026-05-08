@@ -250,6 +250,25 @@ constraint. They are enforced by convention, not tooling.
 | `task_executor.py` | Specific agent names (must be config-driven) |
 | `scheduler.py` | Project structure types |
 
+**Wiring carve-outs in `ypl/mcp_common/`:**
+
+`ypl/mcp_common/` is otherwise pure (Layer-0-equivalent for MCP code), but
+two modules sit at the same architectural level as `ypl/mono_server/server.py`
+and `ypl/agent_harness_service/tools/local_mcp_server.py` — the wiring layer
+where AHS and the agcouch MCP are composed. They are documented here as
+explicit carve-outs:
+
+| Module | What it imports | Why |
+|--------|-----------------|-----|
+| `mcp_common/shared_tool.py` | `agent_harness_service.tools.mcp_instance.mcp` (harness FastMCP) and `mcp_server.core.mcp_server` (agcouch FastMCP) | Implements the dual-registration decorator. Path-based mount is still the auth boundary; this file is just the one place that knows about both registries so individual tool modules don't have to. Adding a future external MCP server = appending to its `_INSTANCES` list. |
+
+The architecture tests in `tests/agent_harness_service/test_architecture.py`
+scope to `ypl/agent_harness_service/`, so they do not constrain
+`ypl/mcp_common/`. Future tooling that scans `ypl/mcp_common/` for
+cross-package imports must allow `shared_tool.py` to reach into both AHS
+and `mcp_server`. Pure-internal AHS tools never touch this decorator and
+remain Layer 1.
+
 ---
 
 ## Known Architectural Debt

@@ -66,7 +66,7 @@ from ypl.backend.db import get_async_session, retry_db
 from ypl.backend.utils.linear import LinearClient
 from ypl.db.agent_harness import AgentProject, AgentTask
 from ypl.mcp_common.auth_context import require_caller_user_id
-from ypl.mcp_server.core import mcp_server
+from ypl.mcp_common.shared_tool import shared_tool
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -97,7 +97,8 @@ async def _resolve_auth() -> tuple[str | None, dict[str, Any] | None]:
 # ---------------------------------------------------------------------------
 
 
-@mcp_server.tool(
+@shared_tool(
+    requires_settings=("LINEAR_API_KEY",),
     name="list_linear_teams",
     description=(
         "List all Linear teams accessible to the authenticated user. "
@@ -122,7 +123,8 @@ async def list_linear_teams() -> dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
-@mcp_server.tool(
+@shared_tool(
+    requires_settings=("LINEAR_API_KEY",),
     name="list_linear_projects",
     description=(
         "List Linear projects accessible to the authenticated user. "
@@ -150,7 +152,8 @@ async def list_linear_projects(limit: int = 50) -> dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
-@mcp_server.tool(
+@shared_tool(
+    requires_settings=("LINEAR_API_KEY",),
     name="resolve_linear_team",
     description=(
         "Resolve a Linear team name or key to its UUID. "
@@ -185,7 +188,8 @@ async def resolve_linear_team(team: str) -> dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
-@mcp_server.tool(
+@shared_tool(
+    requires_settings=("LINEAR_API_KEY",),
     name="resolve_linear_project",
     description=(
         "Resolve a Linear project name or slug to its UUID. "
@@ -225,7 +229,8 @@ async def resolve_linear_project(project: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-@mcp_server.tool(
+@shared_tool(
+    requires_settings=("LINEAR_API_KEY",),
     name="import_project_from_linear",
     description=(
         "Import a Linear project into AHS by fetching its issues and creating a new AgentProject "
@@ -299,7 +304,8 @@ async def import_project_from_linear(
         return {"success": False, "error": str(e)}
 
 
-@mcp_server.tool(
+@shared_tool(
+    requires_settings=("LINEAR_API_KEY",),
     name="link_project_to_linear",
     description=(
         "Link an existing AHS project to an existing Linear project by storing the Linear project "
@@ -407,7 +413,8 @@ async def link_project_to_linear(
 # ---------------------------------------------------------------------------
 
 
-@mcp_server.tool(
+@shared_tool(
+    requires_settings=("LINEAR_API_KEY",),
     name="export_project_to_linear",
     description=(
         "Export an AHS project and all its tasks to Linear as a project + issues. "
@@ -474,7 +481,8 @@ async def export_project_to_linear(
         return {"success": False, "error": str(exc)}
 
 
-@mcp_server.tool(
+@shared_tool(
+    requires_settings=("LINEAR_API_KEY",),
     name="push_task_status_to_linear",
     description=(
         "Push a single AHS task's current status to its linked Linear issue. "
@@ -657,7 +665,8 @@ async def push_task_status_to_linear(
 _VALID_DIRECTIONS = frozenset({"bidirectional", "linear_to_ahs", "ahs_to_linear"})
 
 
-@mcp_server.tool(
+@shared_tool(
+    requires_settings=("LINEAR_API_KEY",),
     name="sync_project_with_linear",
     description=(
         "Synchronise an AHS project with its linked Linear project. "
@@ -775,7 +784,8 @@ async def sync_project_with_linear(
 # ---------------------------------------------------------------------------
 
 
-@mcp_server.tool(
+@shared_tool(
+    requires_settings=("LINEAR_API_KEY",),
     name="attach_link_to_linear_issue",
     description=(
         "Attach a URL link to a Linear issue. The link appears in the issue sidebar "

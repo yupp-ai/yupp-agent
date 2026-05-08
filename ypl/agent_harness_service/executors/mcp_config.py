@@ -5,12 +5,16 @@ the result in the format each CLI expects:
   - Claude Code: .mcp.json (custom headers)
   - Codex CLI:   -c flags  (bearer_token_env_var)
 
-The server list is built programmatically from ``settings`` — there is no
-base ``.mcp.json`` template in the repo. Per-session decisions (which
-servers to include, which headers to attach) happen here based on
-:class:`SessionPermissions` + session context. For local ``claude`` sessions
-in the repo, create your own ``.mcp.json`` in the project root (gitignored);
-see ``.mcp.json.example``.
+Currently only the harness MCP is injected. Shared (AHS-system) and
+external-data tools that previously required the agent to also connect to
+``/mcp/agcouch`` with ``AGCOUCH_MCP_TOKEN`` now register on the harness
+mount via ``@shared_tool`` (see :mod:`ypl.mcp_common.shared_tool`), so
+agents reach every tool through ``AHS_MCP_SECRET`` and the AHS executor
+does not handle ``AGCOUCH_MCP_TOKEN`` at all.
+
+When the DB-backed external-MCP registry lands (phase-9), additional
+servers will plug into :func:`_build_base_servers` here and inherit the
+same permission filtering logic.
 """
 
 import json
@@ -23,7 +27,6 @@ from ypl.agent_harness_service.common.constants import (
     ALL_MCP_SERVERS,
 )
 from ypl.agent_harness_service.common.types import SessionPermissions
-from ypl.backend.config import settings
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -36,26 +39,13 @@ CODEX_HARNESS_BEARER_ENV = "AHS_MCP_BEARER"
 def _build_base_servers() -> dict[str, Any]:
     """Return the baseline set of MCP servers available to any session.
 
-    Today this is just ``agcouch-mcp-server`` — the AHS monolith's own MCP
-    endpoint served in-process at ``/mcp/agcouch``. When we add more
-    first-party servers (or a DB-backed registry of external ones), they
+    Currently empty — the harness server is injected later in
+    :func:`resolve_mcp_servers` because it needs per-session headers
+    (``X-AHS-Session-ID``). When we add additional first-party MCP
+    servers (or a DB-backed registry of external ones in phase-9), they
     plug in here.
-
-    The ``harness`` server is injected later in :func:`resolve_mcp_servers`
-    because it needs per-session headers (``X-AHS-Session-ID``).
     """
-    servers: dict[str, Any] = {}
-
-    if settings.AGCOUCH_MCP_SERVER_NAME and settings.AGCOUCH_MCP_SERVER_URL:
-        servers[settings.AGCOUCH_MCP_SERVER_NAME] = {
-            "type": "http",
-            "url": settings.AGCOUCH_MCP_SERVER_URL,
-            "headers": {
-                "Authorization": f"Bearer {settings.AGCOUCH_MCP_TOKEN}",
-            },
-        }
-
-    return servers
+    return {}
 
 
 def resolve_mcp_servers(
@@ -102,38 +92,28 @@ def resolve_mcp_servers(
 
     # Harness MCP server is always present (tool-level filtering is done
     # via --allowedTools in _build_args based on permissions).
+    #
+    # Identity headers (``X-User-ID`` / ``X-AHS-Agent-Name``) are written
+    # into the agent's sandboxed ``.mcp.json`` here — the AHS runner
+    # writes the file and the agent cannot modify it. The harness auth
+    # middleware validates the secret then trusts these headers, so
+    # tools (project_tasks, agent_artifacts, memory_artifacts,
+    # report_security_incident, …) attribute calls to the right
+    # principal without trusting the agent's process.
+    harness_headers: dict[str, str] = {
+        "X-AHS-Token": AHS_MCP_SECRET,
+        "X-AHS-Session-ID": session_id,
+    }
+    user_id = ctx.get("current_turn_user_id") or ctx.get("user_id")
+    if user_id:
+        harness_headers["X-User-ID"] = user_id
+    if agent_name:
+        harness_headers["X-AHS-Agent-Name"] = agent_name
     base_servers["harness"] = {
         "type": "http",
         "url": f"{AHS_MCP_BASE_URL}/mcp/harness/",
-        "headers": {
-            "X-AHS-Token": AHS_MCP_SECRET,
-            "X-AHS-Session-ID": session_id,
-        },
+        "headers": harness_headers,
     }
-
-    # Inject session identity headers into agcouch-mcp-server.
-    # These headers are written by the AHS runner into the sandbox workspace's
-    # .mcp.json and cannot be modified by the agent — they are tamper-proof.
-    if "agcouch-mcp-server" in base_servers:
-        base_servers["agcouch-mcp-server"].setdefault("headers", {})
-
-        # X-User-ID: creator attribution (prefer current_turn_user_id over session user_id).
-        # Without this, all resources created by AHS agents are attributed to the shared
-        # AGCOUCH_MCP_TOKEN owner instead of the session's actual requesting user.
-        user_id = ctx.get("current_turn_user_id") or ctx.get("user_id")
-        if user_id:
-            base_servers["agcouch-mcp-server"]["headers"]["X-User-ID"] = user_id
-
-        # X-AHS-Agent-Name: the agent's canonical name (e.g. "eng-raccoon").
-        # Used by report_security_incident to attribute incidents to the correct agent
-        # without trusting the agent itself to supply its own name.
-        if agent_name:
-            base_servers["agcouch-mcp-server"]["headers"]["X-AHS-Agent-Name"] = agent_name
-
-        # X-AHS-Session-ID: the current session UUID.
-        # Allows MCP tools to link incidents to the originating session.
-        if session_id:
-            base_servers["agcouch-mcp-server"]["headers"]["X-AHS-Session-ID"] = session_id
 
     # Drop disabled servers
     servers = {k: v for k, v in base_servers.items() if not v.get("disabled")}
@@ -188,7 +168,6 @@ def build_codex_mcp_args(
 
     The harness MCP server uses a Bearer token in format "<secret>:<session_id>"
     via the CODEX_HARNESS_BEARER_ENV env var (set by build_codex_mcp_env).
-    The agcouch MCP server uses AGCOUCH_MCP_TOKEN (already in the subprocess env).
     """
     servers = resolve_mcp_servers(session_id, session_context, is_slack)
     args: list[str] = []
@@ -203,9 +182,6 @@ def build_codex_mcp_args(
         if name == "harness":
             # Harness auth: Bearer token = "<secret>:<session_id>" via env var.
             args += ["-c", f'mcp_servers.{name}.bearer_token_env_var="{CODEX_HARNESS_BEARER_ENV}"']
-        elif name == "agcouch-mcp-server":
-            # Agcouch auth: Bearer token from AGCOUCH_MCP_TOKEN env var.
-            args += ["-c", f'mcp_servers.{name}.bearer_token_env_var="AGCOUCH_MCP_TOKEN"']
 
     return args
 

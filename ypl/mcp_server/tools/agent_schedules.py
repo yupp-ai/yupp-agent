@@ -30,7 +30,7 @@ from ypl.mcp_common.scheduled_agent_call_helpers import (
     validate_cron_expression,
     validate_timezone,
 )
-from ypl.mcp_server.core import mcp_server
+from ypl.mcp_common.shared_tool import shared_tool
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -41,7 +41,7 @@ logger = get_logger()
 # ============================================================================
 
 
-@mcp_server.tool(
+@shared_tool(
     name="list_ahs_agents",
     description=(
         "List all configured agents in the Agent Harness Service (AHS). "
@@ -89,7 +89,7 @@ async def list_ahs_agents() -> dict[str, Any]:
 # ============================================================================
 
 
-@mcp_server.tool(
+@shared_tool(
     name="create_agent_schedule",
     description=(
         "Create a one-time agent schedule to execute at a specific time. "
@@ -147,7 +147,7 @@ async def create_agent_schedule_tool(
         return {"success": False, "error": str(e)}
 
 
-@mcp_server.tool(
+@shared_tool(
     name="create_recurring_agent_schedule",
     description=(
         "Create a recurring agent schedule using a cron expression. "
@@ -214,7 +214,7 @@ async def create_recurring_agent_schedule_tool(
         return {"success": False, "error": str(e)}
 
 
-@mcp_server.tool(
+@shared_tool(
     name="cancel_agent_schedule",
     description=(
         "Cancel an agent schedule. "
@@ -265,7 +265,7 @@ async def cancel_agent_schedule(
         return {"success": False, "error": str(e)}
 
 
-@mcp_server.tool(
+@shared_tool(
     name="edit_agent_schedule",
     description=(
         "Edit an existing agent schedule. "
@@ -360,7 +360,7 @@ async def edit_agent_schedule(
         return {"success": False, "error": str(e)}
 
 
-@mcp_server.tool(
+@shared_tool(
     name="list_agent_schedules",
     description=(
         "List agent schedules with optional filters. "

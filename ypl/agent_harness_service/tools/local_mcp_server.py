@@ -3,9 +3,16 @@
 The original ~2544-line monolith has been split into focused modules under
 ``ypl/agent_harness_service/tools/``.  This shim:
 
-1. Imports all tool submodules, triggering ``@mcp.tool()`` registration on the
-   shared FastMCP instance defined in ``mcp_instance``.
-2. Re-exports every public symbol that existing callers import from here,
+1. Imports all internal-only AHS tool submodules, triggering ``@mcp.tool()``
+   registration on the harness FastMCP instance defined in ``mcp_instance``.
+2. Imports the shared / external-data tool submodules from
+   ``ypl/mcp_server/tools/`` so their ``@shared_tool(...)`` decorators
+   register them on the harness MCP as well as agcouch MCP. Without this
+   the harness mount would expose only internal tools — agents calling
+   ``query_yuppdb`` / ``search_gcp_logs`` / etc. via ``/mcp/harness``
+   would get a "no such tool" error and fall back to the (now-removed)
+   AHS → agcouch detour through ``AGCOUCH_MCP_TOKEN``.
+3. Re-exports every public symbol that existing callers import from here,
    so no other file needs to change.
 
 Existing imports that continue to work::
@@ -26,9 +33,10 @@ Existing imports that continue to work::
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# 2. Import all tool submodules to trigger @mcp.tool() registration.
-#    Import order does not affect tool registration order (FastMCP collects
-#    decorators lazily), but keeping it consistent helps readability.
+# 2. Import all internal-only AHS tool submodules to trigger @mcp.tool()
+#    registration. Import order does not affect tool registration order
+#    (FastMCP collects decorators lazily), but keeping it consistent helps
+#    readability.
 # ---------------------------------------------------------------------------
 from ypl.agent_harness_service.tools import (  # noqa: F401
     agent_messaging,
@@ -52,6 +60,33 @@ from ypl.agent_harness_service.tools.mcp_instance import (  # noqa: F401
     reset_turn_websearch_count,
     set_session_current_user,
     set_session_sandbox,
+)
+
+# ---------------------------------------------------------------------------
+# 3. Import shared / external-data tool submodules from ypl.mcp_server.tools.
+#    Each module's ``@shared_tool(...)`` decorator registers on every MCP
+#    instance in ``ypl.mcp_common.shared_tool._INSTANCES`` — currently both
+#    harness and agcouch. Without these imports, agents talking to the
+#    harness mount only see internal AHS tools (bash, workspace, subagents,
+#    etc.), not the AHS-system or external-data tools.
+#
+#    Mono-server callers also import ``ypl.mcp_server.mcp_tools`` from
+#    ``ypl/mono_server/server.py``; Python's module cache makes that a
+#    no-op so each tool registers exactly once on each instance.
+# ---------------------------------------------------------------------------
+from ypl.mcp_server.tools import (  # noqa: F401
+    agent_artifacts,
+    agent_schedules,
+    database,
+    gcp_logs,
+    linear_sync,
+    memory_artifacts,
+    project_tasks,
+    redis,
+    security_incidents,
+    sentry,
+    slack,
+    twitter,
 )
 
 # ---------------------------------------------------------------------------
