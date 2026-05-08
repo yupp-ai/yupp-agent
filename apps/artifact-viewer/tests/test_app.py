@@ -474,6 +474,497 @@ class TestBySlug:
         assert "v1" in resp.text and "v2" in resp.text
 
 
+class TestEdit:
+    """Edit form (GET) and submit (POST) flow.
+
+    The submit handler is a thin proxy to AHS's POST endpoint, so these
+    tests focus on the things the viewer is responsible for: editability
+    gating, version-number prediction in the form banner, and shape of
+    the redirect on success.
+    """
+
+    def test_edit_button_visible_on_slugged_text_artifact(self, client: TestClient) -> None:
+        _sign_in(client)
+        with (
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_meta",
+                new=AsyncMock(return_value=_meta(named_slug="doc", version=2)),
+            ),
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_content",
+                new=AsyncMock(return_value=(b"body", "text/markdown")),
+            ),
+        ):
+            resp = client.get(f"/artifacts/{ART_ID}")
+        assert resp.status_code == 200
+        assert "/edit" in resp.text
+        assert "Edit (creates a new version)" in resp.text
+
+    def test_edit_button_hidden_when_no_slug(self, client: TestClient) -> None:
+        # Un-slugged TEXT can't be versioned, so editing makes no sense.
+        _sign_in(client)
+        with (
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_meta",
+                new=AsyncMock(return_value=_meta(named_slug=None, version=None)),
+            ),
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_content",
+                new=AsyncMock(return_value=(b"body", "text/markdown")),
+            ),
+        ):
+            resp = client.get(f"/artifacts/{ART_ID}")
+        assert resp.status_code == 200
+        assert f"/artifacts/{ART_ID}/edit" not in resp.text
+
+    def test_edit_form_renders_raw_text_and_next_version(self, client: TestClient) -> None:
+        # The edit form's banner must show "Save as v{max+1}". Mock
+        # list_versions to return v1..v4 so the banner reads v5 when the
+        # user is editing v3.
+        _sign_in(client)
+        with (
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_meta",
+                new=AsyncMock(return_value=_meta(named_slug="doc", version=3)),
+            ),
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_content",
+                new=AsyncMock(return_value=(b"# old\n\nbody", "text/markdown")),
+            ),
+            patch(
+                "artifact_viewer.ahs_client.list_versions",
+                new=AsyncMock(
+                    return_value={
+                        "named_slug": "doc",
+                        "versions": [
+                            _meta(version=1),
+                            _meta(version=2),
+                            _meta(version=3),
+                            _meta(version=4),
+                        ],
+                    }
+                ),
+            ),
+        ):
+            resp = client.get(f"/artifacts/{ART_ID}/edit")
+        assert resp.status_code == 200
+        # Banner: editing v3, will become v5.
+        assert "Editing v3" in resp.text
+        assert "v5" in resp.text
+        # Raw markdown source is in the textarea (not pre-rendered).
+        assert "# old" in resp.text
+        # We must not pre-render the markdown (the textarea is a raw editor).
+        assert "<h1>old</h1>" not in resp.text
+
+    def test_edit_form_blocks_unslugged(self, client: TestClient) -> None:
+        _sign_in(client)
+        with (
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_meta",
+                new=AsyncMock(return_value=_meta(named_slug=None, version=None)),
+            ),
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_content",
+                new=AsyncMock(return_value=(b"body", "text/markdown")),
+            ),
+        ):
+            resp = client.get(f"/artifacts/{ART_ID}/edit")
+        assert resp.status_code == 403
+        assert "Cannot edit" in resp.text
+
+    def test_edit_form_blocks_other_users_user_scope_memory(self, client: TestClient) -> None:
+        # Logged-in as user-alice, but the memory belongs to user-bob.
+        # We refuse to render the form rather than 403ing on submit.
+        _sign_in(client)
+        meta = _meta(
+            type="MEMORY",
+            named_slug="my-notes",
+            version=1,
+            memory_scope="user",
+            memory_scope_subject="user-bob",
+            content_type="text/markdown",
+        )
+        with (
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_meta",
+                new=AsyncMock(return_value=meta),
+            ),
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_content",
+                new=AsyncMock(return_value=(b"private", "text/markdown")),
+            ),
+        ):
+            resp = client.get(f"/artifacts/{ART_ID}/edit")
+        assert resp.status_code == 403
+        assert "Cannot edit" in resp.text
+
+    def test_edit_form_allows_topic_memory(self, client: TestClient) -> None:
+        # Topic memories are open: any signed-in user can edit them.
+        _sign_in(client)
+        meta = _meta(
+            type="MEMORY",
+            named_slug="shared",
+            version=1,
+            memory_scope="topic",
+            memory_scope_subject=None,
+            content_type="text/markdown",
+        )
+        with (
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_meta",
+                new=AsyncMock(return_value=meta),
+            ),
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_content",
+                new=AsyncMock(return_value=(b"shared body", "text/markdown")),
+            ),
+            patch(
+                "artifact_viewer.ahs_client.list_versions",
+                new=AsyncMock(return_value={"named_slug": "shared", "versions": [_meta(version=1)]}),
+            ),
+        ):
+            resp = client.get(f"/artifacts/{ART_ID}/edit")
+        assert resp.status_code == 200
+        assert "shared body" in resp.text
+
+    def test_edit_post_calls_create_new_version_and_redirects(self, client: TestClient) -> None:
+        _sign_in(client)
+        new_meta = _meta(named_slug="doc", version=5)
+        create_mock = AsyncMock(return_value=new_meta)
+        with (
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_meta",
+                new=AsyncMock(return_value=_meta(named_slug="doc", version=2)),
+            ),
+            patch("artifact_viewer.ahs_client.create_new_version", new=create_mock),
+        ):
+            resp = client.post(
+                f"/artifacts/{ART_ID}/edit",
+                data={"content": "the new body"},
+            )
+        # 303 See Other so a refresh after POST doesn't replay the submit.
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/artifacts/by-slug/doc/v/5"
+        kwargs = create_mock.await_args.kwargs
+        assert kwargs["named_slug"] == "doc"
+        assert kwargs["content"] == "the new body"
+        assert kwargs["artifact_type"] == "TEXT"
+        # Forward the signed-in user's user_id so AHS attribution is correct.
+        assert kwargs["creator_user_id"] == "user-alice"
+
+    def test_edit_post_memory_uses_inline_content(self, client: TestClient) -> None:
+        _sign_in(client)
+        meta = _meta(
+            type="MEMORY",
+            named_slug="my-notes",
+            version=1,
+            memory_scope="user",
+            memory_scope_subject="user-alice",
+            content_type="text/markdown",
+        )
+        new_meta = _meta(
+            type="MEMORY",
+            named_slug="my-notes",
+            version=2,
+            memory_scope="user",
+            memory_scope_subject="user-alice",
+        )
+        create_mock = AsyncMock(return_value=new_meta)
+        with (
+            patch("artifact_viewer.ahs_client.get_artifact_meta", new=AsyncMock(return_value=meta)),
+            patch("artifact_viewer.ahs_client.create_new_version", new=create_mock),
+        ):
+            resp = client.post(
+                f"/artifacts/{ART_ID}/edit",
+                data={"content": "edited memory"},
+            )
+        assert resp.status_code == 303
+        kwargs = create_mock.await_args.kwargs
+        assert kwargs["artifact_type"] == "MEMORY"
+        assert kwargs["inline_content"] == "edited memory"
+        assert kwargs["content"] is None
+        assert kwargs["memory_scope"] == "user"
+        assert kwargs["memory_scope_subject"] == "user-alice"
+
+    def test_edit_post_blocks_other_users_user_scope_memory(self, client: TestClient) -> None:
+        # Logged-in as user-alice, posting against user-bob's memory.
+        _sign_in(client)
+        meta = _meta(
+            type="MEMORY",
+            named_slug="bobs-notes",
+            version=1,
+            memory_scope="user",
+            memory_scope_subject="user-bob",
+        )
+        create_mock = AsyncMock()
+        with (
+            patch("artifact_viewer.ahs_client.get_artifact_meta", new=AsyncMock(return_value=meta)),
+            patch("artifact_viewer.ahs_client.create_new_version", new=create_mock),
+        ):
+            resp = client.post(f"/artifacts/{ART_ID}/edit", data={"content": "x"})
+        assert resp.status_code == 403
+        # Don't even attempt the upstream call when the gating fails.
+        create_mock.assert_not_called()
+
+    def test_edit_post_memory_redirects_to_by_id_not_slug(self, client: TestClient) -> None:
+        # MEMORY edits MUST redirect to the by-id route. The slug route
+        # defaults type=TEXT and the viewer's slug helper doesn't forward
+        # MEMORY's scope/subject/X-User-ID, so a slug-pinned redirect 404s
+        # on every successful MEMORY save (regression test for the
+        # "lands on a 404 page" critical issue).
+        _sign_in(client)
+        meta = _meta(
+            type="MEMORY",
+            named_slug="shared",
+            version=1,
+            memory_scope="topic",
+            memory_scope_subject=None,
+            content_type="text/markdown",
+        )
+        new_id = "99999999-2222-3333-4444-555555555555"
+        new_meta = _meta(
+            type="MEMORY",
+            named_slug="shared",
+            version=2,
+            memory_scope="topic",
+            memory_scope_subject=None,
+            artifact_id=new_id,
+        )
+        with (
+            patch("artifact_viewer.ahs_client.get_artifact_meta", new=AsyncMock(return_value=meta)),
+            patch("artifact_viewer.ahs_client.create_new_version", new=AsyncMock(return_value=new_meta)),
+        ):
+            resp = client.post(f"/artifacts/{ART_ID}/edit", data={"content": "fresh body"})
+        assert resp.status_code == 303
+        # Critical: the redirect must NOT use /by-slug/.../v/N for MEMORY rows.
+        assert resp.headers["location"] == f"/artifacts/{new_id}"
+        assert "by-slug" not in resp.headers["location"]
+
+    def test_edit_post_forwards_provenance_metadata(self, client: TestClient) -> None:
+        # Edits must persist (a) the source version we forked from and
+        # (b) the original creator. The original creator chains: if the
+        # source row already had ``original_creator_user_id`` in its
+        # metadata, we keep it — otherwise we copy from creator_user_id.
+        _sign_in(client)
+        meta = _meta(
+            named_slug="doc",
+            version=2,
+            creator_user_id="user-original",
+            metadata={"attachments": [], "is_archived": False},
+        )
+        new_meta = _meta(named_slug="doc", version=3)
+        create_mock = AsyncMock(return_value=new_meta)
+        with (
+            patch("artifact_viewer.ahs_client.get_artifact_meta", new=AsyncMock(return_value=meta)),
+            patch("artifact_viewer.ahs_client.create_new_version", new=create_mock),
+        ):
+            resp = client.post(f"/artifacts/{ART_ID}/edit", data={"content": "edited"})
+        assert resp.status_code == 303
+        sent = create_mock.await_args.kwargs["extra_metadata"]
+        assert sent["original_creator_user_id"] == "user-original"
+        assert sent["edited_from_version"] == 2
+        assert sent["edited_from_artifact_id"] == ART_ID
+        assert sent["edited_via"] == "artifact-viewer"
+
+    def test_edit_post_chains_original_creator_through_edits(self, client: TestClient) -> None:
+        # When the source row was itself an edit (already has
+        # original_creator_user_id in metadata), the new edit must
+        # preserve that, NOT replace it with the intermediate editor.
+        _sign_in(client)
+        meta = _meta(
+            named_slug="doc",
+            version=4,
+            creator_user_id="user-intermediate-editor",
+            metadata={"original_creator_user_id": "user-genesis", "is_archived": False},
+        )
+        create_mock = AsyncMock(return_value=_meta(named_slug="doc", version=5))
+        with (
+            patch("artifact_viewer.ahs_client.get_artifact_meta", new=AsyncMock(return_value=meta)),
+            patch("artifact_viewer.ahs_client.create_new_version", new=create_mock),
+        ):
+            resp = client.post(f"/artifacts/{ART_ID}/edit", data={"content": "edited"})
+        assert resp.status_code == 303
+        sent = create_mock.await_args.kwargs["extra_metadata"]
+        assert sent["original_creator_user_id"] == "user-genesis"
+
+    def test_edit_post_rejects_empty_content(self, client: TestClient) -> None:
+        # Empty / whitespace-only submissions must NOT silently land as a
+        # blank top version. Re-render the form with an inline error so
+        # the user sees what happened instead of a misleading success.
+        _sign_in(client)
+        create_mock = AsyncMock()
+        with (
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_meta",
+                new=AsyncMock(return_value=_meta(named_slug="doc", version=2)),
+            ),
+            patch("artifact_viewer.ahs_client.create_new_version", new=create_mock),
+            patch(
+                "artifact_viewer.ahs_client.list_versions",
+                new=AsyncMock(return_value={"named_slug": "doc", "versions": [_meta(version=2)]}),
+            ),
+        ):
+            resp = client.post(f"/artifacts/{ART_ID}/edit", data={"content": "   \n\t  "})
+        assert resp.status_code == 400
+        assert "Refusing to save an empty body" in resp.text
+        create_mock.assert_not_called()
+
+    def test_edit_button_hidden_for_html_content_type(self, client: TestClient) -> None:
+        # text/html artifacts can't faithfully round-trip through a plain
+        # textarea — editing one would re-stamp markdown-ish text as HTML
+        # and render through the sandboxed iframe. Hide the button.
+        _sign_in(client)
+        with (
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_meta",
+                new=AsyncMock(return_value=_meta(named_slug="doc", version=1, content_type="text/html")),
+            ),
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_content",
+                new=AsyncMock(return_value=(b"<b>hi</b>", "text/html")),
+            ),
+        ):
+            resp = client.get(f"/artifacts/{ART_ID}")
+        assert resp.status_code == 200
+        assert f"/artifacts/{ART_ID}/edit" not in resp.text
+
+    def test_edit_form_blocks_html_content_type(self, client: TestClient) -> None:
+        _sign_in(client)
+        with (
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_meta",
+                new=AsyncMock(return_value=_meta(named_slug="doc", version=1, content_type="text/html")),
+            ),
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_content",
+                new=AsyncMock(return_value=(b"<b>hi</b>", "text/html")),
+            ),
+        ):
+            resp = client.get(f"/artifacts/{ART_ID}/edit")
+        assert resp.status_code == 403
+
+    def test_edit_form_blocks_code_review(self, client: TestClient) -> None:
+        # CODE_REVIEW is a pointer artifact (no body to edit).
+        _sign_in(client)
+        with (
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_meta",
+                new=AsyncMock(
+                    return_value=_meta(type="CODE_REVIEW", named_slug="some-pr", version=1, content_type=None)
+                ),
+            ),
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_content",
+                new=AsyncMock(return_value=(b"", "application/octet-stream")),
+            ),
+        ):
+            resp = client.get(f"/artifacts/{ART_ID}/edit")
+        assert resp.status_code == 403
+
+    def test_edit_form_renders_generic_banner_when_versions_unreachable(self, client: TestClient) -> None:
+        # When list_versions raises a transport-level httpx error, the
+        # banner must fall back to generic copy — the previous
+        # current+1 fallback could be off by many.
+        from artifact_viewer.ahs_client import AHSError as _AHSError  # noqa: F401  (import locality)
+
+        _sign_in(client)
+        with (
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_meta",
+                new=AsyncMock(return_value=_meta(named_slug="doc", version=3)),
+            ),
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_content",
+                new=AsyncMock(return_value=(b"body", "text/markdown")),
+            ),
+            patch(
+                "artifact_viewer.ahs_client.list_versions",
+                # Simulate a transport-level failure (NOT just AHSError).
+                new=AsyncMock(side_effect=httpx.ConnectError("connection refused")),
+            ),
+        ):
+            resp = client.get(f"/artifacts/{ART_ID}/edit")
+        # Page must still render — the banner is best-effort, not a hard
+        # dependency.
+        assert resp.status_code == 200
+        # No misleading "v4" / "v5" — just the generic copy.
+        assert "Save as new version" in resp.text
+        assert "(number assigned by the server)" in resp.text
+
+
+class TestVersionsPage:
+    """Versions listing page (separate from individual artifact edit gating).
+
+    The Edit column is conditional on whether the slug is editable at all
+    — agent-scope MEMORY, foreign user-scope MEMORY, HTML-typed artifacts,
+    CODE_REVIEW/OTHER pointer types — instead of rendering rows that
+    always 403 on click.
+    """
+
+    def test_edit_column_hidden_for_agent_scope_memory(self, client: TestClient) -> None:
+        _sign_in(client)
+        agent_meta = _meta(
+            type="MEMORY",
+            named_slug="agent-notes",
+            version=1,
+            memory_scope="agent",
+            memory_scope_subject="some-agent",
+        )
+        with patch(
+            "artifact_viewer.ahs_client.list_versions",
+            new=AsyncMock(return_value={"named_slug": "agent-notes", "versions": [agent_meta]}),
+        ):
+            resp = client.get("/artifacts/by-slug/agent-notes/versions")
+        assert resp.status_code == 200
+        # Slug rendered, but no per-row edit links.
+        assert "agent-notes" in resp.text
+        assert "Edit →" not in resp.text
+
+    def test_edit_column_visible_for_text_slug(self, client: TestClient) -> None:
+        _sign_in(client)
+        with patch(
+            "artifact_viewer.ahs_client.list_versions",
+            new=AsyncMock(
+                return_value={
+                    "named_slug": "doc",
+                    "versions": [_meta(version=1, named_slug="doc"), _meta(version=2, named_slug="doc")],
+                }
+            ),
+        ):
+            resp = client.get("/artifacts/by-slug/doc/versions")
+        assert resp.status_code == 200
+        assert "Edit →" in resp.text
+
+
+class TestResolveNextVersionHttpxError:
+    """Direct cover for the broadened exception catch in _resolve_next_version.
+
+    Lives next to TestEdit because it's part of the same edit-gating story,
+    but exercises ``edit_artifact_get`` end-to-end rather than reaching into
+    the helper directly — the latter is implementation detail.
+    """
+
+    def test_read_timeout_does_not_500_the_page(self, client: TestClient) -> None:
+        _sign_in(client)
+        with (
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_meta",
+                new=AsyncMock(return_value=_meta(named_slug="doc", version=2)),
+            ),
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_content",
+                new=AsyncMock(return_value=(b"body", "text/markdown")),
+            ),
+            patch(
+                "artifact_viewer.ahs_client.list_versions",
+                new=AsyncMock(side_effect=httpx.ReadTimeout("upstream slow")),
+            ),
+        ):
+            resp = client.get(f"/artifacts/{ART_ID}/edit")
+        # A 500 here would mean the broad-except wasn't broad enough.
+        assert resp.status_code == 200
+
+
 class TestAttachment:
     def test_proxies_bytes_and_content_type(self, client: TestClient) -> None:
         _sign_in(client)
@@ -662,3 +1153,129 @@ class TestAHSClient:
 
         assert "/ahs/artifacts/creators" in captured_url
         assert data == {"users": [], "agents": []}
+
+    async def test_create_new_version_forwards_user_id_header(self) -> None:
+        """Edit submissions must include X-User-ID so MEMORY authz passes upstream."""
+        from artifact_viewer import ahs_client
+
+        captured: dict[str, Any] = {}
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            captured["headers"] = dict(req.headers)
+            captured["body"] = req.read().decode()
+            captured["url"] = str(req.url)
+            return httpx.Response(
+                201,
+                json={
+                    "artifact_id": ART_ID,
+                    "type": "TEXT",
+                    "title": "x",
+                    "description": None,
+                    "url": None,
+                    "content_type": "text/markdown",
+                    "named_slug": "doc",
+                    "version": 5,
+                    "creator_user_id": "user-x",
+                    "creator_agent_id": None,
+                    "agent_session_id": None,
+                    "agent_task_id": None,
+                    "created_at": "2026-04-21T12:00:00Z",
+                    "metadata": {},
+                },
+            )
+
+        def fake_client(*, user_id: str | None = None) -> httpx.AsyncClient:
+            headers = {"X-API-Key": "test-key"}
+            if user_id:
+                headers["X-User-ID"] = user_id
+            return httpx.AsyncClient(
+                base_url="http://ahs.test",
+                headers=headers,
+                transport=httpx.MockTransport(handler),
+            )
+
+        with patch.object(ahs_client, "_client", fake_client):
+            data = await ahs_client.create_new_version(
+                artifact_type="TEXT",
+                title="x",
+                description=None,
+                named_slug="doc",
+                content_type="text/markdown",
+                content="hello",
+                creator_user_id="user-x",
+            )
+        assert data["version"] == 5
+        assert captured["headers"].get("x-user-id") == "user-x"
+        # Parse the body to compare structurally — httpx serializes without
+        # spaces, so a literal substring match would be brittle.
+        import json as _json
+
+        sent = _json.loads(captured["body"])
+        assert sent["create_new_slug"] is False
+        assert sent["named_slug"] == "doc"
+        assert sent["content"] == "hello"
+        assert sent["creator_user_id"] == "user-x"
+
+    async def test_create_new_version_passes_memory_fields(self) -> None:
+        """MEMORY edits forward inline_content + scope/subject (not content)."""
+        from artifact_viewer import ahs_client
+
+        captured: dict[str, Any] = {}
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            captured["body"] = req.read().decode()
+            return httpx.Response(
+                201,
+                json={
+                    "artifact_id": ART_ID,
+                    "type": "MEMORY",
+                    "title": "mem",
+                    "description": None,
+                    "url": None,
+                    "content_type": "text/markdown",
+                    "named_slug": "mem-slug",
+                    "version": 2,
+                    "memory_scope": "user",
+                    "memory_scope_subject": "user-x",
+                    "creator_user_id": "user-x",
+                    "creator_agent_id": None,
+                    "agent_session_id": None,
+                    "agent_task_id": None,
+                    "created_at": "2026-04-21T12:00:00Z",
+                    "metadata": {},
+                },
+            )
+
+        def fake_client(*, user_id: str | None = None) -> httpx.AsyncClient:
+            headers = {"X-API-Key": "test-key"}
+            if user_id:
+                headers["X-User-ID"] = user_id
+            return httpx.AsyncClient(
+                base_url="http://ahs.test",
+                headers=headers,
+                transport=httpx.MockTransport(handler),
+            )
+
+        with patch.object(ahs_client, "_client", fake_client):
+            await ahs_client.create_new_version(
+                artifact_type="MEMORY",
+                title="mem",
+                description=None,
+                named_slug="mem-slug",
+                content_type="text/markdown",
+                inline_content="new memory body",
+                memory_scope="user",
+                memory_scope_subject="user-x",
+                creator_user_id="user-x",
+            )
+        import json as _json
+
+        sent = _json.loads(captured["body"])
+        # MEMORY uses inline_content, not content.
+        assert sent["inline_content"] == "new memory body"
+        assert sent["memory_scope"] == "user"
+        assert sent["memory_scope_subject"] == "user-x"
+        # We must NOT also send the (TEXT-only) content key for MEMORY rows —
+        # AHS rejects the request as "inline_content is only valid for MEMORY"
+        # otherwise.
+        assert "content" not in sent

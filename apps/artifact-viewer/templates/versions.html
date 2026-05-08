@@ -3,6 +3,19 @@
 {% block content %}
 <h1>Versions of <a href="/artifacts/by-slug/{{ slug }}">{{ slug }}</a></h1>
 {% if versions %}
+{% if can_edit_slug %}
+<p class="muted small">
+    Editing any version creates a new version on top of the slug — e.g. with
+    v1..v{{ versions[-1].version }} active, editing v1 (or any other row) saves a
+    fresh v{{ (versions[-1].version or 0) + 1 }}. The version you edited stays
+    untouched in this list.
+</p>
+{% endif %}
+{#- ``can_edit_slug`` is computed once in app.py against the slug as a whole
+    (type, content_type, scope/subject are uniform across versions). When it's
+    false — agent-scope MEMORY, another user's user-scope MEMORY,
+    HTML/CODE_REVIEW/OTHER, etc. — we omit the Edit column entirely instead
+    of luring users into 403s on dead-end links. -#}
 <table class="artifacts">
     <thead>
         <tr>
@@ -10,6 +23,7 @@
             <th>Title</th>
             <th>Created (UTC)</th>
             <th>Status</th>
+            {% if can_edit_slug %}<th></th>{% endif %}
             <th></th>
         </tr>
     </thead>
@@ -26,6 +40,11 @@
                     <span class="tag active">active</span>
                 {% endif %}
             </td>
+            {% if can_edit_slug %}
+                <td class="small">
+                    <a href="/artifacts/{{ v.artifact_id }}/edit">Edit →</a>
+                </td>
+            {% endif %}
             <td class="mono small">{{ v.artifact_id }}</td>
         </tr>
     {% endfor %}

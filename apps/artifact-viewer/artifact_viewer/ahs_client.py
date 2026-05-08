@@ -22,10 +22,20 @@ class AHSError(Exception):
         self.detail = detail
 
 
-def _client() -> httpx.AsyncClient:
+def _client(*, user_id: str | None = None) -> httpx.AsyncClient:
+    """Build an authenticated client for AHS calls.
+
+    ``user_id`` is forwarded as ``X-User-ID`` so AHS's MEMORY-write authz
+    can verify the caller owns the (user-scope) memory they're editing.
+    The header is omitted entirely when ``user_id`` is ``None`` so reads
+    behave exactly as before.
+    """
+    headers = {"X-API-Key": settings.AGENT_HARNESS_SERVICE_API_KEY}
+    if user_id:
+        headers["X-User-ID"] = user_id
     return httpx.AsyncClient(
         base_url=settings.VIEWER_AHS_BASE_URL.rstrip("/"),
-        headers={"X-API-Key": settings.AGENT_HARNESS_SERVICE_API_KEY},
+        headers=headers,
         timeout=30.0,
     )
 
@@ -67,8 +77,37 @@ async def get_artifact_by_slug(slug: str, version: int | None = None) -> dict[st
     return cast(dict[str, Any], await _get_json(f"/ahs/artifacts/by-slug/{slug}", params=params or None))
 
 
-async def list_versions(slug: str) -> dict[str, Any]:
-    return cast(dict[str, Any], await _get_json(f"/ahs/artifacts/by-slug/{slug}/versions"))
+async def list_versions(
+    slug: str,
+    *,
+    artifact_type: str | None = None,
+    scope: str | None = None,
+    subject: str | None = None,
+    user_id: str | None = None,
+) -> dict[str, Any]:
+    """List all versions of ``slug``.
+
+    For MEMORY slugs the upstream route requires a ``scope`` query param
+    (and ``subject`` for user/agent scopes); ``user_id`` is forwarded as
+    ``X-User-ID`` so the upstream's read-authz check passes when looking
+    up a user-scoped slug owned by the caller.
+    """
+    params: dict[str, Any] = {}
+    if artifact_type:
+        params["type"] = artifact_type
+    if scope:
+        params["scope"] = scope
+    if subject:
+        params["subject"] = subject
+    async with _client(user_id=user_id) as http:
+        resp = await http.get(f"/ahs/artifacts/by-slug/{slug}/versions", params=params or None)
+    if resp.status_code >= 400:
+        try:
+            detail = resp.json().get("detail", resp.text)
+        except Exception:
+            detail = resp.text
+        raise AHSError(resp.status_code, str(detail))
+    return cast(dict[str, Any], resp.json())
 
 
 async def list_recent(
@@ -127,6 +166,72 @@ async def get_artifact_content(artifact_id: str) -> tuple[bytes, str]:
 
 async def get_attachment(artifact_id: str, filename: str) -> tuple[bytes, str]:
     return await _get_bytes(f"/ahs/artifacts/{artifact_id}/attachments/{filename}")
+
+
+# ---------------------------------------------------------------------------
+# Mutation: create a new version of an existing artifact
+# ---------------------------------------------------------------------------
+
+
+async def create_new_version(
+    *,
+    artifact_type: str,
+    title: str,
+    description: str | None,
+    named_slug: str,
+    content_type: str,
+    content: str | None = None,
+    inline_content: str | None = None,
+    memory_scope: str | None = None,
+    memory_scope_subject: str | None = None,
+    creator_user_id: str | None = None,
+    extra_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Create a new version of an existing slugged artifact.
+
+    Wraps ``POST /ahs/artifacts`` with ``create_new_slug=False``: AHS
+    looks up the slug's max version and inserts a row at ``max+1``,
+    regardless of which version the caller was viewing when they
+    clicked Edit. Editing v3 of a slug with v1..v4 produces v5.
+
+    For TEXT artifacts pass ``content`` (the new body) and
+    ``content_type``. For MEMORY artifacts pass ``inline_content`` plus
+    the (scope, subject) tuple — AHS enforces write authorization on
+    those using the ``X-User-ID`` header forwarded by ``_client``.
+
+    Returns the newly-created artifact's metadata (matches the
+    ``CreateArtifactResponse`` shape — includes ``artifact_id``,
+    ``version``, ``slug_url`` and the rest).
+    """
+    body: dict[str, Any] = {
+        "type": artifact_type,
+        "title": title,
+        "description": description,
+        "content_type": content_type,
+        "named_slug": named_slug,
+        "create_new_slug": False,
+        "creator_user_id": creator_user_id,
+    }
+    if content is not None:
+        body["content"] = content
+    if inline_content is not None:
+        body["inline_content"] = inline_content
+    if memory_scope is not None:
+        body["memory_scope"] = memory_scope
+    if memory_scope_subject is not None:
+        body["memory_scope_subject"] = memory_scope_subject
+    if extra_metadata is not None:
+        body["metadata"] = extra_metadata
+
+    async with _client(user_id=creator_user_id) as http:
+        resp = await http.post("/ahs/artifacts", json=body)
+    if resp.status_code >= 400:
+        try:
+            detail = resp.json().get("detail", resp.text)
+        except Exception:
+            detail = resp.text
+        raise AHSError(resp.status_code, str(detail))
+    return cast(dict[str, Any], resp.json())
 
 
 # ---------------------------------------------------------------------------
