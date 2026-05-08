@@ -26,6 +26,7 @@ The monolith is the primary deployment shape for self-hosted setups: one process
 7. [Verification](#7-verification)
 8. [Upgrades](#8-upgrades)
 9. [Troubleshooting](#9-troubleshooting)
+10. [Mono server feature flags](#10-mono-server-feature-flags)
 
 ---
 
@@ -566,3 +567,102 @@ python -m ypl.mono_server.manage create-mcp-token
 # Full help
 python -m ypl.mono_server.manage --help
 ```
+
+---
+
+## 10. Mono server feature flags
+
+The mono server composes four optional surfaces — AHS (always on), the
+harness MCP (always on), gateway plugins (Slack / GitHub), and the agcouch
+MCP. Two **master flags** in `.env` gate the optional surfaces on or off as
+a unit, and two **per-plugin sub-flags** select which gateways are mounted
+when the gateway master is on. All four are read by `MonoConfig`
+(`ypl/mono_server/config.py`) at process start.
+
+### The two master flags
+
+| Flag | Default | Effect when **true** | Effect when **false** |
+|------|---------|----------------------|------------------------|
+| `AHS_MONO_ENABLE_GATEWAY_SERVICE` | **`false`** | Discover and mount gateway plugins (`/gw/<name>/*`); run their startup/shutdown hooks. | Skip the entire gateway plugin loop. The per-plugin sub-flags below are **not consulted**. |
+| `AHS_MONO_ENABLE_MCP`             | **`false`** | Mount `/mcp/agcouch` and run the agcouch FastMCP lifespan + `mcp_startup` / `mcp_shutdown` (yuppster batch system). | Skip the agcouch mount and lifespan entirely. |
+
+> ⚠️ **Default change (vs. previous releases).** Previously the mono booted
+> with everything mounted (`AHS + SAG + agcouch MCP`). Starting with this
+> release **both master flags default to `false`** — the mono boots as a
+> *pure AHS process*. Operators who relied on the legacy "everything on"
+> shape **must explicitly opt in** by setting both flags to `true`.
+
+`/mcp/harness` is **always** mounted, regardless of these flags. Shared and
+external-data tools dual-register on the harness MCP (see
+`ypl/mcp_common/shared_tool.py`), so AHS agent sessions retain access to
+`query_yuppdb`, `search_gcp_logs`, `get_sentry_issue_details`, etc., even
+when `AHS_MONO_ENABLE_MCP=false`.
+
+### Per-plugin sub-flags
+
+Only consulted when `AHS_MONO_ENABLE_GATEWAY_SERVICE=true`:
+
+| Sub-flag | Default | Mounts |
+|----------|---------|--------|
+| `GATEWAY_SLACK_ENABLED`  | `true`  | `/gw/slack/*` (and the legacy `/slack-agent-gateway/*` alias) |
+| `GATEWAY_GITHUB_ENABLED` | `false` | `/gw/github/*` (requires `AHS_GITHUB_WEBHOOK_SECRET`) |
+
+### Deployment shapes
+
+Pick the shape that matches your environment, then set the flags accordingly:
+
+| Shape | `AHS_MONO_ENABLE_GATEWAY_SERVICE` | `AHS_MONO_ENABLE_MCP` | Use when |
+|-------|-----------------------------------|------------------------|----------|
+| **Pure AHS** (default) | `false` | `false` | Self-hosted deployment that just needs agent sessions; no Slack/GitHub integrations; no external (developer-IDE) MCP access. |
+| **AHS + Slack/GitHub** | `true`  | `false` | Self-hosted deployment with Slack `@mention` flow or GitHub webhook triggers, but no need for the developer-IDE MCP. |
+| **AHS + agcouch MCP**  | `false` | `true`  | Internal Yupp deployment whose engineers connect Claude / Cursor to the agcouch MCP for ad-hoc DB / Sentry / GCP queries. Slack agents not needed. |
+| **Everything on** (legacy) | `true`  | `true`  | The full Yupp prod / staging shape — agents, Slack, GitHub, **and** developer-IDE MCP all in one process. |
+
+### `.env` examples
+
+**Pure AHS (default):**
+
+```bash
+# Both master flags off (or omitted entirely — false is the default).
+AHS_MONO_ENABLE_GATEWAY_SERVICE=false
+AHS_MONO_ENABLE_MCP=false
+```
+
+**Everything on (legacy shape):**
+
+```bash
+AHS_MONO_ENABLE_GATEWAY_SERVICE=true
+AHS_MONO_ENABLE_MCP=true
+GATEWAY_SLACK_ENABLED=true        # default-on sub-flag
+GATEWAY_GITHUB_ENABLED=false      # leave off unless AHS_GITHUB_WEBHOOK_SECRET is set
+```
+
+### Verifying the mounted surface
+
+Without auth headers each mount returns its own discriminator:
+
+```bash
+# /health is always reachable
+curl -s http://localhost:8090/health
+# → {"status":"ok"}
+
+# /mcp/harness is always mounted; un-authenticated requests return 401
+curl -s -o /dev/null -w "%{http_code}\n" -X POST http://localhost:8090/mcp/harness/
+# → 401
+
+# /mcp/agcouch is mounted iff AHS_MONO_ENABLE_MCP=true.
+#   true  → 401 (mounted, auth rejected)
+#   false → 404 (not mounted)
+curl -s -o /dev/null -w "%{http_code}\n" -X POST http://localhost:8090/mcp/agcouch/
+
+# /gw/slack/* is mounted iff AHS_MONO_ENABLE_GATEWAY_SERVICE=true AND
+# GATEWAY_SLACK_ENABLED=true.
+curl -s -o /dev/null -w "%{http_code}\n" -X POST http://localhost:8090/gw/slack/slack/events
+```
+
+### Operator notification
+
+Because the *defaults changed* in this release, every existing operator
+running the mono in production should be notified before upgrading.
+Confirm `.env` carries explicit values for both master flags so the
+post-upgrade behaviour is unambiguous regardless of the new defaults.

@@ -3,14 +3,33 @@
 Composes AHS, SAG, and MCP into a single FastAPI application with a
 combined lifespan, enabling the entire agent platform to run as one process.
 
-Route layout:
+Two master flags in :class:`~ypl.mono_server.config.MonoConfig` gate the
+optional surfaces of the monolith:
+
+  ``AHS_MONO_ENABLE_GATEWAY_SERVICE`` (default ``false``) — mount any
+      ``/gw/<name>/`` gateway plugin routers and run their startup/shutdown
+      hooks.  When ``false`` no plugin lifespan hooks fire and the
+      per-plugin sub-flags (``GATEWAY_SLACK_ENABLED``,
+      ``GATEWAY_GITHUB_ENABLED``) are ignored.
+  ``AHS_MONO_ENABLE_MCP`` (default ``false``) — mount the agcouch MCP at
+      ``/mcp/agcouch`` and run the agcouch FastMCP session manager + the
+      yuppster ``mcp_startup``/``mcp_shutdown`` pair.
+
+The harness MCP at ``/mcp/harness`` is **always** mounted regardless of the
+flags — AHS agent sessions always have a tool surface (shared and
+external-data tools dual-register on harness MCP via
+``ypl.mcp_common.shared_tool``, see PR #300).
+
+Route layout (everything turned on):
   /ahs/*            — Agent Harness Service (router already carries /ahs prefix)
   /mcp/harness      — Harness MCP (agents; x-ahs-token or Bearer <secret>:<session>)
-  /mcp/agcouch      — Agcouch MCP (developers; Bearer yupp_dev_*)
-  /gw/<name>/*      — Gateway plugins (e.g. /gw/slack/*, /gw/github/*)
+  /mcp/agcouch      — Agcouch MCP (developers; Bearer yupp_dev_*) — gated on
+                      AHS_MONO_ENABLE_MCP
+  /gw/<name>/*      — Gateway plugins (e.g. /gw/slack/*, /gw/github/*) —
+                      gated on AHS_MONO_ENABLE_GATEWAY_SERVICE
   /health           — Liveness probe — always 200 OK
 
-Startup order:
+Startup order (when both master flags are on):
   1. AHS (registers orchestration callbacks, warms process pool, etc.)
   2. Harness MCP lifespan (via AHSState._mcp_lifespan_ctx)
   3. Agcouch MCP lifespan
@@ -19,6 +38,11 @@ Startup order:
 
 Shutdown is in strict reverse order so in-flight AHS tasks can still use
 MCP tools while the scheduler drains.
+
+When ``AHS_MONO_ENABLE_MCP=false`` steps 3 and 4 are skipped (the inner block
+runs directly inside the harness MCP lifespan).  When
+``AHS_MONO_ENABLE_GATEWAY_SERVICE=false`` step 5 is skipped (the gateway
+plugin loop is not entered at all).
 
 The two MCP mounts expose *disjoint* tool sets — agent tools are reachable
 only via ``/mcp/harness`` and developer tools only via ``/mcp/agcouch``.
@@ -82,9 +106,15 @@ _PLUGIN_REGISTRY: list[GatewayPlugin] = [
 def discover_plugins(config: MonoConfig) -> list[GatewayPlugin]:
     """Return the list of gateway plugins that are enabled in *config*.
 
-    Each plugin's :attr:`~ypl.mono_server.gateway_plugin.GatewayPlugin.env_flag`
-    maps to a ``MonoConfig`` field by converting it to lower-case
-    (e.g. ``GATEWAY_SLACK_ENABLED`` -> ``gateway_slack_enabled``).  A missing
+    Honours the master ``ahs_mono_enable_gateway_service`` flag: if it is
+    ``False`` this function returns an empty list **unconditionally**, no
+    matter what the per-plugin sub-flags say.  This keeps the whole gateway
+    surface (lifespan + routes) behind a single deployment switch.
+
+    When the master flag is ``True``, each plugin's
+    :attr:`~ypl.mono_server.gateway_plugin.GatewayPlugin.env_flag` maps to a
+    ``MonoConfig`` field by converting it to lower-case (e.g.
+    ``GATEWAY_SLACK_ENABLED`` -> ``gateway_slack_enabled``).  A missing
     field raises :exc:`ValueError` rather than silently disabling the plugin --
     a typo in ``env_flag`` would otherwise make the plugin vanish with no
     diagnostic.
@@ -93,6 +123,8 @@ def discover_plugins(config: MonoConfig) -> list[GatewayPlugin]:
     implement the :class:`~ypl.mono_server.gateway_plugin.GatewayPlugin`
     protocol, and append an instance to :data:`_PLUGIN_REGISTRY` above.
     """
+    if not config.ahs_mono_enable_gateway_service:
+        return []
     enabled: list[GatewayPlugin] = []
     for plugin in _PLUGIN_REGISTRY:
         flag_attr = plugin.env_flag.lower()
@@ -133,10 +165,36 @@ def _setup_ahs_router(config: MonoConfig) -> None:
 
 
 @asynccontextmanager
+async def _maybe_agcouch_lifespan(enabled: bool) -> AsyncGenerator[None, None]:
+    """Enter the agcouch MCP lifespan when ``enabled``; otherwise no-op.
+
+    Encapsulates the master ``AHS_MONO_ENABLE_MCP`` gate so the body of
+    :func:`combined_lifespan` reads as a single linear flow regardless of
+    flag state.
+    """
+    if enabled:
+        async with agcouch_mcp_http_app.lifespan(agcouch_mcp_http_app):
+            yield
+    else:
+        yield
+
+
+@asynccontextmanager
 async def combined_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Orchestrate startup and shutdown of all services in the monolith.
 
-    Startup order:
+    Both master flags from :class:`~ypl.mono_server.config.MonoConfig` are
+    honoured here:
+
+    * ``ahs_mono_enable_mcp=False``  →  skip the agcouch MCP lifespan ctx and
+      skip ``mcp_startup`` / ``mcp_shutdown``.  The inner block (gateway
+      plugins + yield + AHS shutdown) runs directly inside the harness MCP
+      lifespan.
+    * ``ahs_mono_enable_gateway_service=False``  →  skip the gateway plugin
+      startup/shutdown loop entirely (``discover_plugins`` already returns an
+      empty list in that case, but we don't even iterate it for clarity).
+
+    Startup order when both flags are on:
       1. AHS (wires orchestration callbacks, starts warm process pool,
          launches scheduler, creates harness MCP lifespan context)
       2. Enter harness MCP lifespan (via AHSState._mcp_lifespan_ctx)
@@ -144,8 +202,8 @@ async def combined_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
       4. Yuppster batch-system init (mcp_startup)
       5. Enabled gateway plugins in registration order (see discover_plugins)
 
-    Shutdown is the mirror image of startup.  AHS shutdown runs *inside* both
-    MCP lifespan contexts so in-flight scheduler tasks can still call MCP
+    Shutdown is the mirror image of startup.  AHS shutdown runs *inside* the
+    harness MCP lifespan so in-flight scheduler tasks can still call MCP
     tools while the drain completes.
     """
     config = MonoConfig()
@@ -166,37 +224,41 @@ async def combined_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # --- 2. Harness MCP lifespan (FastMCP session manager) ---------------
         # Enter via the unentered context manager stored in ahs_state so real
         # exception info is forwarded to __aexit__ on a crash (same pattern as the
-        # standalone AHS server).
+        # standalone AHS server).  The harness MCP is ALWAYS up — agents always
+        # need a tool surface, regardless of the master flags.
         async with ahs_state._mcp_lifespan_ctx:
             try:
-                # --- 3. Agcouch MCP lifespan --------------------------------
-                # Separate FastMCP instance with its own session manager. Built
-                # inline (not stored on ahs_state) because only the monolith
-                # runs both MCP apps in one process.
-                async with agcouch_mcp_http_app.lifespan(agcouch_mcp_http_app):
+                # --- 3. Agcouch MCP lifespan (gated on ahs_mono_enable_mcp) -
+                # Separate FastMCP instance with its own session manager.
+                # When the flag is OFF this is a noop async with — the inner
+                # block runs directly inside the harness MCP lifespan only.
+                async with _maybe_agcouch_lifespan(config.ahs_mono_enable_mcp):
                     # --- 4. Yuppster batch-system init ---------------------
-                    await mcp_startup()
+                    # Tied to the agcouch MCP — when that mount is off, we
+                    # have no batch system to initialise.
+                    if config.ahs_mono_enable_mcp:
+                        await mcp_startup()
                     try:
-                        # --- 5. Gateway plugins ----------------------------
-                        # Start each enabled plugin in registration order;
-                        # record (plugin, state) pairs so shutdown runs in
-                        # reverse order. Startup is wrapped so a failure in
-                        # plugin N cleanly tears down plugins 0..N-1 before
-                        # re-raising -- no leaked subsystems.
-                        plugins = discover_plugins(config)
+                        # --- 5. Gateway plugins (gated on master flag) -----
+                        # discover_plugins() already returns [] when the
+                        # master flag is off, but we also short-circuit here
+                        # so the startup-failure cleanup path never runs in
+                        # the disabled case.
                         gateway_states: list[tuple[GatewayPlugin, Any]] = []
-                        try:
-                            for plugin in plugins:
-                                state = await plugin.startup()
-                                gateway_states.append((plugin, state))
-                        except Exception:
-                            # Clean up already-started plugins before propagating.
-                            for p, s in reversed(gateway_states):
-                                try:
-                                    await p.shutdown(s)
-                                except Exception:
-                                    logger.exception("Plugin %s shutdown failed during startup cleanup", p.name)
-                            raise
+                        if config.ahs_mono_enable_gateway_service:
+                            plugins = discover_plugins(config)
+                            try:
+                                for plugin in plugins:
+                                    state = await plugin.startup()
+                                    gateway_states.append((plugin, state))
+                            except Exception:
+                                # Clean up already-started plugins before propagating.
+                                for p, s in reversed(gateway_states):
+                                    try:
+                                        await p.shutdown(s)
+                                    except Exception:
+                                        logger.exception("Plugin %s shutdown failed during startup cleanup", p.name)
+                                raise
 
                         try:
                             yield
@@ -204,7 +266,9 @@ async def combined_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                             # Shutdown plugins in strict reverse startup order.
                             # Each call is individually exception-isolated so a
                             # failure in one plugin does not prevent others
-                            # from being torn down.
+                            # from being torn down.  When the master flag is
+                            # off ``gateway_states`` is empty and this loop
+                            # is a noop.
                             for plugin, state in reversed(gateway_states):
                                 try:
                                     await plugin.shutdown(state)
@@ -214,14 +278,15 @@ async def combined_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                         # Yuppster MCP teardown (batch-system flush, Sentry close,
                         # GCP log flush). The finally block ensures mcp_shutdown
                         # runs even if a plugin startup raises or the yield
-                        # block raises.
-                        await mcp_shutdown()
+                        # block raises.  Skipped when the agcouch mount is off.
+                        if config.ahs_mono_enable_mcp:
+                            await mcp_shutdown()
             finally:
-                # AHS teardown -- inside both MCP lifespans so in-flight tasks that
-                # call MCP tools during scheduler drain can still complete.
-                # Stays in monolith mode so send_slack_shutdown_courtesy uses the
-                # in-process Slack callback (the HTTP listener has already closed
-                # by the time this finally runs).
+                # AHS teardown -- inside the harness MCP lifespan so in-flight
+                # tasks that call MCP tools during scheduler drain can still
+                # complete.  Stays in monolith mode so send_slack_shutdown_courtesy
+                # uses the in-process Slack callback (the HTTP listener has
+                # already closed by the time this finally runs).
                 await ahs_shutdown(ahs_state)
     finally:
         set_monolith_mode(False)
@@ -238,6 +303,14 @@ def create_app() -> FastAPI:
     Returns a fully-wired FastAPI app suitable for ``uvicorn
     ypl.mono_server.server:app``.  The standalone AHS, SAG, and MCP server
     entrypoints remain unaffected.
+
+    Two master flags from :class:`~ypl.mono_server.config.MonoConfig` gate
+    the optional mounts:
+
+    * ``ahs_mono_enable_mcp=False``  →  the ``/mcp/agcouch`` mount is skipped.
+      ``/mcp/harness`` is always mounted.
+    * ``ahs_mono_enable_gateway_service=False``  →  no ``/gw/<name>/`` routers
+      are included; ``discover_plugins()`` returns an empty list.
     """
     config = MonoConfig()
 
@@ -283,25 +356,33 @@ def create_app() -> FastAPI:
     # --- Split MCP mounts (disjoint tool sets; path is the enforcement) ------
     # /mcp/harness: agent tools. Auth via HarnessMcpAuthMiddleware
     #   (x-ahs-token or Bearer <secret>:<session_id>). Dev tokens rejected.
+    #   ALWAYS mounted — AHS sessions need a tool surface.
     # /mcp/agcouch: developer tools. Auth via AgcouchMcpAuthMiddleware
-    #   (Bearer yupp_dev_*). Agent tokens rejected.
+    #   (Bearer yupp_dev_*). Agent tokens rejected.  Gated on
+    #   ``ahs_mono_enable_mcp`` — off by default for pure-AHS deployments.
     # There is intentionally no catch-all /mcp mount — each tool set is
     # reachable only at its own path.
     application.mount("/mcp/harness", harness_mcp_http_app)
-    application.mount("/mcp/agcouch", agcouch_mcp_http_app)
+    if config.ahs_mono_enable_mcp:
+        application.mount("/mcp/agcouch", agcouch_mcp_http_app)
 
     # --- Gateway plugins (all enabled plugins, each at /gw/<name>/) ----------
     # Routers are registered here; lifespan (startup/shutdown) is handled by
     # combined_lifespan via discover_plugins().  Plugins without a router
     # (get_router() returns None) still participate in the lifespan.
     # GitHub gateway is wired in via GitHubGatewayPlugin (Task [7]).
-    for plugin in discover_plugins(config):
-        if router := plugin.get_router():
-            application.include_router(router, prefix=f"/gw/{plugin.name}")
-            # Also mount at legacy prefix for backward compatibility with
-            # AHS gateway callbacks that use /slack-agent-gateway/ paths.
-            if plugin.name == "slack":
-                application.include_router(router, prefix="/slack-agent-gateway")
+    # The whole loop is gated on ``ahs_mono_enable_gateway_service``;
+    # discover_plugins() returns [] when that master flag is off, so
+    # iterating it would be a noop, but we skip the call entirely so
+    # disabled-state behaviour is obvious from the code path.
+    if config.ahs_mono_enable_gateway_service:
+        for plugin in discover_plugins(config):
+            if router := plugin.get_router():
+                application.include_router(router, prefix=f"/gw/{plugin.name}")
+                # Also mount at legacy prefix for backward compatibility with
+                # AHS gateway callbacks that use /slack-agent-gateway/ paths.
+                if plugin.name == "slack":
+                    application.include_router(router, prefix="/slack-agent-gateway")
 
     # --- Health check (always registered, no auth) ---------------------------
     @application.get("/health", tags=["health"])
