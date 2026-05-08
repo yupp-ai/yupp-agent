@@ -1,7 +1,7 @@
 ---
 name: data-science-investigation
 description: Data science investigation and analysis on Yupp production data. Use for leaderboard ranking analysis (why does model A rank above B?), engagement and usage analytics, geographic/demographic breakdowns, feature impact analysis, model performance deep-dives, and any ad-hoc data questions requiring narrative + evidence.
-allowed-tools: mcp__agcouch-mcp-server__query_bigquery, mcp__agcouch-mcp-server__query_yuppdb, mcp__agcouch-mcp-server__add_artifact, Bash, Read, Write, Glob, Grep, Task, Skill
+allowed-tools: mcp__harness__query_bigquery, mcp__harness__query_yuppdb, mcp__harness__add_artifact, Bash, Read, Write, Glob, Grep, Task, Skill
 ---
 
 # Data Science Investigation Guide

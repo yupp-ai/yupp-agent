@@ -52,6 +52,6 @@ Check the server terminal output (or `/tmp/ahs_server.log` if you started with `
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `tool_count=0` | Wrong tool permission names | Use `search_memory` not `mcp__agcouch-mcp-server__search_memory` |
+| `tool_count=0` | Wrong tool permission names | Use `search_memory` not `mcp__harness__search_memory` |
 | `<function_calls>` in output | Model doesn't support tools | Use claude-haiku-4-5 or better |
 | 401 Unauthorized | Bad API key | Check AGENT_HARNESS_SERVICE_API_KEY |

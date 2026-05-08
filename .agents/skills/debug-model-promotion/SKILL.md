@@ -1,7 +1,7 @@
 ---
 name: debug-model-promotion
 description: Debug model promotion and cloaked testing issues. Use when investigating why a promoted model is or isn't appearing, traffic pacing issues, or cloaked testing behavior.
-allowed-tools: mcp__agcouch-mcp-server__search_gcp_logs, mcp__agcouch-mcp-server__query_yuppdb, mcp__agcouch-mcp-server__query_bigquery, mcp__agcouch-mcp-server__add_artifact, Bash, Read, Write
+allowed-tools: mcp__harness__search_gcp_logs, mcp__harness__query_yuppdb, mcp__harness__query_bigquery, mcp__harness__add_artifact, Bash, Read, Write
 ---
 
 # Model Promotion Debug Guide

@@ -204,6 +204,12 @@ _CLI_TOOLS_SUPERSEDED_BY_MCP: list[str] = []
 # here; actual connection wiring in ``mcp_client.py`` re-reads the
 # setting at runtime.
 #
+# TODO(phase-4): drop ``settings.AGCOUCH_MCP_SERVER_NAME`` from this list
+# once the dev-token retirement also retires the ``allowed_servers``
+# permission row referring to it. After PR #300 (phase-2) the AHS
+# executor no longer connects to the agcouch mount, so the name is dead
+# weight here, but ``SessionPermissions`` rows persisted with this in
+# ``allowed_servers`` still need to read cleanly.
 # TODO(phase-9): externally-registered MCP servers (from the DB registry)
 # will be appended to this list at runtime when the session starts.
 ALL_MCP_SERVERS: list[str] = ["harness", settings.AGCOUCH_MCP_SERVER_NAME]
@@ -219,6 +225,100 @@ BLOCKED_HARNESS_TOOLS = frozenset(
         "list_agents",
         "schedule_agent_call",
         "schedule_recurring_agent_call",
+    }
+)
+
+# Harness MCP tools that previously lived on the agcouch mount and are now
+# registered on harness via ``@shared_tool`` (PR #300 / phase-2). They reach
+# yuppdb / agentdb / GCP logs / Sentry / Twitter / Linear / shared agent
+# project + artifact + memory state, and were previously blocked for
+# restricted (no-USE_MCP) sessions by the ``mcp__harness__*``
+# wildcard. Now that the wildcard matches nothing, the security boundary
+# has to be enumerated. ``runner.py`` adds ``mcp__harness__<name>`` for
+# every entry below to ``--disallowedTools`` for restricted sessions.
+#
+# ``report_security_incident`` is intentionally *not* listed: SECURITY.md
+# instructs every agent (regardless of USE_MCP) to call it on prompt
+# injection / scope manipulation / etc. attempts.
+SHARED_HARNESS_TOOLS_BLOCKED_FOR_RESTRICTED: frozenset[str] = frozenset(
+    {
+        # project_tasks (agentdb access — read + write)
+        "get_project",
+        "add_project",
+        "update_project",
+        "set_project_status",
+        "set_project_state",
+        "get_project_state",
+        "list_projects",
+        "get_task",
+        "add_tasks",
+        "add_task_sequence",
+        "update_task",
+        "set_task_status",
+        "set_task_dependencies",
+        "get_project_tasks",
+        "get_ready_tasks",
+        "claim_task",
+        "resume_failed_task",
+        "restart_task",
+        # agent_artifacts
+        "add_artifact",
+        "update_artifact",
+        "update_artifact_content",
+        "read_artifact",
+        "list_artifacts",
+        "list_artifact_versions",
+        "search_artifacts",
+        "artifact_url",
+        "archive_artifact",
+        "archive_artifact_slug",
+        # agent_schedules
+        "list_ahs_agents",
+        "create_agent_schedule",
+        "create_recurring_agent_schedule",
+        "cancel_agent_schedule",
+        "edit_agent_schedule",
+        "list_agent_schedules",
+        # memory_artifacts
+        "save_memory",
+        "load_memory",
+        "list_memory",
+        "search_memory",
+        # database — yuppdb / agentdb / bigquery
+        "query_yuppdb",
+        "query_agentdb",
+        "query_bigquery",
+        "query_bigquery_expensive",
+        # gcp_logs / vercel_logs / alert metadata
+        "search_gcp_logs",
+        "search_vercel_logs",
+        "get_gcp_alert_details",
+        # sentry
+        "get_sentry_issue_details",
+        "get_sentry_issue_tag_values",
+        "get_sentry_trace_details",
+        "get_sentry_breadcrumbs",
+        # twitter
+        "search_twitter",
+        "get_user_timeline",
+        "get_tweet",
+        # redis
+        "get_redis_value",
+        "scan_redis_keys",
+        # slack — read-side
+        "read_slack_thread",
+        "search_slack",
+        # linear_sync
+        "list_linear_teams",
+        "list_linear_projects",
+        "resolve_linear_team",
+        "resolve_linear_project",
+        "import_project_from_linear",
+        "link_project_to_linear",
+        "export_project_to_linear",
+        "push_task_status_to_linear",
+        "sync_project_with_linear",
+        "attach_link_to_linear_issue",
     }
 )
 

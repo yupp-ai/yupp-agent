@@ -17,7 +17,7 @@ from ypl.db.agent_harness import (
     AgentSecuritySeverity,
 )
 from ypl.mcp_common.auth_context import current_request_context
-from ypl.mcp_server.core import mcp_server
+from ypl.mcp_common.shared_tool import shared_tool
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -63,7 +63,7 @@ async def _store_incident(
         return incident.incident_id
 
 
-@mcp_server.tool()
+@shared_tool()
 async def report_security_incident(
     incident_type: str,
     severity: str,

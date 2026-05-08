@@ -7,13 +7,13 @@ import json
 from typing import Any
 
 from ypl.db.redis import get_redis_client
-from ypl.mcp_server.core import mcp_server
+from ypl.mcp_common.shared_tool import shared_tool
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
 
 
-@mcp_server.tool(
+@shared_tool(
     name="get_redis_value",
     description=(
         "Get a value from Redis by exact key. Use to inspect feature flags (feature_flag:<name>), "
@@ -79,7 +79,7 @@ async def get_redis_value(key: str) -> dict[str, Any]:
         return {"success": False, "error": str(e), "key": key}
 
 
-@mcp_server.tool(
+@shared_tool(
     name="scan_redis_keys",
     description=(
         "Scan Redis keys matching a pattern (supports * wildcard). Use to discover keys before "

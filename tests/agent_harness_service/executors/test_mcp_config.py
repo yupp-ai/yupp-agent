@@ -1,11 +1,19 @@
-"""Tests for executors/mcp_config.py — MCP server resolution and workspace config writing."""
+"""Tests for executors/mcp_config.py — MCP server resolution and workspace config writing.
+
+After the phase-2 tool taxonomy refactor (PR for branch
+``tw/mono-mcp-2-tool-taxonomy``) AHS no longer attaches an
+``agcouch-mcp-server`` entry to a session's ``.mcp.json``: shared and
+external-data tools register on the harness MCP via ``@shared_tool`` and
+agents reach them through ``AHS_MCP_SECRET``. These tests pin that
+contract so a future refactor cannot silently re-introduce the agcouch
+detour.
+"""
 
 from __future__ import annotations
 import json
 import os
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 from ypl.agent_harness_service.common.types import SessionPermissions
 from ypl.agent_harness_service.executors.mcp_config import (
@@ -32,61 +40,64 @@ class TestResolveMcpServers:
         servers = resolve_mcp_servers(session_id="my-session-123")
         assert servers["harness"]["headers"]["X-AHS-Session-ID"] == "my-session-123"
 
-    def test_full_access_keeps_all_servers(self) -> None:
-        """Full access permissions keeps both agcouch and harness servers."""
+    def test_only_harness_in_full_access(self) -> None:
+        """Full-access sessions still get only the harness mount.
+
+        Pins the phase-2 invariant: AHS reaches every tool through harness
+        MCP, so the agent's ``.mcp.json`` advertises only ``harness``. A
+        regression here would mean the AGCOUCH_MCP_TOKEN detour is back.
+        """
         perms = SessionPermissions.full_access()
         ctx: dict[str, Any] = {"permissions": perms.model_dump(mode="json")}
         servers = resolve_mcp_servers(session_id="sess-1", session_context=ctx)
-        assert "harness" in servers
-        assert "agcouch-mcp-server" in servers
+        assert list(servers.keys()) == ["harness"]
+        assert "agcouch-mcp-server" not in servers
 
-    def test_restricted_permissions_removes_agcouch(self) -> None:
-        """Restricted permissions removes servers not in allowed_servers list."""
+    def test_restricted_permissions_keep_only_harness(self) -> None:
+        """Restricted sessions also see only the harness mount."""
         perms = SessionPermissions.restricted()  # allowed_servers=["harness"]
         ctx: dict[str, Any] = {"permissions": perms.model_dump(mode="json")}
         servers = resolve_mcp_servers(session_id="sess-1", session_context=ctx)
         assert "harness" in servers
         assert "agcouch-mcp-server" not in servers
 
-    def test_slack_session_without_permissions_is_restricted(self) -> None:
-        """Slack session with no permissions defaults to restricted (fail-secure)."""
+    def test_slack_session_without_permissions_keeps_only_harness(self) -> None:
+        """Slack sessions with no permissions still get the harness mount."""
         servers = resolve_mcp_servers(session_id="sess-1", is_slack=True)
-        # Only harness should be present (restricted removes agcouch)
         assert "harness" in servers
         assert "agcouch-mcp-server" not in servers
 
-    def test_agcouch_gets_user_id_header(self) -> None:
-        """User ID from session context is injected into agcouch headers."""
+    def test_harness_gets_user_id_header(self) -> None:
+        """User ID from session context is injected into harness headers.
+
+        The harness auth middleware validates ``AHS_MCP_SECRET`` then
+        trusts the AHS-stamped ``X-User-ID`` for tool attribution. AHS
+        writes the ``.mcp.json`` in a sandboxed location the agent
+        cannot modify.
+        """
         ctx: dict[str, Any] = {"user_id": "user-abc-123"}
         servers = resolve_mcp_servers(session_id="sess-1", session_context=ctx)
-        assert servers["agcouch-mcp-server"]["headers"]["X-User-ID"] == "user-abc-123"
+        assert servers["harness"]["headers"]["X-User-ID"] == "user-abc-123"
 
     def test_current_turn_user_id_takes_priority(self) -> None:
-        """current_turn_user_id overrides user_id for agcouch header."""
+        """current_turn_user_id overrides user_id for the harness header."""
         ctx: dict[str, Any] = {"user_id": "static-user", "current_turn_user_id": "turn-user"}
         servers = resolve_mcp_servers(session_id="sess-1", session_context=ctx)
-        assert servers["agcouch-mcp-server"]["headers"]["X-User-ID"] == "turn-user"
+        assert servers["harness"]["headers"]["X-User-ID"] == "turn-user"
 
     def test_agent_name_header_injected(self) -> None:
-        """Agent name is injected into agcouch headers when provided."""
+        """Agent name is injected into harness headers when provided."""
         servers = resolve_mcp_servers(session_id="sess-1", agent_name="sre")
-        assert servers["agcouch-mcp-server"]["headers"]["X-AHS-Agent-Name"] == "sre"
+        assert servers["harness"]["headers"]["X-AHS-Agent-Name"] == "sre"
 
-    def test_agcouch_has_authorization_header(self) -> None:
-        """Agcouch server is built with a Bearer Authorization header from settings."""
+    def test_no_agcouch_authorization_header(self) -> None:
+        """No agcouch entry — and therefore no AGCOUCH_MCP_TOKEN — anywhere in the dict."""
         servers = resolve_mcp_servers(session_id="sess-1")
-        auth = servers["agcouch-mcp-server"]["headers"].get("Authorization", "")
-        assert auth.startswith("Bearer ")
-
-    def test_no_agcouch_when_settings_empty(self) -> None:
-        """If AGCOUCH_MCP_SERVER_URL is empty the server is not built."""
-        with patch("ypl.agent_harness_service.executors.mcp_config.settings") as mock_settings:
-            mock_settings.AGCOUCH_MCP_SERVER_NAME = "agcouch-mcp-server"
-            mock_settings.AGCOUCH_MCP_SERVER_URL = ""
-            mock_settings.AGCOUCH_MCP_TOKEN = ""
-            servers = resolve_mcp_servers(session_id="sess-1")
         assert "agcouch-mcp-server" not in servers
-        assert "harness" in servers  # harness still injected
+        # Belt-and-suspenders: serialise to JSON and ensure the env-var name
+        # never leaks through. A regression that re-introduces an agcouch
+        # entry would expand ``${AGCOUCH_MCP_TOKEN}`` here.
+        assert "AGCOUCH_MCP_TOKEN" not in json.dumps(servers)
 
 
 class TestEnsureWorkspaceMcpConfig:
@@ -146,11 +157,17 @@ class TestBuildCodexMcpArgs:
         assert "harness" in args_str
         assert CODEX_HARNESS_BEARER_ENV in args_str
 
-    def test_agcouch_bearer_env_var(self) -> None:
-        """Agcouch MCP server gets AGCOUCH_MCP_TOKEN as bearer env var."""
+    def test_no_agcouch_bearer_env_var(self) -> None:
+        """No AGCOUCH_MCP_TOKEN is configured for any Codex MCP server.
+
+        Pins the phase-2 invariant: Codex never sees the agcouch bearer
+        token. A regression that re-introduces the agcouch mount would
+        also re-add ``AGCOUCH_MCP_TOKEN`` here.
+        """
         args = build_codex_mcp_args(session_id="sess-1")
         args_str = " ".join(args)
-        assert "AGCOUCH_MCP_TOKEN" in args_str
+        assert "AGCOUCH_MCP_TOKEN" not in args_str
+        assert "agcouch" not in args_str
 
 
 class TestBuildCodexMcpEnv:

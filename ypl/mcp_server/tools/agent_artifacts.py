@@ -47,7 +47,7 @@ from ypl.agent_harness_service.artifact_store import (
 from ypl.backend.db import get_async_session, get_async_session_read_replica, retry_db
 from ypl.db.agent_harness import AgentArtifact, AgentArtifactType
 from ypl.mcp_common.auth_context import current_request_context
-from ypl.mcp_server.core import mcp_server
+from ypl.mcp_common.shared_tool import shared_tool
 from ypl.mcp_server.tools.artifact_notifier import notify_artifact_event
 from ypl.structured_logger import get_logger
 
@@ -331,7 +331,7 @@ async def _resolve_caller_context() -> tuple[uuid.UUID | None, str | None, uuid.
 # ---------------------------------------------------------------------------
 
 
-@mcp_server.tool()
+@shared_tool()
 async def add_artifact(
     artifact_type: str,
     title: str,
@@ -526,7 +526,7 @@ async def add_artifact(
     }
 
 
-@mcp_server.tool()
+@shared_tool()
 async def update_artifact(
     artifact_id: str,
     title: str | None = None,
@@ -607,7 +607,7 @@ async def update_artifact(
     }
 
 
-@mcp_server.tool()
+@shared_tool()
 async def update_artifact_content(
     slug: str,
     content: str,
@@ -688,7 +688,7 @@ async def update_artifact_content(
     }
 
 
-@mcp_server.tool()
+@shared_tool()
 async def list_artifacts(
     artifact_type: str | None = None,
     limit: int = 20,
@@ -761,7 +761,7 @@ async def list_artifacts(
     return {"success": True, "artifacts": rows, "count": len(rows)}
 
 
-@mcp_server.tool()
+@shared_tool()
 async def list_artifact_versions(slug: str) -> dict[str, Any]:
     """List every version of a TEXT artifact slug, oldest first.
 
@@ -794,7 +794,7 @@ async def list_artifact_versions(slug: str) -> dict[str, Any]:
     return {"success": True, "slug": slug, "versions": rows, "count": len(rows)}
 
 
-@mcp_server.tool()
+@shared_tool()
 async def search_artifacts(
     query: str,
     artifact_type: str | None = None,
@@ -857,7 +857,7 @@ async def search_artifacts(
     return {"success": True, "results": rows, "count": len(rows)}
 
 
-@mcp_server.tool(
+@shared_tool(
     name="read_artifact",
     description=(
         "Read a TEXT artifact's content + metadata. Pass ``id_or_slug`` as "
@@ -902,7 +902,7 @@ async def mcp_read_artifact(
     }
 
 
-@mcp_server.tool()
+@shared_tool()
 async def artifact_url(id_or_slug: str) -> dict[str, Any]:
     """Look up an artifact's canonical URL without fetching its content.
 
@@ -936,7 +936,7 @@ async def artifact_url(id_or_slug: str) -> dict[str, Any]:
     }
 
 
-@mcp_server.tool(
+@shared_tool(
     name="archive_artifact",
     description=(
         "Archive (soft-delete) a single artifact by UUID. The row stays in the "
@@ -955,7 +955,7 @@ async def mcp_archive_artifact(artifact_id: str) -> dict[str, Any]:
     return {"artifact_id": artifact_id, "archived": True}
 
 
-@mcp_server.tool()
+@shared_tool()
 async def archive_artifact_slug(slug: str) -> dict[str, Any]:
     """Archive every active version of a TEXT artifact slug.
 
@@ -985,4 +985,4 @@ async def archive_artifact_slug(slug: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 #
 # Moved to ``ypl/mcp_server/tools/memory_artifacts.py`` (registered there via
-# ``@mcp_server.tool()`` and imported by ``mcp_tools.py``).
+# ``@shared_tool()`` and imported by ``mcp_tools.py``).

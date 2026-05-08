@@ -1,7 +1,7 @@
 ---
 name: search-twitter
 description: Search recent tweets and look up individual posts on X/Twitter. Use when you need to find tweets about a topic, monitor mentions, research public sentiment, or get the content of a specific tweet given its URL or ID.
-allowed-tools: mcp__agcouch-mcp-server__search_twitter, mcp__agcouch-mcp-server__get_tweet
+allowed-tools: mcp__harness__search_twitter, mcp__harness__get_tweet
 ---
 
 # X/Twitter Skill

@@ -11,7 +11,7 @@ from typing import Any
 import aiohttp
 
 from ypl.backend.config import settings
-from ypl.mcp_server.core import mcp_server
+from ypl.mcp_common.shared_tool import shared_tool
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -457,7 +457,8 @@ async def get_sentry_breadcrumbs(
 # ---------------------------------------------------------------------------
 
 
-@mcp_server.tool(
+@shared_tool(
+    requires_settings=("SENTRY_AUTH_TOKEN",),
     name="get_sentry_issue_details",
     description=(
         "Get Sentry issue details with optional specific event. "
@@ -480,7 +481,8 @@ async def mcp_get_sentry_issue_details(
     return await get_sentry_issue_details(issue_id, event_id, project_slug)
 
 
-@mcp_server.tool(
+@shared_tool(
+    requires_settings=("SENTRY_AUTH_TOKEN",),
     name="get_sentry_issue_tag_values",
     description=(
         "Get tag value distribution for a Sentry issue. "
@@ -501,7 +503,8 @@ async def mcp_get_sentry_issue_tag_values(
     return await get_sentry_issue_tag_values(issue_id, tag_key)
 
 
-@mcp_server.tool(
+@shared_tool(
+    requires_settings=("SENTRY_AUTH_TOKEN",),
     name="get_sentry_trace_details",
     description=(
         "Get trace details by 32-char hex trace ID. "
@@ -519,7 +522,8 @@ async def mcp_get_sentry_trace_details(
     return await get_sentry_trace_details(trace_id)
 
 
-@mcp_server.tool(
+@shared_tool(
+    requires_settings=("SENTRY_AUTH_TOKEN",),
     name="get_sentry_breadcrumbs",
     description=(
         "Get breadcrumbs for a Sentry issue's latest or specific event. "
