@@ -39,6 +39,7 @@ from starlette.responses import JSONResponse, Response
 from ypl.agent_harness_service.common.constants import AHS_MCP_SECRET
 from ypl.agent_harness_service.tools.local_mcp_server import mcp as harness_mcp
 from ypl.mcp_common.auth_context import RequestContext, mcp_session_id_var, request_context
+from ypl.mcp_server.auth_dev_token import DEPRECATION_HEADER, DEPRECATION_NOTICE
 from ypl.mcp_server.core import mcp_server as agcouch_mcp
 from ypl.structured_logger import get_logger
 
@@ -173,11 +174,6 @@ class AgcouchMcpAuthMiddleware(BaseHTTPMiddleware):
         :class:`DevTokenAuthMiddleware`: stamp only when the request
         actually flowed through dev-token auth.
         """
-        # Lazy import to keep the constants available even when the dev-token
-        # machinery is removed in phase 5b — at that point this whole class
-        # disappears with it, so the import is harmless.
-        from ypl.mcp_server.auth_dev_token import DEPRECATION_HEADER, DEPRECATION_NOTICE
-
         is_dev_token_request = request.headers.get("authorization", "").startswith("Bearer yupp_dev_")
         response = await self._dispatch_authenticated(request, call_next)
         if is_dev_token_request:
