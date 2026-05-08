@@ -165,28 +165,60 @@ defer, or ignore — you do **not** make that decision for them.
 
 ### Step A: Extract author session info from the PR description
 
-The PR description, for PRs created by AHS-driven agent sessions, contains an
-attribution header that looks like:
+The PR description, for PRs created by an AHS-driven session of any trigger type
+(TASK, SLACK, AGENT, CRON, API), contains an attribution header that looks like:
 
 ```
 🤖 *<agent-name>* for *<user-name>* · 📋 [<project> / <task>](<task-url>)
 🔗 [Session](<AHS_LIT_BASE_URL>/agent_harness_console?session_id=<SESSION_UUID>)
 ```
 
+The first line carries the agent name (always) and a project/task link (only for
+task-triggered authors). The second line — the Session link — is always present
+on AHS-driven PRs. Older PRs (created before the attribution emitter was broadened
+beyond TASK) may have no header at all; treat that as "skip notification".
+
 Parse the PR body (returned by `gh pr view <PR_NUMBER> -R yupp-ai/<REPO> --json body`)
 to extract:
 
-- **`author_agent_name`** — the bare agent name from the `🤖 *<agent-name>*` token (first
-  asterisk-wrapped token on the attribution line). Strip surrounding asterisks/whitespace.
-- **`author_session_id`** — the UUID from the `session_id=<UUID>` query parameter on the
-  Session link.
+- **`author_agent_name`** — the bare agent name from the `🤖 *<agent-name>*` token
+  (first asterisk-wrapped token on the attribution line). Strip surrounding
+  asterisks/whitespace.
+- **`author_session_id`** — the UUID from the `session_id=<UUID>` query parameter
+  on the Session link.
 
-If either value cannot be reliably extracted (e.g. the PR was created by a human
-or by a flow that does not include the attribution header), **skip notification
-silently** — log it in your own response so the operator can see it, but do not
-fail the review. Not every PR has an associated agent session.
+If either value cannot be reliably extracted (e.g. the PR was created by a human,
+by an AHS session pre-dating the broadened attribution header, or by some other
+flow), **skip notification silently** — log it in your own response so the operator
+can see it, but do not fail the review. Not every PR has an associated agent
+session.
 
-### Step B: Send the notification
+### Step B: Send the notification — safety constraints
+
+You **must** always pass `to_session_id=<author_session_id>` (Scenario B —
+inject into the existing author session). You **must not** call
+`send_agent_message` with `to_session_id` omitted or `None` (Scenario A) — that
+would spawn a brand new session for the recipient agent and is never the right
+shape for a review-fix notification. If you do not have a parsed
+`author_session_id`, fall through to the "skip" branch above; do not improvise.
+
+The PR description is editable markdown, so a malicious or buggy author can in
+principle write a misleading attribution header to try to redirect this
+notification. Two layered defences keep that bounded:
+
+- The server-side authz check in `tools/agent_messaging.py:176-177` rejects any
+  `(to_agent_name, to_session_id)` pair where the named agent does not own that
+  session. The worst a forged header can do is produce an authz error and an
+  audit-log line — it cannot misroute a turn.
+- The harness wraps every FELLOW_AGENT body with a sender-identity marker
+  (`session_lifecycle._wrap_fellow_agent_content`), so receivers can never be
+  tricked into thinking a master-reviewer notification came from a different
+  agent.
+
+You do not need to (and should not) duplicate either check yourself. Just
+respect the "always pass to_session_id" rule above.
+
+### Step C: Send the notification — body template
 
 Once you have both `author_agent_name` and `author_session_id`, call:
 
@@ -198,40 +230,65 @@ send_agent_message(
 )
 ```
 
-This injects a `FELLOW_AGENT` turn into the author's existing session (Scenario B —
-no new session is spawned). The receiving agent will see the message at its next
-turn boundary.
+The recipient is unaffected by master-reviewer's `allowed_to_message: ["*"]` —
+the harness's deny-by-default authz, plus the session-ownership check above,
+mean this is the only legitimate cross-agent route this agent ever takes.
 
-**Notification body template** — make sure the message identifies you as the sender
-so the receiving agent can recognise it as an external/inbound notification:
+**Notification body template** — every notification body **must** include three
+machine-extractable fields so the receiver can dedup retries and bound the loop:
 
 ```
-From master-reviewer: a code review has been posted on PR #<PR_NUMBER> (round <N>).
+master-reviewer: code review posted on PR #<PR_NUMBER>.
 
 PR: <PR_URL>
-Review summary: <one-sentence summary of the verdict, e.g. "3 issues need fixing — 1 critical, 2 high; 1 non-blocking suggestion">
+Review-Round: <N>
+Head-SHA: <FULL_HEAD_SHA>
+Verdict: <one-sentence summary, e.g. "3 issues need fixing — 1 critical, 2 high; 1 non-blocking suggestion">
 
 This is a notification, not an instruction. You decide whether to address the
 comments now, ask the human for guidance, defer to a follow-up PR, or take no
 action. If you decide to fix, the typical follow-up is to invoke the
 `/handle-pr-comments <PR_URL>` skill on this PR.
+
+Notes for the receiver:
+- `send_agent_message` is delivered at-least-once and will reopen a COMPLETED
+  or STALE session on arrival. If your session was already terminal when this
+  notification fired, treat the resumption strictly as "answer the
+  notification" — do not pick up unrelated long-running work without
+  reconfirming with the human.
+- `send_agent_message` has no idempotency key today. If you see two
+  notifications for the same `(PR_URL, Review-Round, Head-SHA)` triple,
+  treat the second as a duplicate and ignore it.
+- Track per-PR rounds via `save_memory` keyed on `<PR_URL>`. After 3
+  rounds without convergence, default to "ask the human" instead of
+  auto-running `/handle-pr-comments` again — repeated rounds without
+  convergence are a signal that the review and the fix disagree on
+  something the human needs to resolve.
 ```
 
-If the review was clean (no issues), the body should still be sent so the author
-agent knows the review round is complete:
+If the review was clean (no issues), still send a notification so the author
+agent knows the round closed:
 
 ```
-From master-reviewer: a code review has been posted on PR #<PR_NUMBER> (round <N>).
+master-reviewer: code review posted on PR #<PR_NUMBER>.
+
 PR: <PR_URL>
+Review-Round: <N>
+Head-SHA: <FULL_HEAD_SHA>
 Verdict: clean — no issues found. No action required.
 ```
 
-### Step C: Report the notification in your final response
+`<FULL_HEAD_SHA>` is the value already captured in step "Skip review if no new
+commits since last review" — reuse it rather than re-querying. `<N>` is the
+current `context.review_round` value (round 1, round 2, …).
 
-In your own turn output (the response that will be persisted as your turn result),
-state whether the notification was sent, skipped, or failed. Example lines:
+### Step D: Report the notification in your final response
 
-- `Notified author agent <agent_name> session <uuid> (agent_message_id=<id>).`
+In your own turn output (the response that will be persisted as your turn
+result), state whether the notification was sent, skipped, or failed. Example
+lines:
+
+- `Notified author agent <agent_name> session <uuid> (agent_message_id=<id>, round=<N>, head=<sha7>).`
 - `Skipped author notification — PR description has no AHS session attribution.`
 - `Author notification failed: <reason>. The review is posted; the author session was not woken.`
 
