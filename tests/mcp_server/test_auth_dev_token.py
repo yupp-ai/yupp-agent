@@ -543,6 +543,152 @@ class TestDevTokenAuthMiddleware:
 
 
 # ---------------------------------------------------------------------------
+# X-Auth-Deprecation header (phase 5a — see auth_dev_token.DEPRECATION_NOTICE)
+# ---------------------------------------------------------------------------
+
+
+class TestDeprecationHeader:
+    """Every dev-token response carries the deprecation header.
+
+    Phase 5a ships the header so callers can self-detect deprecated auth
+    without parsing logs. The constants are removed in phase 5b together
+    with the dev-token middleware.
+    """
+
+    def test_constants_match_documented_value(self) -> None:
+        from ypl.mcp_server.auth_dev_token import DEPRECATION_HEADER, DEPRECATION_NOTICE
+
+        # Locked to the value baked into mcp_server/README.md and DEPLOYMENT.md.
+        # If the cutover date moves, update both docs and this assertion.
+        assert DEPRECATION_HEADER == "X-Auth-Deprecation"
+        assert "deprecated" in DEPRECATION_NOTICE.lower()
+        assert "OAuth" in DEPRECATION_NOTICE
+        assert "2026-06-15" in DEPRECATION_NOTICE
+
+    def test_header_present_on_missing_authorization(self) -> None:
+        """401 (missing Authorization) → header still set."""
+        from ypl.mcp_server.auth_dev_token import DEPRECATION_HEADER, DEPRECATION_NOTICE
+
+        app = _make_starlette_app()
+        client = TestClient(app, raise_server_exceptions=False)
+        r = client.get("/ping")
+        assert r.status_code == 401
+        assert r.headers.get(DEPRECATION_HEADER) == DEPRECATION_NOTICE
+
+    def test_header_present_on_malformed_bearer(self) -> None:
+        """401 (malformed Authorization header) → header still set."""
+        from ypl.mcp_server.auth_dev_token import DEPRECATION_HEADER, DEPRECATION_NOTICE
+
+        app = _make_starlette_app()
+        client = TestClient(app, raise_server_exceptions=False)
+        r = client.get("/ping", headers={"authorization": "Token not-bearer-format"})
+        assert r.status_code == 401
+        assert r.headers.get(DEPRECATION_HEADER) == DEPRECATION_NOTICE
+
+    def test_header_present_on_wrong_token_format(self) -> None:
+        """401 (bearer that doesn't start with yupp_dev_) → header still set."""
+        from ypl.mcp_server.auth_dev_token import DEPRECATION_HEADER, DEPRECATION_NOTICE
+
+        app = _make_starlette_app()
+        client = TestClient(app, raise_server_exceptions=False)
+        r = client.get("/ping", headers={"authorization": "Bearer sk-some-other-token"})
+        assert r.status_code == 401
+        assert r.headers.get(DEPRECATION_HEADER) == DEPRECATION_NOTICE
+
+    def test_header_present_on_invalid_token(self) -> None:
+        """401 (validate_token returns None) → header still set."""
+        from ypl.mcp_server.auth_dev_token import DEPRECATION_HEADER, DEPRECATION_NOTICE
+
+        app = _make_starlette_app()
+        client = TestClient(app, raise_server_exceptions=False)
+
+        with patch(
+            "ypl.mcp_server.auth_dev_token.validate_token",
+            new=AsyncMock(return_value=(None, None)),
+        ):
+            r = client.get(
+                "/ping",
+                headers={"authorization": "Bearer yupp_dev_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"},
+            )
+
+        assert r.status_code == 401
+        assert r.headers.get(DEPRECATION_HEADER) == DEPRECATION_NOTICE
+
+    def test_header_present_on_no_permission_403(self) -> None:
+        """403 (no USE_MCP permission) → header still set."""
+        from ypl.mcp_server.auth_dev_token import DEPRECATION_HEADER, DEPRECATION_NOTICE
+
+        db_token = _make_db_token()
+        app = _make_starlette_app()
+        client = TestClient(app, raise_server_exceptions=False)
+
+        with (
+            patch(
+                "ypl.mcp_server.auth_dev_token.validate_token",
+                new=AsyncMock(return_value=(db_token, None)),
+            ),
+            patch(
+                "ypl.mcp_server.auth_dev_token.has_permission_cached",
+                new=AsyncMock(return_value=False),
+            ),
+        ):
+            r = client.get(
+                "/ping",
+                headers={"authorization": "Bearer yupp_dev_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"},
+            )
+
+        assert r.status_code == 403
+        assert r.headers.get(DEPRECATION_HEADER) == DEPRECATION_NOTICE
+
+    def test_header_present_on_successful_auth(self) -> None:
+        """200 (valid token with permission) → header still set."""
+        from ypl.mcp_server.auth_dev_token import DEPRECATION_HEADER, DEPRECATION_NOTICE
+
+        db_token = _make_db_token()
+        app = _make_starlette_app()
+        client = TestClient(app, raise_server_exceptions=False)
+
+        with (
+            patch(
+                "ypl.mcp_server.auth_dev_token.validate_token",
+                new=AsyncMock(return_value=(db_token, None)),
+            ),
+            patch(
+                "ypl.mcp_server.auth_dev_token.has_permission_cached",
+                new=AsyncMock(return_value=True),
+            ),
+            patch(
+                "ypl.mcp_server.auth_dev_token.lookup_user_id_by_email",
+                new=AsyncMock(return_value=None),
+            ),
+        ):
+            r = client.get(
+                "/ping",
+                headers={"authorization": "Bearer yupp_dev_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"},
+            )
+
+        assert r.status_code == 200
+        assert r.headers.get(DEPRECATION_HEADER) == DEPRECATION_NOTICE
+
+    def test_header_absent_on_health_check(self) -> None:
+        """Public /health path skips dev-token auth → no deprecation header."""
+        from ypl.mcp_server.auth_dev_token import DEPRECATION_HEADER, DevTokenAuthMiddleware
+        from ypl.mcp_server.context_vars import request_context
+
+        async def health(request: Request) -> JSONResponse:
+            return JSONResponse({"status": "ok"})
+
+        app = Starlette(routes=[Route("/health", health)])
+        app.add_middleware(DevTokenAuthMiddleware, request_context_var=request_context)
+        client = TestClient(app, raise_server_exceptions=False)
+
+        r = client.get("/health")
+        assert r.status_code == 200
+        # Health endpoints aren't dev-token endpoints; no deprecation message.
+        assert r.headers.get(DEPRECATION_HEADER) is None
+
+
+# ---------------------------------------------------------------------------
 # validate_token (mocked DB session)
 # ---------------------------------------------------------------------------
 

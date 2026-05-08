@@ -154,6 +154,29 @@ class AgcouchMcpAuthMiddleware(BaseHTTPMiddleware):
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
+        """Validate dev-token before processing request.
+
+        Wraps :meth:`_dispatch_authenticated` so every response — accepted
+        or rejected — carries the
+        :data:`~ypl.mcp_server.auth_dev_token.DEPRECATION_HEADER`. The
+        ``/mcp/agcouch`` mount is dedicated to dev-token traffic, so even
+        the no-bearer 401 is, in effect, telling the caller "your future
+        dev-token request will not be honoured".
+        """
+        # Lazy import to keep the constants available even when the dev-token
+        # machinery is removed in phase 5b — at that point this whole class
+        # disappears with it, so the import is harmless.
+        from ypl.mcp_server.auth_dev_token import DEPRECATION_HEADER, DEPRECATION_NOTICE
+
+        response = await self._dispatch_authenticated(request, call_next)
+        response.headers[DEPRECATION_HEADER] = DEPRECATION_NOTICE
+        return response
+
+    async def _dispatch_authenticated(
+        self,
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
         auth_header = request.headers.get("authorization", "")
 
         if not auth_header.startswith("Bearer yupp_dev_"):

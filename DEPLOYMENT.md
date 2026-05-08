@@ -62,7 +62,10 @@ The interactive setup wizard must be run **once** on every new box. It:
 2. Generates `.env` with prompted values + auto-generated secrets
 3. Runs `alembic upgrade head` (schema migrations)
 4. Seeds roles (ADMIN, ENGINEER, MCP_USER)
-5. Creates first admin user + optional MCP dev token
+5. Creates first admin user + (legacy) optional MCP dev token. New
+   deployments should use OAuth instead — see
+   [`ypl/mcp_server/README.md`](./ypl/mcp_server/README.md). Dev tokens
+   are deprecated and will be removed after 2026-06-15.
 
 ```bash
 # Clone the repo (bare-metal / MacBook)
@@ -387,20 +390,36 @@ localhost access keeps reaching every route.
 
 ### MCP client config
 
-Add to your MCP client (e.g. Claude Desktop):
+Add to your MCP client (e.g. Claude Code, Cursor, Claude Cowork). The
+recommended path is the OAuth-secured endpoint — the client manages the
+JWT itself and you sign in once with your `@example.com` Google account:
 
 ```json
 {
   "mcpServers": {
     "ahs-mono": {
-      "url": "https://agent.yourdomain.com/mcp",
-      "headers": {
-        "Authorization": "Bearer yupp_dev_<your-token>"
-      }
+      "type": "http",
+      "url": "https://agent.yourdomain.com/mcp"
     }
   }
 }
 ```
+
+For Claude Code:
+
+```bash
+claude mcp add --transport http ahs-mono --scope user \
+  https://agent.yourdomain.com/mcp
+# Run /mcp in Claude Code; complete the Google OAuth flow on first connect.
+```
+
+> ⚠️ **Dev tokens (`yupp_dev_*`) are deprecated** and will be removed
+> after 2026-06-15. If you still see deployment scripts that export
+> `AGCOUCH_MCP_TOKEN` or set `Authorization: Bearer yupp_dev_*` in
+> `.mcp.json`, migrate them to the OAuth setup above. Every dev-token
+> response carries an `X-Auth-Deprecation` header so you can audit
+> remaining usage. See [`ypl/mcp_server/README.md`](./ypl/mcp_server/README.md#legacy-dev-tokens-deprecated)
+> for the migration appendix.
 
 ---
 
@@ -435,11 +454,27 @@ Expected: HTTP 200 with a `session_id` field.
 
 ### MCP endpoint
 
+The recommended verification is to point an OAuth-capable MCP client
+(Claude Code, Cursor) at `http://localhost:8090/mcp` and confirm the
+client lists tools after the OAuth handshake.
+
+For a curl-only smoke test using a short-lived OAuth JWT obtained
+out-of-band:
+
 ```bash
-# With a dev token created during setup
+curl http://localhost:8090/mcp \
+    -H "Authorization: Bearer <oauth_jwt>"
+# → FastMCP endpoint responds (SSE stream or JSON depending on client)
+```
+
+Dev tokens (`yupp_dev_*`) still work during the deprecation window but
+will be removed after 2026-06-15:
+
+```bash
+# Legacy / deprecated — see ypl/mcp_server/README.md#legacy-dev-tokens-deprecated
 curl http://localhost:8090/mcp \
     -H "Authorization: Bearer yupp_dev_<your-token>"
-# → FastMCP endpoint responds (SSE stream or JSON depending on client)
+# Response carries: X-Auth-Deprecation: yupp_dev tokens are deprecated; switch to OAuth by 2026-06-15
 ```
 
 ### Systemd survival test
@@ -561,7 +596,8 @@ python -m ypl.mono_server.manage add-user
 # List users
 python -m ypl.mono_server.manage list-users
 
-# Create MCP dev token
+# Create MCP dev token (DEPRECATED — switch new clients to OAuth instead;
+# see ypl/mcp_server/README.md. Will be removed after 2026-06-15.)
 python -m ypl.mono_server.manage create-mcp-token
 
 # Full help

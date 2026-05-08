@@ -22,6 +22,21 @@ require_admin_role()
 
 st.title("🔑 MCP Tokens")
 
+# ── Deprecation banner ──────────────────────────────────────────────────────
+# Phase 5a (started 2026-05-08): yupp_dev_* dev tokens are being retired.
+# Phase 5b will delete this page along with the underlying mcp_dev_token
+# table. Do not issue new dev tokens — direct callers to OAuth instead.
+st.error(
+    "⚠️ **Dev tokens (`yupp_dev_*`) are deprecated.** Please do **not** issue new "
+    "dev tokens. Direct users to the OAuth-secured MCP endpoint "
+    "(`https://agcouch-mcp-oauth.example.com/mcp`) instead — see "
+    "`ypl/mcp_server/README.md` for client setup. "
+    "Existing dev tokens continue to work until **2026-06-15**, after which "
+    "this page, the middleware, and the `mcp_dev_token` table are deleted. "
+    "Every dev-token request already returns an `X-Auth-Deprecation` header "
+    "so callers can self-detect."
+)
+
 logger = get_logger()
 
 _SELECTED_KEY = "mcp_token_selected_id"

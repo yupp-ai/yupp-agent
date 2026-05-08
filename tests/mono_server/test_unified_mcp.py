@@ -201,3 +201,70 @@ class TestAgcouchAuth:
         assert r.status_code == 403, f"got {r.status_code}: {r.text}"
         body = r.json()
         assert "permission" in body["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
+# 4. Deprecation header on /mcp/agcouch
+# ---------------------------------------------------------------------------
+
+
+class TestAgcouchDeprecationHeader:
+    """``/mcp/agcouch`` is dedicated to dev-token traffic, so every response
+    (including the no-bearer 401 and the no-yuppdb 503) carries the
+    deprecation header. Removed in phase 5b together with the dev-token
+    branch of ``AgcouchMcpAuthMiddleware``.
+    """
+
+    def test_header_present_on_unauthorized(self) -> None:
+        from ypl.mcp_server.auth_dev_token import DEPRECATION_HEADER, DEPRECATION_NOTICE
+
+        client = TestClient(_make_agcouch_app(), raise_server_exceptions=False)
+        r = client.get("/ping")
+        assert r.status_code == 401
+        assert r.headers.get(DEPRECATION_HEADER) == DEPRECATION_NOTICE
+
+    def test_header_present_on_db_error(self) -> None:
+        """503 (yuppdb error) → deprecation header still set."""
+        from ypl.mcp_server.auth_dev_token import DEPRECATION_HEADER, DEPRECATION_NOTICE
+
+        client = TestClient(_make_agcouch_app(), raise_server_exceptions=False)
+        with patch(
+            "ypl.mcp_server.auth_dev_token.validate_token",
+            new=AsyncMock(side_effect=Exception("connection refused")),
+        ):
+            r = client.get(
+                "/ping",
+                headers={"authorization": "Bearer yupp_dev_XXXXXXXXXXXXXXXXXXXX"},
+            )
+        assert r.status_code == 503
+        assert r.headers.get(DEPRECATION_HEADER) == DEPRECATION_NOTICE
+
+    def test_header_present_on_no_permission_403(self) -> None:
+        """403 (no USE_MCP) → deprecation header still set."""
+        from unittest.mock import MagicMock
+
+        from ypl.db.mcp import MCPTokenStatus
+        from ypl.mcp_server.auth_dev_token import DEPRECATION_HEADER, DEPRECATION_NOTICE
+
+        db_token = MagicMock()
+        db_token.email = "engineer@example.com"
+        db_token.mcp_dev_token_id = "test-token-uuid"
+
+        client = TestClient(_make_agcouch_app(), raise_server_exceptions=False)
+        with (
+            patch(
+                "ypl.mcp_server.auth_dev_token.validate_token",
+                new=AsyncMock(return_value=(db_token, MCPTokenStatus.ACTIVE)),
+            ),
+            patch(
+                "ypl.backend.utils.soul_utils.has_permission_cached",
+                new=AsyncMock(return_value=False),
+            ),
+        ):
+            r = client.get(
+                "/ping",
+                headers={"authorization": "Bearer yupp_dev_XXXXXXXXXXXXXXXXXXXX"},
+            )
+
+        assert r.status_code == 403
+        assert r.headers.get(DEPRECATION_HEADER) == DEPRECATION_NOTICE
