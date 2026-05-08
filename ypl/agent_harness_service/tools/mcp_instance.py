@@ -178,15 +178,21 @@ async def _resolve_parent_session(harness_session_id: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# PR attribution for task-triggered sessions
+# PR attribution for AHS-driven sessions
 # ---------------------------------------------------------------------------
 
 
 async def _resolve_pr_attribution(session_id: str) -> str | None:
-    """Build the PR attribution header for task-triggered sessions.
+    """Build the PR attribution header for AHS-driven sessions.
 
-    Returns a markdown attribution block (agent name, user, project/task links,
-    session link) if the session is task-triggered, or None otherwise.
+    Returns a markdown attribution block — always including the agent name and
+    the Lit session link, plus a project/task link when the session is task-
+    triggered.  The session link is what downstream review-fix loop tooling
+    (e.g. master-reviewer) parses to route follow-up notifications back to the
+    author session, so it must be emitted for every AHS-driven trigger
+    (TASK, SLACK, AGENT, API, CRON), not just TASK.
+
+    Returns None only when the session row cannot be located.
     """
     try:
         sid = _uuid.UUID(session_id)
@@ -194,10 +200,12 @@ async def _resolve_pr_attribution(session_id: str) -> str | None:
         return None
 
     async with get_async_session() as db:
-        # Fetch session context + agent name in one query
+        # Fetch session context + agent name in one query.
+        # ``s.trigger`` is intentionally not selected — attribution is now emitted for
+        # every AHS-driven trigger, so we don't need to branch on it.
         result = await db.execute(
             text(
-                "SELECT a.name, s.context, s.trigger FROM agent_sessions s "
+                "SELECT a.name, s.context FROM agent_sessions s "
                 "JOIN agents a ON s.agent_id = a.agent_id "
                 "WHERE s.agent_session_id = :sid"
             ),
@@ -209,18 +217,15 @@ async def _resolve_pr_attribution(session_id: str) -> str | None:
 
         agent_name: str = row[0] or "agent"
         context: dict[str, Any] = row[1] or {}
-        trigger: str = row[2] or ""
-
-        # Only inject attribution for task-triggered sessions
-        if trigger != "TASK":
-            return None
 
         task_id = context.get("task_id")
         project_id = context.get("project_id")
         project_name = context.get("project_name", "")
         user_name = context.get("user_name", "")
 
-        # Fetch task title
+        # Fetch task title for the project/task link line.  Only relevant when
+        # a task is actually associated with this session — otherwise the
+        # query is skipped to avoid an unnecessary DB hit.
         task_title = ""
         if task_id:
             try:
@@ -234,8 +239,14 @@ async def _resolve_pr_attribution(session_id: str) -> str | None:
     # Build attribution lines
     lines: list[str] = []
 
-    # Line 1: agent + user + project/task link
-    attribution = f"\U0001f916 *{agent_name}* for *{user_name}*"
+    # Line 1: agent + user (+ project/task link, when present).
+    # The "for *<user>*" suffix is omitted when the session has no user_name
+    # (AGENT-triggered sessions inherit user identity from the sender, but the
+    # user_name context field may not be populated on every code path — emit a
+    # cleaner header rather than "for **").
+    attribution = f"\U0001f916 *{agent_name}*"
+    if user_name:
+        attribution += f" for *{user_name}*"
     if project_id and task_id:
         task_url = f"{AHS_LIT_BASE_URL}/agent_projects?project_id={project_id}&task_id={task_id}"
         label = (
@@ -244,7 +255,8 @@ async def _resolve_pr_attribution(session_id: str) -> str | None:
         attribution += f" · \U0001f4cb [{label}]({task_url})"
     lines.append(attribution)
 
-    # Line 2: session link
+    # Line 2: session link — always emitted, downstream tooling parses
+    # session_id from this URL to wire up review-fix notifications, etc.
     session_url = f"{AHS_LIT_BASE_URL}/agent_harness_console?session_id={session_id}"
     lines.append(f"\U0001f517 [Session]({session_url})")
 

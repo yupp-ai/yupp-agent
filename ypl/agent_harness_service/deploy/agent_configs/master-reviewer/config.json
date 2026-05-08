@@ -17,14 +17,15 @@
     "@readonly": "allow",
     "bash": "allow",
     "route_model": "allow",
-    "new_task": "allow"
+    "new_task": "allow",
+    "send_agent_message": "allow"
   },
   "allowed_subagents": [
     "reviewer-claude",
     "reviewer-codex"
   ],
   "allowed_to_message": [
-    "eng-raccoon"
+    "*"
   ],
   "timeout_s": 36000
 }

@@ -113,6 +113,36 @@ logger = get_logger()
 
 
 # ---------------------------------------------------------------------------
+# FELLOW_AGENT message wrapping
+# ---------------------------------------------------------------------------
+
+
+def _wrap_fellow_agent_content(sender_agent_name: str, raw_content: str) -> str:
+    """Prepend a non-spoofable sender-identity marker to FELLOW_AGENT message bodies.
+
+    AHS does not surface FELLOW_AGENT provenance (``from_agent_id``) in the
+    receiver's prompt automatically — without an explicit wrap the receiver
+    only sees ``raw_content`` and has to rely on the sender embedding its own
+    identity inside the body, which is a fragile body-text convention that
+    breaks for any sender that doesn't follow it.
+
+    Wrapping at delivery time guarantees:
+      • Every FELLOW_AGENT message starts with a consistent ``[External
+        message from agent ...]`` marker, so receivers (and the prompts that
+        instruct them — see ``deploy/shared/SOUL.md``) can detect inbound
+        agent messages without parsing the body.
+      • The marker is harness-injected, so a malicious or buggy sender
+        cannot suppress it or impersonate a different agent in the marker.
+      • The original ``raw_content`` is preserved verbatim for the receiver
+        to act on (or relay to Slack).
+
+    Used by both the inbox-drain path (``_drain_session_inbox``) and the
+    initial AGENT-trigger turn injection in ``create_session``.
+    """
+    return f"[External message from agent `{sender_agent_name}`]\n\n{raw_content}"
+
+
+# ---------------------------------------------------------------------------
 # Slack courtesy helpers
 # ---------------------------------------------------------------------------
 
@@ -1161,6 +1191,15 @@ async def _drain_session_inbox(session_id: uuid.UUID) -> None:
                 if agent_obj is None:
                     raise ValueError(f"Agent not found for session {session_id}")
 
+                # Resolve the sending agent's name so we can prepend a non-spoofable
+                # sender-identity marker to the FELLOW_AGENT body.  Failure to look up
+                # the sender is non-fatal — we fall back to a generic "another agent"
+                # marker rather than dropping the message, since the AgentMessage row
+                # already encodes provenance and the receiver still needs to act.
+                from_agent_obj = await msg_db.get(Agent, uuid.UUID(str(row["from_agent_id"])))
+                from_agent_name = from_agent_obj.name if from_agent_obj else "unknown"
+                wrapped_content = _wrap_fellow_agent_content(from_agent_name, row["content"])
+
                 # ------------------------------------------------------------------
                 # Check whether a new turn is already running (started by
                 # _drain_pending_messages).  If so, fall back to _pending_messages
@@ -1173,10 +1212,12 @@ async def _drain_session_inbox(session_id: uuid.UUID) -> None:
                     # Fallback path: queue via _pending_messages so the in-progress
                     # turn's boundary will pick it up.  The AgentSessionMessage in
                     # this path will be USER role (via send_message), not FELLOW_AGENT,
-                    # but the AgentMessage row retains provenance.
+                    # but the AgentMessage row retains provenance.  We still inject
+                    # the sender-identity marker so the receiver can detect that this
+                    # USER-role message originated from another agent.
                     _pending_messages.setdefault(session_id, []).append(
                         PendingMessage(
-                            message=row["content"],
+                            message=wrapped_content,
                             user_id=session_obj.creator_user_id,
                         )
                     )
@@ -1215,7 +1256,10 @@ async def _drain_session_inbox(session_id: uuid.UUID) -> None:
                     agent_session_id=session_id,
                     turn_number=turn_number,
                     role=AgentSessionMessageRole.FELLOW_AGENT,
-                    content=row["content"],
+                    # ``wrapped_content`` carries the sender-identity marker so the
+                    # receiver's prompt makes the inbound A2A origin unambiguous
+                    # without relying on the sender embedding it in the body.
+                    content=wrapped_content,
                     creator_user_id=session_obj.creator_user_id,
                     from_agent_id=uuid.UUID(str(row["from_agent_id"])),
                     agent_message_id_ref=uuid.UUID(msg_id),
@@ -1247,7 +1291,7 @@ async def _drain_session_inbox(session_id: uuid.UUID) -> None:
                     _run_agent_task(
                         agent_session_id=session_id,
                         turn_number=turn_number,
-                        message=row["content"],
+                        message=wrapped_content,
                         agent_config_name=agent_obj.name,
                         workspace=session_obj.workspace,
                         llm_session_id=session_obj.llm_session_id,
@@ -1743,6 +1787,10 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
                     f"Sending agent {_from_agent_obj.name!r} has no agent_user_id. "
                     "Ensure sweep_agent_user_identities() has run or re-create the agent."
                 )
+            # Cache the agent name into a local while the DB session is still open —
+            # used downstream (after the ``async with`` block exits) to wrap the
+            # initial FELLOW_AGENT message body with a non-spoofable sender marker.
+            _from_agent_name: str = _from_agent_obj.name
 
             # A2A authorization: enforce deny-by-default messaging policy.
             # AgentAuthorizationError propagates to routes.py where it is mapped to HTTP 403.
@@ -2102,13 +2150,21 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
             _fellow_from_agent_id: uuid.UUID = _from_agent_uuid
             _fellow_agent_msg_ref: uuid.UUID = _verify_msg_uuid
 
+            # Wrap the body with a non-spoofable sender-identity marker so the
+            # receiver (and the SOUL.md "Inbound Messages from Other Agents"
+            # contract) can detect this is an A2A message without parsing the
+            # body for a sender-supplied "From <agent>: ..." prefix.
+            # ``_from_agent_name`` was cached above while the DB session was
+            # still open — see the AGENT-trigger identity resolution block.
+            _wrapped_initial_message = _wrap_fellow_agent_content(_from_agent_name, request.message)
+
             async with get_async_session() as _msg_db:
                 _fellow_turn = await _next_turn_number(_msg_db, agent_session.agent_session_id)
                 _fellow_msg = AgentSessionMessage(
                     agent_session_id=agent_session.agent_session_id,
                     turn_number=_fellow_turn,
                     role=AgentSessionMessageRole.FELLOW_AGENT,
-                    content=request.message,
+                    content=_wrapped_initial_message,
                     creator_user_id=user_id,
                     from_agent_id=_fellow_from_agent_id,
                     agent_message_id_ref=_fellow_agent_msg_ref,
@@ -2134,7 +2190,7 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
                     _run_agent_task(
                         agent_session_id=agent_session.agent_session_id,
                         turn_number=_fellow_turn,
-                        message=request.message,
+                        message=_wrapped_initial_message,
                         agent_config_name=resolved_agent_id,
                         workspace=agent_session.workspace,
                         llm_session_id=agent_session.llm_session_id,
