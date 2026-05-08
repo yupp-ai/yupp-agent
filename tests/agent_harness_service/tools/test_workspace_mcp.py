@@ -394,7 +394,7 @@ class TestResolvePrAttribution:
             "project_name": "My Project",
             "user_name": "Jane Doe",
         }
-        session_row = ("eng-raccoon", context, "TASK")
+        session_row = ("eng-raccoon", context)
 
         mock_db = AsyncMock()
         # First execute: session query
@@ -420,10 +420,15 @@ class TestResolvePrAttribution:
         assert f"project_id={VALID_PROJECT_ID}" in result
         assert f"task_id={VALID_TASK_ID}" in result
 
-    async def test_non_task_session_returns_none(self) -> None:
-        """Non-task sessions return None."""
+    async def test_non_task_session_emits_attribution_without_task_link(self) -> None:
+        """Non-task sessions still emit attribution — agent name + session link, no project/task line.
+
+        Downstream tooling (e.g. master-reviewer's review-fix loop notification step) parses
+        ``session_id=<UUID>`` out of the attribution to route follow-up agent messages, so
+        the session link must be emitted for every AHS-driven trigger, not just TASK.
+        """
         context = {"user_name": "Jane Doe"}
-        session_row = ("eng-raccoon", context, "SLACK")
+        session_row = ("eng-raccoon", context)
 
         mock_db = AsyncMock()
         session_result = MagicMock()
@@ -436,7 +441,13 @@ class TestResolvePrAttribution:
         with patch("ypl.agent_harness_service.tools.mcp_instance.get_async_session", return_value=mock_ctx):
             result = await _resolve_pr_attribution(VALID_SESSION)
 
-        assert result is None
+        assert result is not None
+        assert "eng-raccoon" in result
+        assert "Jane Doe" in result
+        assert f"session_id={VALID_SESSION}" in result
+        # Non-TASK sessions don't carry project/task context — no project link is emitted.
+        assert "project_id=" not in result
+        assert "task_id=" not in result
 
     async def test_session_not_found_returns_none(self) -> None:
         """Missing session returns None."""
@@ -466,7 +477,7 @@ class TestResolvePrAttribution:
             "project_name": "My Project",
             "user_name": "Jane Doe",
         }
-        session_row = ("eng-raccoon", context, "TASK")
+        session_row = ("eng-raccoon", context)
 
         mock_db = AsyncMock()
         session_result = MagicMock()
