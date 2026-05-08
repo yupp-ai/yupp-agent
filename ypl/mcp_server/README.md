@@ -132,7 +132,7 @@ LIMIT 10
 
 ## Authentication
 
-The MCP server supports two authentication modes, controlled by the `MCP_SERVER_MODE` environment variable. **OAuth is the recommended mode.** DevToken mode remains available during the deprecation window but is no longer the default for new deployments.
+The MCP server supports two authentication modes, controlled by the `MCP_SERVER_MODE` environment variable. **OAuth is the recommended mode for new deployments.** DevToken mode remains available during the deprecation window. Note that the in-code default of `MCP_SERVER_MODE` is still `DEV_TOKEN` until phase 5b flips it — when bringing up a new deployment, set `MCP_SERVER_MODE=OAUTH` explicitly in your `.env` (the `setup.py` wizard and `.env.example` still seed `DEV_TOKEN` to preserve existing-deployment behavior).
 
 ### OAUTH mode (recommended)
 
@@ -467,7 +467,7 @@ CREATE TABLE mcp_audit_logs (
     mcp_dev_token_id UUID REFERENCES mcp_dev_tokens(mcp_dev_token_id),  -- NULL for OAuth (and removed entirely after phase 5b)
     email VARCHAR(255),              -- User email (from token or OAuth claims)
     callback_url TEXT,               -- OAuth callback origin (NULL for DevToken)
-    token_type mcptokentype NOT NULL DEFAULT 'OAUTH',
+    token_type mcptokentype NOT NULL DEFAULT 'DEV_TOKEN',  -- flipped to 'OAUTH' in phase 5b along with mcp_dev_token table removal
     -- What
     tool_name VARCHAR(255) NOT NULL,
     tool_parameters JSONB NOT NULL,

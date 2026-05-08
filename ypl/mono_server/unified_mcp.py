@@ -156,20 +156,32 @@ class AgcouchMcpAuthMiddleware(BaseHTTPMiddleware):
     ) -> Response:
         """Validate dev-token before processing request.
 
-        Wraps :meth:`_dispatch_authenticated` so every response — accepted
-        or rejected — carries the
-        :data:`~ypl.mcp_server.auth_dev_token.DEPRECATION_HEADER`. The
-        ``/mcp/agcouch`` mount is dedicated to dev-token traffic, so even
-        the no-bearer 401 is, in effect, telling the caller "your future
-        dev-token request will not be honoured".
+        Wraps :meth:`_dispatch_authenticated` and stamps the
+        :data:`~ypl.mcp_server.auth_dev_token.DEPRECATION_HEADER` only when
+        the caller actually presented a ``Bearer yupp_dev_*`` token. We
+        deliberately do **not** stamp the header on:
+
+        * requests with no ``Authorization`` header (early 401),
+        * requests bearing an OAuth JWT misrouted to ``/mcp/agcouch``, or
+        * requests bearing an ``x-ahs-token`` agent-secret bearer
+          misrouted here from ``/mcp/harness``.
+
+        Telling those callers to "switch to OAuth" would be at best
+        confusing (OAuth callers are already on it) and at worst
+        actively wrong (agent callers never used dev tokens). The
+        invariant matches the standalone
+        :class:`DevTokenAuthMiddleware`: stamp only when the request
+        actually flowed through dev-token auth.
         """
         # Lazy import to keep the constants available even when the dev-token
         # machinery is removed in phase 5b — at that point this whole class
         # disappears with it, so the import is harmless.
         from ypl.mcp_server.auth_dev_token import DEPRECATION_HEADER, DEPRECATION_NOTICE
 
+        is_dev_token_request = request.headers.get("authorization", "").startswith("Bearer yupp_dev_")
         response = await self._dispatch_authenticated(request, call_next)
-        response.headers[DEPRECATION_HEADER] = DEPRECATION_NOTICE
+        if is_dev_token_request:
+            response.headers[DEPRECATION_HEADER] = DEPRECATION_NOTICE
         return response
 
     async def _dispatch_authenticated(
