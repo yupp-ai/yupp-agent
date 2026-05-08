@@ -112,10 +112,18 @@ PERSONAL_AGENT_DEFAULT_CONFIG: dict[str, Any] = {
 
 # GCS bucket and prefix for persisting session workspace data (attachments, history).
 # Layout: gs://{bucket}/sessions/{environment}/{session_id}/...
-# Persistence is disabled in local dev (checked in session_persistence.py).
+# Persistence is gated by SESSION_PERSISTENCE_BACKEND (see ypl/backend/config.py)
+# with ENVIRONMENT-based fallback (checked in session_persistence.py).
 AHS_GCS_SESSION_BUCKET = os.environ.get("AHS_GCS_SESSION_BUCKET", "yupp-agents")
 _AHS_ENVIRONMENT = os.environ.get("ENVIRONMENT", "local")
 AHS_GCS_SESSION_PREFIX = os.environ.get("AHS_GCS_SESSION_PREFIX", f"sessions/{_AHS_ENVIRONMENT}")
+
+# S3 bucket and prefix mirror for persisting session workspace data, used when
+# ``SESSION_PERSISTENCE_BACKEND=s3``. Default bucket parallels the GCS default
+# so a same-named S3 bucket can be created by infra without extra plumbing.
+# Layout: s3://{bucket}/sessions/{environment}/{session_id}/...
+AHS_S3_SESSION_BUCKET = os.environ.get("AHS_S3_SESSION_BUCKET", "yupp-agents")
+AHS_S3_SESSION_PREFIX = os.environ.get("AHS_S3_SESSION_PREFIX", f"sessions/{_AHS_ENVIRONMENT}")
 
 # Lit (Streamlit console) base URL — used for session/project links in PR
 # descriptions, Slack messages, and CLI/TUI output. Set this in the deployment's

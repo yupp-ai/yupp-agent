@@ -42,7 +42,7 @@ from ypl.agent_harness_service.common.types import (
     SessionPermissions,
     SessionStopResponse,
 )
-from ypl.agent_harness_service.core.session_persistence import sync_session_to_gcs
+from ypl.agent_harness_service.core.session_persistence import sync_session
 from ypl.agent_harness_service.core.streaming import (
     build_notice_events,
     get_pubsub,
@@ -2438,14 +2438,15 @@ async def send_message(request: SessionMessageRequest) -> SessionMessageResponse
         attachment_paths = await _download_attachments_to_workspace(request.attachments, agent_session.workspace)
         agent_message = _prepend_attachment_paths(agent_message, attachment_paths)
 
-        # Fire-and-forget: persist downloaded attachments to GCS immediately
-        # so they survive pod restarts before the agent turn completes.
+        # Fire-and-forget: persist downloaded attachments to the configured
+        # backend immediately so they survive pod restarts before the agent
+        # turn completes.
         async def _sync_attachments() -> None:
             try:
-                await sync_session_to_gcs(str(agent_session.agent_session_id))
+                await sync_session(str(agent_session.agent_session_id))
             except Exception:
                 logger.warning(
-                    "GCS session sync failed after attachment download",
+                    "session sync failed after attachment download",
                     session_id=str(agent_session.agent_session_id),
                     exc_info=True,
                 )

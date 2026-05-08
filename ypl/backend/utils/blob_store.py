@@ -16,6 +16,8 @@ Backend selection is driven by ``settings.BLOB_STORE_ENGINE``:
   Writes under ``BLOB_STORE_LOCAL_DIR``.
 - ``"gcs"``   → :class:`~ypl.backend.utils.blob_store_gcs.GCSBlobStore`
   Writes under ``gs://{GCS_BUCKET_NAME}/``.
+- ``"s3"``    → :class:`~ypl.backend.utils.blob_store_s3.S3BlobStore`
+  Writes under ``s3://{S3_BUCKET_NAME}/``.
 """
 
 from __future__ import annotations
@@ -95,6 +97,7 @@ def get_blob_store() -> BlobStore:
     Reads ``settings.BLOB_STORE_ENGINE`` to choose the implementation:
     - ``"local"`` → :class:`~ypl.backend.utils.blob_store_local.LocalBlobStore`
     - ``"gcs"``   → :class:`~ypl.backend.utils.blob_store_gcs.GCSBlobStore`
+    - ``"s3"``    → :class:`~ypl.backend.utils.blob_store_s3.S3BlobStore`
 
     Raises:
         ValueError: for unknown engine values.
@@ -111,4 +114,12 @@ def get_blob_store() -> BlobStore:
         from ypl.backend.utils.blob_store_gcs import GCSBlobStore
 
         return GCSBlobStore(bucket=settings.GCS_BUCKET_NAME)
-    raise ValueError(f"Unknown BLOB_STORE_ENGINE: {engine!r}. Expected 'local' or 'gcs'.")
+    if engine == "s3":
+        from ypl.backend.utils.blob_store_s3 import S3BlobStore
+
+        return S3BlobStore(
+            bucket=settings.S3_BUCKET_NAME,
+            region=settings.S3_REGION or None,
+            endpoint_url=settings.S3_ENDPOINT_URL or None,
+        )
+    raise ValueError(f"Unknown BLOB_STORE_ENGINE: {engine!r}. Expected 'local', 'gcs', or 's3'.")

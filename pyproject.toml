@@ -149,6 +149,12 @@ google-auth = "2.45.0"
 google-cloud-bigquery = {version = "^3.39.0", extras = ["pandas"]}
 gcloud-aio-storage = "9.6.1"
 
+# AWS — async S3 client for the S3 BlobStore + S3 session-persistence backend.
+# aioboto3 ships with an aiobotocore extra which already includes botocore as
+# a transitive dep, so a single entry is enough for both blob-store and
+# session-sync code paths (both are async).
+aioboto3 = "^13.2.0"
+
 # Redis
 redis = "5.3.1"
 upstash-redis = "1.5.0"
@@ -205,6 +211,9 @@ types-requests = "^2.33.0.20260327"
 types-pyyaml = "^6.0.12.20250915"
 types-cachetools = "^6.2.0.20260317"
 pytest-cov = "^7.1.0"
+# moto provides an in-memory S3 fake we use to exercise the S3 BlobStore +
+# S3 session-persistence sync paths in unit tests without hitting AWS.
+moto = {version = "^5.0.0", extras = ["s3"]}
 
 [tool.mypy]
 python_version = "3.12"

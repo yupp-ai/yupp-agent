@@ -379,18 +379,38 @@ class Settings(BaseSettings):
 
     GCS_BUCKET_NAME: str = os.getenv("GCS_BUCKET_NAME", "yupp-data")
 
+    # S3 (Amazon S3 / S3-compatible) settings — used by ``S3BlobStore`` and
+    # the S3 session-persistence backend. ``S3_ENDPOINT_URL`` is empty by
+    # default (use real AWS S3); set it to e.g. ``http://minio:9000`` for
+    # MinIO or ``http://localhost:4566`` for LocalStack/moto.
+    S3_BUCKET_NAME: str = os.getenv("S3_BUCKET_NAME", "yupp-data")
+    S3_REGION: str = os.getenv("S3_REGION", "")
+    S3_ENDPOINT_URL: str = os.getenv("S3_ENDPOINT_URL", "")
+
     # Blob store — pluggable storage backend used by the artifact system
     # (``ypl/agent_harness_service/artifact_store.py``). ``local`` writes
-    # under the configured directory; ``gcs`` uses ``GCS_BUCKET_NAME``.
+    # under the configured directory; ``gcs`` uses ``GCS_BUCKET_NAME``;
+    # ``s3`` uses ``S3_BUCKET_NAME`` (+ ``S3_REGION``/``S3_ENDPOINT_URL``).
     #
     # Logical paths passed to the store are scoped by UUID shard, e.g.
     # ``ab/<uuid>/<uuid>.md``. The store-level prefix (``artifacts/``) is
     # omitted — ``BLOB_STORE_LOCAL_DIR`` already ends in ``artifacts/`` and
-    # operators who share a GCS bucket with other data can scope via a
+    # operators who share a cloud bucket with other data can scope via a
     # dedicated bucket name.
     BLOB_STORE_ENGINE: str = "local"
     BLOB_STORE_LOCAL_DIR: str = "/data/ahs/artifacts"
     BLOB_STORE_LOCAL_BASE_URL: str = ""
+
+    # Session persistence backend selector for AHS session workspaces
+    # (``attachments/`` + ``history/``). One of:
+    #   - ``""``    → fall through to the legacy ENVIRONMENT-based default
+    #                 (off in local|test|selfhosted, gcs in staging|production).
+    #   - ``"off"`` → disable session persistence even in production.
+    #   - ``"gcs"`` → use ``core.gcs_sync`` against ``AHS_GCS_SESSION_*``.
+    #   - ``"s3"``  → use ``core.session_persistence_s3`` against
+    #                 ``AHS_S3_SESSION_*``.
+    # When set explicitly this overrides the ENVIRONMENT gate (single knob).
+    SESSION_PERSISTENCE_BACKEND: str = os.getenv("SESSION_PERSISTENCE_BACKEND", "")
 
     # Public base URL of the artifact viewer (apps/artifact-viewer). Used by
     # ``create_artifact`` to populate ``agent_artifacts.url`` so callers /

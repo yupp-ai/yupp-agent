@@ -25,7 +25,7 @@ from ypl.agent_harness_service.common.constants import (
     HARNESSED_MODELS,
     TURN_LIMIT_NOTICE,
 )
-from ypl.agent_harness_service.core.session_persistence import sync_session_to_gcs
+from ypl.agent_harness_service.core.session_persistence import sync_session
 from ypl.agent_harness_service.core.session_title import maybe_generate_session_title
 from ypl.agent_harness_service.core.streaming import (
     TranslationState,
@@ -1214,10 +1214,10 @@ async def _run_agent_task(
         # Placed after session-state cleanup (sandbox, websearch counters) so a
         # slow sync does not delay resets that the next turn depends on.
         try:
-            await sync_session_to_gcs(str(agent_session_id))
+            await sync_session(str(agent_session_id))
         except BaseException:
             logger.warning(
-                "GCS session sync failed after agent turn",
+                "session sync failed after agent turn",
                 session_id=str(agent_session_id),
                 exc_info=True,
             )
