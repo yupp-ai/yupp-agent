@@ -26,11 +26,21 @@ def test_mono_server_imports() -> None:
 
 
 def test_config_importable() -> None:
-    """MonoConfig is importable and instantiable with defaults."""
+    """MonoConfig is importable, instantiable, and exposes the expected fields.
+
+    The two master flags ``ahs_mono_enable_gateway_service`` and
+    ``ahs_mono_enable_mcp`` default to ``False`` in production. The mono-server
+    conftest sets them to ``true`` for the legacy "everything on" baseline,
+    so we just assert presence and type here — see
+    ``test_master_flags.TestMonoConfigMasterFlagDefaults`` for the actual
+    default-value tests.
+    """
     from ypl.mono_server.config import MonoConfig
 
     cfg = MonoConfig()
     assert cfg.port == 8090
+    assert isinstance(cfg.ahs_mono_enable_gateway_service, bool)
+    assert isinstance(cfg.ahs_mono_enable_mcp, bool)
     assert cfg.gateway_slack_enabled is True
     assert cfg.gateway_github_enabled is False  # off by default — requires explicit opt-in
 
