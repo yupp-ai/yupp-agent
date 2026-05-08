@@ -13,6 +13,11 @@ dependencies = [
     "markdown-it-py>=3.0",
     "bleach>=6.2",
     "pydantic-settings>=2.6",
+    # Required by Starlette's request.form() parsing for the artifact edit
+    # form (POST /artifacts/{id}/edit). Starlette imports it lazily and
+    # asserts presence on first form() call, so the dependency is mandatory
+    # once the edit route is wired up.
+    "python-multipart>=0.0.20",
 ]
 
 [project.optional-dependencies]
