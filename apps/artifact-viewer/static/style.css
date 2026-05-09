@@ -220,6 +220,25 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
     border-color: var(--accent);
     color: #fff;
 }
+/* "Full page ↗" anchor lives in the same row as the width buttons but
+   is navigation, not a toggle. A small left margin separates it from
+   the width-set; the link inherits the pill shape from
+   .width-toggle-btn but keeps the accent color so it reads as a link,
+   not a pressed button. We also explicitly clear text-decoration since
+   the global ``a:hover`` rule would otherwise underline the pill on
+   hover and make it look broken. */
+.width-toggle-link {
+    margin-left: 8px;
+    display: inline-flex;
+    align-items: center;
+    color: var(--accent);
+    text-decoration: none;
+    line-height: inherit;
+}
+.width-toggle-link:hover {
+    background: var(--bg-alt);
+    text-decoration: none;
+}
 
 .tag {
     display: inline-block;

@@ -56,12 +56,27 @@
     {#- Page-width control. JS toggles a class on <html> and persists the
         choice in localStorage; the head_extra script above re-applies it
         on subsequent page loads to avoid a width flash. The default
-        "medium" matches the existing 1100px max-width. -#}
+        "medium" matches the existing 1100px max-width.
+
+        For HTML artifacts we also offer a "Full page ↗" escape hatch:
+        the sandboxed iframe constrains layout (especially full-bleed
+        backgrounds and sticky nav), so opening the document in a fresh
+        tab via the /raw route lets it render the way the author saw it
+        locally. The /raw response is sandboxed at the HTTP level via
+        Content-Security-Policy so this is no less safe than the iframe. -#}
     <div class="width-toggle" role="group" aria-label="Page width">
         <span class="width-toggle-label muted small">Width</span>
         <button type="button" class="width-toggle-btn" data-width="narrow" aria-pressed="false">Narrow</button>
         <button type="button" class="width-toggle-btn is-active" data-width="medium" aria-pressed="true">Medium</button>
         <button type="button" class="width-toggle-btn" data-width="wide" aria-pressed="false">Wide</button>
+        {% if display_mode == 'html' %}
+            <a class="width-toggle-btn width-toggle-link"
+               href="/artifacts/{{ meta.artifact_id }}/raw"
+               target="_blank"
+               rel="noopener noreferrer"
+               title="Open the HTML body as a full page in a new tab"
+            >Full page&nbsp;↗</a>
+        {% endif %}
     </div>
 
     <section class="artifact-body artifact-body-{{ display_mode }}">

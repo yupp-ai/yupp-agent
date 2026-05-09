@@ -6,6 +6,7 @@ Mount layout::
     GET /search?q=...                    → search results
     GET /artifacts/{uuid}                → rendered artifact
     GET /artifacts/{uuid}/download       → download raw body as a file
+    GET /artifacts/{uuid}/raw            → HTML body served as a full page (sandboxed via CSP)
     GET /artifacts/{uuid}/edit           → full-screen edit form (creates a new version on POST)
     POST /artifacts/{uuid}/edit          → submit new content; redirects to the new version
     GET /artifacts/{uuid}/attachments/{filename} → stream attachment
@@ -323,6 +324,57 @@ async def download(request: Request) -> Response:
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
             "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+async def view_html(request: Request) -> Response:
+    """Render an HTML artifact as a standalone full-page document.
+
+    The default artifact view embeds HTML inside a sandboxed ``srcdoc``
+    iframe, which is great for safety but constrains the document to the
+    iframe's box (and to the viewer's chrome around it). This route serves
+    the same body to a fresh tab so styles like ``min-height:100vh`` and
+    sticky nav bars behave as the author intended.
+
+    Safety: even though the response is on the viewer's origin, we set
+    ``Content-Security-Policy: sandbox …`` which forces the browser to
+    treat the document as if it came from a unique opaque origin —
+    cookies, ``localStorage`` and credentialed ``fetch`` are all
+    inaccessible, matching the iframe sandbox we'd otherwise use. We
+    keep ``allow-popups`` (so ``<a target="_blank">`` works) and
+    ``allow-popups-to-escape-sandbox`` (so spawned tabs aren't
+    re-sandboxed). ``allow-scripts`` is intentionally **not** set on
+    this route either — the iframe view never ran JS and the full-page
+    view shouldn't suddenly start. ``X-Frame-Options: DENY`` blocks
+    embedding so this route can't be re-iframed back into the viewer
+    chrome to confuse users.
+
+    Non-HTML content types fall through to the download route so a
+    pasted ``/raw`` URL on a markdown / plain artifact still does
+    something useful instead of dumping unsanitized text.
+    """
+    artifact_id = request.path_params["artifact_id"]
+    try:
+        data, content_type = await ahs_client.get_artifact_content(artifact_id)
+    except AHSError as exc:
+        return _error_page(request, exc)
+    mime = (content_type or "").split(";", 1)[0].strip().lower()
+    if mime != "text/html":
+        # Anything that isn't HTML has nothing to "view full page" — bounce
+        # to download so the user gets the file in a predictable form.
+        return RedirectResponse(f"/artifacts/{artifact_id}/download", status_code=303)
+    return Response(
+        content=data,
+        media_type="text/html; charset=utf-8",
+        headers={
+            "Content-Security-Policy": "sandbox allow-popups allow-popups-to-escape-sandbox",
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY",
+            "Referrer-Policy": "no-referrer",
+            # Keep this view out of caches so an edited HTML artifact doesn't
+            # serve stale bytes through a shared proxy.
+            "Cache-Control": "private, no-store",
         },
     )
 
@@ -685,6 +737,7 @@ def build_app() -> Starlette:
         Route("/search", search_page, name="search"),
         Route("/artifacts/{artifact_id}", artifact_by_id, name="artifact"),
         Route("/artifacts/{artifact_id}/download", download, name="artifact_download"),
+        Route("/artifacts/{artifact_id}/raw", view_html, name="artifact_view_html"),
         Route(
             "/artifacts/{artifact_id}/edit",
             edit_artifact_get,
