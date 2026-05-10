@@ -220,6 +220,24 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
     border-color: var(--accent);
     color: #fff;
 }
+/* "Full page" anchor is grouped with the width buttons (same pill styling)
+   but visually offset so it doesn't read as a fourth width option. The
+   leading separator and the trailing ↗ glyph in the label make it clear
+   this jumps to a new tab rather than mutating the current page. */
+.width-toggle .full-page-link {
+    margin-left: 8px;
+    text-decoration: none;
+}
+.width-toggle .full-page-link::before {
+    content: "";
+    display: inline-block;
+    width: 1px;
+    height: 14px;
+    margin-right: 8px;
+    margin-left: -8px;
+    background: var(--border);
+    vertical-align: middle;
+}
 
 .tag {
     display: inline-block;

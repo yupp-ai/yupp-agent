@@ -6,6 +6,7 @@ Mount layout::
     GET /search?q=...                    → search results
     GET /artifacts/{uuid}                → rendered artifact
     GET /artifacts/{uuid}/download       → download raw body as a file
+    GET /artifacts/{uuid}/raw            → render text/html top-level under CSP sandbox
     GET /artifacts/{uuid}/edit           → full-screen edit form (creates a new version on POST)
     POST /artifacts/{uuid}/edit          → submit new content; redirects to the new version
     GET /artifacts/{uuid}/attachments/{filename} → stream attachment
@@ -323,6 +324,72 @@ async def download(request: Request) -> Response:
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
             "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+# Sandbox tokens applied via the CSP ``sandbox`` directive on the raw-HTML
+# route. Mirror the iframe sandbox (``render.render_html_iframe``) so the
+# threat model is identical: no JS, no same-origin access to viewer cookies
+# / storage, no form submission — but ``allow-popups`` keeps
+# ``<a target="_blank">`` working, matching what users see in the embedded
+# view.
+_RAW_HTML_CSP_SANDBOX = "sandbox allow-popups allow-popups-to-escape-sandbox"
+
+
+async def raw_html(request: Request) -> Response:
+    """Serve a ``text/html`` artifact as a top-level page under CSP sandbox.
+
+    The default ``/artifacts/{uuid}`` view embeds HTML inside a sandboxed
+    iframe with the viewer's chrome wrapped around it — which is great for
+    safety but hostile to anything that wants the full viewport (charts,
+    dashboards, demo pages). This route opens the artifact in its own tab,
+    served as real ``text/html`` so the browser renders it natively at full
+    width.
+
+    Same-origin script injection is the obvious risk — agent-authored HTML
+    on the viewer's origin would otherwise be able to read session cookies
+    and call AHS as the user. Two layers prevent that:
+
+    * ``Content-Security-Policy: sandbox …`` applies the same restrictions
+      as the iframe ``sandbox`` attribute to a *top-level* document. Without
+      ``allow-same-origin`` the document gets an opaque origin, so even if
+      the page does something clever it can't read ``document.cookie`` for
+      ``*.agcouch.com``. Without ``allow-scripts`` no JS runs at all. The
+      tokens match :data:`_RAW_HTML_CSP_SANDBOX` so the policy is identical
+      to the embedded iframe — same threat model in both views.
+    * ``X-Content-Type-Options: nosniff`` blocks the browser from reading
+      a non-HTML body as HTML if a future bug ever lets a non-HTML artifact
+      reach this route.
+
+    Restricted to ``text/html`` content-type. Other types fall through to
+    a 415 error page; the "Full Page" link is only rendered for HTML
+    artifacts so a user shouldn't normally see this, but the gate is here
+    as defense-in-depth against a hand-typed URL.
+    """
+    artifact_id = request.path_params["artifact_id"]
+    try:
+        data, content_type = await ahs_client.get_artifact_content(artifact_id)
+    except AHSError as exc:
+        return _error_page(request, exc)
+    if not (content_type or "").lower().startswith("text/html"):
+        return _error_page(
+            request,
+            AHSError(
+                415, f"Full-page view is only available for text/html artifacts (got {content_type or 'unknown'})."
+            ),
+            status_code=415,
+        )
+    return Response(
+        content=data,
+        media_type="text/html; charset=utf-8",
+        headers={
+            "Content-Security-Policy": _RAW_HTML_CSP_SANDBOX,
+            "X-Content-Type-Options": "nosniff",
+            # Keep this off the back button list / search index — these
+            # URLs are expected to be opened from the artifact page on
+            # demand, not bookmarked.
+            "Referrer-Policy": "no-referrer",
         },
     )
 
@@ -685,6 +752,7 @@ def build_app() -> Starlette:
         Route("/search", search_page, name="search"),
         Route("/artifacts/{artifact_id}", artifact_by_id, name="artifact"),
         Route("/artifacts/{artifact_id}/download", download, name="artifact_download"),
+        Route("/artifacts/{artifact_id}/raw", raw_html, name="artifact_raw_html"),
         Route(
             "/artifacts/{artifact_id}/edit",
             edit_artifact_get,

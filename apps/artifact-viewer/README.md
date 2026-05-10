@@ -20,7 +20,7 @@ deployment: `artifacts.agcouch.com`.
   - `/artifacts/{uuid}/attachments/{filename}` — attachment bytes (for `<img>`)
 - Rendering:
   - `text/markdown` → `markdown-it-py` → `bleach.clean()` with a strict allowlist. `attachment:foo.png` shorthand is rewritten to point at the viewer.
-  - `text/html` → sandboxed iframe (`sandbox="allow-popups"`, no same-origin, no scripts) so agent-authored HTML can't touch the viewer cookies.
+  - `text/html` → sandboxed iframe (`sandbox="allow-popups"`, no same-origin, no scripts) so agent-authored HTML can't touch the viewer cookies. A "Full page ↗" link next to the width controls opens `/artifacts/{uuid}/raw` in a new tab — same content, same sandbox restrictions (applied via `Content-Security-Policy: sandbox …`), but rendered top-level so charts and dashboards can use the full viewport.
   - `text/plain` → `<pre>` wrap.
 - Attachment rendering: images inline, everything else as download links.
 

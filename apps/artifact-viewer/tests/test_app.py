@@ -147,6 +147,51 @@ class TestArtifactPage:
         assert "<iframe" in body
         assert "sandbox=" in body
 
+    def test_html_artifact_shows_full_page_link(self, client: TestClient) -> None:
+        # The "Full page" affordance is HTML-only — markdown / plain don't
+        # benefit from a top-level render and would expose new content-type
+        # surface area through the raw route. Lock that in here so a
+        # template refactor can't quietly leak it onto every artifact.
+        _sign_in(client)
+        with (
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_meta",
+                new=AsyncMock(return_value=_meta(content_type="text/html")),
+            ),
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_content",
+                new=AsyncMock(return_value=(b"<b>hi</b>", "text/html")),
+            ),
+        ):
+            resp = client.get(f"/artifacts/{ART_ID}")
+        assert resp.status_code == 200
+        body = resp.text
+        # Link must point at the raw route, open in a new tab, and use
+        # noopener so the popup can't reach back into the viewer's window.
+        assert f'href="/artifacts/{ART_ID}/raw"' in body
+        assert 'target="_blank"' in body
+        assert "noopener" in body
+        assert "Full page" in body
+
+    def test_markdown_artifact_does_not_show_full_page_link(self, client: TestClient) -> None:
+        _sign_in(client)
+        with (
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_meta",
+                new=AsyncMock(return_value=_meta()),
+            ),
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_content",
+                new=AsyncMock(return_value=(b"# Heading\n\nbody", "text/markdown")),
+            ),
+        ):
+            resp = client.get(f"/artifacts/{ART_ID}")
+        assert resp.status_code == 200
+        # Neither the link copy nor the raw URL should appear on a
+        # non-HTML artifact page.
+        assert "Full page" not in resp.text
+        assert f"/artifacts/{ART_ID}/raw" not in resp.text
+
     def test_upstream_404_surfaces_as_error_page(self, client: TestClient) -> None:
         from artifact_viewer.ahs_client import AHSError
 
@@ -1026,6 +1071,86 @@ class TestDownload:
             new=AsyncMock(side_effect=AHSError(404, "not found")),
         ):
             resp = client.get(f"/artifacts/{ART_ID}/download")
+        assert resp.status_code == 404
+        assert "Upstream error" in resp.text
+
+
+class TestRawHtml:
+    """Top-level raw-HTML route that backs the "Full page" link.
+
+    The threat model is: agent-authored HTML is served on the viewer's
+    origin, so a missing protection here would let JS in the artifact read
+    the user's session cookie and call AHS as them. Protections covered:
+
+    * ``Content-Security-Policy: sandbox …`` (no scripts, no same-origin
+      access — same restrictions as the embedded iframe sandbox).
+    * ``X-Content-Type-Options: nosniff`` (defense in depth against
+      browsers MIME-sniffing a non-HTML body into HTML).
+    * Content-type gate (415 for anything that isn't ``text/html``) so the
+      route can't be repurposed to bypass the markdown sanitizer.
+    """
+
+    def test_unauthenticated_redirects(self, client: TestClient) -> None:
+        resp = client.get(f"/artifacts/{ART_ID}/raw")
+        assert resp.status_code == 307
+        assert resp.headers["location"].startswith("/auth/login")
+
+    def test_html_served_with_csp_sandbox(self, client: TestClient) -> None:
+        _sign_in(client)
+        with patch(
+            "artifact_viewer.ahs_client.get_artifact_content",
+            new=AsyncMock(return_value=(b"<b>hello</b>", "text/html; charset=utf-8")),
+        ):
+            resp = client.get(f"/artifacts/{ART_ID}/raw")
+        assert resp.status_code == 200
+        # Body served verbatim (no escaping / wrapping) so the browser
+        # renders it natively. The full-page route is the whole point.
+        assert resp.content == b"<b>hello</b>"
+        assert resp.headers["content-type"].startswith("text/html")
+        # CSP must include ``sandbox`` and must NOT grant ``allow-same-origin``
+        # (which would let the page read session cookies) or ``allow-scripts``
+        # (which would let it run JS at all).
+        csp = resp.headers["content-security-policy"]
+        assert "sandbox" in csp
+        assert "allow-same-origin" not in csp
+        assert "allow-scripts" not in csp
+        # Mirror the iframe: keep ``allow-popups`` so links with target=_blank
+        # work, matching the embedded view's behavior.
+        assert "allow-popups" in csp
+        assert resp.headers.get("x-content-type-options") == "nosniff"
+
+    def test_non_html_artifact_returns_415(self, client: TestClient) -> None:
+        # The "Full page" link is only rendered for HTML in the template,
+        # but a hand-typed URL against a markdown / plain artifact must
+        # not silently render — we'd be re-stamping a non-HTML body as
+        # HTML and exposing whatever sanitizer-bypass that opens up.
+        _sign_in(client)
+        with patch(
+            "artifact_viewer.ahs_client.get_artifact_content",
+            new=AsyncMock(return_value=(b"# heading", "text/markdown")),
+        ):
+            resp = client.get(f"/artifacts/{ART_ID}/raw")
+        assert resp.status_code == 415
+
+    def test_unknown_content_type_returns_415(self, client: TestClient) -> None:
+        # Defensive: anything we don't recognize as HTML is rejected.
+        _sign_in(client)
+        with patch(
+            "artifact_viewer.ahs_client.get_artifact_content",
+            new=AsyncMock(return_value=(b"opaque", "application/octet-stream")),
+        ):
+            resp = client.get(f"/artifacts/{ART_ID}/raw")
+        assert resp.status_code == 415
+
+    def test_upstream_error_surfaces_as_error_page(self, client: TestClient) -> None:
+        from artifact_viewer.ahs_client import AHSError
+
+        _sign_in(client)
+        with patch(
+            "artifact_viewer.ahs_client.get_artifact_content",
+            new=AsyncMock(side_effect=AHSError(404, "not found")),
+        ):
+            resp = client.get(f"/artifacts/{ART_ID}/raw")
         assert resp.status_code == 404
         assert "Upstream error" in resp.text
 
