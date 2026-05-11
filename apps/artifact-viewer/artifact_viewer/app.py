@@ -5,6 +5,7 @@ Mount layout::
     GET /                                → home (search + recent)
     GET /search?q=...                    → search results
     GET /artifacts/{uuid}                → rendered artifact
+    GET /artifacts/{uuid}/raw            → full-page sandboxed HTML (text/html only)
     GET /artifacts/{uuid}/download       → download raw body as a file
     GET /artifacts/{uuid}/edit           → full-screen edit form (creates a new version on POST)
     POST /artifacts/{uuid}/edit          → submit new content; redirects to the new version
@@ -299,6 +300,60 @@ async def attachment(request: Request) -> Response:
     except AHSError as exc:
         return _error_page(request, exc)
     return Response(content=data, media_type=content_type)
+
+
+async def raw_html(request: Request) -> Response:
+    """Serve an HTML artifact's raw body in a sandboxed full-page view.
+
+    Linked from the "Full Page" button on artifact pages. Only ``text/html``
+    artifacts are served here (everything else 404s) — the use case is "let
+    me see the agent's HTML in the full browser viewport without the
+    iframe's scrollbars and fixed dimensions".
+
+    Security model: even though the URL lives on the viewer's origin
+    (``artifacts.agcouch.com``), the response carries a
+    ``Content-Security-Policy: sandbox`` header with the same flags as the
+    in-page iframe (no ``allow-scripts``, no ``allow-same-origin``). The
+    browser treats the top-level document as if it were in a sandboxed
+    iframe: opaque origin, no JS execution, ``document.cookie`` empty,
+    same-origin ``fetch`` becomes cross-origin and is CORS-blocked. This
+    keeps parity with the iframe's posture so an agent-authored page can't
+    exfiltrate the viewer's session, regardless of whether it renders
+    in-page or full-page.
+
+    A separate ``artifacts-content.agcouch.com`` origin would be a stronger
+    second layer (and is recommended as future hardening), but the CSP
+    sandbox header alone is sufficient to neutralise the same-origin XSS
+    surface.
+    """
+    artifact_id = request.path_params["artifact_id"]
+    try:
+        data, content_type = await ahs_client.get_artifact_content(artifact_id)
+    except AHSError as exc:
+        return _error_page(request, exc)
+    mime = content_type.split(";", 1)[0].strip().lower() if content_type else ""
+    if mime != "text/html":
+        # Don't pretend to "raw-serve" non-HTML — that would be a
+        # confusing download path with no security story. Send people
+        # back to the rendered page.
+        return _error_page(request, AHSError(404, "Not an HTML artifact"))
+    return Response(
+        content=data,
+        media_type="text/html; charset=utf-8",
+        headers={
+            # Treat the document as sandboxed at the top level. Mirrors
+            # the iframe's ``sandbox`` flags so security posture matches
+            # (no JS, no same-origin storage / cookies).
+            "Content-Security-Policy": (f"sandbox {render.HTML_SANDBOX_FLAGS}; frame-ancestors 'none'"),
+            # Belt-and-suspenders: legacy framing protection in case a
+            # client somehow ignores the CSP frame-ancestors directive.
+            "X-Frame-Options": "DENY",
+            # Prevent the browser from second-guessing the declared MIME.
+            "X-Content-Type-Options": "nosniff",
+            # Don't leak the artifact URL out through outbound clicks.
+            "Referrer-Policy": "no-referrer",
+        },
+    )
 
 
 async def download(request: Request) -> Response:
@@ -684,6 +739,7 @@ def build_app() -> Starlette:
         Route("/", home, name="home"),
         Route("/search", search_page, name="search"),
         Route("/artifacts/{artifact_id}", artifact_by_id, name="artifact"),
+        Route("/artifacts/{artifact_id}/raw", raw_html, name="artifact_raw"),
         Route("/artifacts/{artifact_id}/download", download, name="artifact_download"),
         Route(
             "/artifacts/{artifact_id}/edit",

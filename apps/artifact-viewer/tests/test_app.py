@@ -102,6 +102,13 @@ class TestAuthGating:
         assert resp.status_code == 307
         assert resp.headers["location"].startswith("/auth/login")
 
+    def test_raw_unauthenticated_redirects(self, client: TestClient) -> None:
+        # The /raw route must also be gated — agent-authored HTML is not
+        # public content; the session cookie is what authorises access.
+        resp = client.get(f"/artifacts/{ART_ID}/raw")
+        assert resp.status_code == 307
+        assert resp.headers["location"].startswith("/auth/login")
+
 
 # ---------------------------------------------------------------------------
 # Authenticated flows
@@ -146,6 +153,62 @@ class TestArtifactPage:
         body = resp.text
         assert "<iframe" in body
         assert "sandbox=" in body
+
+    def test_full_page_button_visible_on_html_artifact(self, client: TestClient) -> None:
+        # The "Full Page" link should appear on HTML artifacts only and
+        # point at the /raw route in a new tab with rel=noopener so the
+        # opened page can't navigate this one back via window.opener.
+        _sign_in(client)
+        with (
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_meta",
+                new=AsyncMock(return_value=_meta(content_type="text/html")),
+            ),
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_content",
+                new=AsyncMock(return_value=(b"<b>hi</b>", "text/html")),
+            ),
+        ):
+            resp = client.get(f"/artifacts/{ART_ID}")
+        assert resp.status_code == 200
+        body = resp.text
+        assert "Full Page" in body
+        assert f'href="/artifacts/{ART_ID}/raw"' in body
+        assert 'target="_blank"' in body
+        assert "noopener" in body
+
+    def test_full_page_button_hidden_on_markdown_artifact(self, client: TestClient) -> None:
+        _sign_in(client)
+        with (
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_meta",
+                new=AsyncMock(return_value=_meta()),
+            ),
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_content",
+                new=AsyncMock(return_value=(b"# hi", "text/markdown")),
+            ),
+        ):
+            resp = client.get(f"/artifacts/{ART_ID}")
+        assert resp.status_code == 200
+        assert "Full Page" not in resp.text
+        assert f"/artifacts/{ART_ID}/raw" not in resp.text
+
+    def test_full_page_button_hidden_on_plain_artifact(self, client: TestClient) -> None:
+        _sign_in(client)
+        with (
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_meta",
+                new=AsyncMock(return_value=_meta(content_type="text/plain")),
+            ),
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_content",
+                new=AsyncMock(return_value=(b"hello", "text/plain")),
+            ),
+        ):
+            resp = client.get(f"/artifacts/{ART_ID}")
+        assert resp.status_code == 200
+        assert "Full Page" not in resp.text
 
     def test_upstream_404_surfaces_as_error_page(self, client: TestClient) -> None:
         from artifact_viewer.ahs_client import AHSError
@@ -1026,6 +1089,92 @@ class TestDownload:
             new=AsyncMock(side_effect=AHSError(404, "not found")),
         ):
             resp = client.get(f"/artifacts/{ART_ID}/download")
+        assert resp.status_code == 404
+        assert "Upstream error" in resp.text
+
+
+class TestRawHtml:
+    """Full-page HTML route — sandboxed top-level navigation.
+
+    Security parity with the in-page iframe is the non-negotiable contract
+    here: a malicious agent-authored page must not be able to read the
+    viewer's session cookie or call viewer endpoints with credentials,
+    even though the URL technically lives on ``artifacts.agcouch.com``.
+    The CSP ``sandbox`` directive (without ``allow-same-origin`` /
+    ``allow-scripts``) is what enforces that, so the tests pin the exact
+    header rather than just checking it's "set".
+    """
+
+    def test_serves_html_with_sandbox_csp(self, client: TestClient) -> None:
+        _sign_in(client)
+        with patch(
+            "artifact_viewer.ahs_client.get_artifact_content",
+            new=AsyncMock(return_value=(b"<h1>Hello</h1>", "text/html; charset=utf-8")),
+        ):
+            resp = client.get(f"/artifacts/{ART_ID}/raw")
+        assert resp.status_code == 200
+        assert resp.content == b"<h1>Hello</h1>"
+        assert resp.headers["content-type"].startswith("text/html")
+        # The CSP must include the ``sandbox`` directive so the browser
+        # treats the top-level document as if loaded inside a sandboxed
+        # iframe — opaque origin, no JS, no cookie / storage access for
+        # ``artifacts.agcouch.com``.
+        csp = resp.headers["content-security-policy"]
+        assert "sandbox" in csp
+        # The dangerous flags must NOT appear — granting either would
+        # open an XSS or session-exfil path.
+        assert "allow-scripts" not in csp
+        assert "allow-same-origin" not in csp
+        # Defense in depth: framing protection + no MIME sniffing + no
+        # referrer leak on outbound clicks.
+        assert "frame-ancestors 'none'" in csp
+        assert resp.headers.get("x-frame-options") == "DENY"
+        assert resp.headers.get("x-content-type-options") == "nosniff"
+        assert resp.headers.get("referrer-policy") == "no-referrer"
+
+    def test_refuses_non_html_artifact(self, client: TestClient) -> None:
+        # /raw is HTML-only by design — markdown / plain / images go
+        # through the normal rendered page or /download. Anything else
+        # 404s rather than serve unsafe content with HTML headers.
+        _sign_in(client)
+        with patch(
+            "artifact_viewer.ahs_client.get_artifact_content",
+            new=AsyncMock(return_value=(b"# heading", "text/markdown")),
+        ):
+            resp = client.get(f"/artifacts/{ART_ID}/raw")
+        assert resp.status_code == 404
+        assert "Upstream error" in resp.text
+
+    def test_refuses_image_artifact(self, client: TestClient) -> None:
+        _sign_in(client)
+        with patch(
+            "artifact_viewer.ahs_client.get_artifact_content",
+            new=AsyncMock(return_value=(b"\x89PNG\r\n", "image/png")),
+        ):
+            resp = client.get(f"/artifacts/{ART_ID}/raw")
+        assert resp.status_code == 404
+
+    def test_handles_charset_suffix_on_content_type(self, client: TestClient) -> None:
+        # ``text/html; charset=utf-8`` is the common form upstream — the
+        # MIME check must split on ``;`` so the charset suffix doesn't
+        # cause a spurious 404.
+        _sign_in(client)
+        with patch(
+            "artifact_viewer.ahs_client.get_artifact_content",
+            new=AsyncMock(return_value=(b"<p>x</p>", "text/html; charset=utf-8")),
+        ):
+            resp = client.get(f"/artifacts/{ART_ID}/raw")
+        assert resp.status_code == 200
+
+    def test_upstream_error_surfaces_as_error_page(self, client: TestClient) -> None:
+        from artifact_viewer.ahs_client import AHSError
+
+        _sign_in(client)
+        with patch(
+            "artifact_viewer.ahs_client.get_artifact_content",
+            new=AsyncMock(side_effect=AHSError(404, "not found")),
+        ):
+            resp = client.get(f"/artifacts/{ART_ID}/raw")
         assert resp.status_code == 404
         assert "Upstream error" in resp.text
 

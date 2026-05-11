@@ -58,6 +58,20 @@
         on subsequent page loads to avoid a width flash. The default
         "medium" matches the existing 1100px max-width. -#}
     <div class="width-toggle" role="group" aria-label="Page width">
+        {%- if display_mode == 'html' %}
+            {#- For HTML artifacts only: open the raw body in a new tab so the
+                user can see the page in the full browser viewport instead of
+                the in-page iframe. The /raw route ships ``Content-Security-Policy:
+                sandbox`` headers that match the iframe's flags, so security
+                posture is identical (no scripts, opaque origin). -#}
+            <a class="width-toggle-btn full-page-btn"
+               href="/artifacts/{{ meta.artifact_id }}/raw"
+               target="_blank"
+               rel="noopener noreferrer"
+               title="Open this HTML in a new tab at full viewport (sandboxed)">
+                Full Page ↗
+            </a>
+        {%- endif %}
         <span class="width-toggle-label muted small">Width</span>
         <button type="button" class="width-toggle-btn" data-width="narrow" aria-pressed="false">Narrow</button>
         <button type="button" class="width-toggle-btn is-active" data-width="medium" aria-pressed="true">Medium</button>
