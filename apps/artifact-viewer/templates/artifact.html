@@ -103,7 +103,13 @@
         for (var i = 0; i < WIDTHS.length; i++) {
             html.classList.toggle('artifact-width-' + WIDTHS[i], WIDTHS[i] === width);
         }
-        var btns = document.querySelectorAll('.width-toggle-btn');
+        // ``[data-width]`` excludes the "Full Page" anchor (and any future
+        // sibling action in the strip that doesn't carry a width value).
+        // Without this filter, clicking Full Page would call ``apply(null)``
+        // — clearing every pill's ``is-active`` state and writing the
+        // literal ``"null"`` to localStorage, silently wiping the user's
+        // saved width preference.
+        var btns = document.querySelectorAll('.width-toggle-btn[data-width]');
         for (var j = 0; j < btns.length; j++) {
             var pressed = btns[j].getAttribute('data-width') === width;
             btns[j].setAttribute('aria-pressed', pressed ? 'true' : 'false');
@@ -115,7 +121,9 @@
         try { saved = window.localStorage.getItem(STORAGE_KEY); } catch (_) { /* ignore */ }
         var width = (saved === 'narrow' || saved === 'wide') ? saved : 'medium';
         apply(width);
-        var btns = document.querySelectorAll('.width-toggle-btn');
+        // Same ``[data-width]`` filter as in ``apply`` — keeps the Full Page
+        // anchor (or any future non-toggle action) out of the click handler.
+        var btns = document.querySelectorAll('.width-toggle-btn[data-width]');
         for (var i = 0; i < btns.length; i++) {
             btns[i].addEventListener('click', function (ev) {
                 var next = ev.currentTarget.getAttribute('data-width');

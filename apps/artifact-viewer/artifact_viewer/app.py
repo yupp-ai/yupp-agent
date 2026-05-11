@@ -333,10 +333,13 @@ async def raw_html(request: Request) -> Response:
         return _error_page(request, exc)
     mime = content_type.split(";", 1)[0].strip().lower() if content_type else ""
     if mime != "text/html":
-        # Don't pretend to "raw-serve" non-HTML — that would be a
-        # confusing download path with no security story. Send people
-        # back to the rendered page.
-        return _error_page(request, AHSError(404, "Not an HTML artifact"))
+        # The "Full Page" button only appears for HTML artifacts, so this
+        # branch is only reachable if someone hand-edits the URL or clicks
+        # a stale link. Redirect (in the new tab) back to the normal
+        # rendered page rather than showing the viewer's error template —
+        # the user's original tab still has the artifact open and a 404
+        # in the new tab would be confusing UX with no extra signal.
+        return RedirectResponse(f"/artifacts/{artifact_id}", status_code=303)
     return Response(
         content=data,
         media_type="text/html; charset=utf-8",
@@ -352,6 +355,13 @@ async def raw_html(request: Request) -> Response:
             "X-Content-Type-Options": "nosniff",
             # Don't leak the artifact URL out through outbound clicks.
             "Referrer-Policy": "no-referrer",
+            # The body is per-user-authenticated agent content at a stable
+            # URL — without an explicit directive, browsers / shared proxies
+            # / any CDN in front of the viewer can keep the response and
+            # replay it to another signed-in user. ``private, no-store``
+            # forbids both shared and disk caching so the auth gate stays
+            # the sole source of truth for who sees what.
+            "Cache-Control": "private, no-store",
         },
     )
 
