@@ -220,6 +220,20 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
     border-color: var(--accent);
     color: #fff;
 }
+/* Full-page link sits in the same strip as the width-toggle pills but is
+   an action (not a toggle) — slightly stronger affordance, separator gap
+   on the right so it visually splits from the Narrow / Medium / Wide
+   group. Only rendered for ``text/html`` artifacts. */
+.width-toggle-btn.full-page-btn {
+    text-decoration: none;
+    margin-right: 8px;
+    border-color: var(--accent);
+    color: var(--accent);
+}
+.width-toggle-btn.full-page-btn:hover {
+    background: var(--accent);
+    color: #fff;
+}
 
 .tag {
     display: inline-block;

@@ -67,6 +67,16 @@ class TestHtmlIframe:
         # Original ampersand must be escaped too.
         assert "&amp;" in out
 
+    def test_iframe_uses_shared_sandbox_flags_constant(self) -> None:
+        # The full-page route's Content-Security-Policy header must use
+        # the same sandbox flags as the iframe — guarding the constant
+        # here keeps the two paths from drifting apart.
+        out = render.render_html_iframe("<p>x</p>")
+        assert f'sandbox="{render.HTML_SANDBOX_FLAGS}"' in out
+        # Negative: never grant the dangerous flags accidentally.
+        assert "allow-scripts" not in render.HTML_SANDBOX_FLAGS
+        assert "allow-same-origin" not in render.HTML_SANDBOX_FLAGS
+
 
 class TestPlain:
     def test_wraps_in_pre_and_escapes(self) -> None:

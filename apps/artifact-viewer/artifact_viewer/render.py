@@ -106,6 +106,15 @@ def render_plain(content: str) -> str:
     return f'<pre class="plain">{html.escape(content)}</pre>'
 
 
+# Sandbox flags shared by the in-page iframe (``sandbox`` attribute) and the
+# full-page route's ``Content-Security-Policy: sandbox <flags>`` response
+# header. Keeping the two in lockstep means "Full Page" gets the same
+# security posture as the iframe — no scripts, no same-origin access to
+# the viewer's cookies / storage / endpoints, just popups for outbound
+# ``<a target="_blank">`` links.
+HTML_SANDBOX_FLAGS = "allow-popups allow-popups-to-escape-sandbox"
+
+
 def render_html_iframe(content: str) -> str:
     """Render agent-authored HTML inside a sandboxed iframe.
 
@@ -115,12 +124,7 @@ def render_html_iframe(content: str) -> str:
     ``allow-popups`` is kept so ``<a target="_blank">`` still works.
     """
     escaped = html.escape(content, quote=True)
-    return (
-        '<iframe class="artifact-html-frame" '
-        'sandbox="allow-popups allow-popups-to-escape-sandbox" '
-        f'srcdoc="{escaped}">'
-        "</iframe>"
-    )
+    return f'<iframe class="artifact-html-frame" sandbox="{HTML_SANDBOX_FLAGS}" srcdoc="{escaped}"></iframe>'
 
 
 def is_image(content_type: str | None) -> bool:
