@@ -35,15 +35,14 @@ INVALID_SESSION = "not-a-uuid"
 
 class TestResolveWorkspace:
     def _setup_session(self, tmp_path: Path) -> Path:
-        """Create a session dir with repo symlinks (like service.py does)."""
+        """Create a session dir with the shared ``repos/`` symlink (mirrors session_lifecycle)."""
         session_dir = tmp_path / VALID_SESSION
         session_dir.mkdir(parents=True)
-        # Create repo dirs and symlink them into the session
+        # Create the shared repos dir and symlink it into the session as ``repos/``.
         repos_dir = tmp_path / "repos"
         (repos_dir / "yupp-agent").mkdir(parents=True)
         (repos_dir / "other-repo").mkdir(parents=True)
-        (session_dir / "yupp-agent").symlink_to(repos_dir / "yupp-agent")
-        (session_dir / "other-repo").symlink_to(repos_dir / "other-repo")
+        (session_dir / "repos").symlink_to(repos_dir)
         (session_dir / "history").mkdir()
         return repos_dir
 

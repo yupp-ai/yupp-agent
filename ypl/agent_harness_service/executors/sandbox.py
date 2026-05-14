@@ -236,36 +236,58 @@ def _resolve_inner_symlinks(
 
 
 def _resolve_workspace_symlinks(workspace: str) -> list[tuple[str, str]]:
-    """Scan workspace for repo symlinks and resolve to real paths.
+    """Resolve the workspace ``repos/`` symlink to per-repo bind tuples.
 
-    Only includes symlinks whose resolved target is under ``AHS_REPOS_DIR``
-    to prevent a writable workspace from injecting arbitrary host paths
-    into the bwrap mount list (symlink escape attack). The materialized
-    ``agent_memories/`` directory is a regular subdirectory of the
-    workspace (no symlink), so it is mounted via the workspace bind and
-    needs no special handling here.
+    Every session workspace contains a single ``repos/`` symlink pointing at
+    ``AHS_REPOS_DIR`` (set up in ``session_lifecycle.py``). To preserve the
+    existing per-repo bwrap mount contract — system mounts each repo
+    read-only and overlays specific ``.git/`` subdirs as read-write — we
+    enumerate the children of ``AHS_REPOS_DIR`` and return one entry per
+    repo.
+
+    The symlink target is validated against ``AHS_REPOS_DIR`` to prevent a
+    writable workspace from injecting arbitrary host paths into the bwrap
+    mount list (symlink escape attack). ``AHS_REPOS_DIR`` itself is
+    operator-controlled, so its children are trusted (in local dev, repos
+    inside ``AHS_REPOS_DIR`` are commonly symlinks to a checkout elsewhere).
+
+    The materialized ``agent_memories/`` directory is a regular subdirectory
+    of the workspace (no symlink), so it is mounted via the workspace bind
+    and needs no special handling here.
 
     Returns:
-        A list of ``(real_path, symlink_path)`` tuples for repos symlinks
-        (mounted read-only).
+        A list of ``(real_path, symlink_path)`` tuples for each repo under
+        the workspace's ``repos/`` symlink (mounted read-only).
     """
     repo_binds: list[tuple[str, str]] = []
     if not os.path.isdir(workspace):
         return repo_binds
+
+    repos_link = os.path.join(workspace, "repos")
+    if not (os.path.islink(repos_link) and os.path.isdir(repos_link)):
+        return repo_binds
+
     real_repos_dir = os.path.realpath(AHS_REPOS_DIR)
-    for entry in os.listdir(workspace):
-        full = os.path.join(workspace, entry)
-        if os.path.islink(full) and os.path.isdir(full):
-            real = os.path.realpath(full)
-            if real.startswith(real_repos_dir + os.sep) or real == real_repos_dir:
-                repo_binds.append((real, full))
-            else:
-                logger.warning(
-                    "Skipping workspace symlink outside allowed dirs",
-                    symlink=full,
-                    target=real,
-                    repos_dir=real_repos_dir,
-                )
+    real_link_target = os.path.realpath(repos_link)
+    if real_link_target != real_repos_dir:
+        logger.warning(
+            "Skipping workspace ``repos/`` symlink whose target is not AHS_REPOS_DIR",
+            symlink=repos_link,
+            target=real_link_target,
+            repos_dir=real_repos_dir,
+        )
+        return repo_binds
+
+    for entry in sorted(os.listdir(real_repos_dir)):
+        child = os.path.join(real_repos_dir, entry)
+        if not os.path.isdir(child):
+            continue
+        real_child = os.path.realpath(child)
+        # ``virtual`` is the path the agent sees inside the workspace — the
+        # caller uses it for diagnostic logging only; bwrap binds the real
+        # path on both sides of the mount.
+        virtual = os.path.join(repos_link, entry)
+        repo_binds.append((real_child, virtual))
     return repo_binds
 
 
@@ -320,7 +342,8 @@ def build_bwrap_command(command: str, workspace: str) -> list[str]:
     Creates a minimal filesystem namespace:
     - System binaries/libraries (read-only)
     - Workspace directory (read-write)
-    - Repo symlink targets (read-only, so repos are accessible inside the namespace)
+    - Each shared repo under ``AHS_REPOS_DIR`` (read-only — the workspace's
+      ``repos/`` symlink resolves there)
     - Ephemeral /tmp
     - Minimal /dev and /proc
     - Isolated PID namespace (--unshare-pid)
@@ -339,8 +362,8 @@ def build_bwrap_command(command: str, workspace: str) -> list[str]:
     # System mounts (handles merged-usr symlinks on modern distros)
     args += _bwrap_system_mounts()
 
-    # Resolve workspace symlinks — bwrap doesn't follow symlinks by default,
-    # so we need explicit mount entries for each real path.
+    # Resolve workspace ``repos/`` symlink — bwrap doesn't follow host
+    # symlinks, so we mount each shared repo explicitly.
     repo_binds = _resolve_workspace_symlinks(workspace)
     for real_path, _symlink_path in repo_binds:
         args += ["--ro-bind", real_path, real_path]

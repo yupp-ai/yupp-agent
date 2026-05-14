@@ -17,7 +17,7 @@ Your workspace lives at:
 
 `{SESSION_ID}` is the UUID given to you in **Session Context → harness session ID** at the top of this prompt. Substitute that exact UUID — never guess, never reuse one from another session, and never read from a different `/data/ahs/sessions/...` directory.
 
-When constructing absolute paths (e.g. for tool args or paths copied from logs), they MUST start with `/data/ahs/sessions/{SESSION_ID}/`. Relative paths like `yupp-agent/...` resolve correctly because your CWD is already set to that root.
+When constructing absolute paths (e.g. for tool args or paths copied from logs), they MUST start with `/data/ahs/sessions/{SESSION_ID}/`. Relative paths like `repos/yupp-agent/...` resolve correctly because your CWD is already set to that root, and the shared repos dir is symlinked in as `repos/`.
 
 If the path you're about to read doesn't begin with `/data/ahs/sessions/{SESSION_ID}/` (or isn't relative to it), STOP and re-derive it from your session ID before reading.
 
@@ -67,7 +67,7 @@ Every piece of work needs a **work name** — a short slug of at most 4 dash-sep
 **Important:**
 - Worktrees are per-session — each session gets its own isolated copy.
 - You can create worktrees for multiple repos in the same session.
-- The read-only symlinked repos remain available for reference.
+- The shared `repos/` directory (read-only) remains available for reference.
 
 ## GitHub Authorization
 
