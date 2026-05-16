@@ -60,6 +60,16 @@ pre.plain { white-space: pre-wrap; }
 .muted { color: var(--fg-muted); }
 .small { font-size: 0.85em; }
 
+/* Per-cell label spans rendered inside each artifact-listing metadata
+   cell (Creator: / Agent: / Slug: / Status: / Created: ). Hidden by
+   default because the desktop ``<thead>`` row already provides column
+   header context; revealed inside the ``@media (max-width: 600px)``
+   block where the header row is hidden and each row collapses into a
+   card. Living in the DOM (rather than as CSS ``::before { content:
+   attr(data-label) }``) means screen readers pick the label up
+   reliably across browsers + ATs. */
+.cell-label { display: none; }
+
 /* --- Topbar --- */
 
 .topbar {
@@ -605,9 +615,14 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
         order: 2;
         flex: 1 1 100%;
     }
+    /* Font-size MUST stay ≥ 16 px on any focusable input: iOS Safari auto-
+       zooms the page on focus when the computed font-size is smaller, and
+       the resulting layout shift wipes out the mobile design this PR is
+       built to serve. Visual size is tuned via ``padding`` instead. The
+       same rule governs the filter-bar select / date inputs below. */
     .search input {
-        padding: 6px 8px;
-        font-size: 13px;
+        padding: 6px 10px;
+        font-size: 16px;
     }
 
     /* --- Main column --- */
@@ -622,19 +637,40 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
     .main > p.muted { font-size: 12px; line-height: 1.4; }
 
     /* --- Filter bar ---
-       Stays a horizontal scroll strip (same as desktop), just with tighter
-       padding and a smaller min-height so it doesn't dominate the screen.
-       Hide the "From" / "To" date labels — the native date pickers are
-       self-explanatory and the labels eat row width. */
+       Stays a horizontal scroll strip (same as desktop) with tighter
+       padding so it doesn't dominate the screen. Field labels stay
+       visible (they're tiny anyway and removing them hurts a11y / users
+       who don't recognize a bare date picker), but get a smaller font.
+
+       Input / select font-size is held at 16 px to keep iOS Safari from
+       auto-zooming on focus — see ``.search input`` above. Tap targets
+       use ``min-height: 36 px`` to clear the WCAG 2.5.5 / iOS-HIG guidance
+       (44 px is the strict target but the filter row would dominate the
+       viewport at that size; 36 px is the practical compromise used by
+       most mobile-first frameworks). */
     .filter-bar {
         padding: 6px 8px;
         gap: 8px;
     }
     .filter-bar label { font-size: 11px; }
     .filter-bar select,
-    .filter-bar input[type="date"] { font-size: 12px; padding: 3px 4px; }
-    .filter-bar input[type="date"] { min-width: 110px; }
-    .filter-apply { padding: 4px 10px; font-size: 12px; }
+    .filter-bar input[type="date"] {
+        font-size: 16px;
+        padding: 6px 8px;
+        min-height: 36px;
+    }
+    .filter-bar input[type="date"] { min-width: 130px; }
+    .filter-bar .filter-checkbox input[type="checkbox"] {
+        /* Native checkboxes scale with font-size; nudge up so the tap
+           target lines up with the rest of the row. */
+        width: 18px;
+        height: 18px;
+    }
+    .filter-apply {
+        padding: 8px 14px;
+        font-size: 14px;
+        min-height: 36px;
+    }
 
     /* --- Artifact listing table → card layout ---
        Hide the table header row entirely; turn each ``<tr>`` into a card
@@ -665,19 +701,24 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
         display: none;
     }
 
-    /* Title: own line, larger type, full width. */
+    /* Title: own line, larger type, full width. ``overflow-wrap: anywhere``
+       keeps unbreakable strings (long slugs, kebab-case titles) inside the
+       card on a 360 px viewport — without it they push the card past the
+       viewport width and the user has to side-scroll the whole page. */
     table.artifacts.artifacts-listing td.col-title {
         display: block;
         font-size: 15px;
         line-height: 1.35;
         margin-bottom: 4px;
+        overflow-wrap: anywhere;
     }
     table.artifacts.artifacts-listing td.col-title a { font-weight: 500; }
 
-    /* Metadata cells (creator / agent / slug / status / created):
-       inline-flow on a second line, each prefixed with its ``data-label``
-       and separated by a thin middle-dot. ``inline`` (not inline-block)
-       lets the line wrap naturally between items on very narrow screens.
+    /* Metadata cells (creator / agent / slug / status / created): inline-flow
+       on a second line, separated by a thin middle-dot via ``::after``.
+       ``inline`` (not inline-block) lets the line wrap naturally between
+       items on very narrow screens; ``overflow-wrap: anywhere`` covers
+       long unbroken slugs / agent ids.
 
        Cells whose only content is the muted "—" placeholder still render
        (e.g. "Creator: —") — visually quiet because of the muted color,
@@ -691,15 +732,18 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
         font-size: 11px;
         color: var(--fg-muted);
         line-height: 1.6;
+        overflow-wrap: anywhere;
     }
-    /* ``data-label`` (set on each <td> in _artifact_table.html) renders as
-       a tiny "Label: " prefix. Status is skipped — its colored pill is
-       self-explanatory. */
-    table.artifacts.artifacts-listing td.col-creator::before,
-    table.artifacts.artifacts-listing td.col-agent::before,
-    table.artifacts.artifacts-listing td.col-slug::before,
-    table.artifacts.artifacts-listing td.col-created::before {
-        content: attr(data-label) ": ";
+    /* Mobile-only: surface the per-cell ``<span class="cell-label">``
+       labels that ``.cell-label { display: none }`` hides on desktop.
+       Using a DOM-text span (rather than CSS ``::before { content: attr(…)
+       }``) means every screen reader picks the label up reliably, and it
+       lets us label the Status cell too — desktop column-header context
+       is gone here, so without an explicit label the status pill would
+       speak just "archived" / "active" with no field name. */
+    table.artifacts.artifacts-listing td .cell-label {
+        display: inline;
+        color: var(--fg-muted);
         opacity: 0.7;
     }
     /* Visual separator between metadata items. Trailing dot is suppressed
@@ -723,10 +767,13 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
         font-size: 11px;
     }
 
-    /* Time-mode toggle below the table: smaller pills, less vertical
-       padding so it doesn't visually compete with the cards above. */
-    .time-toggle { font-size: 11px; margin-top: 8px; }
-    .time-toggle-btn { padding: 2px 8px; }
+    /* Time-mode toggle below the table: tap targets at 32 px min-height
+       (the smallest size that clears WCAG 2.5.5 Level AA's 24 px guidance
+       with margin to spare and stays comfortable for thumb input on a
+       phone). The desktop padding produced ~18 px tall buttons, well
+       below useful on a touchscreen. */
+    .time-toggle { font-size: 12px; margin-top: 10px; }
+    .time-toggle-btn { padding: 6px 12px; min-height: 32px; }
 
     /* --- Versions table ---
        Schema differs from the artifact listing (no ``col-*`` classes and no
@@ -748,7 +795,9 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
     .artifact-header h1 { font-size: 16px; }
 
     /* --- Width toggle (artifact page) ---
-       Right-aligned strip wraps tightly on narrow screens. */
-    .width-toggle { font-size: 11px; gap: 4px; flex-wrap: wrap; }
-    .width-toggle-btn { padding: 2px 8px; }
+       Right-aligned strip wraps tightly on narrow screens. Tap targets
+       match the time-toggle buttons (32 px min-height) for the same
+       reasons noted there. */
+    .width-toggle { font-size: 12px; gap: 6px; flex-wrap: wrap; }
+    .width-toggle-btn { padding: 6px 12px; min-height: 32px; }
 }

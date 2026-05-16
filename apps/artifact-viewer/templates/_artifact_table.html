@@ -55,24 +55,33 @@
     apply the card-layout transform. The shared ``artifacts`` class still
     drives the desktop table styling for both this macro and the versions
     table; scoping the mobile transform to a second class means the
-    versions table (which has a different column schema and no ``col-*``
-    classes) keeps its tabular layout and just scrolls horizontally on a
-    phone instead of being half-rewritten. -#}
-<table class="artifacts artifacts-listing">
-    <thead>
-        <tr>
-            <th aria-label="Type"></th>
-            <th>Title</th>
-            <th>Creator</th>
-            <th>Agent</th>
-            <th>Slug / Version</th>
-            <th>Status</th>
-            <th>
+    versions table (which has a different column schema) keeps its tabular
+    layout and just scrolls horizontally on a phone instead of being
+    half-rewritten.
+
+    Explicit ARIA ``role`` attributes are set on the table, thead/tbody,
+    rows, and cells. They are redundant on desktop (a real ``<table>``
+    already has these implicit roles), but the mobile breakpoint flips
+    every element to ``display: block`` / ``display: inline``, which
+    browsers treat as stripping the implicit table roles from the
+    accessibility tree. The explicit roles survive that flip so screen
+    readers keep announcing the listing as a table with rows and cells
+    even on phones. -#}
+<table class="artifacts artifacts-listing" role="table">
+    <thead role="rowgroup">
+        <tr role="row">
+            <th role="columnheader" aria-label="Type"></th>
+            <th role="columnheader">Title</th>
+            <th role="columnheader">Creator</th>
+            <th role="columnheader">Agent</th>
+            <th role="columnheader">Slug / Version</th>
+            <th role="columnheader">Status</th>
+            <th role="columnheader">
                 Created <span class="time-mode-label muted">(local)</span>
             </th>
         </tr>
     </thead>
-    <tbody>
+    <tbody role="rowgroup">
     {% for a in artifacts %}
         {% set tkey = _type_key(a)|trim %}
         {% set tmeta = _type_meta.get(tkey, _type_meta['TEXT']) %}
@@ -81,25 +90,32 @@
         {% if tkey == 'CODE_REVIEW' and pr_num %}
             {% set display_title = 'PR ' ~ pr_num ~ ' - ' ~ display_title %}
         {% endif %}
-        {#- Each ``<td>`` carries a ``col-*`` class so the mobile stylesheet can
-            target individual columns by purpose (the legacy ``type-cell`` class
-            stays on the type column for back-compat with existing rules). On
-            narrow viewports the row collapses into a card: the title column
-            spans the full width with large type, and the other columns reflow
-            inline as a small-text "metadata" block underneath. The
-            ``data-label`` attribute is rendered via CSS as a tiny prefix on
-            mobile so each value still reads as "Creator: …", "Slug: …", etc.
-            without needing the table header row. -#}
-        <tr>
-            <td class="col-type type-cell" title="{{ tmeta.label }}">
+        {#- Each ``<td>`` carries a ``col-*`` class so the mobile stylesheet
+            can target individual columns by purpose (the legacy ``type-cell``
+            class stays on the type column for back-compat with existing
+            rules). On narrow viewports the row collapses into a card: the
+            title column spans the full width with large type, and the other
+            columns reflow inline as a small-text "metadata" block underneath.
+
+            Each metadata cell carries a ``<span class="cell-label">…</span>``
+            with its column name. ``.cell-label`` is ``display: none`` on
+            desktop (the ``<thead>`` row already provides the column header
+            context) and ``display: inline`` on mobile, where the header is
+            hidden. Living in the DOM means every screen reader picks it up
+            regardless of inconsistent support for CSS ``attr()`` content,
+            and the status pill gets a "Status: active/archived" label
+            instead of speaking just "active". -#}
+        <tr role="row">
+            <td class="col-type type-cell" role="cell" title="{{ tmeta.label }}">
                 <span class="type-emoji" role="img" aria-label="{{ tmeta.label }}">{{ tmeta.emoji }}</span>
             </td>
-            <td class="col-title">
+            <td class="col-title" role="cell">
                 <a href="/artifacts/{{ a.artifact_id }}">
                     {{ display_title }}
                 </a>
             </td>
-            <td class="col-creator" data-label="Creator">
+            <td class="col-creator" role="cell">
+                <span class="cell-label">Creator: </span>
                 {% if a.creator_user_name %}
                     {{ a.creator_user_name }}
                 {% elif a.creator_user_id %}
@@ -108,7 +124,8 @@
                     <span class="muted">—</span>
                 {% endif %}
             </td>
-            <td class="col-agent" data-label="Agent">
+            <td class="col-agent" role="cell">
+                <span class="cell-label">Agent: </span>
                 {% if a.creator_agent_name %}
                     {{ a.creator_agent_name }}
                 {% elif a.creator_agent_id %}
@@ -117,7 +134,8 @@
                     <span class="muted">—</span>
                 {% endif %}
             </td>
-            <td class="col-slug" data-label="Slug">
+            <td class="col-slug" role="cell">
+                <span class="cell-label">Slug: </span>
                 {% if a.named_slug %}
                     <a href="/artifacts/by-slug/{{ a.named_slug }}">{{ a.named_slug }}</a>
                     {% if a.version is not none %}<span class="mono">v{{ a.version }}</span>{% endif %}
@@ -125,14 +143,16 @@
                     <span class="muted">—</span>
                 {% endif %}
             </td>
-            <td class="col-status" data-label="Status">
+            <td class="col-status" role="cell">
+                <span class="cell-label">Status: </span>
                 {% if a.metadata and a.metadata.is_archived %}
                     <span class="tag archived">archived</span>
                 {% else %}
                     <span class="tag active">active</span>
                 {% endif %}
             </td>
-            <td class="col-created" data-label="Created">
+            <td class="col-created" role="cell">
+                <span class="cell-label">Created: </span>
                 {% if a.created_at %}
                     <time class="timestamp" datetime="{{ a.created_at }}" data-utc="{{ a.created_at }}">{{ (a.created_at or '')[:19]|replace('T', ' ') }}</time>
                 {% else %}
