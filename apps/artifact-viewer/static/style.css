@@ -562,3 +562,196 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
     opacity: 0.6;
     cursor: not-allowed;
 }
+
+/* --- Mobile / narrow viewport ---
+   Phone-shaped screens (≲ 600 px). The desktop layout is a wide grid that
+   relies on horizontal real estate the device doesn't have, so we collapse it
+   into a single-column shape: the topbar stacks (title on top, search bar
+   full-width below, user controls inline beside the title), the filter row
+   keeps its horizontal-scroll behaviour but uses tighter chrome, and the
+   artifact table becomes a card list — title large in row 1, every other
+   field reflowed as small "Label: value" pills underneath.
+
+   We deliberately treat the artifact-list table (``table.artifacts`` rows
+   inside ``home.html`` / ``search.html``) differently from the versions
+   table: the listing rows carry ``col-*`` classes so we can hide / restyle
+   individual columns by purpose, while the versions table (uniform schema,
+   small column count) just gets a horizontal scroll container.
+*/
+@media (max-width: 600px) {
+    /* --- Topbar --- */
+
+    /* Two-row layout:
+       Row 1: brand on the left, user (avatar + Sign out) on the right.
+       Row 2: search field, spans the full width.
+       The search ``order: 2`` forces it below the user block even though it
+       sits second in the source. */
+    .topbar-inner {
+        flex-wrap: wrap;
+        padding: 8px 12px;
+        gap: 8px 12px;
+    }
+    .brand {
+        font-size: 14px;
+    }
+    .user {
+        margin-left: auto;
+        gap: 6px;
+    }
+    .user .logout { font-size: 12px; }
+    .avatar { width: 20px; height: 20px; }
+
+    .search {
+        order: 2;
+        flex: 1 1 100%;
+    }
+    .search input {
+        padding: 6px 8px;
+        font-size: 13px;
+    }
+
+    /* --- Main column --- */
+
+    .main {
+        padding: 14px 12px 40px;
+    }
+    h1 { font-size: 18px; margin-bottom: 10px; }
+
+    /* The "Showing 1-50 of 94 …" hint reads as chrome — small enough to
+       not crowd out the actual list. */
+    .main > p.muted { font-size: 12px; line-height: 1.4; }
+
+    /* --- Filter bar ---
+       Stays a horizontal scroll strip (same as desktop), just with tighter
+       padding and a smaller min-height so it doesn't dominate the screen.
+       Hide the "From" / "To" date labels — the native date pickers are
+       self-explanatory and the labels eat row width. */
+    .filter-bar {
+        padding: 6px 8px;
+        gap: 8px;
+    }
+    .filter-bar label { font-size: 11px; }
+    .filter-bar select,
+    .filter-bar input[type="date"] { font-size: 12px; padding: 3px 4px; }
+    .filter-bar input[type="date"] { min-width: 110px; }
+    .filter-apply { padding: 4px 10px; font-size: 12px; }
+
+    /* --- Artifact listing table → card layout ---
+       Hide the table header row entirely; turn each ``<tr>`` into a card
+       with a top "title" row and an inline "metadata" row underneath. */
+    table.artifacts.artifacts-listing {
+        display: block;
+        font-size: 13px;
+    }
+    table.artifacts.artifacts-listing thead { display: none; }
+    table.artifacts.artifacts-listing tbody { display: block; }
+
+    table.artifacts.artifacts-listing tr {
+        display: block;
+        border-bottom: 1px solid var(--border);
+        padding: 10px 2px;
+    }
+    table.artifacts.artifacts-listing tbody tr:hover { background: transparent; }
+
+    table.artifacts.artifacts-listing td {
+        border: none;
+        padding: 0;
+        vertical-align: baseline;
+    }
+
+    /* Hide the type emoji column on mobile — it's redundant once the slug
+       and title are stacked, and freeing the row width matters more. */
+    table.artifacts.artifacts-listing td.col-type {
+        display: none;
+    }
+
+    /* Title: own line, larger type, full width. */
+    table.artifacts.artifacts-listing td.col-title {
+        display: block;
+        font-size: 15px;
+        line-height: 1.35;
+        margin-bottom: 4px;
+    }
+    table.artifacts.artifacts-listing td.col-title a { font-weight: 500; }
+
+    /* Metadata cells (link / creator / agent / slug / status / created):
+       inline-flow on a second line, each prefixed with its ``data-label``
+       and separated by a thin middle-dot. ``inline`` (not inline-block)
+       lets the line wrap naturally between items on very narrow screens.
+
+       Cells whose only content is the muted "—" placeholder are still
+       rendered but read as e.g. "Link: —" — visually quiet because of
+       the muted color, and they keep the layout predictable. */
+    table.artifacts.artifacts-listing td.col-link,
+    table.artifacts.artifacts-listing td.col-creator,
+    table.artifacts.artifacts-listing td.col-agent,
+    table.artifacts.artifacts-listing td.col-slug,
+    table.artifacts.artifacts-listing td.col-status,
+    table.artifacts.artifacts-listing td.col-created {
+        display: inline;
+        font-size: 11px;
+        color: var(--fg-muted);
+        line-height: 1.6;
+    }
+    /* ``data-label`` (set on each <td> in _artifact_table.html) renders as
+       a tiny "Label: " prefix. Status is skipped — its colored pill is
+       self-explanatory. */
+    table.artifacts.artifacts-listing td.col-link::before,
+    table.artifacts.artifacts-listing td.col-creator::before,
+    table.artifacts.artifacts-listing td.col-agent::before,
+    table.artifacts.artifacts-listing td.col-slug::before,
+    table.artifacts.artifacts-listing td.col-created::before {
+        content: attr(data-label) ": ";
+        opacity: 0.7;
+    }
+    /* Visual separator between metadata items. Trailing dot is suppressed
+       on the last cell so the row doesn't end with " · ". */
+    table.artifacts.artifacts-listing td.col-link::after,
+    table.artifacts.artifacts-listing td.col-creator::after,
+    table.artifacts.artifacts-listing td.col-agent::after,
+    table.artifacts.artifacts-listing td.col-slug::after,
+    table.artifacts.artifacts-listing td.col-status::after {
+        content: " · ";
+        color: var(--border);
+        margin: 0 2px;
+    }
+    /* The status pill carries its own bg color — shrink it so it sits
+       naturally in the metadata stream rather than dominating it. */
+    table.artifacts.artifacts-listing td.col-status .tag {
+        margin-left: 0;
+        font-size: 10px;
+        padding: 1px 5px;
+    }
+    table.artifacts.artifacts-listing td.col-created .timestamp {
+        font-size: 11px;
+    }
+
+    /* Time-mode toggle below the table: smaller pills, less vertical
+       padding so it doesn't visually compete with the cards above. */
+    .time-toggle { font-size: 11px; margin-top: 8px; }
+    .time-toggle-btn { padding: 2px 8px; }
+
+    /* --- Versions table ---
+       Schema differs from the artifact listing (no ``col-*`` classes and no
+       ``artifacts-listing`` marker), so skip the card transform and just
+       let it scroll horizontally instead of overflowing the main column.
+       ``display: block`` + ``overflow-x: auto`` lets the user pan across
+       Version / Created / Status / Edit / ID without breaking desktop. */
+    table.artifacts:not(.artifacts-listing) {
+        display: block;
+        overflow-x: auto;
+        white-space: nowrap;
+    }
+
+    /* --- Artifact page header ---
+       Already collapses to one column at 720 px via the existing rule —
+       just tighten the meta list font here so the dt/dd pairs stay legible
+       on a phone screen without dominating. */
+    .artifact-meta { font-size: 10.5px; }
+    .artifact-header h1 { font-size: 16px; }
+
+    /* --- Width toggle (artifact page) ---
+       Right-aligned strip wraps tightly on narrow screens. */
+    .width-toggle { font-size: 11px; gap: 4px; flex-wrap: wrap; }
+    .width-toggle-btn { padding: 2px 8px; }
+}

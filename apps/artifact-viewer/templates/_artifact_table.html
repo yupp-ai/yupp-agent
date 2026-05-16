@@ -50,7 +50,14 @@
 
 {% macro artifact_table(artifacts) %}
 {% if artifacts %}
-<table class="artifacts">
+{#- ``artifacts-listing`` is the marker the mobile stylesheet keys off to
+    apply the card-layout transform. The shared ``artifacts`` class still
+    drives the desktop table styling for both this macro and the versions
+    table; scoping the mobile transform to a second class means the
+    versions table (which has a different column schema and no ``col-*``
+    classes) keeps its tabular layout and just scrolls horizontally on a
+    phone instead of being half-rewritten. -#}
+<table class="artifacts artifacts-listing">
     <thead>
         <tr>
             <th aria-label="Type"></th>
@@ -74,16 +81,25 @@
         {% if tkey == 'CODE_REVIEW' and pr_num %}
             {% set display_title = 'PR ' ~ pr_num ~ ' - ' ~ display_title %}
         {% endif %}
+        {#- Each ``<td>`` carries a ``col-*`` class so the mobile stylesheet can
+            target individual columns by purpose (the legacy ``type-cell`` class
+            stays on the type column for back-compat with existing rules). On
+            narrow viewports the row collapses into a card: the title column
+            spans the full width with large type, and the other columns reflow
+            inline as a small-text "metadata" block underneath. The
+            ``data-label`` attribute is rendered via CSS as a tiny prefix on
+            mobile so each value still reads as "Creator: …", "Slug: …", etc.
+            without needing the table header row. -#}
         <tr>
-            <td class="type-cell" title="{{ tmeta.label }}">
+            <td class="col-type type-cell" title="{{ tmeta.label }}">
                 <span class="type-emoji" role="img" aria-label="{{ tmeta.label }}">{{ tmeta.emoji }}</span>
             </td>
-            <td>
+            <td class="col-title">
                 <a href="/artifacts/{{ a.artifact_id }}">
                     {{ display_title }}
                 </a>
             </td>
-            <td>
+            <td class="col-link" data-label="Link">
                 {% if tkey == 'CODE_REVIEW' and a.url %}
                     <a href="{{ a.url }}" target="_blank" rel="noopener noreferrer">
                         {% if pr_num %}PR #{{ pr_num }}{% else %}view PR ↗{% endif %}
@@ -94,7 +110,7 @@
                     <span class="muted">—</span>
                 {% endif %}
             </td>
-            <td>
+            <td class="col-creator" data-label="Creator">
                 {% if a.creator_user_name %}
                     {{ a.creator_user_name }}
                 {% elif a.creator_user_id %}
@@ -103,7 +119,7 @@
                     <span class="muted">—</span>
                 {% endif %}
             </td>
-            <td>
+            <td class="col-agent" data-label="Agent">
                 {% if a.creator_agent_name %}
                     {{ a.creator_agent_name }}
                 {% elif a.creator_agent_id %}
@@ -112,7 +128,7 @@
                     <span class="muted">—</span>
                 {% endif %}
             </td>
-            <td>
+            <td class="col-slug" data-label="Slug">
                 {% if a.named_slug %}
                     <a href="/artifacts/by-slug/{{ a.named_slug }}">{{ a.named_slug }}</a>
                     {% if a.version is not none %}<span class="mono">v{{ a.version }}</span>{% endif %}
@@ -120,14 +136,14 @@
                     <span class="muted">—</span>
                 {% endif %}
             </td>
-            <td>
+            <td class="col-status" data-label="Status">
                 {% if a.metadata and a.metadata.is_archived %}
                     <span class="tag archived">archived</span>
                 {% else %}
                     <span class="tag active">active</span>
                 {% endif %}
             </td>
-            <td>
+            <td class="col-created" data-label="Created">
                 {% if a.created_at %}
                     <time class="timestamp" datetime="{{ a.created_at }}" data-utc="{{ a.created_at }}">{{ (a.created_at or '')[:19]|replace('T', ' ') }}</time>
                 {% else %}
