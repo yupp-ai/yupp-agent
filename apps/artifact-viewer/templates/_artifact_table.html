@@ -6,13 +6,14 @@
                      ``title`` for hover and aria-label for screen readers.
     2. Title       — viewer link. For CODE_REVIEW the title is auto-prefixed
                      with "PR {pr_number} - " when the PR number is extractable
-                     from the artifact URL.
-    3. Link        — PR link for CODE_REVIEW, external URL for OTHER, dash otherwise.
-    4. Creator     — creator_user_name when available, falls back to creator_user_id.
-    5. Agent       — creator_agent_name when available, falls back to a short agent id.
-    6. Slug / Ver
-    7. Status
-    8. Created     — ISO timestamp in a <time> tag; the toggle below the table
+                     from the artifact URL. The external URL (PR / OTHER link)
+                     is reachable from the artifact viewer page itself, so the
+                     list view no longer carries a dedicated Link column.
+    3. Creator     — creator_user_name when available, falls back to creator_user_id.
+    4. Agent       — creator_agent_name when available, falls back to a short agent id.
+    5. Slug / Ver
+    6. Status
+    7. Created     — ISO timestamp in a <time> tag; the toggle below the table
                      flips the rendered value between local time (default) and UTC.
                      Lives at the end because the timestamp is the lowest-priority
                      piece of metadata for scanning the list.
@@ -62,7 +63,6 @@
         <tr>
             <th aria-label="Type"></th>
             <th>Title</th>
-            <th>Link</th>
             <th>Creator</th>
             <th>Agent</th>
             <th>Slug / Version</th>
@@ -98,17 +98,6 @@
                 <a href="/artifacts/{{ a.artifact_id }}">
                     {{ display_title }}
                 </a>
-            </td>
-            <td class="col-link" data-label="Link">
-                {% if tkey == 'CODE_REVIEW' and a.url %}
-                    <a href="{{ a.url }}" target="_blank" rel="noopener noreferrer">
-                        {% if pr_num %}PR #{{ pr_num }}{% else %}view PR ↗{% endif %}
-                    </a>
-                {% elif tkey == 'OTHER' and a.url %}
-                    <a href="{{ a.url }}" target="_blank" rel="noopener noreferrer">open ↗</a>
-                {% else %}
-                    <span class="muted">—</span>
-                {% endif %}
             </td>
             <td class="col-creator" data-label="Creator">
                 {% if a.creator_user_name %}

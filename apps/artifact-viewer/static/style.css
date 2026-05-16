@@ -674,15 +674,14 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
     }
     table.artifacts.artifacts-listing td.col-title a { font-weight: 500; }
 
-    /* Metadata cells (link / creator / agent / slug / status / created):
+    /* Metadata cells (creator / agent / slug / status / created):
        inline-flow on a second line, each prefixed with its ``data-label``
        and separated by a thin middle-dot. ``inline`` (not inline-block)
        lets the line wrap naturally between items on very narrow screens.
 
-       Cells whose only content is the muted "—" placeholder are still
-       rendered but read as e.g. "Link: —" — visually quiet because of
-       the muted color, and they keep the layout predictable. */
-    table.artifacts.artifacts-listing td.col-link,
+       Cells whose only content is the muted "—" placeholder still render
+       (e.g. "Creator: —") — visually quiet because of the muted color,
+       and they keep the layout predictable. */
     table.artifacts.artifacts-listing td.col-creator,
     table.artifacts.artifacts-listing td.col-agent,
     table.artifacts.artifacts-listing td.col-slug,
@@ -696,7 +695,6 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
     /* ``data-label`` (set on each <td> in _artifact_table.html) renders as
        a tiny "Label: " prefix. Status is skipped — its colored pill is
        self-explanatory. */
-    table.artifacts.artifacts-listing td.col-link::before,
     table.artifacts.artifacts-listing td.col-creator::before,
     table.artifacts.artifacts-listing td.col-agent::before,
     table.artifacts.artifacts-listing td.col-slug::before,
@@ -706,7 +704,6 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
     }
     /* Visual separator between metadata items. Trailing dot is suppressed
        on the last cell so the row doesn't end with " · ". */
-    table.artifacts.artifacts-listing td.col-link::after,
     table.artifacts.artifacts-listing td.col-creator::after,
     table.artifacts.artifacts-listing td.col-agent::after,
     table.artifacts.artifacts-listing td.col-slug::after,
