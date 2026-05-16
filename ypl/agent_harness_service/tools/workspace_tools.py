@@ -184,7 +184,8 @@ def resolve_workspace(session_id: str, repo: str | None = None, require_write: b
     """Resolve workspace root for a session.
 
     The session workspace at ``AHS_SESSIONS_DIR/{session_id}/`` contains:
-    - Symlinks to read-only repos (e.g., ``yupp-agent/`` → ``${AHS_REPOS_DIR}/yupp-agent``)
+    - A single ``repos/`` symlink → ``AHS_REPOS_DIR`` (read-only, shared
+      across all sessions)
     - Real directories for writable worktrees (e.g., ``yupp-agent-fix-auth-bug/``)
     - ``history/``, ``.claude/``, ``.mcp.json`` (infrastructure, skipped)
 
@@ -194,8 +195,8 @@ def resolve_workspace(session_id: str, repo: str | None = None, require_write: b
 
     Resolution order for read access:
     1. Worktree (same as write, preferred if it exists)
-    2. Symlinked repo in the session workspace (``{session_dir}/{repo}/``)
-    3. Shared read-only repo at ``AHS_REPOS_DIR/{repo}/``
+    2. Shared read-only repo via the ``repos/`` symlink (``{session_dir}/repos/{repo}/``)
+    3. Shared read-only repo at ``AHS_REPOS_DIR/{repo}/`` (when no session dir)
 
     Raises ValueError if no workspace found or write required without worktree.
     """
@@ -254,10 +255,10 @@ def safe_path(workspace_root: str, relative_path: str) -> str:
     """Resolve path within workspace, preventing escape via ../ or symlinks.
 
     Also allows paths that resolve to repos under ``AHS_REPOS_DIR`` — this
-    handles session workspaces where repos are symlinked in (e.g.,
-    ``yupp-agent/ → ${AHS_REPOS_DIR}/yupp-agent``). Without this,
-    ``read_file("yupp-agent/README.md")`` would be rejected because the real
-    path lands outside the session directory.
+    handles session workspaces where the shared repos dir is symlinked in
+    as ``repos/`` (i.e. ``{session_dir}/repos/ → ${AHS_REPOS_DIR}``).
+    Without this, ``read_file("repos/yupp-agent/README.md")`` would be
+    rejected because the real path lands outside the session directory.
 
     Raises ValueError if resolved path is outside workspace_root and AHS_REPOS_DIR.
     """

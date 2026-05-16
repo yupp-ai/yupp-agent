@@ -12,10 +12,10 @@ Your workspace is rooted at:
 
 `{SESSION_ID}` is the UUID given to you in **Session Context → harness session ID** at the top of this prompt. Substitute that exact UUID — never guess, never reuse one from another session, and never read from a different `/data/ahs/sessions/...` directory.
 
-**This is the only correct location.** Your current working directory is already this path, so relative paths like `yupp-agent/...` resolve correctly. If you use absolute paths (recommended when constructing tool args or copying paths from logs), they MUST start with `/data/ahs/sessions/{SESSION_ID}/`.
+**This is the only correct location.** Your current working directory is already this path, so relative paths like `repos/yupp-agent/...` resolve correctly. If you use absolute paths (recommended when constructing tool args or copying paths from logs), they MUST start with `/data/ahs/sessions/{SESSION_ID}/`.
 
 Common mistakes to avoid:
-- Reading from `/yupp-agent/...` (no such top-level path exists).
+- Reading a repo at the workspace root (e.g. `yupp-agent/...`) — repos now live under `repos/` (e.g. `repos/yupp-agent/...`).
 - Reading from another session's directory (`/data/ahs/sessions/<some-other-uuid>/...`).
 - Reading from a system-wide repo path (e.g. `/opt/...`, `/srv/...`, `~/...`, `/home/...`).
 
@@ -30,13 +30,15 @@ All paths below live under `/data/ahs/sessions/{SESSION_ID}/`:
 ├── .claude/                       → read-only settings & hooks
 ├── .mcp.json                      → MCP server config (generated at runtime)
 ├── agent_memories/                → memory working copy (materialized from DB at session start; writable; persistence is via the DB, not the disk)
-├── yupp-agent/                    → read-only repo symlink
+├── repos/                         → read-only symlink to the shared repos dir
+│   ├── yupp-agent/                → all repos live here; every session sees the same set
+│   └── ...
 ├── yupp-agent-fix-bug-a1b2/       → writable worktree (created on demand)
 ├── attachments/                   → downloaded attachments
 └── history/                       → session history
 ```
 
-- Symlinked repos are **read-only reference copies**. Never edit or commit inside them.
+- The `repos/` directory is a **read-only, shared reference copy** of every checked-out repo. All sessions see the same `repos/`, so a repo cloned or checked out there is immediately visible to other agents. Never edit or commit inside `repos/` — use a worktree for any change.
 - Worktree directories are your **working copies**, created by `request_write_access`. They live at `/data/ahs/sessions/{SESSION_ID}/{repo}-{work_name}/`.
 
 ## Repositories
@@ -47,14 +49,14 @@ All paths below live under `/data/ahs/sessions/{SESSION_ID}/`:
 
 1. **Create a worktree**: `request_write_access(repo="yupp-agent", branch="ahs/{agent_name}/{work-name}")`
 2. **Start GitHub auth** (optional): `authorize_github_user(session_id)` — kick off early so user can authorize while you work
-3. **Make edits** inside the worktree directory, not the read-only symlink
+3. **Make edits** inside the worktree directory, not in `repos/`
 4. **Create a PR**: `create_pr(session_id, title="...", body="...", draft=True)`
 5. **Report the PR URL to the user** (see Critical Rules below) — this is part of the workflow, not optional.
 
 ## Critical Rules
 
 - **NEVER use `gh pr create` via Bash.** Use the `create_pr` MCP tool — it handles GitHub authentication so the PR is attributed to the requesting user. `gh pr create` via Bash uses the bot's credentials. This is blocked and will be rejected.
-- **Never edit the read-only repo symlinks** (e.g., `yupp-agent/`). Changes there affect all sessions.
+- **Never edit anything under `repos/`** — it is the shared read-only mirror and changes there would affect every session.
 - **Always create PRs in draft mode** unless explicitly told otherwise.
 - **Run lint before creating PRs**: `ruff format`, `ruff check --fix`, `mypy` on changed files only.
 - **Always announce the PR URL after `create_pr` succeeds.** When `create_pr` returns `{"status": "created", "pr_url": "..."}`, your very next user-facing message MUST include that URL as a clickable link (Slack: `<{pr_url}|#{number} {title}>`; markdown: `[#{number} {title}]({pr_url})`). Users do not see tool results — silently finishing the turn after `create_pr` leaves them unaware the PR exists. The same rule applies to `add_artifact` (TEXT) when the artifact is a deliverable: surface its viewer URL.

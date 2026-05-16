@@ -33,8 +33,8 @@ WHERE agent_session_message_id = '<message_id>'
 If you need to write custom queries beyond the examples below, read the ORM files first for exact column names and enum values — do not guess:
 
 ```
-Read("yupp-agent/ypl/db/agent_harness.py")         # all core tables
-Read("yupp-agent/ypl/db/agent_memory_index.py")    # memory tables
+Read("repos/yupp-agent/ypl/db/agent_harness.py")         # all core tables
+Read("repos/yupp-agent/ypl/db/agent_memory_index.py")    # memory tables
 ```
 
 ## Agent Memory

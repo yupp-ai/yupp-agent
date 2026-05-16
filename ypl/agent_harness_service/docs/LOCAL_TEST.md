@@ -40,14 +40,14 @@ ln -sfn $(pwd) $AHS_DATA_DIR/repos/yupp-agent
 
 ```
 /tmp/ahs/
-├── repos/            ← agent starts here (cwd, read-only)
+├── repos/            ← shared mirror; each session workspace symlinks this in as `repos/`
 │   └── yupp-agent/   → symlink to your local checkout
 ├── shared/           → symlink to deploy/shared/
 │   ├── SOUL.md                    (shared identity)
 │   ├── WORKSPACE.md               (repo guide, injected into system prompt)
 │   ├── ACTIVE_MEMORY_MANAGEMENT.md
 │   └── SLACK_GATEWAY.md           (only for Slack-triggered sessions)
-├── workspaces/       (auto-created, per-session git worktrees)
+├── sessions/         (auto-created, per-session workspace; contains `repos/` symlink + writable worktrees)
 └── session_logs/     (auto-created, per-session event logs)
 
 Agent configs (auto-detected from repo):
@@ -342,8 +342,8 @@ After the agent completes, check that a worktree was created:
 
 ```bash
 SESSION_ID=$(cat /tmp/LAST_AHS_SESSION_ID)
-ls -la $AHS_DATA_DIR/workspaces/$SESSION_ID/
-# Should show: yupp-agent/ (plus any branch-suffixed worktree directory)
+ls -la $AHS_DATA_DIR/sessions/$SESSION_ID/
+# Should show: repos/ (shared symlink) plus any branch-suffixed worktree directory (e.g. yupp-agent-fix-bug/)
 ```
 
 ### Test PR creation (dry run)
@@ -364,11 +364,12 @@ ahscli history
 
 ### Verify worktree cleanup
 
-Worktrees persist under `$AHS_DATA_DIR/workspaces/{session_id}/`. To clean up manually:
+Worktrees persist under `$AHS_DATA_DIR/sessions/{session_id}/` as `{repo}-{slug}/` directories (siblings of the read-only `repos/` symlink). To clean up manually:
 
 ```bash
-git -C $AHS_DATA_DIR/repos/yupp-agent worktree remove $AHS_DATA_DIR/workspaces/$SESSION_ID/yupp-agent --force
-rm -rf $AHS_DATA_DIR/workspaces/$SESSION_ID
+# Replace yupp-agent-fix-bug with the actual worktree directory name.
+git -C $AHS_DATA_DIR/repos/yupp-agent worktree remove $AHS_DATA_DIR/sessions/$SESSION_ID/yupp-agent-fix-bug --force
+rm -rf $AHS_DATA_DIR/sessions/$SESSION_ID
 ```
 
 ## 8. Test raw executor agents
