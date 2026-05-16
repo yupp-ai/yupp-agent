@@ -1954,18 +1954,18 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
         except FileExistsError:
             pass
 
-        # Symlink all repos from AHS_REPOS_DIR into the workspace so agents
-        # can access them without a separate --add-dir flag.
+        # Symlink AHS_REPOS_DIR as a single ``repos/`` directory in the
+        # workspace. Repos are shared across all sessions, so every workspace
+        # sees the same set — including any repos a session checks out or
+        # clones into ``repos/`` itself. (The bwrap sandbox still mounts the
+        # shared dir read-only; agents that need write access to a repo call
+        # ``request_write_access`` to create a per-session worktree.)
         if os.path.isdir(AHS_REPOS_DIR):
-            for repo_entry in os.listdir(AHS_REPOS_DIR):
-                repo_src = os.path.join(AHS_REPOS_DIR, repo_entry)
-                if not os.path.isdir(repo_src):
-                    continue
-                repo_link = os.path.join(workspace, repo_entry)
-                try:
-                    os.symlink(repo_src, repo_link)
-                except FileExistsError:
-                    pass
+            repos_link = os.path.join(workspace, "repos")
+            try:
+                os.symlink(AHS_REPOS_DIR, repos_link)
+            except FileExistsError:
+                pass
 
         # Create history/ subdir for session history persistence
         os.makedirs(os.path.join(workspace, "history"), exist_ok=True)
