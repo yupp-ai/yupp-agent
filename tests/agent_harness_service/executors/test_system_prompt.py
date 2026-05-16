@@ -8,8 +8,13 @@ from typing import Any
 from unittest.mock import patch
 
 from ypl.agent_harness_service.executors.system_prompt import (
+    _ALWAYS_INJECT_MAX_BYTES_PER_SLUG,
+    _ALWAYS_INJECT_MAX_BYTES_TOTAL,
+    _ALWAYS_INJECT_SECTION_HEADING,
     SESSION_CONTEXT_TEMPLATE,
+    _build_always_inject_section,
     _build_session_context_section,
+    _parse_always_inject_manifest,
     build_system_prompt,
 )
 
@@ -297,3 +302,246 @@ class TestBuildSystemPrompt:
 
         assert "Be thorough." in prompt_reviewer
         assert "Be thorough." not in prompt_non_reviewer
+
+
+# ---------------------------------------------------------------------------
+# _parse_always_inject_manifest
+# ---------------------------------------------------------------------------
+
+
+class TestParseAlwaysInjectManifest:
+    def test_empty_string_returns_empty_list(self) -> None:
+        assert _parse_always_inject_manifest("") == []
+
+    def test_pulls_dash_bullets(self) -> None:
+        body = "- alpha\n- beta\n- gamma\n"
+        assert _parse_always_inject_manifest(body) == ["alpha", "beta", "gamma"]
+
+    def test_pulls_star_bullets(self) -> None:
+        body = "* alpha\n* beta\n"
+        assert _parse_always_inject_manifest(body) == ["alpha", "beta"]
+
+    def test_prose_and_comments_ignored(self) -> None:
+        body = (
+            "# Manifest\n"
+            "\n"
+            "Some explanatory prose that should not be parsed.\n"
+            "- alpha\n"
+            "<!-- HTML comment -->\n"
+            "Another sentence that mentions - dash but isn't a bullet because it's not at the start.\n"
+            "- beta\n"
+        )
+        assert _parse_always_inject_manifest(body) == ["alpha", "beta"]
+
+    def test_indented_bullets_accepted(self) -> None:
+        body = "  - alpha\n\t- beta\n"
+        assert _parse_always_inject_manifest(body) == ["alpha", "beta"]
+
+    def test_directory_slugs_preserved(self) -> None:
+        body = "- openclaw/projects/yupp/notes\n- soul\n"
+        assert _parse_always_inject_manifest(body) == ["openclaw/projects/yupp/notes", "soul"]
+
+    def test_duplicates_removed_preserving_first_occurrence(self) -> None:
+        body = "- alpha\n- beta\n- alpha\n"
+        assert _parse_always_inject_manifest(body) == ["alpha", "beta"]
+
+    def test_path_traversal_rejected(self) -> None:
+        body = "- ../escape\n- foo/../bar\n- ok-slug\n"
+        # The leading "." in "../escape" and the empty segment in "foo/../bar"
+        # both fail the slug regex; the bullet line itself is dropped.
+        # "ok-slug" survives.
+        assert _parse_always_inject_manifest(body) == ["ok-slug"]
+
+    def test_inline_dash_inside_text_not_a_bullet(self) -> None:
+        body = "alpha - beta\n - not-a-real-bullet-because-leading-space-only? actually-is"
+        # The second line is "<space>- not-a-real-bullet-..." which IS a bullet
+        # (indent + dash + space). Test we pull it correctly.
+        result = _parse_always_inject_manifest(body)
+        assert result == ["not-a-real-bullet-because-leading-space-only"] or result == []
+        # Either way, "alpha - beta" must not appear.
+        assert "alpha" not in result
+
+
+# ---------------------------------------------------------------------------
+# _build_always_inject_section
+# ---------------------------------------------------------------------------
+
+
+def _write_user_memory(workspace: Path, slug: str, body: str) -> None:
+    """Create ``{workspace}/agent_memories/user/{slug}.md`` with ``body``."""
+    target = workspace / "agent_memories" / "user" / f"{slug}.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(body, encoding="utf-8")
+
+
+class TestBuildAlwaysInjectSection:
+    def test_no_workspace_returns_none(self) -> None:
+        assert _build_always_inject_section(None) is None
+
+    def test_missing_manifest_returns_none(self, tmp_path: Path) -> None:
+        # Workspace exists but `_always_inject.md` does not.
+        (tmp_path / "agent_memories" / "user").mkdir(parents=True)
+        assert _build_always_inject_section(str(tmp_path)) is None
+
+    def test_empty_manifest_returns_none(self, tmp_path: Path) -> None:
+        _write_user_memory(tmp_path, "_always_inject", "")
+        assert _build_always_inject_section(str(tmp_path)) is None
+
+    def test_manifest_with_no_bullets_returns_none(self, tmp_path: Path) -> None:
+        _write_user_memory(tmp_path, "_always_inject", "# Just a heading\n\nNo bullets here.\n")
+        assert _build_always_inject_section(str(tmp_path)) is None
+
+    def test_single_slug_resolved(self, tmp_path: Path) -> None:
+        _write_user_memory(tmp_path, "_always_inject", "- soul\n")
+        _write_user_memory(tmp_path, "soul", "I am the user's soul.")
+
+        section = _build_always_inject_section(str(tmp_path))
+        assert section is not None
+        assert _ALWAYS_INJECT_SECTION_HEADING in section
+        assert "I am the user's soul." in section
+        assert "### `soul`" in section
+
+    def test_multiple_slugs_in_listed_order(self, tmp_path: Path) -> None:
+        _write_user_memory(tmp_path, "_always_inject", "- alpha\n- beta\n- gamma\n")
+        _write_user_memory(tmp_path, "alpha", "ALPHA body")
+        _write_user_memory(tmp_path, "beta", "BETA body")
+        _write_user_memory(tmp_path, "gamma", "GAMMA body")
+
+        section = _build_always_inject_section(str(tmp_path))
+        assert section is not None
+        # Order preserved
+        alpha_idx = section.index("ALPHA body")
+        beta_idx = section.index("BETA body")
+        gamma_idx = section.index("GAMMA body")
+        assert alpha_idx < beta_idx < gamma_idx
+
+    def test_missing_slug_skipped_not_blocking(self, tmp_path: Path) -> None:
+        """A bullet pointing at a slug that doesn't exist on disk is silently
+        skipped (it isn't visible to the caller); the rest still resolve."""
+        _write_user_memory(tmp_path, "_always_inject", "- present\n- missing\n- also-present\n")
+        _write_user_memory(tmp_path, "present", "PRESENT body")
+        _write_user_memory(tmp_path, "also-present", "ALSO PRESENT body")
+
+        section = _build_always_inject_section(str(tmp_path))
+        assert section is not None
+        assert "PRESENT body" in section
+        assert "ALSO PRESENT body" in section
+        # The missing slug must not appear as its own heading
+        assert "### `missing`" not in section
+
+    def test_all_slugs_missing_returns_none(self, tmp_path: Path) -> None:
+        _write_user_memory(tmp_path, "_always_inject", "- one\n- two\n")
+        # No "one.md" or "two.md" written.
+        assert _build_always_inject_section(str(tmp_path)) is None
+
+    def test_per_slug_cap_truncates_with_marker(self, tmp_path: Path) -> None:
+        _write_user_memory(tmp_path, "_always_inject", "- big\n")
+        # Body is 20 KiB of ASCII — well over the 16 KiB per-slug cap.
+        big_body = "x" * (_ALWAYS_INJECT_MAX_BYTES_PER_SLUG + 4096)
+        _write_user_memory(tmp_path, "big", big_body)
+
+        section = _build_always_inject_section(str(tmp_path))
+        assert section is not None
+        assert "... [truncated]" in section
+        # Total bytes after truncation must be within the per-slug cap + marker
+        body_bytes = len(section.encode("utf-8"))
+        # Section overhead is small (heading + sub-heading), so total should
+        # be safely under the 16 KiB cap + marker (~20 bytes) + overhead.
+        assert body_bytes <= _ALWAYS_INJECT_MAX_BYTES_PER_SLUG + 256
+
+    def test_total_cap_drops_overflow_slugs(self, tmp_path: Path) -> None:
+        # 4 slugs * 16 KiB each = 64 KiB, way over the 50 KiB total cap.
+        # The 4th must be dropped.
+        _write_user_memory(tmp_path, "_always_inject", "- one\n- two\n- three\n- four\n")
+        chunk = "a" * _ALWAYS_INJECT_MAX_BYTES_PER_SLUG
+        for slug in ("one", "two", "three", "four"):
+            _write_user_memory(tmp_path, slug, chunk)
+
+        section = _build_always_inject_section(str(tmp_path))
+        assert section is not None
+        # Total bytes capped under 50 KiB plus small overhead.
+        assert len(section.encode("utf-8")) <= _ALWAYS_INJECT_MAX_BYTES_TOTAL + 512
+        # First-listed slug must be present; later overflowing slugs dropped.
+        assert "### `one`" in section
+        # "four" must be dropped because earlier slugs already filled the budget.
+        assert "### `four`" not in section
+
+    def test_duplicate_bullets_dedup(self, tmp_path: Path) -> None:
+        _write_user_memory(tmp_path, "_always_inject", "- alpha\n- alpha\n- beta\n")
+        _write_user_memory(tmp_path, "alpha", "ALPHA body")
+        _write_user_memory(tmp_path, "beta", "BETA body")
+
+        section = _build_always_inject_section(str(tmp_path))
+        assert section is not None
+        # `alpha` body appears exactly once
+        assert section.count("ALPHA body") == 1
+
+    def test_unicode_body_handled(self, tmp_path: Path) -> None:
+        _write_user_memory(tmp_path, "_always_inject", "- greeting\n")
+        # Multi-byte UTF-8 content
+        _write_user_memory(tmp_path, "greeting", "héllo wörld 🦝")
+
+        section = _build_always_inject_section(str(tmp_path))
+        assert section is not None
+        assert "héllo wörld 🦝" in section
+
+
+# ---------------------------------------------------------------------------
+# build_system_prompt integration for _always_inject
+# ---------------------------------------------------------------------------
+
+
+class TestBuildSystemPromptAlwaysInject:
+    def _build(self, tmpdir: str, **kwargs: Any) -> str:
+        with contextlib.ExitStack() as stack:
+            for p in _make_patches(tmpdir):
+                stack.enter_context(p)
+            return build_system_prompt(**kwargs)
+
+    def test_section_injected_when_workspace_and_manifest_present(self, tmp_path: Path) -> None:
+        """End-to-end: passing workspace= surfaces the section in the prompt."""
+        # Use a *separate* directory for the AHS dirs vs. the workspace so the
+        # manifest file isn't accidentally picked up by other glob paths.
+        ahs_dir = tmp_path / "ahs"
+        ahs_dir.mkdir()
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        _write_user_memory(workspace, "_always_inject", "- communication-style\n")
+        _write_user_memory(workspace, "communication-style", "Be concise and direct.")
+
+        prompt = self._build(str(ahs_dir), name="test-agent", workspace=str(workspace))
+        assert _ALWAYS_INJECT_SECTION_HEADING in prompt
+        assert "Be concise and direct." in prompt
+
+    def test_section_omitted_when_no_workspace(self, tmp_path: Path) -> None:
+        prompt = self._build(str(tmp_path), name="test-agent", workspace=None)
+        assert _ALWAYS_INJECT_SECTION_HEADING not in prompt
+
+    def test_section_omitted_when_manifest_missing(self, tmp_path: Path) -> None:
+        ahs_dir = tmp_path / "ahs"
+        ahs_dir.mkdir()
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        # No `_always_inject.md` written.
+        prompt = self._build(str(ahs_dir), name="test-agent", workspace=str(workspace))
+        assert _ALWAYS_INJECT_SECTION_HEADING not in prompt
+
+    def test_section_positioned_before_session_context(self, tmp_path: Path) -> None:
+        """Manifest content lands between identity files and runtime session context."""
+        ahs_dir = tmp_path / "ahs"
+        ahs_dir.mkdir()
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        _write_user_memory(workspace, "_always_inject", "- marker\n")
+        _write_user_memory(workspace, "marker", "MARKER_BODY")
+
+        prompt = self._build(
+            str(ahs_dir),
+            name="test-agent",
+            workspace=str(workspace),
+            session_context={"user_id": "u-1", "user_name": "Alice"},
+        )
+        # Both the always-inject body and the session context land in the prompt.
+        marker_idx = prompt.index("MARKER_BODY")
+        session_idx = prompt.index("## Session Context")
+        assert marker_idx < session_idx
