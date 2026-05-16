@@ -1,22 +1,48 @@
 #!/bin/bash
 set -e
 
-source "$(pwd)/scripts/gcp_instance_id.sh"
-
-export CONTAINER_INSTANCE_ID=$(get_container_instance_id)
+# Legacy GCP helper — present on the prod / staging Cloud Run images but
+# pruned from the open-source tree (de-yupp phase 5).  Source it when it
+# exists so production behaviour is unchanged; fall back to a deterministic
+# value otherwise so the entrypoint still boots inside the one-box / Mac /
+# self-hosted image.
+if [ -f "$(pwd)/scripts/gcp_instance_id.sh" ]; then
+    # shellcheck disable=SC1091
+    source "$(pwd)/scripts/gcp_instance_id.sh"
+    export CONTAINER_INSTANCE_ID=$(get_container_instance_id)
+else
+    export CONTAINER_INSTANCE_ID="${CONTAINER_INSTANCE_ID:-local}"
+fi
 
 # Create .streamlit directory if it doesn't exist
 mkdir -p /app/.streamlit
 
-# Determine redirect URI based on environment
-if [ "$ENVIRONMENT" = "production" ]; then
+# Determine redirect URI.
+#
+# Resolution order:
+#   1. STREAMLIT_GOOGLE_AUTH_REDIRECT_URI — explicit override.  This is what
+#      the Mac / self-hosted Cloudflare-tunnel deploy sets to e.g.
+#      ``https://agent-ui.tian.dev/oauth2callback`` so OAuth keeps working
+#      behind a public hostname.
+#   2. Cloud-Run hard-codes for the legacy production / staging shapes.
+#   3. Empty — combined with empty GOOGLE_AUTH_CLIENT_ID/SECRET below, this
+#      skips secrets.toml generation and leaves Streamlit unauthenticated.
+#      Only safe for localhost-only deploys.
+if [ -n "${STREAMLIT_GOOGLE_AUTH_REDIRECT_URI:-}" ]; then
+    GOOGLE_AUTH_REDIRECT_URI="${STREAMLIT_GOOGLE_AUTH_REDIRECT_URI}"
+elif [ "${ENVIRONMENT:-}" = "production" ]; then
     GOOGLE_AUTH_REDIRECT_URI="https://agent-streamlit-server-production-451082535721.us-east4.run.app/oauth2callback"
-else
+elif [ "${ENVIRONMENT:-}" = "staging" ]; then
     GOOGLE_AUTH_REDIRECT_URI="https://agent-streamlit-server-staging-451082535721.us-east4.run.app/oauth2callback"
+else
+    GOOGLE_AUTH_REDIRECT_URI=""
 fi
 
-# Generate secrets.toml from environment variables if auth credentials are provided
-if [ -n "$GOOGLE_AUTH_CLIENT_ID" ] && [ -n "$GOOGLE_AUTH_CLIENT_SECRET" ]; then
+# Generate secrets.toml from environment variables if auth credentials are
+# provided.  All three (client id, secret, redirect URI) must be set —
+# Streamlit's auth helper refuses to bind without a redirect URI, so a
+# half-configured deployment is worse than disabling auth outright.
+if [ -n "${GOOGLE_AUTH_CLIENT_ID:-}" ] && [ -n "${GOOGLE_AUTH_CLIENT_SECRET:-}" ] && [ -n "${GOOGLE_AUTH_REDIRECT_URI:-}" ]; then
     echo "Generating .streamlit/secrets.toml from environment variables..."
     cat > /app/.streamlit/secrets.toml <<EOF
 [auth]
@@ -26,9 +52,13 @@ redirect_uri = "${GOOGLE_AUTH_REDIRECT_URI}"
 cookie_secret = "${GOOGLE_AUTH_COOKIE_SECRET}"
 server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration"
 EOF
-    echo "Authentication configured successfully."
+    echo "Authentication configured (redirect_uri=${GOOGLE_AUTH_REDIRECT_URI})."
 else
-    echo "Warning: Google OAuth environment variables not set. Authentication will be disabled."
+    echo "Warning: Google OAuth environment variables not fully set."
+    echo "  GOOGLE_AUTH_CLIENT_ID:       ${GOOGLE_AUTH_CLIENT_ID:+set}"
+    echo "  GOOGLE_AUTH_CLIENT_SECRET:   ${GOOGLE_AUTH_CLIENT_SECRET:+set}"
+    echo "  GOOGLE_AUTH_REDIRECT_URI:    ${GOOGLE_AUTH_REDIRECT_URI:+set}"
+    echo "  Streamlit authentication will be disabled."
 fi
 
 # Run streamlit server.
