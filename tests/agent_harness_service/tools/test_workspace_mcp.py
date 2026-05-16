@@ -115,68 +115,125 @@ class TestListAvailableRepos:
 
 class TestAddSharedRepo:
     def test_success(self) -> None:
-        with patch(
-            "ypl.agent_harness_service.tools.workspace.ensure_repo_cloned",
-            return_value={"status": "cloned", "path": "/data/ahs/repos/pr-status-check"},
-        ) as mock_clone:
-            result = add_shared_repo(url="https://github.com/wangtian24/pr-status-check")
+        with (
+            patch(
+                "ypl.agent_harness_service.tools.workspace.ensure_repo_cloned",
+                return_value={"status": "cloned", "path": "/data/ahs/repos/pr-status-check"},
+            ) as mock_clone,
+            patch("ypl.agent_harness_service.tools.workspace.shutil.disk_usage") as mock_du,
+        ):
+            mock_du.return_value = MagicMock(free=100 * 1024 * 1024 * 1024)  # 100 GiB free
+            result = add_shared_repo(session_id=VALID_SESSION, url="https://github.com/wangtian24/pr-status-check")
 
         assert result["status"] == "cloned"
         assert result["name"] == "pr-status-check"
         assert result["url"] == "https://github.com/wangtian24/pr-status-check"
         mock_clone.assert_called_once_with("pr-status-check", "https://github.com/wangtian24/pr-status-check")
 
+    def test_invalid_session_id_raises(self) -> None:
+        with pytest.raises(ValueError, match="not a valid UUID"):
+            add_shared_repo(session_id=INVALID_SESSION, url="https://github.com/o/r")
+
     def test_already_exists(self) -> None:
-        with patch(
-            "ypl.agent_harness_service.tools.workspace.ensure_repo_cloned",
-            return_value={"status": "exists", "path": "/data/ahs/repos/pr-status-check"},
+        with (
+            patch(
+                "ypl.agent_harness_service.tools.workspace.ensure_repo_cloned",
+                return_value={"status": "exists", "path": "/data/ahs/repos/pr-status-check"},
+            ),
+            patch("ypl.agent_harness_service.tools.workspace.shutil.disk_usage") as mock_du,
         ):
-            result = add_shared_repo(url="https://github.com/wangtian24/pr-status-check")
+            mock_du.return_value = MagicMock(free=100 * 1024 * 1024 * 1024)
+            result = add_shared_repo(session_id=VALID_SESSION, url="https://github.com/wangtian24/pr-status-check")
 
         assert result["status"] == "exists"
         assert result["name"] == "pr-status-check"
 
     def test_url_with_dot_git_suffix(self) -> None:
-        with patch(
-            "ypl.agent_harness_service.tools.workspace.ensure_repo_cloned",
-            return_value={"status": "cloned", "path": "/data/ahs/repos/yupp-agent"},
+        with (
+            patch(
+                "ypl.agent_harness_service.tools.workspace.ensure_repo_cloned",
+                return_value={"status": "cloned", "path": "/data/ahs/repos/yupp-agent"},
+            ),
+            patch("ypl.agent_harness_service.tools.workspace.shutil.disk_usage") as mock_du,
         ):
-            result = add_shared_repo(url="https://github.com/yupp-ai/yupp-agent.git")
+            mock_du.return_value = MagicMock(free=100 * 1024 * 1024 * 1024)
+            result = add_shared_repo(session_id=VALID_SESSION, url="https://github.com/yupp-ai/yupp-agent.git")
 
         assert result["name"] == "yupp-agent"
         assert result["url"] == "https://github.com/yupp-ai/yupp-agent.git"
 
     def test_explicit_name_override(self) -> None:
-        with patch(
-            "ypl.agent_harness_service.tools.workspace.ensure_repo_cloned",
-            return_value={"status": "cloned", "path": "/data/ahs/repos/custom-name"},
-        ) as mock_clone:
-            add_shared_repo(url="https://github.com/wangtian24/pr-status-check", name="custom-name")
+        with (
+            patch(
+                "ypl.agent_harness_service.tools.workspace.ensure_repo_cloned",
+                return_value={"status": "cloned", "path": "/data/ahs/repos/custom-name"},
+            ) as mock_clone,
+            patch("ypl.agent_harness_service.tools.workspace.shutil.disk_usage") as mock_du,
+        ):
+            mock_du.return_value = MagicMock(free=100 * 1024 * 1024 * 1024)
+            add_shared_repo(
+                session_id=VALID_SESSION,
+                url="https://github.com/wangtian24/pr-status-check",
+                name="custom-name",
+            )
 
         mock_clone.assert_called_once_with("custom-name", "https://github.com/wangtian24/pr-status-check")
 
     def test_invalid_url_returns_error(self) -> None:
         # ssh shape is rejected (only https accepted)
-        result = add_shared_repo(url="git@github.com:owner/repo.git")
+        result = add_shared_repo(session_id=VALID_SESSION, url="git@github.com:owner/repo.git")
         assert result["status"] == "error"
         assert "Invalid GitHub URL" in result["error"]
 
     def test_non_github_url_returns_error(self) -> None:
-        result = add_shared_repo(url="https://gitlab.com/owner/repo")
+        result = add_shared_repo(session_id=VALID_SESSION, url="https://gitlab.com/owner/repo")
         assert result["status"] == "error"
         assert "Invalid GitHub URL" in result["error"]
 
     def test_clone_error_propagates(self) -> None:
-        with patch(
-            "ypl.agent_harness_service.tools.workspace.ensure_repo_cloned",
-            return_value={"status": "error", "error": "git clone failed: auth"},
+        with (
+            patch(
+                "ypl.agent_harness_service.tools.workspace.ensure_repo_cloned",
+                return_value={"status": "error", "error": "git clone failed: auth"},
+            ),
+            patch("ypl.agent_harness_service.tools.workspace.shutil.disk_usage") as mock_du,
         ):
-            result = add_shared_repo(url="https://github.com/private-org/secret-repo")
+            mock_du.return_value = MagicMock(free=100 * 1024 * 1024 * 1024)
+            result = add_shared_repo(session_id=VALID_SESSION, url="https://github.com/private-org/secret-repo")
 
         assert result["status"] == "error"
         assert "auth" in result["error"]
         # Name still derived from URL even on error
         assert result["name"] == "secret-repo"
+
+    def test_disk_quota_refused(self) -> None:
+        """Disk-quota guard returns error before invoking ensure_repo_cloned."""
+        with (
+            patch("ypl.agent_harness_service.tools.workspace.ensure_repo_cloned") as mock_clone,
+            patch("ypl.agent_harness_service.tools.workspace.shutil.disk_usage") as mock_du,
+        ):
+            mock_du.return_value = MagicMock(free=100 * 1024 * 1024)  # 100 MiB free
+            result = add_shared_repo(session_id=VALID_SESSION, url="https://github.com/o/r")
+
+        assert result["status"] == "error"
+        assert "Insufficient free disk space" in result["error"]
+        assert result["name"] == "r"
+        # Clone never attempted.
+        mock_clone.assert_not_called()
+
+    def test_disk_usage_failure_does_not_block(self) -> None:
+        """If shutil.disk_usage raises OSError, clone proceeds (ensure_repo_cloned handles creation)."""
+        with (
+            patch(
+                "ypl.agent_harness_service.tools.workspace.ensure_repo_cloned",
+                return_value={"status": "cloned", "path": "/data/ahs/repos/r"},
+            ) as mock_clone,
+            patch("ypl.agent_harness_service.tools.workspace.shutil.disk_usage", side_effect=OSError),
+        ):
+            result = add_shared_repo(session_id=VALID_SESSION, url="https://github.com/o/r")
+
+        assert result["status"] == "cloned"
+        mock_clone.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -190,17 +247,21 @@ class TestRemoveSharedRepo:
             "ypl.agent_harness_service.tools.workspace.remove_repo_from_disk",
             return_value={"status": "removed", "path": "/data/ahs/repos/pr-status-check"},
         ) as mock_remove:
-            result = remove_shared_repo(name="pr-status-check")
+            result = remove_shared_repo(session_id=VALID_SESSION, name="pr-status-check")
 
         assert result["status"] == "removed"
         mock_remove.assert_called_once_with("pr-status-check")
+
+    def test_invalid_session_id_raises(self) -> None:
+        with pytest.raises(ValueError, match="not a valid UUID"):
+            remove_shared_repo(session_id=INVALID_SESSION, name="foo")
 
     def test_protected_refused(self) -> None:
         with patch(
             "ypl.agent_harness_service.tools.workspace.remove_repo_from_disk",
             return_value={"status": "error", "error": "Repo 'yupp-agent' is protected ..."},
         ):
-            result = remove_shared_repo(name="yupp-agent")
+            result = remove_shared_repo(session_id=VALID_SESSION, name="yupp-agent")
 
         assert result["status"] == "error"
         assert "protected" in result["error"]
@@ -210,9 +271,56 @@ class TestRemoveSharedRepo:
             "ypl.agent_harness_service.tools.workspace.remove_repo_from_disk",
             return_value={"status": "missing", "path": "/data/ahs/repos/not-there"},
         ):
-            result = remove_shared_repo(name="not-there")
+            result = remove_shared_repo(session_id=VALID_SESSION, name="not-there")
 
         assert result["status"] == "missing"
+
+
+# ---------------------------------------------------------------------------
+# request_write_access — pending_clone path
+# ---------------------------------------------------------------------------
+
+
+class TestRequestWriteAccessPendingClone:
+    def test_configured_but_not_cloned_returns_pending(self, tmp_path: Path) -> None:
+        """Configured-but-not-on-disk → pending_clone with add_shared_repo hint."""
+        with (
+            patch("ypl.agent_harness_service.tools.workspace.AHS_REPOS_DIR", str(tmp_path)),
+            patch(
+                "ypl.agent_harness_service.tools.workspace.load_shared_repos_config",
+                return_value=[
+                    {
+                        "name": "configured-not-cloned",
+                        "url": "https://github.com/yupp-ai/configured-not-cloned",
+                        "protected": False,
+                    }
+                ],
+            ),
+            patch("ypl.agent_harness_service.tools.workspace.create_worktree") as mock_create,
+        ):
+            result = request_write_access(session_id=VALID_SESSION, repo="configured-not-cloned")
+
+        assert result["status"] == "pending_clone"
+        assert result["repo"] == "configured-not-cloned"
+        assert result["url"] == "https://github.com/yupp-ai/configured-not-cloned"
+        assert "add_shared_repo" in result["message"]
+        # Worktree creation never attempted.
+        mock_create.assert_not_called()
+
+    def test_on_disk_repo_proceeds(self, tmp_path: Path) -> None:
+        """On-disk repo bypasses the pending_clone short-circuit."""
+        (tmp_path / "yupp-agent").mkdir()
+        with (
+            patch("ypl.agent_harness_service.tools.workspace.AHS_REPOS_DIR", str(tmp_path)),
+            patch(
+                "ypl.agent_harness_service.tools.workspace.create_worktree",
+                return_value={"status": "granted", "workspace": "/tmp/x", "branch": "agent/x"},
+            ) as mock_create,
+        ):
+            result = request_write_access(session_id=VALID_SESSION, repo="yupp-agent")
+
+        assert result["status"] == "granted"
+        mock_create.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

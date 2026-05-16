@@ -373,8 +373,35 @@ chown ahs:ahs "${AHS_REPOS_DIR}"
 # Drift-heal for SSH→HTTPS origins (older bootstrap paths used SSH deploy
 # keys, but pushes need GH_TOKEN over HTTPS) is handled per-worktree at PR
 # time by _normalize_origin_to_https() in repo_manager.py.
-sudo -u ahs /opt/yupp-agent/.venv/bin/python \
-    -m ypl.agent_harness_service.scripts.pull_repos
+
+# Precondition: step 11 now requires the venv (step 7) and poetry-installed
+# deps (step 8/9) — running `--from 11` on a fresh VM without those would
+# fail with a confusing ModuleNotFoundError. Fail loudly with a hint instead.
+VENV_PY="/opt/yupp-agent/.venv/bin/python"
+if ! [ -x "${VENV_PY}" ]; then
+    echo "ERROR: ${VENV_PY} not found. Step 11 requires steps 7-9 (venv + deps). Run with --from 7 (or lower)."
+    exit 1
+fi
+if ! sudo -u ahs "${VENV_PY}" -c "import yaml" 2>/dev/null; then
+    echo "ERROR: PyYAML not importable in ${VENV_PY}. Re-run from step 9 (poetry install)."
+    exit 1
+fi
+
+# The pull script exits non-zero if any *configured* repo failed to clone
+# or shared_repos.yaml is unparseable. Hard-fail the bootstrap on either —
+# the old hardcoded `git clone yupp-agent` loop would have done the same.
+sudo -u ahs "${VENV_PY}" -m ypl.agent_harness_service.scripts.pull_repos
+
+# Belt-and-suspenders: explicitly verify yupp-agent landed. The pull script
+# above exits non-zero on configured-clone failures, but this catches the
+# (unlikely) case where someone editing shared_repos.yaml accidentally
+# removed yupp-agent from it entirely. _ALWAYS_PROTECTED in repo_manager
+# prevents removal at runtime, but it can't fix an already-broken yaml.
+if ! [ -d "${AHS_REPOS_DIR}/yupp-agent/.git" ]; then
+    echo "ERROR: ${AHS_REPOS_DIR}/yupp-agent/.git not present after pull_repos. shared_repos.yaml may be missing the yupp-agent entry."
+    exit 1
+fi
+echo "  yupp-agent verified at ${AHS_REPOS_DIR}/yupp-agent"
 fi
 
 # --- Step 12: Install systemd service ---

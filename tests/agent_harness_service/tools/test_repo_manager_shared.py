@@ -160,6 +160,104 @@ class TestIsRepoProtected:
         with patch("ypl.agent_harness_service.tools.repo_manager.SHARED_REPOS_CONFIG_PATH", str(cfg_path)):
             assert rm.is_repo_protected("foo") is False
 
+    def test_always_protected_overrides_missing_yaml(self, tmp_path: Path) -> None:
+        """yupp-agent stays protected even if shared_repos.yaml is missing entirely."""
+        with patch(
+            "ypl.agent_harness_service.tools.repo_manager.SHARED_REPOS_CONFIG_PATH",
+            str(tmp_path / "does-not-exist.yaml"),
+        ):
+            assert rm.is_repo_protected("yupp-agent") is True
+
+    def test_always_protected_overrides_yaml_drop(self, tmp_path: Path) -> None:
+        """yupp-agent stays protected even if removed from shared_repos.yaml."""
+        cfg_path = tmp_path / "shared_repos.yaml"
+        _write_yaml(cfg_path, "repos:\n  - name: other\n    url: https://github.com/o/other\n")
+        with patch("ypl.agent_harness_service.tools.repo_manager.SHARED_REPOS_CONFIG_PATH", str(cfg_path)):
+            assert rm.is_repo_protected("yupp-agent") is True
+
+    def test_always_protected_overrides_explicit_false(self, tmp_path: Path) -> None:
+        """yupp-agent stays protected even if shared_repos.yaml explicitly sets protected: false."""
+        cfg_path = tmp_path / "shared_repos.yaml"
+        _write_yaml(
+            cfg_path,
+            "repos:\n  - name: yupp-agent\n    url: https://github.com/yupp-ai/yupp-agent\n    protected: false\n",
+        )
+        with patch("ypl.agent_harness_service.tools.repo_manager.SHARED_REPOS_CONFIG_PATH", str(cfg_path)):
+            assert rm.is_repo_protected("yupp-agent") is True
+
+
+class TestIsSharedReposConfigParseable:
+    def test_missing_file_is_parseable(self, tmp_path: Path) -> None:
+        with patch(
+            "ypl.agent_harness_service.tools.repo_manager.SHARED_REPOS_CONFIG_PATH",
+            str(tmp_path / "missing.yaml"),
+        ):
+            assert rm.is_shared_repos_config_parseable() is True
+
+    def test_well_formed_yaml(self, tmp_path: Path) -> None:
+        cfg_path = tmp_path / "shared_repos.yaml"
+        _write_yaml(cfg_path, "repos: []")
+        with patch("ypl.agent_harness_service.tools.repo_manager.SHARED_REPOS_CONFIG_PATH", str(cfg_path)):
+            assert rm.is_shared_repos_config_parseable() is True
+
+    def test_malformed_yaml_is_unparseable(self, tmp_path: Path) -> None:
+        cfg_path = tmp_path / "shared_repos.yaml"
+        cfg_path.write_text("[: not valid yaml")
+        with patch("ypl.agent_harness_service.tools.repo_manager.SHARED_REPOS_CONFIG_PATH", str(cfg_path)):
+            assert rm.is_shared_repos_config_parseable() is False
+
+    def test_missing_repos_key_is_unparseable(self, tmp_path: Path) -> None:
+        cfg_path = tmp_path / "shared_repos.yaml"
+        _write_yaml(cfg_path, "something_else: 1")
+        with patch("ypl.agent_harness_service.tools.repo_manager.SHARED_REPOS_CONFIG_PATH", str(cfg_path)):
+            assert rm.is_shared_repos_config_parseable() is False
+
+
+class TestDetectDefaultBranch:
+    def test_origin_master(self, tmp_path: Path) -> None:
+        with patch("ypl.agent_harness_service.tools.repo_manager.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout=b"origin/master\n")
+            assert rm._detect_default_branch(str(tmp_path)) == "master"
+
+    def test_origin_main(self, tmp_path: Path) -> None:
+        with patch("ypl.agent_harness_service.tools.repo_manager.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout=b"origin/main\n")
+            assert rm._detect_default_branch(str(tmp_path)) == "main"
+
+    def test_falls_back_to_main_on_failure(self, tmp_path: Path) -> None:
+        with patch("ypl.agent_harness_service.tools.repo_manager.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=1, stdout=b"")
+            assert rm._detect_default_branch(str(tmp_path)) == "main"
+
+    def test_falls_back_on_oserror(self, tmp_path: Path) -> None:
+        with patch("ypl.agent_harness_service.tools.repo_manager.subprocess.run", side_effect=OSError):
+            assert rm._detect_default_branch(str(tmp_path)) == "main"
+
+
+class TestPullRepo:
+    def test_uses_detected_default_branch(self, tmp_path: Path) -> None:
+        """pull_repo passes the detected default branch to git pull."""
+        calls = []
+
+        def fake_run(cmd: list[str], **_kw: object) -> MagicMock:
+            calls.append(cmd)
+            if cmd[:3] == ["git", "-C", str(tmp_path)] and "symbolic-ref" in cmd:
+                return MagicMock(returncode=0, stdout=b"origin/develop\n")
+            return MagicMock(returncode=0, stderr=b"")
+
+        with patch("ypl.agent_harness_service.tools.repo_manager.subprocess.run", side_effect=fake_run):
+            assert rm.pull_repo(str(tmp_path)) is True
+
+        # Find the actual pull call
+        pull_cmds = [c for c in calls if c[:2] == ["git", "pull"]]
+        assert len(pull_cmds) == 1
+        assert pull_cmds[0] == ["git", "pull", "--ff-only", "origin", "develop"]
+
+    def test_returns_false_on_filenotfound(self, tmp_path: Path) -> None:
+        """Concurrent remove → FileNotFoundError → False (no exception)."""
+        with patch("ypl.agent_harness_service.tools.repo_manager.subprocess.run", side_effect=FileNotFoundError):
+            assert rm.pull_repo(str(tmp_path)) is False
+
 
 # ---------------------------------------------------------------------------
 # ensure_repo_cloned
@@ -187,27 +285,71 @@ class TestEnsureRepoCloned:
         assert result["status"] == "exists"
         assert result["path"] == str(target)
 
-    def test_path_exists_but_not_git(self, tmp_path: Path) -> None:
-        (tmp_path / "foo").mkdir()
-        with patch("ypl.agent_harness_service.tools.repo_manager.AHS_REPOS_DIR", str(tmp_path)):
-            result = rm.ensure_repo_cloned("foo", "https://github.com/o/foo")
-        assert result["status"] == "error"
-        assert "not a git repo" in result["error"]
+    def test_partial_clone_quarantined_and_retried(self, tmp_path: Path) -> None:
+        """Stale non-git target is renamed to .broken.{ts} and the clone retries."""
+        target = tmp_path / "foo"
+        target.mkdir()
+        (target / "junk").write_text("leftover")
 
-    def test_runs_git_clone_when_missing(self, tmp_path: Path) -> None:
+        def fake_run(cmd: list[str], **_kw: object) -> MagicMock:
+            if cmd[:2] == ["git", "clone"]:
+                # Simulate clone creating .git
+                (tmp_path / "foo" / ".git").mkdir(parents=True, exist_ok=True)
+            return MagicMock(returncode=0, stderr=b"")
+
         with (
             patch("ypl.agent_harness_service.tools.repo_manager.AHS_REPOS_DIR", str(tmp_path)),
-            patch("ypl.agent_harness_service.tools.repo_manager.subprocess.run") as mock_run,
+            patch("ypl.agent_harness_service.tools.repo_manager.subprocess.run", side_effect=fake_run),
         ):
-            mock_run.return_value = MagicMock(returncode=0, stderr=b"")
+            result = rm.ensure_repo_cloned("foo", "https://github.com/o/foo")
+
+        assert result["status"] == "cloned"
+        # Old junk dir was quarantined, not deleted
+        quarantined = [p for p in tmp_path.iterdir() if p.name.startswith("foo.broken.")]
+        assert len(quarantined) == 1
+        assert (quarantined[0] / "junk").read_text() == "leftover"
+        # New clone present
+        assert (tmp_path / "foo" / ".git").is_dir()
+
+    def test_runs_git_clone_when_missing(self, tmp_path: Path) -> None:
+        def fake_run(cmd: list[str], **_kw: object) -> MagicMock:
+            if cmd[:2] == ["git", "clone"]:
+                (tmp_path / "foo" / ".git").mkdir(parents=True, exist_ok=True)
+            return MagicMock(returncode=0, stderr=b"")
+
+        with (
+            patch("ypl.agent_harness_service.tools.repo_manager.AHS_REPOS_DIR", str(tmp_path)),
+            patch("ypl.agent_harness_service.tools.repo_manager.subprocess.run", side_effect=fake_run) as mock_run,
+        ):
             result = rm.ensure_repo_cloned("foo", "https://github.com/o/foo")
         assert result["status"] == "cloned"
         assert result["path"] == str(tmp_path / "foo")
-        # First arg is the command list
-        args = mock_run.call_args[0][0]
-        assert args[:2] == ["git", "clone"]
-        assert args[2] == "https://github.com/o/foo"
-        assert args[3] == str(tmp_path / "foo")
+        # Find the actual clone call (there may be other git calls)
+        clone_calls = [c.args[0] for c in mock_run.call_args_list if c.args[0][:2] == ["git", "clone"]]
+        assert len(clone_calls) == 1
+        assert clone_calls[0] == ["git", "clone", "https://github.com/o/foo", str(tmp_path / "foo")]
+
+    def test_failed_clone_cleans_up(self, tmp_path: Path) -> None:
+        """A failed git clone removes any half-written target so the next call retries cleanly."""
+        from subprocess import CalledProcessError
+
+        def fake_run(cmd: list[str], **_kw: object) -> MagicMock:
+            if cmd[:2] == ["git", "clone"]:
+                # Simulate git creating a partial dir then failing
+                (tmp_path / "foo").mkdir(parents=True, exist_ok=True)
+                raise CalledProcessError(returncode=128, cmd=cmd, stderr=b"auth required")
+            return MagicMock(returncode=0, stderr=b"")
+
+        with (
+            patch("ypl.agent_harness_service.tools.repo_manager.AHS_REPOS_DIR", str(tmp_path)),
+            patch("ypl.agent_harness_service.tools.repo_manager.subprocess.run", side_effect=fake_run),
+        ):
+            result = rm.ensure_repo_cloned("foo", "https://github.com/o/foo")
+
+        assert result["status"] == "error"
+        assert "git clone failed" in result["error"]
+        # Cleanup happened — no stale target left to wedge the next call.
+        assert not (tmp_path / "foo").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -235,6 +377,36 @@ class TestRemoveRepoFromDisk:
         assert result["status"] == "error"
         assert "protected" in result["error"]
 
+    def test_always_protected_refused_even_without_yaml(self, tmp_path: Path) -> None:
+        """yupp-agent is refused even if shared_repos.yaml is absent."""
+        with (
+            patch(
+                "ypl.agent_harness_service.tools.repo_manager.SHARED_REPOS_CONFIG_PATH",
+                str(tmp_path / "absent.yaml"),
+            ),
+            patch("ypl.agent_harness_service.tools.repo_manager.AHS_REPOS_DIR", str(tmp_path)),
+        ):
+            result = rm.remove_repo_from_disk("yupp-agent")
+        assert result["status"] == "error"
+        assert "protected" in result["error"]
+
+    def test_fail_closed_on_malformed_yaml(self, tmp_path: Path) -> None:
+        """Malformed shared_repos.yaml → refuse ALL removals (fail-closed)."""
+        cfg_path = tmp_path / "shared_repos.yaml"
+        cfg_path.write_text("[: not valid yaml")  # exists but unparseable
+        repos_dir = tmp_path / "repos"
+        repos_dir.mkdir()
+        (repos_dir / "foo" / ".git").mkdir(parents=True)
+        with (
+            patch("ypl.agent_harness_service.tools.repo_manager.SHARED_REPOS_CONFIG_PATH", str(cfg_path)),
+            patch("ypl.agent_harness_service.tools.repo_manager.AHS_REPOS_DIR", str(repos_dir)),
+        ):
+            result = rm.remove_repo_from_disk("foo")
+        assert result["status"] == "error"
+        assert "unparseable" in result["error"]
+        # Directory was NOT removed.
+        assert (repos_dir / "foo" / ".git").is_dir()
+
     def test_missing_returns_missing(self, tmp_path: Path) -> None:
         with patch("ypl.agent_harness_service.tools.repo_manager.AHS_REPOS_DIR", str(tmp_path)):
             result = rm.remove_repo_from_disk("not-here")
@@ -257,24 +429,18 @@ class TestRemoveRepoFromDisk:
         # Decoy contents untouched
         assert (decoy / "keepme.txt").read_text() == "dont touch"
 
-    def test_directory_removed(self, tmp_path: Path) -> None:
+    def test_directory_removed_with_shutil(self, tmp_path: Path) -> None:
+        """remove_repo_from_disk uses shutil.rmtree (no /bin/rm subprocess)."""
         repos_dir = tmp_path / "repos"
         target = repos_dir / "foo"
         target.mkdir(parents=True)
         (target / "marker").write_text("x")
 
-        with (
-            patch("ypl.agent_harness_service.tools.repo_manager.AHS_REPOS_DIR", str(repos_dir)),
-            patch("ypl.agent_harness_service.tools.repo_manager.subprocess.run") as mock_run,
-        ):
-            mock_run.return_value = MagicMock(returncode=0, stderr=b"")
+        with patch("ypl.agent_harness_service.tools.repo_manager.AHS_REPOS_DIR", str(repos_dir)):
             result = rm.remove_repo_from_disk("foo")
 
         assert result["status"] == "removed"
-        # Confirm the rm command was issued with the right path
-        args = mock_run.call_args[0][0]
-        assert args[:3] == ["rm", "-rf", "--"]
-        assert args[3] == str(target)
+        assert not target.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -358,6 +524,8 @@ repos:
         def fake_run(cmd: list[str], **_kw: object) -> MagicMock:
             if cmd[:2] == ["git", "clone"]:
                 (repos_dir / "foo" / ".git").mkdir(parents=True, exist_ok=True)
+            elif "symbolic-ref" in cmd:
+                return MagicMock(returncode=0, stdout=b"origin/main\n")
             return MagicMock(returncode=0, stderr=b"")
 
         with (
@@ -365,10 +533,11 @@ repos:
             patch("ypl.agent_harness_service.tools.repo_manager.SHARED_REPOS_CONFIG_PATH", str(cfg_path)),
             patch("ypl.agent_harness_service.tools.repo_manager.subprocess.run", side_effect=fake_run) as mock_run,
         ):
-            results = rm.pull_all_repos()
+            result = rm.pull_all_repos()
 
-        assert results == {"foo": True}
-        # Should have run a clone and at least one pull
+        assert result["pulls"] == {"foo": True}
+        assert result["clone_failures"] == {}
+        assert result["config_unparseable"] is False
         cmds = [c.args[0] for c in mock_run.call_args_list]
         assert any(c[:2] == ["git", "clone"] for c in cmds)
         assert any(c[:2] == ["git", "pull"] for c in cmds)
@@ -387,6 +556,78 @@ repos:
             patch("ypl.agent_harness_service.tools.repo_manager.subprocess.run") as mock_run,
         ):
             mock_run.return_value = MagicMock(returncode=0, stderr=b"")
-            results = rm.pull_all_repos()
+            result = rm.pull_all_repos()
 
-        assert results == {"adhoc": True}
+        assert result["pulls"] == {"adhoc": True}
+        assert result["clone_failures"] == {}
+        assert result["config_unparseable"] is False
+
+    def test_clone_failure_surfaced(self, tmp_path: Path) -> None:
+        """Configured-clone failures are reported in clone_failures dict."""
+        from subprocess import CalledProcessError
+
+        repos_dir = tmp_path / "repos"
+        repos_dir.mkdir()
+        cfg_path = tmp_path / "shared_repos.yaml"
+        _write_yaml(
+            cfg_path,
+            "repos:\n  - name: foo\n    url: https://github.com/o/foo\n",
+        )
+
+        def fake_run(cmd: list[str], **_kw: object) -> MagicMock:
+            if cmd[:2] == ["git", "clone"]:
+                raise CalledProcessError(returncode=128, cmd=cmd, stderr=b"network error")
+            return MagicMock(returncode=0, stderr=b"")
+
+        with (
+            patch("ypl.agent_harness_service.tools.repo_manager.AHS_REPOS_DIR", str(repos_dir)),
+            patch("ypl.agent_harness_service.tools.repo_manager.SHARED_REPOS_CONFIG_PATH", str(cfg_path)),
+            patch("ypl.agent_harness_service.tools.repo_manager.subprocess.run", side_effect=fake_run),
+        ):
+            result = rm.pull_all_repos()
+
+        assert result["pulls"] == {}
+        assert "foo" in result["clone_failures"]
+        assert "network error" in result["clone_failures"]["foo"]
+
+    def test_malformed_yaml_signals_unparseable(self, tmp_path: Path) -> None:
+        """Malformed shared_repos.yaml → config_unparseable=True."""
+        repos_dir = tmp_path / "repos"
+        repos_dir.mkdir()
+        cfg_path = tmp_path / "shared_repos.yaml"
+        cfg_path.write_text("[: not valid yaml")
+
+        with (
+            patch("ypl.agent_harness_service.tools.repo_manager.AHS_REPOS_DIR", str(repos_dir)),
+            patch("ypl.agent_harness_service.tools.repo_manager.SHARED_REPOS_CONFIG_PATH", str(cfg_path)),
+        ):
+            result = rm.pull_all_repos()
+
+        assert result["config_unparseable"] is True
+
+    def test_concurrent_remove_during_pull_tolerated(self, tmp_path: Path) -> None:
+        """A repo removed between listdir and git pull is skipped, doesn't crash."""
+        repos_dir = tmp_path / "repos"
+        (repos_dir / "vanish" / ".git").mkdir(parents=True)
+        cfg_path = tmp_path / "shared_repos.yaml"
+        _write_yaml(cfg_path, "repos: []")
+
+        call_count = {"n": 0}
+
+        def fake_run(cmd: list[str], **_kw: object) -> MagicMock:
+            # First call simulates the dir vanishing under our feet
+            if cmd[:2] == ["git", "pull"]:
+                call_count["n"] += 1
+                raise FileNotFoundError(2, "No such directory")
+            return MagicMock(returncode=0, stdout=b"origin/main\n", stderr=b"")
+
+        with (
+            patch("ypl.agent_harness_service.tools.repo_manager.AHS_REPOS_DIR", str(repos_dir)),
+            patch("ypl.agent_harness_service.tools.repo_manager.SHARED_REPOS_CONFIG_PATH", str(cfg_path)),
+            patch("ypl.agent_harness_service.tools.repo_manager.subprocess.run", side_effect=fake_run),
+        ):
+            result = rm.pull_all_repos()
+
+        # Pull was attempted but the FileNotFoundError was caught.
+        assert call_count["n"] >= 1
+        assert result["pulls"] == {"vanish": False}

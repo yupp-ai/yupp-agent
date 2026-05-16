@@ -9,9 +9,14 @@ Handles:
 - Workspace setup for new sessions
 """
 
+import contextlib
+import fcntl
 import os
 import re
+import shutil
 import subprocess
+import time
+from collections.abc import Iterator
 from typing import Any
 
 import yaml
@@ -41,6 +46,18 @@ SHARED_REPOS_CONFIG_PATH = os.environ.get(
     "AHS_SHARED_REPOS_CONFIG",
     os.path.join(_DEPLOY_DIR, "shared_repos.yaml"),
 )
+
+# Repos the harness itself depends on and must never be removable via the
+# MCP tool path, regardless of what shared_repos.yaml says. This is a
+# defence-in-depth layer on top of ``protected: true`` in the yaml — a
+# future PR that drops or flips the yaml entry doesn't accidentally make
+# yupp-agent's mirror destroyable.
+_ALWAYS_PROTECTED: frozenset[str] = frozenset({"yupp-agent"})
+
+# Lockfile under AHS_REPOS_DIR used to serialize concurrent
+# clone/remove operations between the systemd pull timer and MCP-triggered
+# add_shared_repo / remove_shared_repo. See _repos_lock().
+_REPOS_LOCK_FILENAME = ".repos.lock"
 
 
 def _branch_to_dir_suffix(branch: str) -> str:
@@ -479,15 +496,47 @@ def push_and_create_pr(
     return {"status": "created", "pr_url": pr_url, "branch": branch}
 
 
-def pull_repo(repo_path: str) -> bool:
-    """Pull latest main for a repo.
+def _detect_default_branch(repo_path: str) -> str:
+    """Best-effort: return the default branch on origin, falling back to ``main``.
 
-    Returns:
-        True if pull succeeded, False otherwise.
+    ``add_shared_repo`` lets agents register arbitrary GitHub repos and
+    many still default to ``master`` (or other names). The pull cron must
+    not hardcode ``main`` for those.
     """
     try:
+        result = subprocess.run(
+            ["git", "-C", repo_path, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+            check=False,
+            capture_output=True,
+            timeout=10,
+        )
+    except (subprocess.SubprocessError, OSError) as e:
+        logger.warning(
+            f"Failed to detect default branch repo_path={repo_path!r}",
+            repo_path=repo_path,
+            error=str(e),
+        )
+        return "main"
+    if result.returncode != 0:
+        return "main"
+    ref = result.stdout.decode("utf-8", errors="replace").strip()
+    return ref.removeprefix("origin/") or "main"
+
+
+def pull_repo(repo_path: str) -> bool:
+    """Pull latest default branch for a repo.
+
+    Returns True if the pull succeeded. Returns False on a normal git
+    failure (logged at error). Returns False but does NOT log at error on
+    ``FileNotFoundError`` / ``OSError`` — that's the race window where a
+    concurrent ``remove_shared_repo`` removed this dir between the
+    ``pull_all_repos`` listdir snapshot and the actual ``git pull``; not
+    abnormal, no need to surface.
+    """
+    default_branch = _detect_default_branch(repo_path)
+    try:
         subprocess.run(
-            ["git", "pull", "--ff-only", "origin", "main"],
+            ["git", "pull", "--ff-only", "origin", default_branch],
             cwd=repo_path,
             check=True,
             capture_output=True,
@@ -495,9 +544,19 @@ def pull_repo(repo_path: str) -> bool:
         return True
     except subprocess.CalledProcessError as e:
         logger.error(
-            f"Failed to pull repo repo_path={repo_path!r}",
+            f"Failed to pull repo repo_path={repo_path!r} branch={default_branch!r}",
             repo_path=repo_path,
+            branch=default_branch,
             stderr=e.stderr.decode("utf-8", errors="replace")[:500] if e.stderr else "",
+        )
+        return False
+    except (FileNotFoundError, OSError) as e:
+        # Concurrent remove_shared_repo (or remove_repo_from_disk) raced
+        # us — the cwd no longer exists. Log at debug, return False, move on.
+        logger.info(
+            f"Repo vanished during pull repo_path={repo_path!r} (likely concurrent remove)",
+            repo_path=repo_path,
+            error=type(e).__name__,
         )
         return False
 
@@ -523,12 +582,37 @@ def repo_name_from_url(url: str) -> str:
     return _parse_github_url(url)[1]
 
 
+def is_shared_repos_config_parseable() -> bool:
+    """True when ``shared_repos.yaml`` is parseable (or absent).
+
+    Returns False only when the file exists but cannot be parsed as a
+    ``{"repos": [...]}`` mapping. Used as a fail-closed gate so destructive
+    operations (remove_repo_from_disk) refuse to proceed when the source of
+    truth they consult for protection flags is unreadable, and so the pull
+    cron exits non-zero on a malformed config (instead of silently no-op'ing
+    on every tick).
+
+    An absent file is treated as parseable — that's a legitimate state on
+    first deploy, before anyone has checked in shared_repos.yaml.
+    """
+    if not os.path.isfile(SHARED_REPOS_CONFIG_PATH):
+        return True
+    try:
+        with open(SHARED_REPOS_CONFIG_PATH) as f:
+            data = yaml.safe_load(f) or {}
+    except (OSError, yaml.YAMLError):
+        return False
+    return isinstance(data, dict) and isinstance(data.get("repos"), list)
+
+
 def load_shared_repos_config() -> list[dict[str, Any]]:
     """Load the declarative shared_repos.yaml list.
 
     Returns an empty list if the file is missing or malformed (with a
     warning) — the pull loop falls back to discovering whatever is already
-    on disk, so a broken config never silently strands a VM.
+    on disk, so a broken config never silently strands a VM. Operators
+    should use ``is_shared_repos_config_parseable()`` (and pull_repos.py's
+    non-zero exit on that condition) to detect the malformed case.
 
     Each entry has at least: ``name`` (str), ``url`` (str), ``protected``
     (bool, default False). Unknown keys are preserved but ignored.
@@ -581,11 +665,74 @@ def load_shared_repos_config() -> list[dict[str, Any]]:
 
 
 def is_repo_protected(name: str) -> bool:
-    """Return True if the named repo is marked ``protected: true`` in config."""
+    """Return True if the named repo is unrenameable / unremovable.
+
+    Protection comes from two sources, *either* of which is sufficient:
+
+    1. ``_ALWAYS_PROTECTED`` — a code-level frozenset of harness-critical
+       names that can never be removed via the MCP tool path, regardless
+       of what shared_repos.yaml says. This guards against a future PR
+       that drops the yaml entry or flips the flag.
+    2. ``protected: true`` in shared_repos.yaml — the config-level way for
+       operators to mark new entries as critical without touching code.
+    """
+    if name in _ALWAYS_PROTECTED:
+        return True
     for entry in load_shared_repos_config():
         if entry["name"] == name:
             return bool(entry.get("protected", False))
     return False
+
+
+# ---------------------------------------------------------------------------
+# Concurrency control — serialize clone / remove operations
+# ---------------------------------------------------------------------------
+
+
+@contextlib.contextmanager
+def _repos_lock(blocking: bool = True, timeout: float = 60.0) -> Iterator[None]:
+    """Acquire an exclusive flock on AHS_REPOS_DIR/.repos.lock.
+
+    Wraps clone/remove operations to prevent two writers from racing on the
+    same target directory between the systemd pull timer's phase-1 cloning
+    and an MCP-triggered ``add_shared_repo`` / ``remove_shared_repo``. Also
+    protects two overlapping pull ticks from doing the same work twice.
+
+    Reads (``pull_repo``, ``list_repos_with_metadata``) are intentionally
+    NOT lock-protected — they're idempotent and tolerate concurrent
+    structural changes via ``OSError`` handling.
+
+    Raises ``BlockingIOError`` if ``blocking=False`` and the lock is held,
+    or ``TimeoutError`` if ``blocking=True`` and we couldn't acquire within
+    ``timeout`` seconds.
+    """
+    os.makedirs(AHS_REPOS_DIR, exist_ok=True)
+    lock_path = os.path.join(AHS_REPOS_DIR, _REPOS_LOCK_FILENAME)
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    acquired = False
+    try:
+        if not blocking:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        else:
+            # Poll for the lock so the deadline is honoured even if another
+            # holder dies without releasing.
+            deadline = time.monotonic() + timeout
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError as e:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(f"Could not acquire {lock_path} within {timeout}s") from e
+                    time.sleep(0.1)
+        acquired = True
+        yield
+    finally:
+        try:
+            if acquired:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
 
 def ensure_repo_cloned(name: str, url: str) -> dict[str, str]:
@@ -595,6 +742,15 @@ def ensure_repo_cloned(name: str, url: str) -> dict[str, str]:
     git repo, returns ``{"status": "exists"}``. Otherwise runs
     ``git clone {url} {AHS_REPOS_DIR}/{name}`` and returns
     ``{"status": "cloned"}`` (or ``{"status": "error", "error": ...}``).
+
+    Self-healing: if the target directory exists but has no ``.git/`` (a
+    stale partial clone from a killed process / OOM / disk-full), it is
+    *quarantined* to ``{target}.broken.{epoch_ms}`` and the clone is
+    retried. This prevents one transient failure from wedging every
+    subsequent call until a human cleans up.
+
+    Lock-protected: holds ``_repos_lock`` for the duration so concurrent
+    callers can't race on the same target directory.
 
     Validates ``name`` against the safe-name regex and verifies the URL
     parses as an https GitHub URL. URL/name consistency is _not_ enforced
@@ -610,32 +766,52 @@ def ensure_repo_cloned(name: str, url: str) -> dict[str, str]:
 
     os.makedirs(AHS_REPOS_DIR, exist_ok=True)
     target = os.path.join(AHS_REPOS_DIR, name)
-    if os.path.isdir(os.path.join(target, ".git")):
-        return {"status": "exists", "path": target}
-    if os.path.exists(target):
-        return {
-            "status": "error",
-            "error": f"Path exists but is not a git repo: {target!r}",
-        }
 
     try:
-        subprocess.run(
-            ["git", "clone", url, target],
-            check=True,
-            capture_output=True,
-            timeout=120,
-        )
-    except subprocess.TimeoutExpired:
-        return {"status": "error", "error": f"git clone timed out for {url!r}"}
-    except subprocess.CalledProcessError as e:
-        stderr = e.stderr.decode("utf-8", errors="replace")[:500] if e.stderr else ""
-        logger.error(
-            f"git clone failed name={name!r} url={url!r}",
-            name=name,
-            url=url,
-            stderr=stderr,
-        )
-        return {"status": "error", "error": f"git clone failed: {stderr}"}
+        with _repos_lock(blocking=True, timeout=60.0):
+            # Re-check inside the lock — another holder may have just cloned this.
+            if os.path.isdir(os.path.join(target, ".git")):
+                return {"status": "exists", "path": target}
+            if os.path.exists(target):
+                # Stale partial clone — move out of the way and proceed.
+                quarantine = f"{target}.broken.{int(time.time() * 1000)}"
+                try:
+                    os.rename(target, quarantine)
+                except OSError as e:
+                    return {
+                        "status": "error",
+                        "error": f"Failed to quarantine stale path {target!r}: {e}",
+                    }
+                logger.warning(
+                    f"Quarantined stale partial clone target={target!r} quarantine={quarantine!r}",
+                    target=target,
+                    quarantine=quarantine,
+                )
+
+            try:
+                subprocess.run(
+                    ["git", "clone", url, target],
+                    check=True,
+                    capture_output=True,
+                    timeout=120,
+                )
+            except subprocess.TimeoutExpired:
+                # Best-effort cleanup of any half-written target so the next
+                # tick retries cleanly instead of going through quarantine.
+                shutil.rmtree(target, ignore_errors=True)
+                return {"status": "error", "error": f"git clone timed out for {url!r}"}
+            except subprocess.CalledProcessError as e:
+                shutil.rmtree(target, ignore_errors=True)
+                stderr = e.stderr.decode("utf-8", errors="replace")[:500] if e.stderr else ""
+                logger.error(
+                    f"git clone failed name={name!r} url={url!r}",
+                    name=name,
+                    url=url,
+                    stderr=stderr,
+                )
+                return {"status": "error", "error": f"git clone failed: {stderr}"}
+    except TimeoutError as e:
+        return {"status": "error", "error": str(e)}
 
     logger.info(f"Cloned shared repo name={name!r} url={url!r} path={target!r}", name=name, url=url, path=target)
     return {"status": "cloned", "path": target}
@@ -644,49 +820,93 @@ def ensure_repo_cloned(name: str, url: str) -> dict[str, str]:
 def remove_repo_from_disk(name: str) -> dict[str, str]:
     """Remove a repo's directory from AHS_REPOS_DIR.
 
-    Refuses if the repo is marked ``protected: true`` in shared_repos.yaml
-    (e.g. yupp-agent itself, which the harness runs from).
+    Refuses if the repo is protected — either via ``_ALWAYS_PROTECTED``
+    (code-level guard for harness-critical repos like yupp-agent) or via
+    ``protected: true`` in shared_repos.yaml. Also refuses if the config
+    file exists but cannot be parsed — without a readable source of truth
+    we cannot safely consult the protection list, so we fail closed.
 
     Refuses to recurse into anything outside AHS_REPOS_DIR even if a
     symlink points elsewhere — the symlink itself is unlinked, never
     followed.
+
+    Lock-protected to prevent racing with ``ensure_repo_cloned``.
     """
     if not _SAFE_NAME_RE.match(name):
         return {"status": "error", "error": f"Invalid repo name: {name!r}"}
     if is_repo_protected(name):
         return {
             "status": "error",
-            "error": f"Repo {name!r} is protected (marked protected: true in shared_repos.yaml); refusing to remove.",
+            "error": (
+                f"Repo {name!r} is protected; refusing to remove. "
+                "(Either listed in _ALWAYS_PROTECTED in repo_manager.py, "
+                "or marked `protected: true` in shared_repos.yaml.)"
+            ),
         }
-    target = os.path.join(AHS_REPOS_DIR, name)
-    if not os.path.exists(target) and not os.path.islink(target):
-        return {"status": "missing", "path": target}
-
-    # Symlinks: unlink without following. Used in local dev where repos are
-    # often symlinks to a checkout elsewhere.
-    if os.path.islink(target):
-        try:
-            os.unlink(target)
-        except OSError as e:
-            return {"status": "error", "error": f"failed to unlink: {e}"}
-        logger.info(f"Removed shared repo (symlink) name={name!r} path={target!r}", name=name, path=target)
-        return {"status": "removed", "path": target}
-
-    # Regular directory: rm -rf, but only after we've confirmed it lives
-    # directly under the real AHS_REPOS_DIR (defense in depth against a
-    # crafted name like '..' slipping past the regex on a future change).
-    real_parent = os.path.realpath(os.path.dirname(target))
-    real_repos = os.path.realpath(AHS_REPOS_DIR)
-    if real_parent != real_repos:
+    # Fail closed: if the source of truth for protection exists but we
+    # can't parse it, refuse to mutate anything based on it.
+    if not is_shared_repos_config_parseable():
         return {
             "status": "error",
-            "error": f"Refusing to remove path outside AHS_REPOS_DIR: {target!r}",
+            "error": (
+                f"shared_repos.yaml at {SHARED_REPOS_CONFIG_PATH!r} exists but is unparseable; "
+                "refusing to remove any repo until it can be read (protection list may be wrong)."
+            ),
         }
+
+    target = os.path.join(AHS_REPOS_DIR, name)
+
+    # Path-safety check — ``realpath`` of the target must live directly
+    # under the real AHS_REPOS_DIR. Combined with ``_SAFE_NAME_RE`` this is
+    # belt-and-suspenders against future changes to the name regex.
+    real_repos = os.path.realpath(AHS_REPOS_DIR)
+    if os.path.islink(target):
+        # For symlinks we check the link path itself (its parent), not its
+        # target — we're going to unlink the link, not follow it.
+        check_path = os.path.realpath(os.path.dirname(target))
+        if check_path != real_repos:
+            return {
+                "status": "error",
+                "error": f"Refusing to operate on symlink whose parent isn't AHS_REPOS_DIR: {target!r}",
+            }
+    elif os.path.isdir(target):
+        real_target = os.path.realpath(target)
+        if os.path.dirname(real_target) != real_repos:
+            return {
+                "status": "error",
+                "error": f"Refusing to remove path outside AHS_REPOS_DIR: {target!r} -> {real_target!r}",
+            }
+
     try:
-        subprocess.run(["rm", "-rf", "--", target], check=True, capture_output=True)
-    except subprocess.CalledProcessError as e:
-        stderr = e.stderr.decode("utf-8", errors="replace")[:500] if e.stderr else ""
-        return {"status": "error", "error": f"rm -rf failed: {stderr}"}
+        with _repos_lock(blocking=True, timeout=60.0):
+            # Re-check after acquiring the lock.
+            if not os.path.exists(target) and not os.path.islink(target):
+                return {"status": "missing", "path": target}
+
+            if os.path.islink(target):
+                # Symlinks: unlink without following. Used in local dev where
+                # repos are often symlinks to a checkout elsewhere.
+                try:
+                    os.unlink(target)
+                except OSError as e:
+                    return {"status": "error", "error": f"failed to unlink: {e}"}
+                logger.info(
+                    f"Removed shared repo (symlink) name={name!r} path={target!r}",
+                    name=name,
+                    path=target,
+                )
+                return {"status": "removed", "path": target}
+
+            # Regular directory: shutil.rmtree (no /bin/rm dependency,
+            # structured exceptions, and the symlink-follow case is already
+            # handled by the early return above).
+            try:
+                shutil.rmtree(target)
+            except OSError as e:
+                return {"status": "error", "error": f"shutil.rmtree failed: {e}"}
+    except TimeoutError as e:
+        return {"status": "error", "error": str(e)}
+
     logger.info(f"Removed shared repo name={name!r} path={target!r}", name=name, path=target)
     return {"status": "removed", "path": target}
 
@@ -731,28 +951,39 @@ def list_repos_with_metadata() -> list[dict[str, Any]]:
     return sorted(by_name.values(), key=lambda e: e["name"])
 
 
-def pull_all_repos() -> dict[str, bool]:
+def pull_all_repos() -> dict[str, Any]:
     """Ensure every configured repo is cloned, then pull every on-disk repo.
 
     The pull cycle has two phases:
 
     1. *Ensure-clone* — for each entry in ``shared_repos.yaml``, clone it
-       into ``AHS_REPOS_DIR`` if missing. Failures here are logged but
-       don't abort the cycle.
+       into ``AHS_REPOS_DIR`` if missing. ``ensure_repo_cloned`` is itself
+       lock-protected; we surface per-entry failures in the return value so
+       the cron wrapper can hard-fail when configured repos didn't land.
     2. *Pull* — for every repo currently on disk (whether from the config
-       or added ad-hoc by ``add_shared_repo``), ``git pull --ff-only``.
+       or added ad-hoc by ``add_shared_repo``), ``git pull --ff-only`` on
+       its default branch. Concurrent removes mid-pull are tolerated.
 
-    Returns:
-        Dict mapping repo name to pull success status. Repos that were
-        freshly cloned in phase 1 also get pulled in phase 2 (no-op fast
-        path) so the return dict always reflects every repo on disk.
+    Returns a dict with three keys:
+
+    - ``pulls``: ``{name: bool}`` — pull success for every repo on disk.
+    - ``clone_failures``: ``{name: error_message}`` — configured entries
+      that phase-1 failed to clone. Empty on success.
+    - ``config_unparseable``: ``bool`` — True iff shared_repos.yaml exists
+      but couldn't be parsed (operator must fix the yaml).
+
+    Callers (notably ``pull_repos.py``) should treat a non-empty
+    ``clone_failures`` or ``config_unparseable=True`` as a hard failure
+    that the systemd timer surfaces in its journal.
     """
-    results: dict[str, bool] = {}
+    config_unparseable = not is_shared_repos_config_parseable()
+    clone_failures: dict[str, str] = {}
 
     # Phase 1: ensure every configured repo is cloned.
     for entry in load_shared_repos_config():
         clone_result = ensure_repo_cloned(entry["name"], entry["url"])
         if clone_result["status"] == "error":
+            clone_failures[entry["name"]] = clone_result.get("error", "")
             logger.warning(
                 f"ensure_repo_cloned failed name={entry['name']!r}",
                 name=entry["name"],
@@ -760,25 +991,57 @@ def pull_all_repos() -> dict[str, bool]:
             )
 
     # Phase 2: pull every repo present on disk.
+    pulls: dict[str, bool] = {}
     if not os.path.isdir(AHS_REPOS_DIR):
         logger.warning(
             f"Repos directory not found path={AHS_REPOS_DIR!r}",
             path=AHS_REPOS_DIR,
         )
-        return results
+        return {
+            "pulls": pulls,
+            "clone_failures": clone_failures,
+            "config_unparseable": config_unparseable,
+        }
 
-    for entry_name in sorted(os.listdir(AHS_REPOS_DIR)):
+    try:
+        listing = sorted(os.listdir(AHS_REPOS_DIR))
+    except OSError as e:
+        logger.error(
+            f"Failed to list AHS_REPOS_DIR path={AHS_REPOS_DIR!r}",
+            path=AHS_REPOS_DIR,
+            error=str(e),
+        )
+        return {
+            "pulls": pulls,
+            "clone_failures": clone_failures,
+            "config_unparseable": config_unparseable,
+        }
+
+    for entry_name in listing:
         full_path = os.path.join(AHS_REPOS_DIR, entry_name)
-        if os.path.isdir(full_path) and os.path.isdir(os.path.join(full_path, ".git")):
-            results[entry_name] = pull_repo(full_path)
+        # Re-check existence inside the loop — a concurrent remove between
+        # the listdir snapshot and this iteration is fine, just skip.
+        try:
+            if not os.path.isdir(full_path) or not os.path.isdir(os.path.join(full_path, ".git")):
+                continue
+        except OSError:
+            continue
+        pulls[entry_name] = pull_repo(full_path)
 
-    ok = sum(1 for v in results.values() if v)
-    fail = len(results) - ok
+    ok = sum(1 for v in pulls.values() if v)
+    fail = len(pulls) - ok
     logger.info(
-        f"Pulled all repos: {ok} ok, {fail} failed (repos={list(results.keys())})",
-        results=results,
+        f"Pulled all repos: {ok} ok, {fail} failed (repos={list(pulls.keys())}); "
+        f"clone_failures={list(clone_failures.keys())}; config_unparseable={config_unparseable}",
+        pulls=pulls,
+        clone_failures=clone_failures,
+        config_unparseable=config_unparseable,
     )
-    return results
+    return {
+        "pulls": pulls,
+        "clone_failures": clone_failures,
+        "config_unparseable": config_unparseable,
+    }
 
 
 def parse_pr_url(pr_url: str) -> tuple[str, str]:

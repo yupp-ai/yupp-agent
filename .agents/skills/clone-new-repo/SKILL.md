@@ -36,6 +36,27 @@ Anything else (SSH `git@…`, GitLab, BitBucket) is rejected by `add_shared_repo
 If the user asks to clone a private non-yupp-ai repo, decline up front and
 explain — don't attempt the clone.
 
+## Trigger requirements
+
+The full skill (clone + ask-to-persist + open PR) requires an **interactive**
+session — `AskUserQuestion` is only available on Slack / CLI / interactive
+triggers. If you're running from a `cron`-triggered or agent-to-agent (A2A)
+session, follow this short-circuit instead of using `AskUserQuestion`:
+
+- **`cron` trigger:** clone via `add_shared_repo`, then *automatically*
+  proceed to step 5 (open a PR adding the entry) — cron triggers are
+  generally intended to make persistent changes, and there's no human
+  available to answer the prompt.
+- **A2A trigger:** clone via `add_shared_repo` and stop. Persisting via PR
+  needs human review/approval, which an A2A peer can't give. Surface the
+  clone result back to the calling agent and let them decide.
+- **Unknown / other trigger:** clone-only, same as A2A. Be explicit in
+  your response that the persistence step was skipped because no
+  interactive prompt is available.
+
+Read the session trigger from the system prompt's session context block
+(it lists the trigger type near the top).
+
 ## Steps
 
 ### 1. Validate the URL
@@ -45,10 +66,10 @@ If it doesn't, tell the user the accepted shapes and stop.
 
 ### 2. Clone on this VM
 
-Call `add_shared_repo`:
+Call `add_shared_repo`, passing your session_id (required, audit-logged):
 
 ```
-add_shared_repo(url="https://github.com/wangtian24/pr-status-check")
+add_shared_repo(session_id="<your session id>", url="https://github.com/wangtian24/pr-status-check")
 ```
 
 Possible results:
@@ -58,7 +79,7 @@ Possible results:
   to step 4 (still ask about persisting in case the YAML is missing it).
 - `{"status": "error", "error": "..."}` — surface the error and stop. Common
   causes: private repo outside `yupp-ai/*`, network error, name collision
-  with a non-git directory.
+  with a non-git directory, free disk space below the 2 GiB quota.
 
 ### 3. Confirm the clone
 
@@ -68,6 +89,10 @@ Tell the user:
 > every session starting from the next one.
 
 ### 4. Ask whether to persist for future VMs
+
+**Interactive triggers only** (Slack / CLI / interactive). For `cron` /
+A2A / unknown triggers, follow the "Trigger requirements" section above
+and skip the prompt.
 
 Use `AskUserQuestion`:
 
@@ -165,4 +190,28 @@ Steps:
 1. Decline: "The VM's GitHub App is installed on yupp-ai only — private
    repos under some-other-org can't be cloned. Move the repo to yupp-ai
    or make it public and retry."
+```
+
+### Cron trigger (no interactive prompt available)
+
+```
+Cron: /clone-new-repo https://github.com/wangtian24/some-tool
+
+Steps:
+1. add_shared_repo(session_id=..., url=...) → cloned
+2. Skip AskUserQuestion (cron-triggered, no human available).
+3. Auto-proceed to step 5: request_write_access + edit yaml + create_pr.
+4. Report the PR URL to whatever channel the cron output goes to.
+```
+
+### A2A trigger (clone-only)
+
+```
+A2A peer: please /clone-new-repo https://github.com/wangtian24/some-tool
+
+Steps:
+1. add_shared_repo(session_id=..., url=...) → cloned
+2. Skip AskUserQuestion and skip PR step — A2A peers can't authorize
+   persistent changes.
+3. Return clone result to caller and note that persistence was skipped.
 ```
