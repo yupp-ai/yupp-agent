@@ -5,25 +5,18 @@ import { cache } from 'react'
 import type { AuthenticatedSession, Session, SessionUser } from './auth-types'
 import { canAccessCouch } from './authorization'
 import { isLocalDevelopment } from './environments'
-import {
-  type SessionCookiePayload,
-  unsafeGetSessionFromCookie,
-} from './session-cookie'
+import { type SessionCookiePayload, unsafeGetSessionFromCookie } from './session-cookie'
 
-/**
- * Dev-only auth bypass for automated testing. Set in .env.local:
- *   COUCH_DEV_BYPASS_AUTH_EMAIL=test@example.com
- *   COUCH_DEV_BYPASS_AUTH_USER_ID=00000000-0000-0000-0000-000000000000
- * Only honored when isLocalDevelopment === true. Never run with this set
- * in production.
- */
+// Dev-only auth bypass. Set in .env.local:
+//   COUCH_DEV_BYPASS_AUTH_EMAIL=test@example.com
+//   COUCH_DEV_BYPASS_AUTH_USER_ID=00000000-0000-0000-0000-000000000000
+// Only honored when NODE_ENV=development.
 function tryDevBypass(): InternalAuthenticatedSession | null {
   if (!isLocalDevelopment) return null
   const email = process.env.COUCH_DEV_BYPASS_AUTH_EMAIL
   if (!email) return null
   const userId =
-    process.env.COUCH_DEV_BYPASS_AUTH_USER_ID ??
-    '00000000-0000-0000-0000-000000000000'
+    process.env.COUCH_DEV_BYPASS_AUTH_USER_ID ?? '00000000-0000-0000-0000-000000000000'
   return {
     status: 'authenticated',
     user: { id: userId, email, firstName: 'Test' },
@@ -39,10 +32,7 @@ export type InternalAuthenticatedSession = {
 
 export type InternalSession =
   | InternalAuthenticatedSession
-  | {
-      status: 'unauthenticated'
-      user?: undefined
-    }
+  | { status: 'unauthenticated'; user?: undefined }
 
 function createSessionUser(input: {
   userId: string

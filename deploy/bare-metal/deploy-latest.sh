@@ -21,17 +21,20 @@ set -euo pipefail
 INSTALL_DIR="${INSTALL_DIR:-/opt/yupp-agent}"
 DATA_DIR="${DATA_DIR:-/data/ahs}"
 APP_USER="${APP_USER:-ahs}"
-# NOTE: `couch` (apps/couch) is intentionally NOT deployed yet — the app is
-# pre-release and the prod box has no `bun` installed. Re-enable by adding
-# `couch` back to SERVICES and `apps/couch` back to BUN_APPS once Bun is
-# installed system-wide on ahs-mono-prod and the app is ready to ship.
+# NOTE: `couch` (apps/couch) is intentionally NOT deployed yet — the app
+# is npm/Node-based; add `couch` to SERVICES and `apps/couch` to NPM_APPS
+# below once Node + npm are installed system-wide on ahs-mono-prod and the
+# app is ready to ship.
 SERVICES=(ahs-mono ahs-streamlit artifact-viewer)
 # Sub-apps with their own pyproject / venv. Each gets ``pip install -e`` on
 # every deploy so code changes take effect without a separate step.
 SUBAPPS=(apps/artifact-viewer)
-# Bun apps. Each gets ``bun install --production && bun run build`` on every
-# deploy so code changes take effect without a separate step.
+# Bun apps. Each gets ``bun install --production && bun run build`` on
+# every deploy. (Currently unused — Couch was migrated to Node + npm.)
 BUN_APPS=()
+# Node + npm apps. Each gets ``npm ci --omit=dev && npm run build`` on
+# every deploy.
+NPM_APPS=()
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 info() { echo -e "${GREEN}[deploy]${NC} $*"; }
@@ -81,7 +84,7 @@ for subapp in "${SUBAPPS[@]}"; do
     sudo -u "$APP_USER" "${app_venv}/bin/pip" install --quiet -e "$app_dir"
 done
 
-# --- 2c. Sync Bun apps (couch, etc.) ---------------------------------------
+# --- 2c. Sync Bun apps ------------------------------------------------------
 for bunapp in "${BUN_APPS[@]}"; do
     app_dir="${INSTALL_DIR}/${bunapp}"
     if [[ ! -d "$app_dir" ]]; then
@@ -100,6 +103,25 @@ for bunapp in "${BUN_APPS[@]}"; do
     " || die "bun install/build for ${bunapp} failed."
 done
 
+# --- 2d. Sync Node/npm apps (couch, etc.) ----------------------------------
+for npmapp in "${NPM_APPS[@]}"; do
+    app_dir="${INSTALL_DIR}/${npmapp}"
+    if [[ ! -d "$app_dir" ]]; then
+        warn "Node app ${npmapp} not present in repo — skipping."
+        continue
+    fi
+    if ! command -v npm >/dev/null 2>&1; then
+        die "npm not found on PATH; install Node + npm system-wide before deploying ${npmapp}."
+    fi
+    info "npm ci + build for ${npmapp} (cheap if nothing changed)…"
+    sudo -u "$APP_USER" bash -c "
+        set -euo pipefail
+        cd '$app_dir'
+        npm ci --omit=dev
+        npm run build
+    " || die "npm ci/build for ${npmapp} failed."
+done
+
 # --- 3. Sync systemd unit files --------------------------------------------
 # Unit files can live under deploy/systemd/ (main services) OR
 # apps/*/deploy/*.service (sub-apps and Bun apps). Each service name maps
@@ -111,7 +133,7 @@ unit_source_for() {
     if [[ -f "$main" ]]; then
         echo "$main"; return 0
     fi
-    for subapp in "${SUBAPPS[@]}" "${BUN_APPS[@]}"; do
+    for subapp in "${SUBAPPS[@]}" "${BUN_APPS[@]}" "${NPM_APPS[@]}"; do
         local alt="${INSTALL_DIR}/${subapp}/deploy/${unit}.service"
         if [[ -f "$alt" ]]; then
             echo "$alt"; return 0

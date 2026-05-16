@@ -10,15 +10,9 @@ export async function GET(request: NextRequest) {
       '/api/authentication/google/callback'
     )
 
-    return NextResponse.redirect(
-      new URL(
-        getGoogleAuthUrl({
-          state: oauthState,
-        })
-      )
-    )
+    return NextResponse.redirect(new URL(getGoogleAuthUrl({ state: oauthState })))
   } catch {
-    return NextResponse.redirect(new URL('/?error=authentication', request.url))
+    return NextResponse.redirect(new URL('/login?error=authentication', request.url))
   }
 }
 
@@ -31,16 +25,9 @@ export async function POST(request: NextRequest) {
     )
 
     return NextResponse.json({
-      redirectUrl: getGoogleAuthUrl({
-        state: oauthState,
-      }),
+      redirectUrl: getGoogleAuthUrl({ state: oauthState }),
     })
   } catch {
-    return NextResponse.json(
-      {
-        error: 'Internal Server Error',
-      },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
 }

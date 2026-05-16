@@ -11,7 +11,7 @@ WorkingDirectory=/opt/yupp-agent/apps/couch
 EnvironmentFile=/data/ahs/.env
 Environment=NODE_ENV=production
 Environment=PORT=3010
-ExecStart=/usr/local/bin/bun run start
+ExecStart=/usr/bin/env npm run start
 Restart=always
 RestartSec=5
 
