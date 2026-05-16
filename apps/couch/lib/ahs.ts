@@ -42,8 +42,11 @@ import type {
   TaskListResponse,
 } from "./types";
 
-const SERVER_BASE = (process.env.AHS_BASE_URL ?? "http://localhost:8090").replace(/\/$/, "");
-const SERVER_KEY = process.env.AHS_API_KEY ?? "";
+// Env names use a COUCH_ prefix so they don't collide with other apps that
+// share /data/ahs/.env (artifact-viewer uses VIEWER_*, etc.). Bare names
+// are kept as a fallback for local dev and tests.
+const SERVER_BASE = (process.env.COUCH_AHS_BASE_URL ?? process.env.AHS_BASE_URL ?? "http://localhost:8090").replace(/\/$/, "");
+const SERVER_KEY = process.env.COUCH_AHS_API_KEY ?? process.env.AHS_API_KEY ?? "";
 const IS_BROWSER = typeof window !== "undefined";
 
 export class AhsError extends Error {

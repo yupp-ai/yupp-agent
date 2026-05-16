@@ -13,8 +13,10 @@ Production: `https://couch.agcouch.com`.
 
 REST + WebSocket against AHS only. Auth + key handling:
 
-- `AHS_BASE_URL`, `AHS_API_KEY` are server-side only. The browser never
-  sees `AHS_API_KEY`.
+- AHS connection env (read with `COUCH_*` taking priority over the bare
+  name): `COUCH_AHS_BASE_URL` || `AHS_BASE_URL`, `COUCH_AHS_API_KEY` ||
+  `AHS_API_KEY`. Both forms are server-side only — the browser never sees
+  the API key.
 - Server components call AHS directly via `lib/ahs.ts` (raw `fetch` with
   `X-API-Key` header).
 - Browser HTTP calls hit the proxy at `/api/ahs/[...path]/route.ts`,
@@ -26,6 +28,12 @@ REST + WebSocket against AHS only. Auth + key handling:
 - Couch auth is Google OAuth → signed session cookie. `middleware.ts`
   gates everything except `/login`, `/api/authentication/*`,
   `/api/healthz`, and `/_next/*`.
+- OAuth + cookie env (`COUCH_*` preferred, bare name fallback):
+  `COUCH_GOOGLE_CLIENT_ID` || `GOOGLE_CLIENT_ID`,
+  `COUCH_GOOGLE_CLIENT_SECRET` || `GOOGLE_CLIENT_SECRET`,
+  `COUCH_AUTH_SECRET` || `AUTH_SECRET`,
+  `COUCH_OAUTH_REDIRECT_URL` || `OAUTH_REDIRECT_HOST` (origin only;
+  callback path is appended by the code).
 
 ## Common commands
 

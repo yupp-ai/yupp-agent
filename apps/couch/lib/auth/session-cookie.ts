@@ -93,9 +93,9 @@ function decodeBase64Url(value: string): Buffer {
 }
 
 function cookieSecret(): string {
-  const secret = process.env.AUTH_SECRET
+  const secret = process.env.COUCH_AUTH_SECRET ?? process.env.AUTH_SECRET
   if (!secret) {
-    throw new Error('AUTH_SECRET is not set')
+    throw new Error('COUCH_AUTH_SECRET (or AUTH_SECRET) is not set')
   }
   return secret
 }
