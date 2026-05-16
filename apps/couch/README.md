@@ -1,34 +1,85 @@
-# Couch
+# couch
 
-Devin-style AHS web frontend for end users. Lean Next.js 16 app on port
-3010. No admin chrome — that lives in `apps/war-room/`.
+Next.js 15 (App Router) front-end for AHS. Runs standalone on port 3010.
+Production: `https://couch.agcouch.com`.
 
-## Local dev
-
-```bash
-~/scripts/ahs-tunnel.sh             # forwards :8090 to ahs-mono-prod
-cp .env.example .env.local          # then fill in AHS_API_KEY + GOOGLE_OAUTH_*
-bun install
-bun run dev                         # http://localhost:3010
-```
+Replaces the previous `apps/couch` (Bun + Next 16 + heavy tRPC stack) and
+`apps/war-room` (admin UI) — both in one ported app with all admin pages
+included.
 
 ## Stack
 
-- Next.js 16 App Router, React 19, Bun
-- Tailwind v4 + shadcn/ui (`base-maia` style, light theme)
-- TanStack React Query, Zod, `@yupp/agents-ui`, `@yupp/agents-protocol`
-- Auth, AHS REST client, and WebSocket hook copied from `apps/war-room`
+- Next.js 15.1, React 19, Node + npm
+- Vanilla server components and client components (no shadcn / no tRPC)
+- React-markdown + remark-gfm for chat rendering
+- zod for input validation
+- @playwright/test for the smoke suite
 
-## What's wired
+## Setup
 
-- Sessions list (mine_only) in left rail with Pin / Rename (localStorage)
-- Landing prompt with agent dropdown (last selection persisted)
-- Session view: chat (history + WS live items), follow-up input, status pill
-- Right artifact panel with tabs — TEXT (markdown) and PR (link) rendered
-  inline; other types fall back to a download CTA
-- Session …-menu: Copy ID, Stop, Toggle tool calls, Rename, Pin
-- Google OAuth — verified Google account + present in AHS users DB (via `resolveUserByEmail`)
+```bash
+cd apps/couch
+cp .env.example .env.local
+# Fill in AHS_BASE_URL, AHS_API_KEY, GOOGLE_CLIENT_ID/SECRET, AUTH_SECRET.
+npm install
+npm run dev          # http://localhost:3010
+```
 
-See `AGENTS.md` for backend contract and conventions. Design and roadmap:
-`docs/frontend/2026-04-24-couch-ahs-frontend-prd.md`. Plan:
-`docs/frontend/2026-04-24-couch-ahs-frontend-plan.md`.
+For local development against a remote AHS, run `~/scripts/ahs-tunnel.sh`
+first to forward `localhost:8090` to `ahs-mono-prod`.
+
+To skip the Google login flow locally (e.g., for Playwright):
+
+```bash
+# .env.local
+COUCH_DEV_BYPASS_AUTH_EMAIL=tian.wang@angellist.com
+COUCH_DEV_BYPASS_AUTH_USER_ID=<your-ahs-user-id>
+```
+
+## Backend contract
+
+- All AHS traffic flows through the Couch server. The AHS API key
+  (`AHS_API_KEY`) lives only on the server.
+- Server components call AHS directly via `lib/ahs.ts`.
+- Browser HTTP traffic hits the proxy at `/api/ahs/[...path]`, which
+  verifies the session cookie and injects `X-API-Key` server-side.
+- Browser WebSocket connects to `/api/ahs/session/{id}/ws`; the
+  `beforeFiles` rewrite in `next.config.mjs` forwards the upgrade to AHS
+  with `api_key=<server env>` appended. Browser never sees the key.
+- Auth: Google OAuth (server-side); session is a signed cookie. Routes
+  are gated by `middleware.ts`.
+
+## Common commands
+
+```bash
+npm run dev          # port 3010
+npm run build        # production build
+npm run typecheck    # tsc --noEmit
+npm run lint         # next lint
+npm run test:e2e     # playwright smoke tests
+```
+
+## Tests
+
+`tests/e2e/smoke.spec.ts` covers the auth gate without needing AHS:
+- `/` redirects to `/login`
+- `/login` renders the Sign in button
+- protected routes preserve `?redirectTo=`
+- the logo asset loads
+
+Run via `npx playwright test`. Playwright spins up `npm run dev` itself
+with stub env vars (see `playwright.config.ts`).
+
+## Deployment
+
+The systemd unit at `deploy/couch.service` expects:
+- `npm` on PATH
+- `/data/ahs/.env` with `AHS_BASE_URL`, `AHS_API_KEY`,
+  `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `AUTH_SECRET`,
+  `OAUTH_REDIRECT_HOST`.
+
+When ready to enable on `ahs-mono-prod`, add `couch` to `SERVICES` and
+`apps/couch` to `NPM_APPS` in `deploy/bare-metal/deploy-latest.sh`, and
+ensure Node + npm are installed system-wide on the VM.
+
+Domain: `couch.agcouch.com` (Cloudflare → monolith VM → :3010).

@@ -1,4 +1,3 @@
-const YUPP_PREVIEW_HOST_SUFFIX = '.preview.yuppster.ai'
 const LOCALHOST_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]'])
 
 function parseOrigin(origin: string): URL | null {
@@ -28,12 +27,6 @@ function isLocalhostOrigin(url: URL): boolean {
   return LOCALHOST_HOSTNAMES.has(url.hostname)
 }
 
-function isPreviewOrigin(url: URL): boolean {
-  return (
-    url.protocol === 'https:' && url.hostname.endsWith(YUPP_PREVIEW_HOST_SUFFIX)
-  )
-}
-
 export function isAllowedOauthInitiatorHost(
   oauthInitiatorHost: string,
   currentHost: string
@@ -54,16 +47,10 @@ export function isAllowedOauthInitiatorHost(
     return true
   }
 
-  const trustedOrigins = configuredUrl
-    ? [currentUrl, configuredUrl]
-    : [currentUrl]
+  const trustedOrigins = configuredUrl ? [currentUrl, configuredUrl] : [currentUrl]
 
   if (isLocalhostOrigin(candidateUrl)) {
     return trustedOrigins.some(isLocalhostOrigin)
-  }
-
-  if (isPreviewOrigin(candidateUrl)) {
-    return trustedOrigins.some(isPreviewOrigin)
   }
 
   return false

@@ -1,6 +1,6 @@
 import { unstable_rethrow } from 'next/navigation'
 import { type NextRequest, NextResponse } from 'next/server'
-import { isAhsHttpError, resolveUserByEmail } from '@/lib/ahs/server/client'
+import { AhsError, resolveUser } from '@/lib/ahs'
 import { canAccessCouchDuringLogin } from '@/lib/auth/authorization'
 import {
   decodeAndValidateOauthState,
@@ -31,13 +31,13 @@ function getGoogleFirstName(input: {
 }
 
 function redirectToError(request: NextRequest, redirectTo?: string) {
-  const url = new URL(redirectTo || '/', request.url)
+  const url = new URL(redirectTo || '/login', request.url)
   url.searchParams.set('error', 'authentication')
   return NextResponse.redirect(url)
 }
 
 function redirectToUnauthorized(request: NextRequest) {
-  return NextResponse.redirect(new URL('/?error=unauthorized', request.url))
+  return NextResponse.redirect(new URL('/login?error=unauthorized', request.url))
 }
 
 export async function GET(request: NextRequest) {
@@ -79,23 +79,24 @@ export async function GET(request: NextRequest) {
       return redirectToUnauthorized(request)
     }
 
-    let resolvedUser: Awaited<ReturnType<typeof resolveUserByEmail>>
-    try {
-      resolvedUser = await resolveUserByEmail(userInfo.email)
-    } catch (error) {
-      if (isAhsHttpError(error, 400) || isAhsHttpError(error, 404)) {
+    // Resolve the Google email to an AHS user_id. Use the server-side
+    // ahs client (no X-API-Key in browser).
+    const resolved = await resolveUser(userInfo.email)
+    if (!resolved.ok) {
+      // 400/404 = user not registered with AHS → unauthorized banner.
+      // Anything else = treat as an auth error.
+      if (resolved.status === 400 || resolved.status === 404) {
         return redirectToUnauthorized(request)
       }
-      throw error
+      return redirectToError(request, oauthState.redirectTo)
     }
 
     const cookieInfo = await createCookieInfo(
       createSessionCookiePayload({
-        userId: resolvedUser.user_id,
-        email: resolvedUser.email,
+        userId: resolved.data.user_id,
+        email: resolved.data.email,
         firstName: getGoogleFirstName(userInfo),
-      }),
-      request.nextUrl.hostname
+      })
     )
 
     const redirectUrl = new URL(oauthState.redirectTo, request.url)
@@ -104,6 +105,8 @@ export async function GET(request: NextRequest) {
     return response
   } catch (error) {
     unstable_rethrow(error)
+    // Avoid unused-var warning while keeping the rethrow guard.
+    void (error as Error)
     return redirectToError(request)
   }
 }

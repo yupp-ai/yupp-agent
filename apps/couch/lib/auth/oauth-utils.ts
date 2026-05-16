@@ -66,36 +66,21 @@ export function decodeAndValidateOauthState(
   csrfCookieName: string,
   callbackPath: string
 ):
-  | {
-      isValid: true
-      redirectTo: string
-      additionalData?: string
-    }
-  | {
-      isValid: false
-      redirectTo?: string
-      additionalData?: string
-    } {
+  | { isValid: true; redirectTo: string; additionalData?: string }
+  | { isValid: false; redirectTo?: string; additionalData?: string } {
   let decodedState: z.infer<typeof oAuthStateSchema> | undefined
 
   try {
-    decodedState = oAuthStateSchema.parse(
-      JSON.parse(decodeBase64Url(encodedState))
-    )
+    decodedState = oAuthStateSchema.parse(JSON.parse(decodeBase64Url(encodedState)))
   } catch {
     return { isValid: false }
   }
 
   const currentHost = request.nextUrl.origin
-  if (
-    !isAllowedOauthInitiatorHost(decodedState.oauthInitiatorHost, currentHost)
-  ) {
+  if (!isAllowedOauthInitiatorHost(decodedState.oauthInitiatorHost, currentHost)) {
     return {
       isValid: false,
-      redirectTo: normalizeOauthRedirectPath(
-        decodedState.redirectTo,
-        currentHost
-      ),
+      redirectTo: normalizeOauthRedirectPath(decodedState.redirectTo, currentHost),
       additionalData: decodedState.additionalData,
     }
   }
@@ -107,14 +92,9 @@ export function decodeAndValidateOauthState(
     redirect(redirectUrl.toString())
   }
 
-  const redirectTo = normalizeOauthRedirectPath(
-    decodedState.redirectTo,
-    oauthInitiatorHost
-  )
+  const redirectTo = normalizeOauthRedirectPath(decodedState.redirectTo, oauthInitiatorHost)
 
-  const storedCsrfToken = request.cookies.get(
-    getSecureCookieName(csrfCookieName)
-  )?.value
+  const storedCsrfToken = request.cookies.get(getSecureCookieName(csrfCookieName))?.value
 
   if (!storedCsrfToken || storedCsrfToken !== decodedState.csrf) {
     return {

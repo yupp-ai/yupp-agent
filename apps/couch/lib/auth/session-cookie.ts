@@ -4,15 +4,13 @@ import { createHmac, timingSafeEqual } from 'node:crypto'
 import type { cookies } from 'next/headers'
 import type { NextResponse } from 'next/server'
 import { z } from 'zod'
-import { isLocalDevelopment, isProduction } from './environments'
+import { isLocalDevelopment } from './environments'
+import { SESSION_COOKIE_NAME } from './session-cookie-name'
+
+export { SESSION_COOKIE_NAME }
 
 const useSecureCookie = !isLocalDevelopment
-const nonProductionSuffix = isProduction ? '' : '-non-prod'
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7
-
-export const SESSION_COOKIE_NAME = useSecureCookie
-  ? `__Secure-yupp.session-token${nonProductionSuffix}`
-  : `yupp.session-token${nonProductionSuffix}`
 
 const SessionCookiePayloadSchema = z.object({
   userId: z.string(),
@@ -29,11 +27,7 @@ function getSessionExpirationDate(now = new Date()) {
 }
 
 export function createSessionCookiePayload(
-  input: {
-    userId: string
-    email: string
-    firstName?: string
-  },
+  input: { userId: string; email: string; firstName?: string },
   expiresAt = getSessionExpirationDate()
 ): SessionCookiePayload {
   const firstName = input.firstName?.trim() || undefined
@@ -50,17 +44,13 @@ export function createSessionCookiePayload(
 export const deleteSessionCookie = (
   cookieStoreLike:
     | Awaited<ReturnType<typeof cookies>>
-    | ReturnType<typeof NextResponse.redirect>['cookies'],
-  hostname?: string
+    | ReturnType<typeof NextResponse.redirect>['cookies']
 ) => {
-  const cookieDomain = getParentDomain(hostname)
-
   cookieStoreLike.delete({
     name: SESSION_COOKIE_NAME,
     httpOnly: true,
     secure: useSecureCookie,
     sameSite: 'lax',
-    ...(cookieDomain && !isProduction ? { domain: cookieDomain } : {}),
   })
 }
 
@@ -80,11 +70,7 @@ export async function unsafeGetSessionFromCookie(cookieStoreLike: {
   }
 }
 
-export async function createCookieInfo(
-  payload: SessionCookiePayload,
-  hostname?: string
-) {
-  const cookieDomain = getParentDomain(hostname)
+export async function createCookieInfo(payload: SessionCookiePayload) {
   return {
     name: SESSION_COOKIE_NAME,
     value: signCookiePayload(payload),
@@ -94,24 +80,8 @@ export async function createCookieInfo(
       secure: useSecureCookie,
       path: '/',
       sameSite: 'lax' as const,
-      ...(cookieDomain && !isProduction ? { domain: cookieDomain } : {}),
     },
   }
-}
-
-const YUPP_PREVIEW_DOMAIN = '.preview.yuppster.ai'
-
-function getParentDomain(hostname?: string): string | undefined {
-  if (isProduction) {
-    return undefined
-  }
-  if (isLocalDevelopment || !hostname) {
-    return undefined
-  }
-  if (hostname.includes(YUPP_PREVIEW_DOMAIN)) {
-    return YUPP_PREVIEW_DOMAIN
-  }
-  return undefined
 }
 
 function encodeBase64Url(value: Buffer | string): string {
@@ -145,8 +115,7 @@ function signCookiePayload(payload: SessionCookiePayload): string {
 }
 
 function verifyCookiePayload(cookieValue: string): unknown {
-  const [encodedHeader, encodedPayload, encodedSignature] =
-    cookieValue.split('.')
+  const [encodedHeader, encodedPayload, encodedSignature] = cookieValue.split('.')
   if (!encodedHeader || !encodedPayload || !encodedSignature) {
     throw new Error('Invalid cookie')
   }
@@ -162,9 +131,7 @@ function verifyCookiePayload(cookieValue: string): unknown {
     throw new Error('Invalid cookie signature')
   }
 
-  const header = JSON.parse(
-    decodeBase64Url(encodedHeader).toString('utf8')
-  ) as {
+  const header = JSON.parse(decodeBase64Url(encodedHeader).toString('utf8')) as {
     alg?: string
   }
   if (header.alg !== 'HS256') {
