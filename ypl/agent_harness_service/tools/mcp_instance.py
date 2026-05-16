@@ -18,6 +18,7 @@ from sqlmodel import select
 
 from ypl.agent_harness_service.common.constants import AHS_LIT_BASE_URL
 from ypl.backend.db import get_async_session
+from ypl.backend.utils.slack_utils import create_slack_link
 from ypl.db.agent_harness import AgentSession, AgentTask
 from ypl.structured_logger import get_logger
 
@@ -195,11 +196,6 @@ async def _resolve_pr_attribution(session_id: str) -> str | None:
 
     Returns None only when the session row cannot be located.
     """
-    # Import lazily to avoid a circular import: slack_utils is broadly used,
-    # and pulling it at module load would tangle the import graph for
-    # mcp_instance (a Layer-0 helper).
-    from ypl.backend.utils.slack_utils import create_slack_link
-
     try:
         sid = _uuid.UUID(session_id)
     except ValueError:
