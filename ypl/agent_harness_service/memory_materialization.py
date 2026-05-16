@@ -20,7 +20,6 @@ working copy"* for the rationale.
 
 from __future__ import annotations
 import os
-import re
 import tempfile
 
 from ypl.agent_harness_service.artifact_store import (
@@ -28,6 +27,7 @@ from ypl.agent_harness_service.artifact_store import (
     list_artifacts,
     read_artifact_content,
 )
+from ypl.agent_harness_service.memory_slug import is_safe_slug
 from ypl.agent_harness_service.memory_store import MemoryCallerContext
 from ypl.db.agent_harness import AgentArtifactType
 from ypl.structured_logger import get_logger
@@ -41,11 +41,6 @@ MEMORY_ROOT = "agent_memories"
 # in :data:`ypl.agent_harness_service.memory_store.VALID_MEMORY_SCOPES`.
 SCOPE_SUBDIRS: tuple[str, str, str] = ("topic", "user", "agent")
 
-# Slugs become filenames. Allow nested folders (``foo/bar``) but reject
-# anything that could escape the memory root via path traversal or hidden
-# filenames.
-_SLUG_FILENAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_./-]{0,254}$")
-
 
 # ---------------------------------------------------------------------------
 # Path / safety helpers
@@ -57,12 +52,12 @@ def _safe_relpath_for(scope: str | None, slug: str | None) -> str | None:
 
     Rejects scopes outside the canonical three, empty / non-conforming
     slugs, and any slug that would escape the memory root via ``..``.
+    Slug validation is delegated to
+    :func:`ypl.agent_harness_service.memory_slug.is_safe_slug` so the
+    server-side materializer and the ``ahs-memory`` CLI share one rule
+    set.
     """
-    if scope not in SCOPE_SUBDIRS or not slug:
-        return None
-    if not _SLUG_FILENAME_RE.match(slug):
-        return None
-    if any(part in ("", "..", ".") for part in slug.split("/")):
+    if scope not in SCOPE_SUBDIRS or not slug or not is_safe_slug(slug):
         return None
     return os.path.join(scope, f"{slug}.md")
 
