@@ -12,6 +12,9 @@ Handles:
 import os
 import re
 import subprocess
+from typing import Any
+
+import yaml
 
 from ypl.agent_harness_service.common.constants import AHS_REPOS_DIR, AHS_SESSIONS_DIR, SESSION_INFRA_DIRS
 from ypl.structured_logger import get_logger
@@ -22,6 +25,22 @@ _SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 
 # Regex to split branch names into word-like segments
 _BRANCH_SLUG_SPLIT = re.compile(r"[-_/]+")
+
+# Accepted clone URL shape — https GitHub URLs only. SSH origins are rewritten
+# by _normalize_origin_to_https() at push time, but for new clones we require
+# https up-front so the GitHub App credential helper handles auth.
+_GITHUB_URL_RE = re.compile(
+    r"^https://github\.com/(?P<owner>[A-Za-z0-9][A-Za-z0-9-]{0,38})/(?P<name>[A-Za-z0-9][A-Za-z0-9._-]{0,99}?)(?:\.git)?/?$"
+)
+
+# Path to the shared_repos.yaml config that lists which repos should exist
+# on every VM. Resolved relative to this module so it works in both the
+# in-tree dev layout and the deployed /opt/yupp-agent layout.
+_DEPLOY_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "deploy"))
+SHARED_REPOS_CONFIG_PATH = os.environ.get(
+    "AHS_SHARED_REPOS_CONFIG",
+    os.path.join(_DEPLOY_DIR, "shared_repos.yaml"),
+)
 
 
 def _branch_to_dir_suffix(branch: str) -> str:
@@ -483,14 +502,264 @@ def pull_repo(repo_path: str) -> bool:
         return False
 
 
+# ---------------------------------------------------------------------------
+# Shared repo config — declarative list of "what should be on every VM"
+# ---------------------------------------------------------------------------
+
+
+def _parse_github_url(url: str) -> tuple[str, str]:
+    """Parse a GitHub https clone URL into (owner, name).
+
+    Raises ValueError if the URL doesn't look like an https GitHub URL.
+    """
+    m = _GITHUB_URL_RE.match(url.strip())
+    if not m:
+        raise ValueError(f"Invalid GitHub URL: {url!r}. Expected https://github.com/{{owner}}/{{repo}}[.git]")
+    return m.group("owner"), m.group("name")
+
+
+def repo_name_from_url(url: str) -> str:
+    """Derive a directory name (the repo slug) from a clone URL."""
+    return _parse_github_url(url)[1]
+
+
+def load_shared_repos_config() -> list[dict[str, Any]]:
+    """Load the declarative shared_repos.yaml list.
+
+    Returns an empty list if the file is missing or malformed (with a
+    warning) — the pull loop falls back to discovering whatever is already
+    on disk, so a broken config never silently strands a VM.
+
+    Each entry has at least: ``name`` (str), ``url`` (str), ``protected``
+    (bool, default False). Unknown keys are preserved but ignored.
+    """
+    if not os.path.isfile(SHARED_REPOS_CONFIG_PATH):
+        logger.warning(
+            f"shared_repos.yaml not found path={SHARED_REPOS_CONFIG_PATH!r}",
+            path=SHARED_REPOS_CONFIG_PATH,
+        )
+        return []
+    try:
+        with open(SHARED_REPOS_CONFIG_PATH) as f:
+            data = yaml.safe_load(f) or {}
+    except (OSError, yaml.YAMLError) as e:
+        logger.error(
+            f"Failed to load shared_repos.yaml path={SHARED_REPOS_CONFIG_PATH!r}",
+            path=SHARED_REPOS_CONFIG_PATH,
+            error=str(e),
+        )
+        return []
+
+    raw = data.get("repos") if isinstance(data, dict) else None
+    if not isinstance(raw, list):
+        logger.warning(
+            f"shared_repos.yaml missing 'repos' list path={SHARED_REPOS_CONFIG_PATH!r}",
+            path=SHARED_REPOS_CONFIG_PATH,
+        )
+        return []
+
+    out: list[dict[str, Any]] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name")
+        url = entry.get("url")
+        if not isinstance(name, str) or not isinstance(url, str):
+            logger.warning("Skipping shared_repos.yaml entry without name/url", entry=entry)
+            continue
+        if not _SAFE_NAME_RE.match(name):
+            logger.warning(f"Skipping shared_repos.yaml entry with unsafe name name={name!r}", name=name)
+            continue
+        out.append(
+            {
+                "name": name,
+                "url": url,
+                "protected": bool(entry.get("protected", False)),
+            }
+        )
+    return out
+
+
+def is_repo_protected(name: str) -> bool:
+    """Return True if the named repo is marked ``protected: true`` in config."""
+    for entry in load_shared_repos_config():
+        if entry["name"] == name:
+            return bool(entry.get("protected", False))
+    return False
+
+
+def ensure_repo_cloned(name: str, url: str) -> dict[str, str]:
+    """Clone the repo into AHS_REPOS_DIR if it isn't there yet.
+
+    Idempotent — if the target directory already exists and looks like a
+    git repo, returns ``{"status": "exists"}``. Otherwise runs
+    ``git clone {url} {AHS_REPOS_DIR}/{name}`` and returns
+    ``{"status": "cloned"}`` (or ``{"status": "error", "error": ...}``).
+
+    Validates ``name`` against the safe-name regex and verifies the URL
+    parses as an https GitHub URL. URL/name consistency is _not_ enforced
+    (callers may want to alias) but the URL must still be a GitHub URL so
+    the GitHub App credential helper applies.
+    """
+    if not _SAFE_NAME_RE.match(name):
+        return {"status": "error", "error": f"Invalid repo name: {name!r}"}
+    try:
+        _parse_github_url(url)
+    except ValueError as e:
+        return {"status": "error", "error": str(e)}
+
+    os.makedirs(AHS_REPOS_DIR, exist_ok=True)
+    target = os.path.join(AHS_REPOS_DIR, name)
+    if os.path.isdir(os.path.join(target, ".git")):
+        return {"status": "exists", "path": target}
+    if os.path.exists(target):
+        return {
+            "status": "error",
+            "error": f"Path exists but is not a git repo: {target!r}",
+        }
+
+    try:
+        subprocess.run(
+            ["git", "clone", url, target],
+            check=True,
+            capture_output=True,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        return {"status": "error", "error": f"git clone timed out for {url!r}"}
+    except subprocess.CalledProcessError as e:
+        stderr = e.stderr.decode("utf-8", errors="replace")[:500] if e.stderr else ""
+        logger.error(
+            f"git clone failed name={name!r} url={url!r}",
+            name=name,
+            url=url,
+            stderr=stderr,
+        )
+        return {"status": "error", "error": f"git clone failed: {stderr}"}
+
+    logger.info(f"Cloned shared repo name={name!r} url={url!r} path={target!r}", name=name, url=url, path=target)
+    return {"status": "cloned", "path": target}
+
+
+def remove_repo_from_disk(name: str) -> dict[str, str]:
+    """Remove a repo's directory from AHS_REPOS_DIR.
+
+    Refuses if the repo is marked ``protected: true`` in shared_repos.yaml
+    (e.g. yupp-agent itself, which the harness runs from).
+
+    Refuses to recurse into anything outside AHS_REPOS_DIR even if a
+    symlink points elsewhere — the symlink itself is unlinked, never
+    followed.
+    """
+    if not _SAFE_NAME_RE.match(name):
+        return {"status": "error", "error": f"Invalid repo name: {name!r}"}
+    if is_repo_protected(name):
+        return {
+            "status": "error",
+            "error": f"Repo {name!r} is protected (marked protected: true in shared_repos.yaml); refusing to remove.",
+        }
+    target = os.path.join(AHS_REPOS_DIR, name)
+    if not os.path.exists(target) and not os.path.islink(target):
+        return {"status": "missing", "path": target}
+
+    # Symlinks: unlink without following. Used in local dev where repos are
+    # often symlinks to a checkout elsewhere.
+    if os.path.islink(target):
+        try:
+            os.unlink(target)
+        except OSError as e:
+            return {"status": "error", "error": f"failed to unlink: {e}"}
+        logger.info(f"Removed shared repo (symlink) name={name!r} path={target!r}", name=name, path=target)
+        return {"status": "removed", "path": target}
+
+    # Regular directory: rm -rf, but only after we've confirmed it lives
+    # directly under the real AHS_REPOS_DIR (defense in depth against a
+    # crafted name like '..' slipping past the regex on a future change).
+    real_parent = os.path.realpath(os.path.dirname(target))
+    real_repos = os.path.realpath(AHS_REPOS_DIR)
+    if real_parent != real_repos:
+        return {
+            "status": "error",
+            "error": f"Refusing to remove path outside AHS_REPOS_DIR: {target!r}",
+        }
+    try:
+        subprocess.run(["rm", "-rf", "--", target], check=True, capture_output=True)
+    except subprocess.CalledProcessError as e:
+        stderr = e.stderr.decode("utf-8", errors="replace")[:500] if e.stderr else ""
+        return {"status": "error", "error": f"rm -rf failed: {stderr}"}
+    logger.info(f"Removed shared repo name={name!r} path={target!r}", name=name, path=target)
+    return {"status": "removed", "path": target}
+
+
+def list_repos_with_metadata() -> list[dict[str, Any]]:
+    """List shared repos with config metadata.
+
+    Merges the on-disk view (``list_repos()``) with the declarative
+    ``shared_repos.yaml`` view. Each entry has:
+
+    - ``name``: directory name under AHS_REPOS_DIR
+    - ``path``: absolute path (None if config entry isn't cloned yet)
+    - ``in_config``: True if listed in shared_repos.yaml
+    - ``protected``: True if config entry has ``protected: true``
+    - ``url``: clone URL from config (None for ad-hoc on-disk repos)
+    - ``on_disk``: True if directory exists under AHS_REPOS_DIR
+    """
+    by_name: dict[str, dict[str, Any]] = {}
+    for cfg in load_shared_repos_config():
+        by_name[cfg["name"]] = {
+            "name": cfg["name"],
+            "path": None,
+            "in_config": True,
+            "protected": cfg["protected"],
+            "url": cfg["url"],
+            "on_disk": False,
+        }
+    for disk in list_repos():
+        existing = by_name.get(disk["name"])
+        if existing is None:
+            by_name[disk["name"]] = {
+                "name": disk["name"],
+                "path": disk["path"],
+                "in_config": False,
+                "protected": False,
+                "url": None,
+                "on_disk": True,
+            }
+        else:
+            existing["path"] = disk["path"]
+            existing["on_disk"] = True
+    return sorted(by_name.values(), key=lambda e: e["name"])
+
+
 def pull_all_repos() -> dict[str, bool]:
-    """Pull all repos in the repos directory.
+    """Ensure every configured repo is cloned, then pull every on-disk repo.
+
+    The pull cycle has two phases:
+
+    1. *Ensure-clone* — for each entry in ``shared_repos.yaml``, clone it
+       into ``AHS_REPOS_DIR`` if missing. Failures here are logged but
+       don't abort the cycle.
+    2. *Pull* — for every repo currently on disk (whether from the config
+       or added ad-hoc by ``add_shared_repo``), ``git pull --ff-only``.
 
     Returns:
-        Dict mapping repo name to success status.
+        Dict mapping repo name to pull success status. Repos that were
+        freshly cloned in phase 1 also get pulled in phase 2 (no-op fast
+        path) so the return dict always reflects every repo on disk.
     """
     results: dict[str, bool] = {}
 
+    # Phase 1: ensure every configured repo is cloned.
+    for entry in load_shared_repos_config():
+        clone_result = ensure_repo_cloned(entry["name"], entry["url"])
+        if clone_result["status"] == "error":
+            logger.warning(
+                f"ensure_repo_cloned failed name={entry['name']!r}",
+                name=entry["name"],
+                error=clone_result.get("error", ""),
+            )
+
+    # Phase 2: pull every repo present on disk.
     if not os.path.isdir(AHS_REPOS_DIR):
         logger.warning(
             f"Repos directory not found path={AHS_REPOS_DIR!r}",
@@ -498,10 +767,10 @@ def pull_all_repos() -> dict[str, bool]:
         )
         return results
 
-    for entry in sorted(os.listdir(AHS_REPOS_DIR)):
-        full_path = os.path.join(AHS_REPOS_DIR, entry)
+    for entry_name in sorted(os.listdir(AHS_REPOS_DIR)):
+        full_path = os.path.join(AHS_REPOS_DIR, entry_name)
         if os.path.isdir(full_path) and os.path.isdir(os.path.join(full_path, ".git")):
-            results[entry] = pull_repo(full_path)
+            results[entry_name] = pull_repo(full_path)
 
     ok = sum(1 for v in results.values() if v)
     fail = len(results) - ok

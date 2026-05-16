@@ -19,8 +19,14 @@ from ypl.agent_harness_service.tools.mcp_instance import (
     _validate_session_id,
     mcp,
 )
-from ypl.agent_harness_service.tools.repo_manager import create_worktree, push_and_create_pr
-from ypl.agent_harness_service.tools.repo_manager import list_repos as _list_repos
+from ypl.agent_harness_service.tools.repo_manager import (
+    create_worktree,
+    ensure_repo_cloned,
+    list_repos_with_metadata,
+    push_and_create_pr,
+    remove_repo_from_disk,
+    repo_name_from_url,
+)
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -54,18 +60,80 @@ def request_write_access(session_id: str, repo: str, branch: str | None = None) 
 @mcp.tool(
     name="list_available_repos",
     description=(
-        "List all available repositories that can be used with request_write_access "
-        "and create_pr. Returns each repo's name and filesystem path."
+        "List all shared repositories that can be used with request_write_access "
+        "and create_pr. Each entry includes: name, path (None if configured but "
+        "not yet cloned), in_config (True if listed in shared_repos.yaml), "
+        "protected (True if listed as protected — cannot be removed), url "
+        "(clone URL from config), and on_disk (True if currently cloned)."
     ),
 )
-def list_available_repos() -> list[dict[str, str]]:
-    """List all available repositories.
+def list_available_repos() -> list[dict[str, Any]]:
+    """List all shared repositories with config metadata.
 
     Returns:
-        List of dicts with repo name and path for each available repo.
+        List of dicts with name, path, in_config, protected, url, on_disk.
     """
     logger.info("MCP tool: list_available_repos")
-    return _list_repos()
+    return list_repos_with_metadata()
+
+
+@mcp.tool(
+    name="add_shared_repo",
+    description=(
+        "Clone a new repository into the shared repos directory on this VM "
+        "(so every session can read it). Use this to make a repo available "
+        "immediately; to persist it across VM recreations, also add the "
+        "entry to ypl/agent_harness_service/deploy/shared_repos.yaml via a PR. "
+        "The /clone-new-repo skill orchestrates both steps. "
+        "Accepts https://github.com/{owner}/{repo} URLs (with or without .git). "
+        "Idempotent: returns status='exists' if the repo is already cloned. "
+        "Note: private repos outside the yupp-ai org will fail to clone — "
+        "the GitHub App used for auth only has access to yupp-ai/*."
+    ),
+)
+def add_shared_repo(url: str, name: str | None = None) -> dict[str, str]:
+    """Clone a repo into AHS_REPOS_DIR on this VM.
+
+    Args:
+        url: HTTPS GitHub clone URL (e.g. ``https://github.com/owner/repo``).
+        name: Optional directory name override. Defaults to the URL's repo slug.
+
+    Returns:
+        Dict with status (``cloned`` | ``exists`` | ``error``), path, and url.
+    """
+    logger.info("MCP tool: add_shared_repo", url=url, name=name)
+    try:
+        derived = repo_name_from_url(url)
+    except ValueError as e:
+        return {"status": "error", "error": str(e)}
+    final_name = name or derived
+    result = ensure_repo_cloned(final_name, url)
+    return {**result, "name": final_name, "url": url}
+
+
+@mcp.tool(
+    name="remove_shared_repo",
+    description=(
+        "Remove a shared repository from this VM's repos directory. "
+        "Refuses to remove repos marked protected in shared_repos.yaml "
+        "(e.g. yupp-agent itself — the harness needs it to run). "
+        "Note: this only removes the repo from the current VM. If the "
+        "repo is listed in shared_repos.yaml, the next pull tick will "
+        "re-clone it. To permanently remove a repo, also delete its "
+        "entry from shared_repos.yaml via a PR."
+    ),
+)
+def remove_shared_repo(name: str) -> dict[str, str]:
+    """Remove a shared repo's directory from AHS_REPOS_DIR.
+
+    Args:
+        name: Directory name under AHS_REPOS_DIR.
+
+    Returns:
+        Dict with status (``removed`` | ``missing`` | ``error``) and path.
+    """
+    logger.info("MCP tool: remove_shared_repo", name=name)
+    return remove_repo_from_disk(name)
 
 
 @mcp.tool(

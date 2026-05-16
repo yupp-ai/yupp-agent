@@ -362,22 +362,19 @@ echo "  Step 11/13: Cloning code repos for agents"
 echo "--------------------------------------------"
 mkdir -p "${AHS_REPOS_DIR}"
 chown ahs:ahs "${AHS_REPOS_DIR}"
-cd "${AHS_REPOS_DIR}"
-for repo in yupp-agent; do
-    if [ ! -d "$repo" ]; then
-        sudo -u ahs git clone https://github.com/yupp-ai/${repo}.git "$repo"
-    else
-        # Heal origin if it drifted to SSH (e.g. re-cloned by hand via deploy key).
-        # A read-only deploy key blocks push; HTTPS + gh credential helper works.
-        cur_url=$(sudo -u ahs git -C "$repo" remote get-url origin 2>/dev/null || echo "")
-        if [[ "$cur_url" == git@github.com:* ]] || [[ "$cur_url" == ssh://* ]]; then
-            sudo -u ahs git -C "$repo" remote set-url origin "https://github.com/yupp-ai/${repo}.git"
-            echo "  $repo: rewrote origin SSH -> HTTPS"
-        else
-            echo "  $repo already cloned"
-        fi
-    fi
-done
+
+# The pull script (driven on a 5-minute systemd timer) is the single source
+# of truth for "what repos exist on this VM": it reads
+# ypl/agent_harness_service/deploy/shared_repos.yaml and clones any missing
+# entry into ${AHS_REPOS_DIR}. We invoke it once here so a fresh VM is
+# bootstrapped immediately instead of waiting up to 5 minutes for the first
+# timer tick.
+#
+# Drift-heal for SSH→HTTPS origins (older bootstrap paths used SSH deploy
+# keys, but pushes need GH_TOKEN over HTTPS) is handled per-worktree at PR
+# time by _normalize_origin_to_https() in repo_manager.py.
+sudo -u ahs /opt/yupp-agent/.venv/bin/python \
+    -m ypl.agent_harness_service.scripts.pull_repos
 fi
 
 # --- Step 12: Install systemd service ---

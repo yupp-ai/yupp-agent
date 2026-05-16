@@ -8,18 +8,26 @@ import pytest
 from ypl.agent_harness_service.common.constants import AHS_LIT_BASE_URL
 from ypl.agent_harness_service.tools.mcp_instance import _resolve_pr_attribution
 from ypl.agent_harness_service.tools.workspace import (
+    add_shared_repo as _add_shared_repo_tool,
+)
+from ypl.agent_harness_service.tools.workspace import (
     create_pr as _create_pr_tool,
 )
 from ypl.agent_harness_service.tools.workspace import (
     list_available_repos as _list_available_repos_tool,
 )
 from ypl.agent_harness_service.tools.workspace import (
+    remove_shared_repo as _remove_shared_repo_tool,
+)
+from ypl.agent_harness_service.tools.workspace import (
     request_write_access as _request_write_access_tool,
 )
 
 # Unwrap FunctionTool to get raw callables
+add_shared_repo = _add_shared_repo_tool.fn
 create_pr = _create_pr_tool.fn
 list_available_repos = _list_available_repos_tool.fn
+remove_shared_repo = _remove_shared_repo_tool.fn
 request_write_access = _request_write_access_tool.fn
 
 VALID_SESSION = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -71,19 +79,140 @@ class TestRequestWriteAccess:
 class TestListAvailableRepos:
     def test_returns_repos_list(self) -> None:
         repos = [
-            {"name": "yupp-agent", "path": "/data/ahs/repos/yupp-agent"},
-            {"name": "other-repo", "path": "/data/ahs/repos/other-repo"},
+            {
+                "name": "yupp-agent",
+                "path": "/data/ahs/repos/yupp-agent",
+                "in_config": True,
+                "protected": True,
+                "url": "https://github.com/yupp-ai/yupp-agent.git",
+                "on_disk": True,
+            },
+            {
+                "name": "other-repo",
+                "path": "/data/ahs/repos/other-repo",
+                "in_config": False,
+                "protected": False,
+                "url": None,
+                "on_disk": True,
+            },
         ]
-        with patch("ypl.agent_harness_service.tools.workspace._list_repos", return_value=repos):
+        with patch("ypl.agent_harness_service.tools.workspace.list_repos_with_metadata", return_value=repos):
             result = list_available_repos()
 
         assert result == repos
 
     def test_empty_list(self) -> None:
-        with patch("ypl.agent_harness_service.tools.workspace._list_repos", return_value=[]):
+        with patch("ypl.agent_harness_service.tools.workspace.list_repos_with_metadata", return_value=[]):
             result = list_available_repos()
 
         assert result == []
+
+
+# ---------------------------------------------------------------------------
+# add_shared_repo
+# ---------------------------------------------------------------------------
+
+
+class TestAddSharedRepo:
+    def test_success(self) -> None:
+        with patch(
+            "ypl.agent_harness_service.tools.workspace.ensure_repo_cloned",
+            return_value={"status": "cloned", "path": "/data/ahs/repos/pr-status-check"},
+        ) as mock_clone:
+            result = add_shared_repo(url="https://github.com/wangtian24/pr-status-check")
+
+        assert result["status"] == "cloned"
+        assert result["name"] == "pr-status-check"
+        assert result["url"] == "https://github.com/wangtian24/pr-status-check"
+        mock_clone.assert_called_once_with("pr-status-check", "https://github.com/wangtian24/pr-status-check")
+
+    def test_already_exists(self) -> None:
+        with patch(
+            "ypl.agent_harness_service.tools.workspace.ensure_repo_cloned",
+            return_value={"status": "exists", "path": "/data/ahs/repos/pr-status-check"},
+        ):
+            result = add_shared_repo(url="https://github.com/wangtian24/pr-status-check")
+
+        assert result["status"] == "exists"
+        assert result["name"] == "pr-status-check"
+
+    def test_url_with_dot_git_suffix(self) -> None:
+        with patch(
+            "ypl.agent_harness_service.tools.workspace.ensure_repo_cloned",
+            return_value={"status": "cloned", "path": "/data/ahs/repos/yupp-agent"},
+        ):
+            result = add_shared_repo(url="https://github.com/yupp-ai/yupp-agent.git")
+
+        assert result["name"] == "yupp-agent"
+        assert result["url"] == "https://github.com/yupp-ai/yupp-agent.git"
+
+    def test_explicit_name_override(self) -> None:
+        with patch(
+            "ypl.agent_harness_service.tools.workspace.ensure_repo_cloned",
+            return_value={"status": "cloned", "path": "/data/ahs/repos/custom-name"},
+        ) as mock_clone:
+            add_shared_repo(url="https://github.com/wangtian24/pr-status-check", name="custom-name")
+
+        mock_clone.assert_called_once_with("custom-name", "https://github.com/wangtian24/pr-status-check")
+
+    def test_invalid_url_returns_error(self) -> None:
+        # ssh shape is rejected (only https accepted)
+        result = add_shared_repo(url="git@github.com:owner/repo.git")
+        assert result["status"] == "error"
+        assert "Invalid GitHub URL" in result["error"]
+
+    def test_non_github_url_returns_error(self) -> None:
+        result = add_shared_repo(url="https://gitlab.com/owner/repo")
+        assert result["status"] == "error"
+        assert "Invalid GitHub URL" in result["error"]
+
+    def test_clone_error_propagates(self) -> None:
+        with patch(
+            "ypl.agent_harness_service.tools.workspace.ensure_repo_cloned",
+            return_value={"status": "error", "error": "git clone failed: auth"},
+        ):
+            result = add_shared_repo(url="https://github.com/private-org/secret-repo")
+
+        assert result["status"] == "error"
+        assert "auth" in result["error"]
+        # Name still derived from URL even on error
+        assert result["name"] == "secret-repo"
+
+
+# ---------------------------------------------------------------------------
+# remove_shared_repo
+# ---------------------------------------------------------------------------
+
+
+class TestRemoveSharedRepo:
+    def test_success(self) -> None:
+        with patch(
+            "ypl.agent_harness_service.tools.workspace.remove_repo_from_disk",
+            return_value={"status": "removed", "path": "/data/ahs/repos/pr-status-check"},
+        ) as mock_remove:
+            result = remove_shared_repo(name="pr-status-check")
+
+        assert result["status"] == "removed"
+        mock_remove.assert_called_once_with("pr-status-check")
+
+    def test_protected_refused(self) -> None:
+        with patch(
+            "ypl.agent_harness_service.tools.workspace.remove_repo_from_disk",
+            return_value={"status": "error", "error": "Repo 'yupp-agent' is protected ..."},
+        ):
+            result = remove_shared_repo(name="yupp-agent")
+
+        assert result["status"] == "error"
+        assert "protected" in result["error"]
+
+    def test_missing_repo(self) -> None:
+        with patch(
+            "ypl.agent_harness_service.tools.workspace.remove_repo_from_disk",
+            return_value={"status": "missing", "path": "/data/ahs/repos/not-there"},
+        ):
+            result = remove_shared_repo(name="not-there")
+
+        assert result["status"] == "missing"
 
 
 # ---------------------------------------------------------------------------

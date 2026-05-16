@@ -1,9 +1,18 @@
-"""Cron script to auto-pull all repos.
+"""Cron script to ensure every configured repo is cloned and up to date.
 
-Pulls latest main for all repos in AHS_REPOS_DIR.
-Intended to run every 5 minutes via cron:
+Does two things on every tick (driven by the ahs-pull-agent-repos systemd
+timer, every 5 minutes):
 
-    */5 * * * * python -m ypl.agent_harness_service.scripts.pull_repos
+1. Ensures every entry in ``shared_repos.yaml`` is cloned into
+   ``AHS_REPOS_DIR`` (default ``/data/ahs/repos/``). This is what gets a
+   fresh VM bootstrapped without any hardcoded clone list in
+   ``setup_vm.sh``.
+2. Pulls every repo currently on disk — both configured entries and any
+   ad-hoc clones added via the ``add_shared_repo`` MCP tool.
+
+Run manually:
+
+    python -m ypl.agent_harness_service.scripts.pull_repos
 """
 
 from ypl.agent_harness_service.tools.repo_manager import pull_all_repos

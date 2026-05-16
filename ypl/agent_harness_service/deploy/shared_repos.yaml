@@ -1,0 +1,22 @@
+# Shared repos cloned into AHS_REPOS_DIR (default /data/ahs/repos/) on every
+# VM. Pulled every 5 minutes by the ahs-pull-agent-repos systemd timer (which
+# invokes ypl.agent_harness_service.scripts.pull_repos).
+#
+# Each entry:
+#   name      - directory name under AHS_REPOS_DIR (must be filesystem-safe)
+#   url       - HTTPS git clone URL (use https://; SSH origins get rewritten)
+#   protected - if true, remove_shared_repo refuses to delete this entry
+#               (yupp-agent itself is protected because the harness service
+#               runs from it and breaks if it's removed)
+#
+# Editing this file:
+#   - via PR: edit and merge — the next pull tick on each VM picks it up
+#     and clones missing entries; ad-hoc clones on a VM aren't disturbed
+#   - via agent: use the /clone-new-repo skill, which calls add_shared_repo
+#     (immediate clone on this VM) and optionally opens a PR to add here
+#     (so the repo survives VM recreation)
+
+repos:
+  - name: yupp-agent
+    url: https://github.com/yupp-ai/yupp-agent.git
+    protected: true

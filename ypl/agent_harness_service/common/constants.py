@@ -221,6 +221,8 @@ BLOCKED_HARNESS_TOOLS = frozenset(
     {
         "request_write_access",
         "list_available_repos",
+        "add_shared_repo",
+        "remove_shared_repo",
         "create_pr",
         "list_agents",
         "schedule_agent_call",
