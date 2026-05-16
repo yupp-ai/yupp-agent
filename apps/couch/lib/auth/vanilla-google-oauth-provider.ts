@@ -21,12 +21,9 @@ const GoogleUserInfoSchema = z.object({
 
 export type GoogleUserInfo = z.infer<typeof GoogleUserInfoSchema>
 
-const appHost = process.env.OAUTH_REDIRECT_HOST || 'http://localhost:3000'
+const appHost = process.env.OAUTH_REDIRECT_HOST || 'http://localhost:3010'
 const REDIRECT_URI = `${appHost}/api/authentication/google/callback`
-const GOOGLE_ISSUERS = new Set([
-  'accounts.google.com',
-  'https://accounts.google.com',
-])
+const GOOGLE_ISSUERS = new Set(['accounts.google.com', 'https://accounts.google.com'])
 
 function getGoogleClientId(): string {
   const value = process.env.GOOGLE_CLIENT_ID
@@ -51,16 +48,13 @@ export function getGoogleAuthUrl({ state }: { state: string }): string {
     response_type: 'code',
     scope: 'openid email profile',
     state,
-    hd: 'yupp.ai',
     prompt: 'select_account',
   })
 
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`
 }
 
-export async function exchangeCodeForIdToken(
-  code: string
-): Promise<GoogleUserInfo | null> {
+export async function exchangeCodeForIdToken(code: string): Promise<GoogleUserInfo | null> {
   const params = new URLSearchParams({
     client_id: getGoogleClientId(),
     client_secret: getGoogleClientSecret(),
@@ -72,9 +66,7 @@ export async function exchangeCodeForIdToken(
   try {
     const response = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: params.toString(),
     })
 
@@ -84,14 +76,9 @@ export async function exchangeCodeForIdToken(
     }
 
     const tokenData = TokenResponseSchema.parse(data)
-    const userInfo = GoogleUserInfoSchema.parse(
-      decodeIdToken(tokenData.id_token)
-    )
+    const userInfo = GoogleUserInfoSchema.parse(decodeIdToken(tokenData.id_token))
 
-    if (
-      userInfo.aud !== getGoogleClientId() ||
-      !GOOGLE_ISSUERS.has(userInfo.iss)
-    ) {
+    if (userInfo.aud !== getGoogleClientId() || !GOOGLE_ISSUERS.has(userInfo.iss)) {
       return null
     }
 

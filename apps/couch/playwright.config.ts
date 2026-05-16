@@ -1,43 +1,32 @@
 import { defineConfig, devices } from '@playwright/test'
 
-// Tests run on a separate port from the dev server so we don't fight the
-// user's running `bun run dev` and so we can inject COUCH_DEV_BYPASS_AUTH_*
-// env vars cleanly.
-const PORT = 3011
+const PORT = 3010
 const BASE_URL = `http://localhost:${PORT}`
 
 export default defineConfig({
   testDir: './tests/e2e',
-  testMatch: /.*\.spec\.ts$/,
-  testIgnore: ['**/node_modules/**', '../../apps/war-room/**', '../../ypl/**'],
+  timeout: 30_000,
   fullyParallel: false,
-  forbidOnly: Boolean(process.env.CI),
+  forbidOnly: !!process.env.CI,
   retries: 0,
   workers: 1,
-  reporter: [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }]],
+  reporter: 'list',
   use: {
     baseURL: BASE_URL,
     trace: 'on-first-retry',
-    screenshot: 'only-on-failure',
   },
-  projects: [
-    {
-      name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
-    },
-  ],
+  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {
-    // Tests run their own dev server. Stop your `bun run dev` first
-    // (Next.js 16 refuses to start a second dev server in the same project).
-    command: `next dev -p ${PORT}`,
+    command: 'npm run dev',
     url: BASE_URL,
     reuseExistingServer: !process.env.CI,
-    timeout: 90_000,
+    timeout: 60_000,
     env: {
-      // Dev-only bypass — see lib/auth/get-session.ts. Never set in prod.
-      COUCH_DEV_BYPASS_AUTH_EMAIL: 'test@example.com',
-      COUCH_DEV_BYPASS_AUTH_USER_ID: '00000000-0000-0000-0000-000000000000',
-      NODE_ENV: 'development',
+      // Smoke tests don't need AHS. Set a fake AHS URL so server-side
+      // calls fail fast and the unauth path is exercised.
+      AHS_BASE_URL: 'http://127.0.0.1:9',
+      AHS_API_KEY: 'unused',
+      AUTH_SECRET: 'test'.repeat(16),
     },
   },
 })
