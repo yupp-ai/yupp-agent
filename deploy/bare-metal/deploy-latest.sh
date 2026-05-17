@@ -109,12 +109,17 @@ for npmapp in "${NPM_APPS[@]}"; do
     if ! command -v npm >/dev/null 2>&1; then
         die "npm not found on PATH; install Node + npm system-wide before deploying ${npmapp}."
     fi
+    # Need full devDeps for the build — Next.js reads tsconfig.json `paths`
+    # via the installed `typescript` package, so `@/*` aliases fail to
+    # resolve when typescript isn't there. Install everything, build, then
+    # prune devDeps to keep the runtime tree lean.
     info "npm ci + build for ${npmapp} (cheap if nothing changed)…"
     sudo -u "$APP_USER" bash -c "
         set -euo pipefail
         cd '$app_dir'
-        npm ci --omit=dev
+        npm ci
         npm run build
+        npm prune --omit=dev
     " || die "npm ci/build for ${npmapp} failed."
 done
 
