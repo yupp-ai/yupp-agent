@@ -6,8 +6,11 @@ import { getInternalSession } from '@/lib/auth/get-session'
 // injected from server-side env. Defense-in-depth: also require a valid
 // session cookie before forwarding.
 
-const AHS_BASE_URL = (process.env.AHS_BASE_URL ?? 'http://localhost:8090').replace(/\/$/, '')
-const AHS_API_KEY = process.env.AHS_API_KEY ?? ''
+// COUCH_* names take precedence; bare names are a fallback. See lib/ahs.ts.
+const AHS_BASE_URL = (
+  process.env.COUCH_AHS_BASE_URL ?? process.env.AHS_BASE_URL ?? 'http://localhost:8090'
+).replace(/\/$/, '')
+const AHS_API_KEY = process.env.COUCH_AHS_API_KEY ?? process.env.AHS_API_KEY ?? ''
 
 // Headers we strip before forwarding to AHS. host/connection are managed
 // by undici/node-fetch; X-API-Key is set by us; content-length/encoding
