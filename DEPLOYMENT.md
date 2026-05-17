@@ -335,7 +335,7 @@ when a full pass succeeds; on the next run it asks before starting over.
 | # | Step | Skippable? |
 |---|------|------------|
 | 1 | Toolchain check (Docker Desktop, brew, Python 3.12, Poetry, jq) — installs what's missing. | no |
-| 2 | Creates host-side `./ahs-data/{sessions,repos,agent_memories}` for the bind mounts. | no |
+| 2 | Creates host-side `./ahs-data/{sessions,repos,agent_memories,artifacts}` for the bind mounts and clones `yupp-agent` into `./ahs-data/repos/yupp-agent` so agent sessions have a repo to operate on (mirrors `deploy/bare-metal/install.sh`'s `DEFAULT_AGENT_REPOS` loop). | no |
 | 3 | Generates `.env` from `.env.example` plus auto-generated internal secrets (`POSTGRES_PASSWORD`, `AGENT_HARNESS_SERVICE_API_KEY`, `VIEWER_SESSION_SECRET_KEY`, `GOOGLE_AUTH_COOKIE_SECRET`). Defaults `ENVIRONMENT=selfhosted`, `SANDBOX_ENABLED=false`, `AHS_MONO_ENABLE_GATEWAY_SERVICE=true`, `GATEWAY_SLACK_ENABLED=true`. | no |
 | 4 | Cloudflare tunnel — installs `cloudflared`, runs `tunnel login/create`, routes DNS for `agent.<apex>`, `agent-ui.<apex>`, `artifacts.<apex>`, writes `~/.cloudflared/config.yml`, `brew services start cloudflared`. | `SKIP_CLOUDFLARE=1` |
 | 5 | Google OAuth — prompts for the Web Application client ID + secret you created at https://console.cloud.google.com/apis/credentials and writes the OAuth env vars for both Streamlit (`GOOGLE_AUTH_*`, `STREAMLIT_GOOGLE_AUTH_REDIRECT_URI`) and the Artifact Viewer (`VIEWER_GOOGLE_CLIENT_*`, `VIEWER_OAUTH_REDIRECT_URL`). | `SKIP_OAUTH=1` |
@@ -393,8 +393,13 @@ docker compose -f docker-compose.one-box.yml exec app python -m alembic upgrade 
 docker compose -f docker-compose.one-box.yml down            # stop containers, keep data
 docker compose -f docker-compose.one-box.yml down -v         # also wipe postgres + redis volumes
 brew services stop cloudflared                                # stop the tunnel
-rm -rf ./ahs-data                                             # wipe session / repo / memory bind mounts
+rm -rf ./ahs-data                                             # wipe session / repo / memory / artifact bind mounts
 ```
+
+⚠️ `rm -rf ./ahs-data` is destructive — it deletes every artifact body
+under `./ahs-data/artifacts/` even though their DB rows remain in Postgres.
+Pair it with `down -v` if you want a clean slate. To preserve artifacts
+across rebuilds, leave `./ahs-data/artifacts/` in place.
 
 ### Sandbox / bwrap on macOS
 

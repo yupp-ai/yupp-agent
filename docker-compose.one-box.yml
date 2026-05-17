@@ -101,16 +101,27 @@ services:
     volumes:
       # Host-side bind mounts for agent state.  Created on first
       # `docker compose up -d` if they don't already exist.
+      # - sessions: per-session workspaces; also contains attachments/
+      #   (see ypl/agent_harness_service/service/resolvers.py — attachments
+      #   live under the workspace, so no separate bind mount is needed).
+      # - repos: shared read-only checkouts agents request worktrees from.
+      # - agent_memories: per-agent memory snapshots.
+      # - artifacts: textual artifact bodies + binary attachments stored
+      #   under BLOB_STORE_LOCAL_DIR (ypl/backend/utils/blob_store_local.py).
+      #   Without this mount, `docker compose down -v` or a container
+      #   rebuild orphans the DB rows while the underlying files vanish.
       - ./ahs-data/sessions:/data/ahs/sessions
       - ./ahs-data/repos:/data/ahs/repos
       - ./ahs-data/agent_memories:/data/ahs/agent_memories
+      - ./ahs-data/artifacts:/data/ahs/artifacts
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8090/health || exit 1"]
+      # python:3.12-slim doesn't ship curl, so use the stdlib urllib client.
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8090/health', timeout=5).status==200 else 1)\""]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -136,7 +147,7 @@ services:
       app:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8501/_stcore/health || exit 1"]
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=5).status==200 else 1)\""]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -164,7 +175,7 @@ services:
       app:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8095/healthz || exit 1"]
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8095/healthz', timeout=5).status==200 else 1)\""]
       interval: 30s
       timeout: 10s
       retries: 3

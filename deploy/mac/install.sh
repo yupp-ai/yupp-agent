@@ -95,6 +95,25 @@ generate_secret() {
     python3 -c "import secrets; print(secrets.token_urlsafe(32))"
 }
 
+generate_fernet_key() {
+    # 32 url-safe bytes base64-encoded — Fernet-compatible.  Required for
+    # SLACK_AGENT_GW_ENCRYPTION_KEY and MCP_OAUTH_STORAGE_ENCRYPTION_KEY;
+    # secrets.token_urlsafe(32) is the wrong length/encoding for Fernet.
+    python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+}
+
+pgdata_volume_exists() {
+    # Compose normally name-prefixes named volumes with the project name
+    # (basename of the directory).  Check both common forms — the prefixed
+    # form Compose creates and the bare name in case the project_name was
+    # set explicitly.
+    local project_name
+    project_name="$(basename "$REPO_ROOT")"
+    docker volume inspect "${project_name}_pgdata" >/dev/null 2>&1 && return 0
+    docker volume inspect "pgdata" >/dev/null 2>&1 && return 0
+    return 1
+}
+
 env_get() {
     # Read a key from $ENV_FILE; print empty string if absent.
     local key="$1"
@@ -178,37 +197,81 @@ require_cmd poetry "Re-open your shell or add \$HOME/.local/bin to PATH."
 info "All required tools present."
 
 # ---------------------------------------------------------------------------
-step 2 $TOTAL_STEPS "Workspace directories"
+step 2 $TOTAL_STEPS "Workspace directories + agent repo seed"
 # ---------------------------------------------------------------------------
-mkdir -p "$DATA_DIR/sessions" "$DATA_DIR/repos" "$DATA_DIR/agent_memories"
+mkdir -p "$DATA_DIR/sessions" "$DATA_DIR/repos" "$DATA_DIR/agent_memories" "$DATA_DIR/artifacts"
 info "Host bind-mount roots ready under $DATA_DIR/"
-info "  → /data/ahs/sessions/, /data/ahs/repos/, /data/ahs/agent_memories/ inside containers"
+info "  → /data/ahs/{sessions,repos,agent_memories,artifacts}/ inside containers"
+
+# AHS resolves agent worktrees from AHS_REPOS_DIR (default
+# /data/ahs/repos/).  list_available_repos / request_write_access return
+# "repo not found" until at least one repo is present, so seed yupp-agent
+# the way deploy/bare-metal/install.sh does (DEFAULT_AGENT_REPOS loop).
+DEFAULT_AGENT_REPOS="${DEFAULT_AGENT_REPOS:-yupp-ai/yupp-agent}"
+for repo_spec in $DEFAULT_AGENT_REPOS; do
+    repo_name="${repo_spec##*/}"
+    repo_name="${repo_name%.git}"
+    target="$DATA_DIR/repos/$repo_name"
+    if [[ -d "$target/.git" ]]; then
+        info "Agent repo already cloned: $target"
+        continue
+    fi
+    if [[ "$repo_spec" == *"://"* || "$repo_spec" == *"@"* ]]; then
+        clone_url="$repo_spec"
+    else
+        clone_url="https://github.com/${repo_spec}.git"
+    fi
+    info "Cloning default agent repo $repo_spec → $target..."
+    if git clone --depth 50 "$clone_url" "$target"; then
+        info "  ✓ $repo_name"
+    else
+        warn "  ✗ Failed to clone $repo_spec.  Clone manually later:"
+        warn "      git clone $clone_url $target"
+    fi
+done
 
 # ---------------------------------------------------------------------------
 step 3 $TOTAL_STEPS "Generate .env"
 # ---------------------------------------------------------------------------
 if [[ ! -f "$ENV_FILE" ]]; then
     cp "$ENV_EXAMPLE" "$ENV_FILE"
-    info "Created .env from .env.example"
+    chmod 600 "$ENV_FILE"
+    info "Created .env from .env.example (mode 0600)"
 else
+    chmod 600 "$ENV_FILE"
     info ".env already exists — leaving existing values in place; appending missing keys."
 fi
 
-# Mac/Docker-flavoured defaults — only write if not already set.
+# Mac/Docker-flavoured defaults — only write if not already set.  Note:
+# AHS_DATA_DIR is deliberately NOT written to .env — `docker-compose.one-box.yml`
+# sets it on the `app` service environment block, where it belongs.  Writing it
+# to a shared .env would poison the host (poetry-dotenv-plugin, the setup
+# wizard, future dev tooling) by resolving AHS_REPOS_DIR / AHS_SESSIONS_DIR to
+# /data/ahs, which doesn't exist on macOS.
 [[ -z "$(env_get ENVIRONMENT)" ]]                       && env_set ENVIRONMENT                       "selfhosted"
 [[ -z "$(env_get SANDBOX_ENABLED)" ]]                   && env_set SANDBOX_ENABLED                   "false"
-[[ -z "$(env_get AHS_DATA_DIR)" ]]                      && env_set AHS_DATA_DIR                      "/data/ahs"
 [[ -z "$(env_get AHS_MONO_ENABLE_GATEWAY_SERVICE)" ]]   && env_set AHS_MONO_ENABLE_GATEWAY_SERVICE   "true"
 [[ -z "$(env_get GATEWAY_SLACK_ENABLED)" ]]             && env_set GATEWAY_SLACK_ENABLED             "true"
 [[ -z "$(env_get USE_GOOGLE_CLOUD_LOGGING)" ]]          && env_set USE_GOOGLE_CLOUD_LOGGING          "false"
 [[ -z "$(env_get DISABLE_WRITE_GOOGLE_CLOUD_METRICS)" ]] && env_set DISABLE_WRITE_GOOGLE_CLOUD_METRICS "true"
 
-# Postgres credentials — generate a strong password on first run.
+# Postgres credentials — generate a strong password on first run.  Refuse to
+# regenerate the password if the pgdata named volume already exists, because
+# Postgres only honours POSTGRES_PASSWORD on first initdb; rewriting it on
+# top of an existing role yields the classic opaque `28P01` desync.
 [[ -z "$(env_get POSTGRES_USER)" ]] && env_set POSTGRES_USER "postgres"
 [[ -z "$(env_get POSTGRES_DB)" ]]   && env_set POSTGRES_DB   "yadb"
-if [[ -z "$(env_get POSTGRES_PASSWORD)" ]] || [[ "$(env_get POSTGRES_PASSWORD)" == "postgres" ]] || [[ "$(env_get POSTGRES_PASSWORD)" == "changeme_before_deployment" ]]; then
+_existing_pw="$(env_get POSTGRES_PASSWORD)"
+if [[ -z "$_existing_pw" ]] || [[ "$_existing_pw" == "postgres" ]] || [[ "$_existing_pw" == "changeme_before_deployment" ]]; then
+    if pgdata_volume_exists; then
+        error "Postgres data volume already exists but .env has no usable POSTGRES_PASSWORD.
+        Generating a new password now would desync the persisted role.
+        Either restore the original password to .env, or run
+            $COMPOSE down -v
+        to wipe the pgdata volume and start fresh."
+    fi
     env_set POSTGRES_PASSWORD "${POSTGRES_PASSWORD:-$(generate_secret)}"
-    info "Wrote a strong POSTGRES_PASSWORD."
+    info "Wrote a strong POSTGRES_PASSWORD (initdb will pick it up on first start)."
 fi
 
 # Internal AHS API key.
@@ -227,7 +290,35 @@ if [[ -z "$(env_get GOOGLE_AUTH_COOKIE_SECRET)" ]]; then
     env_set GOOGLE_AUTH_COOKIE_SECRET "$(generate_secret)"
 fi
 
-info ".env updated."
+# Backend cross-service secret — backend/config.py falls back to a per-process
+# token_urlsafe(32) otherwise, which means user sessions die on every restart.
+if [[ -z "$(env_get SECRET_KEY)" ]]; then
+    env_set SECRET_KEY "$(generate_secret)"
+fi
+
+# X-API-Key (and rotation slot) — backend/config.py needs both for header auth.
+if [[ -z "$(env_get X_API_KEY)" ]]; then
+    _xkey="$(generate_secret)"
+    env_set X_API_KEY           "$_xkey"
+    env_set X_API_KEY_SECONDARY "$_xkey"
+fi
+
+# MCP OAuth JWT signing — opaque random secret is fine.
+if [[ -z "$(env_get MCP_OAUTH_JWT_SIGNING_KEY)" ]]; then
+    env_set MCP_OAUTH_JWT_SIGNING_KEY "$(generate_secret)"
+fi
+
+# Fernet-format keys — wrong length/encoding for token_urlsafe(32); use
+# Fernet.generate_key() so cryptography accepts them.
+if [[ -z "$(env_get SLACK_AGENT_GW_ENCRYPTION_KEY)" ]]; then
+    env_set SLACK_AGENT_GW_ENCRYPTION_KEY "$(generate_fernet_key)"
+fi
+if [[ -z "$(env_get MCP_OAUTH_STORAGE_ENCRYPTION_KEY)" ]]; then
+    env_set MCP_OAUTH_STORAGE_ENCRYPTION_KEY "$(generate_fernet_key)"
+fi
+
+chmod 600 "$ENV_FILE"
+info ".env updated (mode 0600)."
 
 # ---------------------------------------------------------------------------
 step 4 $TOTAL_STEPS "Cloudflare tunnel (optional but required for SAG)"
@@ -258,14 +349,21 @@ if [[ "$SKIP_CF" != "1" ]]; then
         ARTIFACTS_HOST="artifacts.$APEX"
 
         TUNNEL_NAME="${TUNNEL_NAME:-yupp-agent}"
-        # Skip create if already exists.
-        if ! cloudflared tunnel list 2>/dev/null | awk '{print $2}' | grep -qx "$TUNNEL_NAME"; then
+        # Parse the JSON output rather than the text-table — cloudflared has
+        # shifted text-column ordering across releases (and is moving toward
+        # JSON-by-default), so awk-by-column is brittle.
+        TUNNEL_UUID="$(cloudflared tunnel list --output json 2>/dev/null \
+            | jq -r --arg n "$TUNNEL_NAME" '.[] | select(.name == $n) | .id' \
+            | head -n 1)"
+        if [[ -z "$TUNNEL_UUID" ]]; then
             info "Creating tunnel $TUNNEL_NAME..."
             cloudflared tunnel create "$TUNNEL_NAME"
+            TUNNEL_UUID="$(cloudflared tunnel list --output json 2>/dev/null \
+                | jq -r --arg n "$TUNNEL_NAME" '.[] | select(.name == $n) | .id' \
+                | head -n 1)"
         else
-            info "Tunnel $TUNNEL_NAME already exists; reusing."
+            info "Tunnel $TUNNEL_NAME already exists ($TUNNEL_UUID); reusing."
         fi
-        TUNNEL_UUID="$(cloudflared tunnel list 2>/dev/null | awk -v n="$TUNNEL_NAME" '$2==n {print $1}' | head -n 1)"
         [[ -z "$TUNNEL_UUID" ]] && error "Could not resolve tunnel UUID for $TUNNEL_NAME."
 
         # DNS routes.
@@ -274,7 +372,11 @@ if [[ "$SKIP_CF" != "1" ]]; then
             cloudflared tunnel route dns "$TUNNEL_NAME" "$host" || warn "DNS route for $host failed (already routed? continuing)"
         done
 
-        # Write ~/.cloudflared/config.yml from the template.
+        # Write ~/.cloudflared/config.yml from the template.  Use 127.0.0.1
+        # instead of `localhost` — on macOS `localhost` resolves to ::1
+        # first, Docker Desktop's published ports listen on IPv4 0.0.0.0
+        # only, and the symptom is "tunnel healthy, every request 502 Bad
+        # Gateway with no signal".
         info "Writing $CLOUDFLARED_CONFIG"
         cat > "$CLOUDFLARED_CONFIG" <<EOF
 # Generated by deploy/mac/install.sh
@@ -283,15 +385,15 @@ credentials-file: $CLOUDFLARED_DIR/$TUNNEL_UUID.json
 
 ingress:
   - hostname: $AGENT_HOST
-    service: http://localhost:8090
+    service: http://127.0.0.1:8090
     originRequest:
       connectTimeout: 10s
   - hostname: $AGENT_UI_HOST
-    service: http://localhost:8501
+    service: http://127.0.0.1:8501
     originRequest:
       connectTimeout: 10s
   - hostname: $ARTIFACTS_HOST
-    service: http://localhost:8095
+    service: http://127.0.0.1:8095
     originRequest:
       connectTimeout: 10s
   - service: http_status:404
@@ -373,15 +475,25 @@ EOF
         if [[ -n "$AGENT_UI_HOST_CURR" && -n "$ARTIFACTS_HOST_CURR" ]]; then
             env_set STREAMLIT_GOOGLE_AUTH_REDIRECT_URI "https://$AGENT_UI_HOST_CURR/oauth2callback"
             env_set VIEWER_OAUTH_REDIRECT_URL          "https://$ARTIFACTS_HOST_CURR/auth/callback"
-            env_set VIEWER_AHS_BASE_URL                "http://app:8090"
+            # AHS uses VIEWER_BASE_URL to format outbound artifact links
+            # (see ypl/agent_harness_service/artifact_store.py).  Default
+            # points at artifacts.agcouch.com, which would break the
+            # "share a link with a teammate" outcome.
+            env_set VIEWER_BASE_URL                    "https://$ARTIFACTS_HOST_CURR"
             env_set VIEWER_SESSION_COOKIE_SECURE       "true"
         else
             env_set STREAMLIT_GOOGLE_AUTH_REDIRECT_URI "http://127.0.0.1:8501/oauth2callback"
             env_set VIEWER_OAUTH_REDIRECT_URL          "http://127.0.0.1:8095/auth/callback"
-            env_set VIEWER_AHS_BASE_URL                "http://app:8090"
+            env_set VIEWER_BASE_URL                    "http://127.0.0.1:8095"
             env_set VIEWER_SESSION_COOKIE_SECURE       "false"
         fi
+        # VIEWER_AHS_BASE_URL is intentionally NOT set here — it's pinned
+        # in docker-compose.one-box.yml (artifact-viewer.environment) to the
+        # internal Docker network address (http://app:8090).  Compose's
+        # environment: wins over env_file:, so the .env line would silently
+        # have no effect.
 
+        chmod 600 "$ENV_FILE"
         info "OAuth keys written to .env."
     else
         warn "Skipped OAuth — Streamlit and Artifact Viewer will start unauthenticated."
@@ -423,14 +535,21 @@ if ! poetry env info --path >/dev/null 2>&1; then
 fi
 
 info "Running ypl.mono_server.setup against the dockerized postgres."
-# The wizard reads .env directly.  POSTGRES_HOST=localhost:5432 because the
-# wizard runs on the host; Docker has published 5432.
-POETRY_OK=1
-poetry run python -m ypl.mono_server.setup || POETRY_OK=0
-if [[ "$POETRY_OK" != "1" ]]; then
-    warn "Setup wizard exited non-zero.  Re-run manually with:"
-    warn "    poetry run python -m ypl.mono_server.setup"
-    warn "Continuing — most of the time this is just the user opting out of a prompt."
+# The wizard reads its env from AHS_ENV_PATH (or AHS_DATA_DIR/.env).  Point
+# it at the same .env compose injects via env_file: so wizard writes and
+# container reads agree on every secret.
+# POSTGRES_HOST=localhost:5432 because the wizard runs on the host; Docker
+# has published 5432 to 127.0.0.1.
+#
+# Fail hard on non-zero exit.  The wizard runs migrations, seeds roles, and
+# creates the admin user — if any of that fails, the container will later
+# crash-loop with no schema.  Soft-fail + sentinel-on-success is the worst
+# of both worlds.
+export AHS_ENV_PATH="$ENV_FILE"
+if ! poetry run python -m ypl.mono_server.setup; then
+    error "Setup wizard failed.  Fix the underlying error and re-run.
+        Verify Postgres is reachable:        $COMPOSE logs postgres
+        Re-run the wizard manually:          AHS_ENV_PATH=$ENV_FILE poetry run python -m ypl.mono_server.setup"
 fi
 
 # ---------------------------------------------------------------------------
@@ -497,4 +616,5 @@ Workspace bind mounts:
   $DATA_DIR/sessions/        /data/ahs/sessions/        in containers
   $DATA_DIR/repos/           /data/ahs/repos/           in containers
   $DATA_DIR/agent_memories/  /data/ahs/agent_memories/  in containers
+  $DATA_DIR/artifacts/       /data/ahs/artifacts/       in containers
 EOF
