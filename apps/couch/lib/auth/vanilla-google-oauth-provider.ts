@@ -21,22 +21,28 @@ const GoogleUserInfoSchema = z.object({
 
 export type GoogleUserInfo = z.infer<typeof GoogleUserInfoSchema>
 
-const appHost = process.env.OAUTH_REDIRECT_HOST || 'http://localhost:3010'
-const REDIRECT_URI = `${appHost}/api/authentication/google/callback`
+// COUCH_OAUTH_REDIRECT_URL is the production name (matches the shared
+// /data/ahs/.env convention); OAUTH_REDIRECT_HOST is the local fallback.
+// Either way the value is a base URL — we append the callback path.
+const appHost =
+  process.env.COUCH_OAUTH_REDIRECT_URL ||
+  process.env.OAUTH_REDIRECT_HOST ||
+  'http://localhost:3010'
+const REDIRECT_URI = `${appHost.replace(/\/$/, '')}/api/authentication/google/callback`
 const GOOGLE_ISSUERS = new Set(['accounts.google.com', 'https://accounts.google.com'])
 
 function getGoogleClientId(): string {
-  const value = process.env.GOOGLE_CLIENT_ID
+  const value = process.env.COUCH_GOOGLE_CLIENT_ID ?? process.env.GOOGLE_CLIENT_ID
   if (!value) {
-    throw new Error('GOOGLE_CLIENT_ID is not set')
+    throw new Error('COUCH_GOOGLE_CLIENT_ID (or GOOGLE_CLIENT_ID) is not set')
   }
   return value
 }
 
 function getGoogleClientSecret(): string {
-  const value = process.env.GOOGLE_CLIENT_SECRET
+  const value = process.env.COUCH_GOOGLE_CLIENT_SECRET ?? process.env.GOOGLE_CLIENT_SECRET
   if (!value) {
-    throw new Error('GOOGLE_CLIENT_SECRET is not set')
+    throw new Error('COUCH_GOOGLE_CLIENT_SECRET (or GOOGLE_CLIENT_SECRET) is not set')
   }
   return value
 }
