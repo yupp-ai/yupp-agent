@@ -21,11 +21,7 @@ set -euo pipefail
 INSTALL_DIR="${INSTALL_DIR:-/opt/yupp-agent}"
 DATA_DIR="${DATA_DIR:-/data/ahs}"
 APP_USER="${APP_USER:-ahs}"
-# NOTE: `couch` (apps/couch) is intentionally NOT deployed yet — the app
-# is npm/Node-based; add `couch` to SERVICES and `apps/couch` to NPM_APPS
-# below once Node + npm are installed system-wide on ahs-mono-prod and the
-# app is ready to ship.
-SERVICES=(ahs-mono ahs-streamlit artifact-viewer)
+SERVICES=(ahs-mono ahs-streamlit artifact-viewer couch)
 # Sub-apps with their own pyproject / venv. Each gets ``pip install -e`` on
 # every deploy so code changes take effect without a separate step.
 SUBAPPS=(apps/artifact-viewer)
@@ -33,8 +29,8 @@ SUBAPPS=(apps/artifact-viewer)
 # every deploy. (Currently unused — Couch was migrated to Node + npm.)
 BUN_APPS=()
 # Node + npm apps. Each gets ``npm ci --omit=dev && npm run build`` on
-# every deploy.
-NPM_APPS=()
+# every deploy. Requires Node + npm on PATH on the VM.
+NPM_APPS=(apps/couch)
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 info() { echo -e "${GREEN}[deploy]${NC} $*"; }
