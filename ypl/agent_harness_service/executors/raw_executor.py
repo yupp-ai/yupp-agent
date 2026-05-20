@@ -249,21 +249,12 @@ def _load_raw_executor_prompt() -> str | None:
         return None
 
 
-def _build_skill_catalog_section(exclude: frozenset[str] | None = None) -> str | None:
-    """Build a system prompt section listing available skills.
-
-    Scans ``AHS_SKILLS_DIR`` for SKILL.md files, extracts name and description
-    from YAML frontmatter, and returns a compact catalog. The agent uses the
-    ``load_skill()`` MCP tool to load a skill's full content on demand.
-
-    Args:
-        exclude: Skill directory names to omit from the catalog (e.g. skills
-            whose content has already been inlined into the system prompt).
-    """
+def _collect_disk_skill_entries(exclude: frozenset[str] | None) -> list[tuple[str, str]]:
+    """Scan ``AHS_SKILLS_DIR`` for SKILL.md files and return ``[(name, description)]``."""
     from ypl.agent_harness_service.common.constants import AHS_SKILLS_DIR
 
     if not os.path.isdir(AHS_SKILLS_DIR):
-        return None
+        return []
 
     entries: list[tuple[str, str]] = []
     for entry in sorted(os.listdir(AHS_SKILLS_DIR)):
@@ -272,7 +263,6 @@ def _build_skill_catalog_section(exclude: frozenset[str] | None = None) -> str |
         skill_md = os.path.join(AHS_SKILLS_DIR, entry, "SKILL.md")
         if not os.path.isfile(skill_md):
             continue
-        # Extract description from YAML frontmatter
         description = ""
         try:
             with open(skill_md) as f:
@@ -286,7 +276,118 @@ def _build_skill_catalog_section(exclude: frozenset[str] | None = None) -> str |
         except OSError:
             continue
         entries.append((entry, description))
+    return entries
 
+
+async def _collect_db_skill_entries(
+    *,
+    user_id: str | None,
+    agent_name: str | None,
+    exclude_names: set[str],
+) -> list[tuple[str, str]]:
+    """Fetch SKILL artifacts visible to (user_id, agent_name) for the catalog.
+
+    Returns ``[(name, description)]`` tuples, with disk-skill name collisions
+    filtered out (disk wins). Best-effort: any error is logged and treated as
+    "no DB skills" so a flaky DB never blocks session startup.
+    """
+    if user_id is None and agent_name is None:
+        # No caller identity → no DB visibility (matches memory_read_clause).
+        return []
+
+    try:
+        # Imported inside the function to avoid an import cycle at module load
+        # time (artifact_store transitively imports backend.db which can be
+        # expensive to initialise during static analysis / tests).
+        from ypl.agent_harness_service.artifact_store import list_artifacts
+        from ypl.agent_harness_service.memory_store import MemoryCallerContext
+        from ypl.db.agent_harness import AgentArtifactType
+
+        caller = MemoryCallerContext(user_id=user_id, agent_name=agent_name)
+        artifacts = await list_artifacts(
+            artifact_type=AgentArtifactType.SKILL,
+            memory_caller=caller,
+            limit=200,
+        )
+    except Exception:
+        logger.exception("Failed to merge DB skills into catalog — proceeding with disk-only catalog")
+        return []
+
+    # Latest version per (scope, subject, slug) wins. The DB query returns all
+    # versions, so dedupe by slug here (results are reverse-chronological).
+    seen: set[str] = set()
+    entries: list[tuple[str, str]] = []
+    for a in artifacts:
+        slug = a.named_slug
+        if not slug or slug in seen or slug in exclude_names:
+            continue
+        seen.add(slug)
+        meta = (a.artifact_metadata or {}).get("skill", {})
+        description = meta.get("description") or a.description or ""
+        entries.append((slug, description))
+    return entries
+
+
+async def _build_skill_catalog_section_async(
+    exclude: frozenset[str] | None = None,
+    *,
+    user_id: str | None = None,
+    agent_name: str | None = None,
+) -> str | None:
+    """Build a system prompt section listing available skills.
+
+    Merges curated on-disk skills (``AHS_SKILLS_DIR``) with SKILL artifacts
+    visible to the caller (agent / user / topic scope). Disk skills win on
+    name collision — they're the curated baseline. The agent uses the
+    ``load_skill()`` MCP tool to load a skill's full content on demand.
+
+    Args:
+        exclude: Skill names to omit from the catalog (e.g. skills whose
+            content has already been inlined into the system prompt).
+        user_id: Caller's ``user_id`` for DB-skill visibility. Pass ``None``
+            for callers with no user identity.
+        agent_name: Caller's ``agent_name`` for DB-skill visibility. Pass
+            ``None`` for callers with no agent identity.
+    """
+    disk_entries = _collect_disk_skill_entries(exclude)
+    disk_names = {name for name, _ in disk_entries}
+    # Disk excludes plus everything already inlined into the prompt.
+    db_exclude = disk_names | (set(exclude) if exclude else set())
+    db_entries = await _collect_db_skill_entries(
+        user_id=user_id,
+        agent_name=agent_name,
+        exclude_names=db_exclude,
+    )
+
+    entries = disk_entries + db_entries
+    if not entries:
+        return None
+
+    lines = [
+        "## Available Skills",
+        "Skills provide domain-specific guidance for common tasks. They are NOT loaded "
+        "into your context by default — load them on demand when the task requires it.",
+        "",
+        "To load a skill, use the `load_skill` tool:",
+        '  `load_skill(skill_name="<skill-name>")`',
+        "",
+    ]
+    for name, desc in entries:
+        line = f"- **{name}**"
+        if desc:
+            line += f" — {desc}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _build_skill_catalog_section(exclude: frozenset[str] | None = None) -> str | None:
+    """Disk-only skill catalog (back-compat wrapper).
+
+    Synchronous; used by tests and any caller that doesn't have an async
+    context to query DB-backed SKILL artifacts. New code paths should use
+    :func:`_build_skill_catalog_section_async` to also pick up DB skills.
+    """
+    entries = _collect_disk_skill_entries(exclude)
     if not entries:
         return None
 
@@ -316,7 +417,7 @@ def _build_resource_catalog_section(resource_catalog: list[dict[str, str]]) -> s
     return "\n".join(lines)
 
 
-def _build_system_prompt(
+async def _build_system_prompt(
     agent: AgentSpec,
     provider: str,
     model_id: str,
@@ -326,6 +427,7 @@ def _build_system_prompt(
     is_task: bool = False,
     session_context: dict[str, Any] | None = None,
     slack_session_id: str | None = None,
+    requesting_user_id: str | None = None,
 ) -> str:
     """Build the system prompt for a raw executor agent.
 
@@ -385,12 +487,18 @@ def _build_system_prompt(
         parts.append(_build_resource_catalog_section(resource_catalog))
 
     # Skill catalog — compact listing so the agent knows what's available
-    # without paying the full token cost of every skill upfront.
+    # without paying the full token cost of every skill upfront. Merges
+    # on-disk curated skills with DB-backed SKILL artifacts visible to the
+    # caller (agent / user / topic scope; disk wins on name collision).
     # Exclude skill-backed files already inlined into the system prompt above
     # (has_native_skills=False path) to avoid listing them as load_skill() candidates.
     from ypl.agent_harness_service.executors.system_prompt import SKILL_BACKED_NAMES
 
-    skill_catalog = _build_skill_catalog_section(exclude=SKILL_BACKED_NAMES)
+    skill_catalog = await _build_skill_catalog_section_async(
+        exclude=SKILL_BACKED_NAMES,
+        user_id=requesting_user_id,
+        agent_name=agent.name,
+    )
     if skill_catalog:
         parts.append(skill_catalog)
 
@@ -705,7 +813,10 @@ async def run_raw_executor(
     if read_resource_tool and read_resource_tool not in filtered_tools:
         filtered_tools.append(read_resource_tool)
 
-    system_prompt = _build_system_prompt(
+    requesting_user_id = None
+    if session_context:
+        requesting_user_id = session_context.get("current_turn_user_id") or session_context.get("user_id")
+    system_prompt = await _build_system_prompt(
         agent,
         provider,
         model_id,
@@ -715,6 +826,7 @@ async def run_raw_executor(
         is_task=is_task,
         session_context=session_context,
         slack_session_id=slack_session_id,
+        requesting_user_id=requesting_user_id,
     )
 
     # Convert to provider format

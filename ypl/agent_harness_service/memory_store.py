@@ -18,7 +18,7 @@ from typing import Any, Literal
 from sqlalchemy import and_, or_
 from sqlmodel import col
 
-from ypl.db.agent_harness import AgentArtifact, AgentArtifactType
+from ypl.db.agent_harness import SCOPED_INLINE_ARTIFACT_TYPES, AgentArtifact
 
 # The three valid values of ``memory_scope`` on a MEMORY artifact row.
 MemoryScope = Literal["user", "agent", "topic"]
@@ -119,19 +119,21 @@ def apply_memory_filters(
     memory_scope: str | None,
     memory_scope_subject: str | None,
 ) -> Any:
-    """Apply the MEMORY visibility + scope/subject narrowing to ``stmt``.
+    """Apply scoped-inline visibility + scope/subject narrowing to ``stmt``.
 
-    Non-MEMORY rows are preserved when ``memory_scope`` / ``subject`` are
-    unset (they just don't take part in the MEMORY filter); narrowing to a
-    specific scope or subject implicitly excludes non-MEMORY rows because
-    their scope columns are NULL.
+    Affects MEMORY and SKILL rows (the scoped-inline artifact types). Other
+    artifact types are preserved when ``memory_scope`` / ``subject`` are
+    unset (they don't take part in the scope filter); narrowing to a specific
+    scope or subject implicitly excludes them because their scope columns
+    are NULL.
     """
     if memory_caller is not None:
-        # Let non-MEMORY rows through unconditionally; constrain MEMORY rows
-        # to the caller's visibility.
+        # Scoped-inline rows (MEMORY, SKILL) are constrained to the caller's
+        # visibility (topic + own user + own agent). Other rows pass through.
+        scoped_types = list(SCOPED_INLINE_ARTIFACT_TYPES)
         stmt = stmt.where(
             or_(
-                col(AgentArtifact.artifact_type) != AgentArtifactType.MEMORY,
+                col(AgentArtifact.artifact_type).notin_(scoped_types),
                 memory_read_clause(memory_caller),
             )
         )
