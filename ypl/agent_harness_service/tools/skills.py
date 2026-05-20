@@ -27,7 +27,7 @@ def load_skill(skill_name: str) -> str:
 
     Args:
         skill_name: Name of the skill to load (e.g., 'workspace-guide',
-            'memory-guide', 'fetch-from-db'). Must match a directory name
+            'memory-guide', 'review-pr'). Must match a directory name
             under the skills directory.
 
     Returns:

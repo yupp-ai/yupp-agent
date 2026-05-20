@@ -130,7 +130,7 @@ class MCPToolAccess:
                         "properties": {
                             "uri": {
                                 "type": "string",
-                                "description": "Resource URI (e.g., 'yupp://skills/fetch-from-db')",
+                                "description": "Resource URI (e.g., 'yupp://skills/review-pr')",
                             },
                         },
                         "required": ["uri"],

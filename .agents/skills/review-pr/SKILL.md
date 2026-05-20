@@ -7,9 +7,6 @@ description: Common guidelines for reviewing GitHub pull requests across all Yup
 
 These guidelines apply to all PR reviews regardless of repository.
 
-For repo-specific concerns, also consult the relevant skill:
-- `/review-pr-yupp-agent` — agent harness, Slack gateway, MCP server, Streamlit dashboards
-
 ## Review Style
 
 - Be brutally honest. No fluff, no "positive comments", no pleasantries
