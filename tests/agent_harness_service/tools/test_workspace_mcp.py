@@ -503,15 +503,7 @@ class TestResolvePrAttribution:
             "slack_channel_id": "C01ABCDEF",
             "slack_thread_ts": "1234567890.123456",
         }
-        session_row = ("eng-raccoon", context)
-
-        mock_db = AsyncMock()
-        session_result = MagicMock()
-        session_result.fetchone.return_value = session_row
-        mock_db.execute = AsyncMock(return_value=session_result)
-        mock_ctx = AsyncMock()
-        mock_ctx.__aenter__ = AsyncMock(return_value=mock_db)
-        mock_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_ctx = _mock_db_session(fetchone_return=("eng-raccoon", context))
 
         # Force the workspace domain so the permalink builder returns a URL.
         with (
@@ -534,15 +526,7 @@ class TestResolvePrAttribution:
             "slack_channel_id": "C01ABCDEF",
             "slack_thread_ts": "1234567890.123456",
         }
-        session_row = ("eng-raccoon", context)
-
-        mock_db = AsyncMock()
-        session_result = MagicMock()
-        session_result.fetchone.return_value = session_row
-        mock_db.execute = AsyncMock(return_value=session_result)
-        mock_ctx = AsyncMock()
-        mock_ctx.__aenter__ = AsyncMock(return_value=mock_db)
-        mock_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_ctx = _mock_db_session(fetchone_return=("eng-raccoon", context))
 
         with (
             patch("ypl.agent_harness_service.tools.mcp_instance.get_async_session", return_value=mock_ctx),
@@ -557,16 +541,7 @@ class TestResolvePrAttribution:
     async def test_non_slack_session_has_no_slack_link(self) -> None:
         """When the session has no Slack context fields, no Slack link is emitted
         even if the workspace domain is configured."""
-        context = {"user_name": "Jane Doe"}
-        session_row = ("eng-raccoon", context)
-
-        mock_db = AsyncMock()
-        session_result = MagicMock()
-        session_result.fetchone.return_value = session_row
-        mock_db.execute = AsyncMock(return_value=session_result)
-        mock_ctx = AsyncMock()
-        mock_ctx.__aenter__ = AsyncMock(return_value=mock_db)
-        mock_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_ctx = _mock_db_session(fetchone_return=("eng-raccoon", {"user_name": "Jane Doe"}))
 
         with (
             patch("ypl.agent_harness_service.tools.mcp_instance.get_async_session", return_value=mock_ctx),
