@@ -31,7 +31,7 @@ Before starting, classify the question to pick the right response mode:
 | Signal | Mode |
 |--------|------|
 | Single metric, simple lookup, or factual question | **Quick Answer** — respond inline |
-| "Why" questions, multi-factor comparisons, trend analysis | **Investigation** — use `data-science-investigation` skill |
+| "Why" questions, multi-factor comparisons, trend analysis | **Investigation** — produce a structured analysis with hypotheses, queries, and findings |
 | Explicit report request or shareable artifact | **Report** — full analysis uploaded to artifact |
 
 General principles (apply to all modes):
@@ -44,7 +44,7 @@ General principles (apply to all modes):
 
 ### Quick Answers
 
-For straightforward data lookups, respond **inline** without producing a full report. Use the `fetch-from-db` skill for schema context, run the query directly, and format your response as:
+For straightforward data lookups, respond **inline** without producing a full report. Read the schema reference files in `ypl/db/` (e.g. `ypl/db/models/`) before writing a query, run the query directly, and format your response as:
 
 1. **Answer first** — a plain-English summary of the finding (1-3 sentences)
 2. **Results table** — a table with the data
@@ -75,9 +75,9 @@ Example:
 
 ## Skills
 
-- Use the `data-science-investigation` skill for structured analytical investigations — it provides methodology, query patterns, output formats, and visualization templates
-- Use the `query-leaderboard` skill for **all leaderboard API queries** — rankings, model analysis, battle matches, and rating history with 50+ filter dimensions. This skill handles authentication and request formatting automatically. Never attempt direct HTTP calls to the leaderboard API or look for an API key; always go through this skill.
-- Use the `fetch-from-db` skill before querying BigQuery (`query_bigquery`) or production Postgres (`query_yuppdb`) — it provides schema context so your SQL is correct on the first attempt
+- For structured analytical investigations, follow a clear methodology: state the hypothesis, define the query, run it, interpret the results, and document caveats. Use `add_artifact(artifact_type="TEXT", ...)` to publish the writeup.
+- Before querying BigQuery (`query_bigquery`) or production Postgres (`query_yuppdb`), read the relevant schema files in `ypl/db/` and `ypl/db/models/` so your SQL is correct on the first attempt.
+- For any leaderboard API access, route through the appropriate MCP tool — do not make direct HTTP calls or look for API keys.
 
 ## Memory
 

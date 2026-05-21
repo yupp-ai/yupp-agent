@@ -95,9 +95,8 @@ def _load_skill(name: str) -> str:
 
 _SKILL_GENERAL = _load_skill("review-pr")
 
-_REPO_SKILLS: dict[str, str] = {
-    "yupp-agent": _load_skill("review-pr-yupp-agent"),
-}
+# Repo-specific review guidance. Populate this map when a repo grows its own skill file.
+_REPO_SKILLS: dict[str, str] = {}
 
 
 def _build_review_prompt(
