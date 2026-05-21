@@ -75,6 +75,11 @@ def _parse_env_int(env_var: str, default: int) -> int:
 
 # Configuration from environment
 TASK_EXECUTOR_ENABLED = os.environ.get("AHS_TASK_EXECUTOR_ENABLED", "true").lower() == "true"
+# Fallback agent name used when neither the task nor its project has an agent set.
+# Resolved against ``Agent.name`` (unique) at execute time, so deployments can
+# point this at any deployed agent (e.g. ``default``).  Empty string disables
+# the fallback — tasks without an agent will continue to raise as before.
+PROJECT_DEFAULT_AGENT_NAME = os.environ.get("PROJECT_DEFAULT_AGENT", "").strip()
 # Raised from 1 → 5: the original default of 1 caused serial dispatch (one task
 # per 10-second poll cycle), so a project with 10 ready tasks needed 100s just
 # for dispatch.  5 tasks per cycle keeps dispatch overhead ≤ 10s for typical
@@ -391,6 +396,13 @@ async def get_agent_by_id(agent_id: uuid.UUID) -> Agent | None:
         return cast(Agent | None, await session.get(Agent, agent_id))
 
 
+async def _get_agent_by_name(agent_name: str) -> Agent | None:
+    """Look up an agent by ``Agent.name`` (unique). Returns None if not found."""
+    async with get_async_session() as session:
+        result = await session.exec(select(Agent).where(Agent.name == agent_name))
+        return result.first()
+
+
 async def _ensure_updates_thread(project: AgentProject, agent_name: str) -> str | None:
     """Ensure the project has a Slack updates thread, creating one if needed.
 
@@ -588,14 +600,32 @@ async def execute_task(task_id: uuid.UUID) -> None:
         if not project:
             raise ValueError(f"Project not found: {task.agent_project_id}")
 
-        # Determine agent (task-specific or project default)
+        # Determine agent (task-specific → project default → deployment-wide fallback)
         agent_id = task.agent_id or project.default_agent_id
-        if not agent_id:
+        agent: Agent | None = None
+        if agent_id:
+            agent = await get_agent_by_id(agent_id)
+            if not agent:
+                raise ValueError(f"Agent not found: {agent_id}")
+        elif PROJECT_DEFAULT_AGENT_NAME:
+            # Fallback: resolve the deployment-wide default agent by name.  Lets
+            # operators stand up new projects without manually wiring a default
+            # agent on each one.
+            agent = await _get_agent_by_name(PROJECT_DEFAULT_AGENT_NAME)
+            if not agent:
+                raise ValueError(
+                    f"PROJECT_DEFAULT_AGENT={PROJECT_DEFAULT_AGENT_NAME!r} does not resolve to any agent "
+                    f"(task {task.agent_task_id}, project {project.agent_project_id})"
+                )
+            logger.info(
+                "Using PROJECT_DEFAULT_AGENT fallback",
+                agent_name=agent.name,
+                agent_id=str(agent.agent_id),
+                agent_task_id=str(task.agent_task_id),
+                agent_project_id=str(project.agent_project_id),
+            )
+        else:
             raise ValueError(f"No agent configured for task {task.agent_task_id} or project {project.agent_project_id}")
-
-        agent = await get_agent_by_id(agent_id)
-        if not agent:
-            raise ValueError(f"Agent not found: {agent_id}")
 
         # Auto-init the project's Slack updates thread if not yet created.
         # This is best-effort; a None result just means Slack won't be used.
