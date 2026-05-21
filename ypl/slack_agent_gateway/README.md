@@ -101,7 +101,7 @@ leave those two columns NULL and set the matching env vars instead — see
 
 #### 4. Deploy and Configure Slack URLs
 
-1. Deploy to staging: `/deploy-to-staging slack-agent-gateway`
+1. Deploy to staging via your project's deployment workflow (e.g. CI/CD pipeline)
 2. **Interactivity & Shortcuts** (needed if your app has buttons, menus,
    modals, or any interactive components — e.g. the Quick Survey):
    - Toggle **Interactivity** to **ON**
