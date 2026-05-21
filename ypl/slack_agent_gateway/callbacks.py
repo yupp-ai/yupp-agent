@@ -7,11 +7,13 @@ Handles:
 - handle_tool_event: Accumulates tool-use entries and edits a live cluster block
 """
 
+import asyncio
 import time
 from typing import Any
 
 from slack_sdk.errors import SlackApiError
 
+from ypl.slack_agent_gateway import rendering
 from ypl.slack_agent_gateway.buffer import discard_buffer
 from ypl.slack_agent_gateway.callbacks_rendering import render_reply_blocks
 from ypl.slack_agent_gateway.constants import (
@@ -97,6 +99,13 @@ async def add_reply(request: AddReplyRequest) -> AddReplyResponse:
     client = await _get_slack_client(session)
     if not client:
         return AddReplyResponse(success=False, error="Failed to get Slack client")
+
+    # If the reply contains renderable fenced blocks (mermaid / dot /
+    # formula), branch to the image-upload path. Plain replies fall
+    # through to the existing chat_postMessage flow below.
+    segments = rendering.split(request.text)
+    if rendering.has_renderable(segments):
+        return await _add_reply_with_renderables(request, session, client, segments)
 
     # Build Block Kit blocks for typed replies (e.g. thinking → context block).
     blocks = render_reply_blocks(request.text, request.reply_type)
@@ -212,6 +221,236 @@ async def add_reply(request: AddReplyRequest) -> AddReplyResponse:
             exc_info=True,
         )
         return AddReplyResponse(success=False, error=str(e))
+
+
+async def _add_reply_with_renderables(
+    request: AddReplyRequest,
+    session: AgentSession,
+    client: RateLimitedSlackClient,
+    segments: list[rendering.TextSegment | rendering.RenderableSegment],
+) -> AddReplyResponse:
+    """Post a reply that contains renderable fenced blocks via files_upload_v2.
+
+    For each ``RenderableSegment`` we render the source to PNG bytes (off
+    the event loop), then upload all images in a single Slack message
+    with the surrounding text as ``initial_comment``. Render failures are
+    surfaced as fenced source plus a small "rendering failed" note —
+    content is never silently dropped.
+    """
+    # If a placeholder is up, drop it — files_upload_v2 can't update in place.
+    if session.placeholder_ts:
+        try:
+            await client.chat_delete(channel=session.channel_id, ts=session.placeholder_ts)
+        except SlackApiError as e:
+            logger.warning(
+                "Failed to delete placeholder before upload",
+                session_id=request.session_id,
+                placeholder_ts=session.placeholder_ts,
+                error=str(e),
+            )
+        session.placeholder_ts = None
+        try:
+            await save_session(session)
+        except Exception as e:
+            logger.warning(
+                "Failed to clear placeholder_ts after delete",
+                session_id=request.session_id,
+                error=str(e),
+            )
+
+    # Render each renderable to bytes (off the event loop). Track per-fence
+    # failures so we can preserve their source in the caption.
+    uploads: list[dict[str, Any]] = []
+    failures: list[str] = []
+    failure_sources: list[str] = []
+    used_filenames: dict[str, int] = {}
+    for seg in segments:
+        if not isinstance(seg, rendering.RenderableSegment):
+            continue
+        renderer = rendering.get_renderer(seg.renderer_name)
+        if renderer is None:
+            # Shouldn't happen — dispatcher only emits registered names — but
+            # be defensive in case of dynamic registry mutation.
+            failures.append(seg.fence_tag)
+            failure_sources.append(f"```{seg.fence_tag}\n{seg.source}\n```")
+            continue
+        try:
+            data = await asyncio.to_thread(renderer.render, seg.source)
+        except Exception as e:
+            logger.warning(
+                "Renderer failed",
+                session_id=request.session_id,
+                renderer=seg.renderer_name,
+                fence_tag=seg.fence_tag,
+                error=str(e),
+            )
+            failures.append(seg.fence_tag)
+            failure_sources.append(f"```{seg.fence_tag}\n{seg.source}\n```")
+            continue
+        uploads.append({"content": data, "filename": _disambiguate_filename(renderer.output_filename, used_filenames)})
+
+    # If every renderable failed, fall back to posting the original text
+    # as a plain message so the user still sees the source.
+    if not uploads:
+        return await _fallback_text_reply(request, session, client)
+
+    # Build the caption: text segments + any per-fence failure notes.
+    caption_parts: list[str] = [s.text for s in segments if isinstance(s, rendering.TextSegment)]
+    caption_parts.extend(failure_sources)
+    if failures:
+        caption_parts.append(f"_(Rendering failed for: {', '.join(failures)} — source preserved above.)_")
+    caption = "\n\n".join(p for p in caption_parts if p) or None
+
+    upload_kwargs: dict[str, Any] = {
+        "channel": session.channel_id,
+        "thread_ts": session.thread_ts,
+        "file_uploads": uploads,
+    }
+    if caption:
+        upload_kwargs["initial_comment"] = caption
+    if request.username:
+        # files_upload_v2 ignores username today, but pass it for forward-compat
+        # (and in case the SDK starts respecting it).
+        upload_kwargs["username"] = request.username
+
+    try:
+        response = await client.files_upload_v2(**upload_kwargs)
+    except SlackApiError as e:
+        logger.error(
+            "files_upload_v2 failed; falling back to text reply",
+            session_id=request.session_id,
+            error=str(e),
+            exc_info=True,
+        )
+        return await _fallback_text_reply(request, session, client)
+
+    message_ts = _extract_upload_message_ts(response) or ""
+    if not message_ts:
+        logger.warning(
+            "files_upload_v2 succeeded but no message_ts found in response",
+            session_id=request.session_id,
+        )
+
+    logger.info(
+        "Posted reply with rendered attachments",
+        session_id=request.session_id,
+        message_ts=message_ts,
+        num_files=len(uploads),
+        num_failures=len(failures),
+    )
+
+    # Best-effort persistence — same pattern as the plain-text path.
+    if message_ts:
+        try:
+            await record_reply(request.session_id, message_ts, request.text, reply_type=request.reply_type)
+        except Exception as e:
+            logger.warning(
+                "Failed to record reply (upload succeeded)",
+                session_id=request.session_id,
+                message_ts=message_ts,
+                error=str(e),
+            )
+        try:
+            await store_reply_mapping(session.channel_id, message_ts, request.session_id)
+        except Exception as e:
+            logger.error(
+                "Failed to store reply mapping (upload succeeded)",
+                session_id=request.session_id,
+                message_ts=message_ts,
+                error=str(e),
+                exc_info=True,
+            )
+
+    return AddReplyResponse(success=True, message_ts=message_ts)
+
+
+async def _fallback_text_reply(
+    request: AddReplyRequest,
+    session: AgentSession,
+    client: RateLimitedSlackClient,
+) -> AddReplyResponse:
+    """Post the original reply text as a plain message. Used when all
+    renderers fail or files_upload_v2 raises — source is preserved so the
+    user can still see what the agent intended."""
+    post_kwargs: dict[str, Any] = {
+        "channel": session.channel_id,
+        "thread_ts": session.thread_ts,
+        "text": request.text,
+    }
+    if request.username:
+        post_kwargs["username"] = request.username
+    try:
+        response = await client.chat_postMessage(**post_kwargs)
+    except SlackApiError as e:
+        logger.error(
+            "Fallback chat_postMessage failed",
+            session_id=request.session_id,
+            error=str(e),
+            exc_info=True,
+        )
+        return AddReplyResponse(success=False, error=str(e))
+    message_ts = str(response.get("ts", ""))
+    if message_ts:
+        try:
+            await record_reply(request.session_id, message_ts, request.text, reply_type=request.reply_type)
+        except Exception as e:
+            logger.warning(
+                "Failed to record fallback reply",
+                session_id=request.session_id,
+                message_ts=message_ts,
+                error=str(e),
+            )
+        try:
+            await store_reply_mapping(session.channel_id, message_ts, request.session_id)
+        except Exception as e:
+            logger.error(
+                "Failed to store fallback reply mapping",
+                session_id=request.session_id,
+                message_ts=message_ts,
+                error=str(e),
+                exc_info=True,
+            )
+    return AddReplyResponse(success=True, message_ts=message_ts)
+
+
+def _extract_upload_message_ts(response: Any) -> str | None:
+    """Extract the Slack channel message ts from a ``files_upload_v2`` response.
+
+    The response shape is roughly::
+
+        {"ok": True, "files": [{"shares": {"public"|"private": {channel_id: [{"ts": ...}, ...]}}, ...}]}
+
+    Returns ``None`` if no ts is found (which we log but don't treat as fatal).
+    """
+    files = response.get("files") if hasattr(response, "get") else None
+    if not files:
+        return None
+    shares = files[0].get("shares", {}) if isinstance(files[0], dict) else {}
+    for visibility in ("public", "private"):
+        channel_map = shares.get(visibility) or {}
+        for channel_shares in channel_map.values():
+            if channel_shares:
+                ts = channel_shares[0].get("ts") if isinstance(channel_shares[0], dict) else None
+                if ts:
+                    return str(ts)
+    return None
+
+
+def _disambiguate_filename(base: str, counts: dict[str, int]) -> str:
+    """Return a per-call-unique filename based on ``base``.
+
+    Two ``diagram.png`` files in the same upload aren't strictly broken,
+    but Slack shows them with identical names which is confusing. This
+    appends an index on collisions: ``diagram.png``, ``diagram-2.png``, ...
+    """
+    n = counts.get(base, 0) + 1
+    counts[base] = n
+    if n == 1:
+        return base
+    if "." in base:
+        stem, ext = base.rsplit(".", 1)
+        return f"{stem}-{n}.{ext}"
+    return f"{base}-{n}"
 
 
 def _build_survey_blocks(session_id: str, prompt: str | None = None) -> list[dict]:

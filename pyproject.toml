@@ -192,6 +192,10 @@ cloudpathlib = "^0.23.0"
 streamlit = "^1.55.0"
 plotly = "^6.1.0"
 google-cloud-storage = "^3.1.0"
+# Rendering — used by SAG's rich-content pipeline (formula fence → PNG via
+# matplotlib.mathtext). Lazy-imported only when a formula fence is rendered.
+# Pillow is pulled in transitively.
+matplotlib = "^3.10"
 
 [tool.poetry.group.dev.dependencies]
 mypy = "^1.19.0"
