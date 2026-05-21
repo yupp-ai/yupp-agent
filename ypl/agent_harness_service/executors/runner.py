@@ -309,6 +309,23 @@ _RESTRICTED_HARNESS_TOOLS_CLI = [
     "mcp__harness__create_agent",
 ]
 
+# Claude Code built-in tools that are unconditionally denied regardless of
+# session permissions, trigger, or executor config.  Their semantics require
+# an interactive Claude Code UI (Code TUI / web app) to render output and
+# capture user input; in headless ``claude -p`` mode (which is how AHS always
+# invokes the CLI) they have no working surface and return cryptic errors
+# when the model attempts to call them.
+#
+# AskUserQuestion is the canonical example — it surfaces a multi-option
+# question dialog in Code TUI; in headless mode the call comes back with the
+# bare string ``"Answer questions?"`` as the tool's error body, which is
+# opaque to the model and indistinguishable from the session having gone
+# dormant.  Denying it at the CLI flag level removes it from the model's
+# tool list entirely so it never gets attempted; the model falls back to
+# asking inline in plain text instead (which the Slack relay surfaces back
+# to the human just fine).
+_ALWAYS_DISALLOWED_CLI_TOOLS: list[str] = ["AskUserQuestion"]
+
 # For harnessed (CLI) executors: MCP harness tools that are superseded by Claude Code's own
 # native built-ins. Derived from HARNESS_TO_CLI_TOOL_MAP (harness name → CLI name).
 # When the harness MCP is available, we deny these so the agent uses its native CLI tools
@@ -699,10 +716,15 @@ class ClaudeCodeRunner(AgentRunner):
             args += ["--allowedTools", ",".join(effective_allowed)]
             # Even in allowlist mode, deny MCP harness tools that have native CLI equivalents
             # (e.g., mcp__harness__* wildcard would otherwise include mcp__harness__bash).
+            # Also deny ``_ALWAYS_DISALLOWED_CLI_TOOLS`` (e.g. AskUserQuestion) which have
+            # no working surface in headless ``claude -p`` mode regardless of session shape.
+            extra_denies = list(_ALWAYS_DISALLOWED_CLI_TOOLS)
             if self.config.has_mcp:
-                args += ["--disallowedTools", ",".join(_MCP_HARNESS_TOOLS_WITH_CLI_EQUIV)]
+                extra_denies.extend(_MCP_HARNESS_TOOLS_WITH_CLI_EQUIV)
+            args += ["--disallowedTools", ",".join(extra_denies)]
         elif disallowed is not None:
             # Denylist mode with explicit denies
+            disallowed.extend(_ALWAYS_DISALLOWED_CLI_TOOLS)
             if self.config.has_mcp:
                 disallowed.extend(_CLI_TOOLS_SUPERSEDED_BY_MCP)
                 disallowed.extend(_MCP_HARNESS_TOOLS_WITH_CLI_EQUIV)
@@ -714,7 +736,7 @@ class ClaudeCodeRunner(AgentRunner):
             # MCP tools still appear as deferred in <available-deferred-tools>; agents
             # should use ToolSearch(query="select:tool1,tool2,...") to batch-load them.
             # See MCP_TOOLS.md in the shared prompt for the full tool manifest.
-            deny_list: list[str] = []
+            deny_list: list[str] = list(_ALWAYS_DISALLOWED_CLI_TOOLS)
             if self.config.has_mcp:
                 deny_list.extend(_CLI_TOOLS_SUPERSEDED_BY_MCP)
                 deny_list.extend(_MCP_HARNESS_TOOLS_WITH_CLI_EQUIV)
