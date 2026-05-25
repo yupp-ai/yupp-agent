@@ -32,25 +32,26 @@ def upgrade() -> None:
     )
     # ondelete=SET NULL: the fork is a peer session and survives the source's deletion.
     op.create_foreign_key(
-        "fk_agent_sessions_forked_from_session_id",
+        op.f("fk_agent_sessions_forked_from_session_id_agent_sessions"),
         "agent_sessions",
         "agent_sessions",
         ["forked_from_session_id"],
         ["agent_session_id"],
         ondelete="SET NULL",
     )
-    # Partial index — the column is NULL for the vast majority of rows; the only
-    # access pattern is "find forks of session X", which still hits the index.
     op.create_index(
         "ix_agent_sessions_forked_from_session_id",
         "agent_sessions",
         ["forked_from_session_id"],
         unique=False,
-        postgresql_where=sa.text("forked_from_session_id IS NOT NULL"),
     )
 
 
 def downgrade() -> None:
     op.drop_index("ix_agent_sessions_forked_from_session_id", table_name="agent_sessions")
-    op.drop_constraint("fk_agent_sessions_forked_from_session_id", "agent_sessions", type_="foreignkey")
+    op.drop_constraint(
+        op.f("fk_agent_sessions_forked_from_session_id_agent_sessions"),
+        "agent_sessions",
+        type_="foreignkey",
+    )
     op.drop_column("agent_sessions", "forked_from_session_id")
