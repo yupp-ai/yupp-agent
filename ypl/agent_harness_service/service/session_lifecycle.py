@@ -22,7 +22,6 @@ from ypl.agent_harness_service.common.constants import (
     AHS_LIT_BASE_URL,
     AHS_REPOS_DIR,
     AHS_SESSIONS_DIR,
-    AHS_WAR_ROOM_BASE_URL,
     EXECUTOR_TYPE_RAW,
     HARNESS_CLAUDE_SDK,
     HARNESS_CODEX_APP_SERVER,
@@ -731,7 +730,7 @@ async def build_resume_context(session_id: uuid.UUID) -> str:
 
 
 # Marker stored on the synthetic USER row written by ``dispatch_resume_turn``.
-# Carried in ``raw_events`` so the console / war-room frontends can render it
+# Carried in ``raw_events`` so the Lit console / Couch frontends can render it
 # differently from a user-typed message and ops can grep / filter on it.
 _AUTO_RESUME_USER_CONTENT = "[AUTO-RESUME] AHS server restart — auto-continuing."
 
@@ -891,7 +890,7 @@ async def dispatch_resume_turn(session_id: uuid.UUID) -> None:
                 role=AgentSessionMessageRole.USER,
                 content=_AUTO_RESUME_USER_CONTENT,
                 creator_user_id=creator_user_id,
-                # Marked so the war-room / couch frontends can render this as
+                # Marked so the Couch frontend can render this as
                 # a system event rather than a real user utterance.
                 raw_events=[
                     {
@@ -2091,8 +2090,6 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
     # Best-effort: notify all channels that a new session was created.
     _sid = agent_session.agent_session_id
     _link_parts: list[str] = []
-    if AHS_WAR_ROOM_BASE_URL:
-        _link_parts.append(f"<{AHS_WAR_ROOM_BASE_URL}/session/{_sid}|WR>")
     if AHS_LIT_BASE_URL:
         _link_parts.append(f"<{AHS_LIT_BASE_URL}/agent_harness_console?session_id={_sid}|Lit>")
     _links = f" ({' | '.join(_link_parts)})" if _link_parts else ""

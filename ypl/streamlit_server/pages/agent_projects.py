@@ -13,7 +13,7 @@ import streamlit as st
 from sqlalchemy import func
 from sqlalchemy.orm import selectinload
 from sqlmodel import col, select
-from ypl.agent_harness_service.common.constants import AHS_WAR_ROOM_BASE_URL, SLACK_WORKSPACE_DOMAIN_NAME
+from ypl.agent_harness_service.common.constants import SLACK_WORKSPACE_DOMAIN_NAME
 from ypl.agent_harness_service.projects.task_utils import TERMINAL_TASK_STATUSES, complete_task, restart_task
 from ypl.agent_harness_service.task_executor import (
     RESUMABLE_ERROR_SUBTYPES,
@@ -1687,11 +1687,7 @@ def _render_task_detail(
             for sid in task.assigned_session_ids:
                 short_id = sid[:8]
                 lit_link = _internal_link(f"Lit {short_id}", f"/agent_harness_console?session_id={sid}")
-                if AHS_WAR_ROOM_BASE_URL:
-                    wr_link = f'<a href="{AHS_WAR_ROOM_BASE_URL}/session/{sid}" target="_blank">WR</a>'
-                    st.markdown(f"- {lit_link} · {wr_link}", unsafe_allow_html=True)
-                else:
-                    st.markdown(f"- {lit_link}", unsafe_allow_html=True)
+                st.markdown(f"- {lit_link}", unsafe_allow_html=True)
 
         if pr_link := _get_pr_link_parts(task.result):
             st.markdown(f"**PR:** [{pr_link[1]}]({pr_link[0]})")
@@ -2255,8 +2251,6 @@ def _render_at_a_glance() -> None:
                     for sid in task.assigned_session_ids:
                         short_id = sid[:8]
                         parts = [_internal_link(f"Lit {short_id}", f"/agent_harness_console?session_id={sid}")]
-                        if AHS_WAR_ROOM_BASE_URL:
-                            parts.append(f'<a href="{AHS_WAR_ROOM_BASE_URL}/session/{sid}" target="_blank">WR</a>')
                         if slack_url := slack_links_map.get(sid):
                             parts.append(
                                 f'<a href="{html.escape(slack_url, quote=True)}" target="_blank" '

@@ -198,7 +198,7 @@ mypy --config-file=pyproject.toml <changed_files>
 
 **Run lint only on files you changed** — not the entire repo. Fix any errors before committing.
 
-For the TypeScript/Next.js code under `apps/war-room/`, use `pnpm biome check` instead.
+For the TypeScript/Next.js code under `apps/couch/`, use `npm run lint` instead.
 
 ## Working Style
 
