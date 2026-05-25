@@ -98,6 +98,7 @@ dmypy.json
 # claude
 .claude/worktrees
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
 
 # temp
 tmp/

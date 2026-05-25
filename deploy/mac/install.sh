@@ -23,9 +23,14 @@
 #   SKIP_OAUTH=1           Skip the Google OAuth step (Streamlit + Viewer
 #                          remain unauthenticated; only safe localhost-only).
 #   CF_APEX_DOMAIN=…       Apex domain (e.g. tian.dev).  When set, the script
-#                          uses agent.<apex>, agent-ui.<apex>, artifacts.<apex>
+#                          uses ahs.<apex>, lit.<apex>, a.<apex>
 #                          without prompting.
 #   POSTGRES_PASSWORD=…    Override the auto-generated Postgres password.
+#   GOOGLE_OAUTH_CLIENT_JSON=…
+#                          Path to the client_secret_*.json downloaded from
+#                          the Google Cloud console.  When set, step 5 reads
+#                          client_id / client_secret from the file instead of
+#                          prompting.
 
 set -euo pipefail
 
@@ -344,9 +349,9 @@ if [[ "$SKIP_CF" != "1" ]]; then
         [[ -z "$APEX" ]] && APEX="$(prompt_value 'Cloudflare apex domain (e.g. tian.dev)' '')"
         [[ -z "$APEX" ]] && error "Apex domain is required for the tunnel step."
 
-        AGENT_HOST="agent.$APEX"
-        AGENT_UI_HOST="agent-ui.$APEX"
-        ARTIFACTS_HOST="artifacts.$APEX"
+        AGENT_HOST="ahs.$APEX"
+        AGENT_UI_HOST="lit.$APEX"
+        ARTIFACTS_HOST="a.$APEX"
 
         TUNNEL_NAME="${TUNNEL_NAME:-yupp-agent}"
         # Parse the JSON output rather than the text-table — cloudflared has
@@ -463,8 +468,20 @@ EOF
     fi
 
     if prompt_yes_no "Configure Google OAuth now?" "y"; then
-        CLIENT_ID="$(prompt_value 'Google OAuth Client ID' "$(env_get GOOGLE_AUTH_CLIENT_ID)")"
-        CLIENT_SECRET="$(prompt_value 'Google OAuth Client Secret' "$(env_get GOOGLE_AUTH_CLIENT_SECRET)")"
+        # Pre-fill from a downloaded client_secret_*.json if GOOGLE_OAUTH_CLIENT_JSON
+        # points at one.  The Google console emits {"web": {"client_id": ..., "client_secret": ...}}.
+        DEFAULT_CLIENT_ID="$(env_get GOOGLE_AUTH_CLIENT_ID)"
+        DEFAULT_CLIENT_SECRET="$(env_get GOOGLE_AUTH_CLIENT_SECRET)"
+        if [[ -n "${GOOGLE_OAUTH_CLIENT_JSON:-}" ]]; then
+            [[ -f "$GOOGLE_OAUTH_CLIENT_JSON" ]] || error "GOOGLE_OAUTH_CLIENT_JSON=$GOOGLE_OAUTH_CLIENT_JSON not found."
+            DEFAULT_CLIENT_ID="$(jq -r '(.web // .installed).client_id // empty' "$GOOGLE_OAUTH_CLIENT_JSON")"
+            DEFAULT_CLIENT_SECRET="$(jq -r '(.web // .installed).client_secret // empty' "$GOOGLE_OAUTH_CLIENT_JSON")"
+            [[ -n "$DEFAULT_CLIENT_ID" && -n "$DEFAULT_CLIENT_SECRET" ]] \
+                || error "Could not extract client_id / client_secret from $GOOGLE_OAUTH_CLIENT_JSON."
+            info "Loaded OAuth client from $GOOGLE_OAUTH_CLIENT_JSON"
+        fi
+        CLIENT_ID="$(prompt_value 'Google OAuth Client ID' "$DEFAULT_CLIENT_ID")"
+        CLIENT_SECRET="$(prompt_value 'Google OAuth Client Secret' "$DEFAULT_CLIENT_SECRET")"
 
         env_set GOOGLE_AUTH_CLIENT_ID     "$CLIENT_ID"
         env_set GOOGLE_AUTH_CLIENT_SECRET "$CLIENT_SECRET"
