@@ -1106,11 +1106,11 @@ async def _drain_session_inbox(session_id: uuid.UUID) -> None:
                 claim_result = await msg_db.execute(
                     text("""
                         UPDATE agent_messages
-                        SET status        = 'delivering',
+                        SET status        = 'DELIVERING',
                             claimed_at    = now(),
                             attempt_count = attempt_count + 1
                         WHERE agent_message_id = :id
-                          AND status = 'queued'
+                          AND status = 'QUEUED'
                           AND attempt_count < max_attempts
                         RETURNING agent_message_id, content, from_agent_id, from_session_id,
                                   to_session_id, attempt_count, max_attempts
@@ -1163,7 +1163,7 @@ async def _drain_session_inbox(session_id: uuid.UUID) -> None:
                     await msg_db.execute(
                         text("""
                             UPDATE agent_messages
-                            SET status = 'queued', claimed_at = NULL
+                            SET status = 'QUEUED', claimed_at = NULL
                             WHERE agent_message_id = :id
                         """),
                         {"id": msg_id},
@@ -1330,8 +1330,8 @@ async def _drain_session_inbox(session_id: uuid.UUID) -> None:
                         text("""
                             UPDATE agent_messages
                             SET status     = CASE
-                                               WHEN attempt_count >= max_attempts THEN 'failed'
-                                               ELSE 'queued'
+                                               WHEN attempt_count >= max_attempts THEN 'FAILED'
+                                               ELSE 'QUEUED'
                                              END,
                                 error      = :err,
                                 claimed_at = NULL
