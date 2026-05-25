@@ -131,7 +131,7 @@ async def request_bot_creation(request: BotCreationRequest) -> BotCreationRespon
     - There is already a PENDING request for this agent.
 
     Args:
-        request: Incoming BotCreationRequest from the war room.
+        request: Incoming BotCreationRequest from the admin client.
 
     Returns:
         BotCreationResponse with request_id and PENDING status.

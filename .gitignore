@@ -133,7 +133,7 @@ wandb/
 # first, then re-ignore only the Node cruft.
 !apps/**
 
-# Node / Next.js (apps/war-room)
+# Node / Next.js (apps/couch)
 apps/**/node_modules/
 apps/**/.next/
 apps/**/.turbo/

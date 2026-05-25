@@ -3,9 +3,8 @@
 Next.js 15 (App Router) front-end for AHS. Runs standalone on port 3010.
 Production: `https://couch.agcouch.com`.
 
-Replaces the previous `apps/couch` (Bun + Next 16 + heavy tRPC stack) and
-`apps/war-room` (admin UI) — both in one ported app with all admin pages
-included.
+Replaces the previous Bun + Next 16 + heavy tRPC stack — a single
+ported app with all user and admin pages included.
 
 ## Stack
 

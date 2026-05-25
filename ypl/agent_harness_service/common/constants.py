@@ -123,11 +123,6 @@ AHS_GCS_SESSION_PREFIX = os.environ.get("AHS_GCS_SESSION_PREFIX", f"sessions/{_A
 # When empty, the Lit link is omitted from generated messages.
 AHS_LIT_BASE_URL = os.environ.get("AHS_LIT_BASE_URL", "").rstrip("/")
 
-# War Room (Next.js admin UI) base URL — used in Slack session-notice links.
-# Set to your deployment's War Room public URL (e.g. ``https://war-room.agcouch.com``).
-# When empty, the War Room link is omitted from generated messages.
-AHS_WAR_ROOM_BASE_URL = os.environ.get("AHS_WAR_ROOM_BASE_URL", "").rstrip("/")
-
 # Slack workspace subdomain — used to build Slack permalinks back to threads
 # from Lit (e.g. ``yuppai`` or ``agentic-couch``). The full URL is built as
 # ``https://{SLACK_WORKSPACE_DOMAIN_NAME}.slack.com/archives/<channel>/p<msg_ts>...``.
