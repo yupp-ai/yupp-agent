@@ -43,7 +43,7 @@ All paths below live under `/data/ahs/sessions/{SESSION_ID}/`:
 
 ## Repositories
 
-**yupp-agent** — Agent Cloud Platform. Houses the Agent Harness Service (AHS), Slack Agent Gateway (SAG), MCP server, Streamlit dashboards, agent configs, skills, and the War Room admin UI.
+**yupp-agent** — Agent Cloud Platform. Houses the Agent Harness Service (AHS), Slack Agent Gateway (SAG), MCP server, Streamlit dashboards, agent configs, skills, and the Couch web UI.
 
 ## Code Change Workflow (Summary)
 

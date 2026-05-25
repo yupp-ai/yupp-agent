@@ -69,7 +69,7 @@ ypl/
 └── db/                      # SQLModel models + Alembic migrations
 
 apps/
-├── couch/                   # Next.js 15 web UI for AHS (Node + npm, port 3010, standalone — see apps/couch/CLAUDE.md). Replaces the old couch + war-room. Prod: couch.agcouch.com
+├── couch/                   # Next.js 15 web UI for AHS (Node + npm, port 3010, standalone — see apps/couch/CLAUDE.md). Prod: couch.agcouch.com
 └── artifact-viewer/         # Python artifact viewer (separate service)
 ```
 

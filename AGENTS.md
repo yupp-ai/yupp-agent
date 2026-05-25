@@ -69,7 +69,7 @@ ypl/
 └── db/                      # SQLModel models + Alembic migrations
 
 apps/
-└── war-room/                # Next.js 16 admin UI for AHS (Bun, port 3009, standalone — see apps/war-room/AGENTS.md)
+└── couch/                   # Next.js 15 web UI for AHS (Node + npm, port 3010, standalone — see apps/couch/CLAUDE.md). Prod: couch.agcouch.com
 ```
 
 ### AHS Layering (Critical Constraint)

@@ -163,7 +163,7 @@ gh pr checks <PR_NUMBER> --json name,state,bucket,link
 Look for checks with `bucket: "fail"` or `state: "FAILURE"`. Common check names:
 - Python lint: `lint`, `Lint`, `ruff`, `pre-commit`
 - Python type check: `mypy`, `type-check`
-- Frontend lint: `biome`, `Biome`, `biome-check`, `format-check` (for `apps/war-room` / frontend code)
+- Frontend lint: `lint`, `eslint`, `format-check` (for `apps/couch` / frontend code)
 - Tests: `test`, `Test`, `tests`, `pytest`, `ci`, `CI`, `unit-tests`, `integration-tests`
 
 ### 3.3 Fetch failed test logs
