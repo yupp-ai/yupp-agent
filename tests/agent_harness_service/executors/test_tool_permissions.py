@@ -196,11 +196,50 @@ class TestBuildArgsToolFlags:
             return runner._build_args("test prompt", _make_context())
 
     def test_default_allow_no_flags(self) -> None:
-        """Default *:allow with no MCP produces no --allowedTools/--disallowedTools."""
+        """Default *:allow with no MCP still emits --disallowedTools for the always-denied list.
+
+        ``AskUserQuestion`` (and any future built-in that can't work in headless
+        ``claude -p`` mode) is always denied regardless of session shape, so the
+        deny flag is non-empty even in the otherwise-empty default-allow path.
+        ``--allowedTools`` remains absent.
+        """
         config = _make_config(tool_permissions={"*": "allow"})
         args = self._get_args(config)
         assert "--allowedTools" not in args
-        assert "--disallowedTools" not in args
+        idx = args.index("--disallowedTools")
+        denied = args[idx + 1].split(",")
+        assert "AskUserQuestion" in denied
+
+    def test_always_disallowed_tools_present_in_all_modes(self) -> None:
+        """``AskUserQuestion`` is denied in every tool-permission shape.
+
+        Headless ``claude -p`` mode (which is how AHS always invokes the CLI)
+        has no UI to render the multi-option question dialog, so attempts to
+        call this tool return a cryptic ``"Answer questions?"`` error that
+        looks indistinguishable from session hangs.  Pin the deny so the model
+        never sees the tool as available.
+        """
+        # Denylist mode with explicit denies.
+        denylist_config = _make_config(tool_permissions={"*": "allow", "edit": "deny"})
+        denylist_args = self._get_args(denylist_config)
+        idx = denylist_args.index("--disallowedTools")
+        assert "AskUserQuestion" in denylist_args[idx + 1].split(",")
+
+        # Default-allow mode with MCP off (covered by test_default_allow_no_flags too,
+        # but pinned here as part of the umbrella assertion).
+        default_allow_config = _make_config(tool_permissions={"*": "allow"})
+        default_allow_args = self._get_args(default_allow_config)
+        idx = default_allow_args.index("--disallowedTools")
+        assert "AskUserQuestion" in default_allow_args[idx + 1].split(",")
+
+        # Allowlist mode (``*: deny``) — even though anything not in the allowed
+        # list is implicitly denied, the always-disallowed list still surfaces
+        # explicitly in ``--disallowedTools`` so the intent is auditable in
+        # the executor command line.
+        allowlist_config = _make_config(tool_permissions={"*": "deny", "read": "allow"})
+        allowlist_args = self._get_args(allowlist_config)
+        idx = allowlist_args.index("--disallowedTools")
+        assert "AskUserQuestion" in allowlist_args[idx + 1].split(",")
 
     def test_deny_all_produces_allowed_tools(self) -> None:
         """*:deny with some allows produces --allowedTools with PascalCase CLI names."""
