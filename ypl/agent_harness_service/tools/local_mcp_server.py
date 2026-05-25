@@ -40,6 +40,7 @@ Existing imports that continue to work::
 # ---------------------------------------------------------------------------
 from ypl.agent_harness_service.tools import (  # noqa: F401
     agent_messaging,
+    fork,
     gateway_tools,
     github_auth,
     linear,
