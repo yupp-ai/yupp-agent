@@ -12,9 +12,13 @@ Lineage is recorded two ways:
 2. ``context["fork_lineage"]`` JSONB list — accumulates across chained forks
    so a fork-of-a-fork carries its full ancestry without recursive joins.
 
-Authorization (Slack sources only): only the user who originated the source
-Slack thread (``context.slack_user_id``) is allowed to fork it. Internal A2A
-or API calls bypass this check — the trust boundary is already inside AHS.
+Authorization: the actor (resolved from ``context.current_turn_user_id`` for
+in-thread forks, or from the caller session's ``creator_user_id`` for
+cross-session forks) must equal the source session's ``creator_user_id``.
+This applies uniformly to Slack and non-Slack sources. The check is skipped
+only when the source has no recorded creator (legacy / unattributed
+sessions). The previous ``slack_user_id``-only check was bypassable in
+shared Slack threads and short-circuited for non-Slack callers.
 """
 
 from __future__ import annotations
@@ -22,10 +26,11 @@ import datetime
 import uuid as _uuid
 from typing import Any
 
-from sqlmodel import select
+from sqlmodel import col, select
 
 from ypl.agent_harness_service.common.constants import mcp_session_id_var
 from ypl.agent_harness_service.common.types import SessionCreateRequest, SessionMessageRequest
+from ypl.agent_harness_service.tools.gateway_tools import _SendResultLike
 from ypl.agent_harness_service.tools.mcp_instance import _validate_session_id, mcp
 from ypl.backend.db import get_async_session
 from ypl.backend.utils.slack_utils import create_slack_link
@@ -42,6 +47,17 @@ from ypl.structured_logger import get_logger
 logger = get_logger()
 
 
+# Whitelist of context fields carried into the new session. Everything else
+# (permissions, task_id, project_id, routine_id, from_agent_id, current_turn_user_id,
+# force_model, subagent_depth, trigger_message_id, …) is dropped so the fork starts
+# from a clean accounting/authorization state. Permissions are recomputed by
+# send_message() via the USE_MCP check.
+_SAFE_CONTEXT_FIELDS_BASE: frozenset[str] = frozenset({"user_id", "user_name", "display_name", "yupp_user_id"})
+_SAFE_CONTEXT_FIELDS_SLACK: frozenset[str] = frozenset(
+    {"slack_channel_id", "slack_team_id", "slack_channel_name", "slack_user_id"}
+)
+
+
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
@@ -51,31 +67,21 @@ def _now_iso() -> str:
     return datetime.datetime.now(datetime.UTC).isoformat()
 
 
-def _derive_new_slack_session_id(src_slack_session_id: str | None, channel: str, new_thread_ts: str) -> str:
+def _derive_new_slack_session_id(src_slack_session_id: str | None, channel: str, new_thread_ts: str) -> str | None:
     """Compose a new SAG-style ``{channel}:{thread_ts}:{app_id}`` composite.
 
     Reuses the ``app_id`` segment from the source's composite so SAG routes
-    follow-up @mentions in the new thread to the same Slack app/agent. Falls
-    back to ``"?"`` if the source's composite is malformed — non-fatal,
-    follow-up routing simply won't resolve.
+    follow-up @mentions in the new thread to the same Slack app/agent.
+    Returns ``None`` when the source's composite is missing or malformed —
+    callers must treat this as a hard error since silently emitting a bogus
+    app_id would produce a thread where follow-up @mentions never resolve.
     """
-    app_id = "?"
-    if src_slack_session_id:
-        parts = src_slack_session_id.split(":")
-        if len(parts) >= 3:
-            app_id = parts[-1]
-    return f"{channel}:{new_thread_ts}:{app_id}"
-
-
-async def _resolve_agent_name(session_uuid: _uuid.UUID) -> str | None:
-    """Look up the source session's agent name (needed to construct SessionCreateRequest)."""
-    async with get_async_session() as db:
-        result = await db.execute(
-            select(Agent.name)
-            .join(AgentSession, AgentSession.agent_id == Agent.agent_id)
-            .where(AgentSession.agent_session_id == session_uuid)
-        )
-        return result.scalar_one_or_none()
+    if not src_slack_session_id:
+        return None
+    parts = src_slack_session_id.split(":")
+    if len(parts) < 3 or not parts[-1]:
+        return None
+    return f"{channel}:{new_thread_ts}:{parts[-1]}"
 
 
 async def _post_slack(
@@ -104,6 +110,7 @@ async def _post_slack(
     else:
         has_presence = False
 
+    result: _SendResultLike
     if has_presence and agent_name:
         gateway = GatewayRegistry.get_instance().get("slack")
         if gateway:
@@ -149,8 +156,9 @@ async def _post_slack(
         "NEW TOP-LEVEL THREAD in the same channel; cross-link messages are "
         "posted in both threads. Lineage is recorded on the new session via "
         "forked_from_session_id and context.fork_lineage. "
-        "Authorization: when the source is Slack-triggered, only the original "
-        "thread originator (context.slack_user_id) is allowed to fork. "
+        "Authorization: the actor (current_turn_user_id for in-thread, or "
+        "caller session's creator for cross-session) must match the source "
+        "session's creator_user_id. "
         "Returns the new session UUID and (for Slack) the new thread URL."
     ),
 )
@@ -204,39 +212,35 @@ async def fork_session(
         src_trigger = src.trigger
         src_slack_session_id = src.slack_session_id
         src_agent_id = src.agent_id
+        src_creator_user_id = str(src.creator_user_id) if src.creator_user_id else None
 
-        # Authorization: only the Slack thread originator can fork a Slack source.
-        # For non-Slack sources (api/cron/agent/task), the trust boundary is already
-        # inside AHS — anyone who can call the MCP tool is allowed.
-        if src_trigger == AgentSessionTrigger.SLACK:
-            originator_slack_user = src_ctx.get("slack_user_id")
-            # Resolve the caller's slack_user_id from their session context.
-            caller_slack_user: str | None = None
-            if effective_session_id != src_id:
-                caller_uuid = _uuid.UUID(effective_session_id)
-                caller_sess = await db.get(AgentSession, caller_uuid)
-                if caller_sess and caller_sess.context:
-                    caller_slack_user = caller_sess.context.get("slack_user_id")
-            else:
-                # Forking from inside the source session — caller_slack_user is the
-                # user who sent the /fork message. We don't track per-message
-                # slack_user_id easily here, so fall back to the originator: the
-                # only attacker model this protects against is cross-session forks,
-                # and the legitimate in-thread /fork case is always the originator
-                # since only they can pass the upstream check at SAG ingress…
-                # except in shared threads. To be safe in shared threads, accept
-                # the originator only when caller == source; that's already the
-                # 100% match case.
-                caller_slack_user = originator_slack_user
+        # Resolve who is actually triggering the fork (the "actor"):
+        # - In-thread fork (caller == source): the user who sent the current turn.
+        #   send_message() stamps src_ctx["current_turn_user_id"] = msg_creator_user_id
+        #   on every Slack message ingestion, so this reflects the /fork sender —
+        #   not the original thread originator. This is what protects shared threads.
+        # - Cross-session fork: the caller session's creator_user_id.
+        actor_user_id: str | None
+        if effective_session_id == src_id:
+            actor_user_id = src_ctx.get("current_turn_user_id") or src_creator_user_id
+        else:
+            caller_uuid = _uuid.UUID(effective_session_id)
+            caller_sess = await db.get(AgentSession, caller_uuid)
+            if not caller_sess:
+                return {"status": "error", "error": f"Caller session not found: {effective_session_id}"}
+            actor_user_id = str(caller_sess.creator_user_id) if caller_sess.creator_user_id else None
 
-            if originator_slack_user and caller_slack_user and originator_slack_user != caller_slack_user:
-                return {
-                    "status": "error",
-                    "error": (
-                        f"Only the original thread participant (slack_user_id={originator_slack_user}) "
-                        f"can /fork this session. Caller is {caller_slack_user}."
-                    ),
-                }
+        # Enforce: the actor must be the source's creator. Applies uniformly to
+        # Slack and non-Slack sources — the only case where we skip the check is
+        # when the source has no creator (legacy / unattributed sessions).
+        if src_creator_user_id and actor_user_id and src_creator_user_id != actor_user_id:
+            return {
+                "status": "error",
+                "error": (
+                    f"Only the source session's creator (user_id={src_creator_user_id}) "
+                    f"can fork this session. Actor is {actor_user_id}."
+                ),
+            }
 
         # Pull the source's agent name while the DB session is still open.
         src_agent = await db.get(Agent, src_agent_id)
@@ -270,6 +274,21 @@ async def fork_session(
                 "status": "error",
                 "error": "Source session is missing slack_channel_id — cannot post a new fork thread.",
             }
+        # Validate the source has a parseable Slack composite BEFORE posting the
+        # header — otherwise we'd open a thread whose follow-up @mentions never
+        # route back to the agent (silent dead-end).
+        if (
+            not src_slack_session_id
+            or len(src_slack_session_id.split(":")) < 3
+            or not src_slack_session_id.split(":")[-1]
+        ):
+            return {
+                "status": "error",
+                "error": (
+                    "Source session's slack_session_id is missing or malformed — "
+                    "cannot derive app_id for routing follow-up @mentions in the new thread."
+                ),
+            }
         orig_thread_ts = src_ctx.get("slack_thread_ts")
         orig_thread_url = create_slack_link(channel, orig_thread_ts, orig_thread_ts) if orig_thread_ts else None
 
@@ -299,23 +318,25 @@ async def fork_session(
         new_thread_url = create_slack_link(channel, new_thread_ts, new_thread_ts)
 
     # ------------------------------------------------------------------
-    # 4) Build the new session's context
+    # 4) Build the new session's context (whitelist — drop privilege/accounting state)
     # ------------------------------------------------------------------
-    new_context: dict[str, Any] = dict(src_ctx)
+    allowed_fields = set(_SAFE_CONTEXT_FIELDS_BASE)
+    if effective_target == "slack_new_thread":
+        allowed_fields |= _SAFE_CONTEXT_FIELDS_SLACK
+    new_context: dict[str, Any] = {k: v for k, v in src_ctx.items() if k in allowed_fields}
+
     if effective_target == "slack_new_thread" and new_thread_ts:
         new_context["slack_thread_ts"] = new_thread_ts
         new_context["slack_message_ts"] = new_thread_ts
-        # Drop carry-over state that referred to the old thread.
-        new_context.pop("slack_thread_prefetched", None)
-        new_context.pop("registered_threads", None)
 
     # Append a lineage entry. Each entry stands alone so chained forks accumulate
-    # without losing intermediate hops.
+    # without losing intermediate hops. Attribute to the actual fork actor, not
+    # the source's creator (the two may differ in the cross-session path).
     new_context["fork_lineage"] = list(src_ctx.get("fork_lineage", [])) + [
         {
             "forked_from_session_id": str(src_uuid),
             "forked_at": _now_iso(),
-            "forked_by_user_id": new_context.get("user_id"),
+            "forked_by_user_id": actor_user_id,
             "forked_via_session_id": effective_session_id,
         }
     ]
@@ -329,9 +350,20 @@ async def fork_session(
     new_trigger = "api"
     if effective_target == "slack_new_thread" and channel and new_thread_ts:
         new_slack_session_id = _derive_new_slack_session_id(src_slack_session_id, channel, new_thread_ts)
+        if not new_slack_session_id:
+            # Already validated above; defensive guard in case _derive_new_slack_session_id
+            # acquires additional failure modes.
+            return {
+                "status": "error",
+                "error": "Failed to derive new Slack session id for the new thread.",
+            }
         new_trigger = "slack"
 
-    # Lazy import to keep tool module deps minimal (Layer-1 → wiring).
+    # TODO: this is a Layer-1 → wiring import, which violates the AHS layering
+    # rule (see ARCHITECTURE.md). Convert to a registered orchestration callback
+    # the same way local_mcp_server.register_orchestration_callbacks() does it.
+    # The lazy import below hides the cycle from import-time detection but does
+    # not change the dependency direction.
     from ypl.agent_harness_service.service.session_lifecycle import create_session, send_message
 
     create_req = SessionCreateRequest(
@@ -360,53 +392,90 @@ async def fork_session(
     # 6) Snapshot completed messages + insert SYSTEM marker + record
     #    forked_from_session_id on the new row.
     # ------------------------------------------------------------------
-    async with get_async_session() as db:
-        result = await db.execute(
-            select(AgentSessionMessage)
-            .where(AgentSessionMessage.agent_session_id == src_uuid)
-            .where(AgentSessionMessage.completion_status == AgentSessionMessageCompletionStatus.SUCCESS)
-            .order_by(AgentSessionMessage.turn_number, AgentSessionMessage.created_at)
-        )
-        src_messages = list(result.scalars().all())
-
-        for msg in src_messages:
-            copy = AgentSessionMessage(
-                agent_session_id=new_session_uuid,
-                turn_number=msg.turn_number,
-                role=msg.role,
-                creator_user_id=msg.creator_user_id,
-                content=msg.content,
-                raw_events=msg.raw_events if include_tool_calls else None,
-                llm_name=msg.llm_name,
-                completion_status=msg.completion_status,
-                error_type=msg.error_type,
-                # Provenance columns are deliberately NOT copied: from_agent_id /
-                # agent_message_id_ref reference rows that belong to the source
-                # session's A2A history and would violate the FELLOW_AGENT check
-                # constraint if attached to a different agent_session_id.
+    # TODO: snapshot races with concurrent source-session turns — if a turn
+    # flips to SUCCESS between create_session above and the SELECT below, the
+    # fork picks up history the user didn't see when they typed /fork. Take a
+    # SELECT … FOR UPDATE lock on the source AgentSession row the same way
+    # session_lifecycle.send_message does, holding it across the snapshot.
+    try:
+        async with get_async_session() as db:
+            result = await db.execute(
+                select(AgentSessionMessage)
+                .where(AgentSessionMessage.agent_session_id == src_uuid)
+                .where(AgentSessionMessage.completion_status == AgentSessionMessageCompletionStatus.SUCCESS)
+                .order_by(col(AgentSessionMessage.turn_number), col(AgentSessionMessage.created_at))
             )
-            db.add(copy)
+            src_messages = list(result.scalars().all())
 
-        max_turn = max((m.turn_number for m in src_messages), default=0)
-        marker_text = (
-            f"[Forked from session {src_id} at turn {max_turn}. "
-            "The conversation above is replayed from the original session; "
-            "the next user turn carries the new fork instructions.]"
+            for msg in src_messages:
+                # Copy A2A provenance straight through: from_agent_id and
+                # agent_message_id_ref reference agents/agent_messages rows that
+                # are NOT session-scoped, so the FKs remain valid in the new
+                # session and the FELLOW_AGENT check constraint
+                # ((role='FELLOW_AGENT') = (from_agent_id IS NOT NULL)) is
+                # satisfied. Omitting from_agent_id for FELLOW_AGENT rows causes
+                # an IntegrityError at commit.
+                copy = AgentSessionMessage(
+                    agent_session_id=new_session_uuid,
+                    turn_number=msg.turn_number,
+                    role=msg.role,
+                    creator_user_id=msg.creator_user_id,
+                    content=msg.content,
+                    raw_events=msg.raw_events if include_tool_calls else None,
+                    llm_name=msg.llm_name,
+                    completion_status=msg.completion_status,
+                    error_type=msg.error_type,
+                    from_agent_id=msg.from_agent_id,
+                    agent_message_id_ref=msg.agent_message_id_ref,
+                )
+                db.add(copy)
+
+            max_turn = max((m.turn_number for m in src_messages), default=0)
+            marker_text = (
+                f"[Forked from session {src_id} at turn {max_turn}. "
+                "The conversation above is replayed from the original session; "
+                "the next user turn carries the new fork instructions.]"
+            )
+            marker = AgentSessionMessage(
+                agent_session_id=new_session_uuid,
+                turn_number=max_turn + 1,
+                role=AgentSessionMessageRole.SYSTEM,
+                content=marker_text,
+                completion_status=AgentSessionMessageCompletionStatus.SUCCESS,
+            )
+            db.add(marker)
+
+            new_sess = await db.get(AgentSession, new_session_uuid)
+            if new_sess is not None:
+                new_sess.forked_from_session_id = src_uuid
+
+            await db.commit()
+    except Exception as exc:
+        logger.error(
+            "fork_session: snapshot commit failed (Slack header already posted, new session row exists)",
+            source_session_id=src_id,
+            new_session_id=str(new_session_uuid),
+            error=str(exc),
+            exc_info=True,
         )
-        marker = AgentSessionMessage(
-            agent_session_id=new_session_uuid,
-            turn_number=max_turn + 1,
-            role=AgentSessionMessageRole.SYSTEM,
-            content=marker_text,
-            completion_status=AgentSessionMessageCompletionStatus.SUCCESS,
-        )
-        db.add(marker)
-
-        new_sess = await db.get(AgentSession, new_session_uuid)
-        if new_sess is not None:
-            new_sess.forked_from_session_id = src_uuid
-
-        await db.commit()
+        # Surface the failure in the original thread so the user knows the
+        # 🍴 Forked from… header in the new thread is orphaned.
+        if effective_target == "slack_new_thread" and channel:
+            orig_thread_ts = src_ctx.get("slack_thread_ts")
+            try:
+                await _post_slack(
+                    text=f"\U0001f374 *Fork failed during snapshot:* `{exc}`. The new thread is orphaned.",
+                    channel=channel,
+                    session_id=effective_session_id,
+                    thread_ts=orig_thread_ts,
+                )
+            except Exception:
+                logger.warning("fork_session: failed to post fork-failure notice", exc_info=True)
+        return {
+            "status": "error",
+            "error": f"Snapshot commit failed: {exc}",
+            "new_session_id": str(new_session_uuid),
+        }
 
     snapshot_turn_count = len(src_messages)
 

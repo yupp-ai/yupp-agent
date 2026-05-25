@@ -30,18 +30,23 @@ def upgrade() -> None:
         "agent_sessions",
         sa.Column("forked_from_session_id", sa.Uuid(), nullable=True),
     )
+    # ondelete=SET NULL: the fork is a peer session and survives the source's deletion.
     op.create_foreign_key(
         "fk_agent_sessions_forked_from_session_id",
         "agent_sessions",
         "agent_sessions",
         ["forked_from_session_id"],
         ["agent_session_id"],
+        ondelete="SET NULL",
     )
+    # Partial index — the column is NULL for the vast majority of rows; the only
+    # access pattern is "find forks of session X", which still hits the index.
     op.create_index(
         "ix_agent_sessions_forked_from_session_id",
         "agent_sessions",
         ["forked_from_session_id"],
         unique=False,
+        postgresql_where=sa.text("forked_from_session_id IS NOT NULL"),
     )
 
 

@@ -46,13 +46,23 @@ The original session is left untouched and continues to be usable.
 
 ## Authorization
 
-For Slack-triggered source sessions, **only the original thread participant**
-(the user whose ``slack_user_id`` matches the source's
-``context.slack_user_id``) is allowed to fork. Requests from a different Slack
-user are rejected with a clear error.
+The **actor** is resolved as:
 
-For non-Slack source sessions (API / cron / agent-triggered / task-triggered),
-no authorization gate is enforced — the trust boundary is already inside AHS.
+- **In-thread fork** (calling session == source): the user who sent the
+  current turn (``context.current_turn_user_id``, stamped by ``send_message``
+  on every Slack ingestion). This is what protects shared Slack threads —
+  a different participant typing ``/fork`` is rejected even though they share
+  the source's thread.
+- **Cross-session fork**: the calling session's ``creator_user_id``.
+
+The actor must equal the source session's ``creator_user_id``. This applies
+uniformly to Slack and non-Slack sources. The check is skipped only when the
+source has no recorded creator (legacy / unattributed sessions). A different
+user attempting to fork another user's session is rejected with a clear error.
+
+Note: ``permissions`` are NOT inherited from the source — the fork starts
+with the recomputed USE_MCP grant for the actor, the same way a fresh
+``send_message`` would.
 
 ## Procedure
 
