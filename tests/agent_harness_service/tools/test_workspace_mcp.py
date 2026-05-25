@@ -495,3 +495,59 @@ class TestResolvePrAttribution:
         assert result is not None
         assert "eng-raccoon" in result
         assert "My Project" in result
+
+    async def test_slack_triggered_session_appends_slack_link(self) -> None:
+        """Slack-triggered session appends a ``[Slack](...)`` link to line 2."""
+        context = {
+            "user_name": "Jane Doe",
+            "slack_channel_id": "C01ABCDEF",
+            "slack_thread_ts": "1234567890.123456",
+        }
+        mock_ctx = _mock_db_session(fetchone_return=("eng-raccoon", context))
+
+        # Force the workspace domain so the permalink builder returns a URL.
+        with (
+            patch("ypl.agent_harness_service.tools.mcp_instance.get_async_session", return_value=mock_ctx),
+            patch("ypl.agent_harness_service.common.constants.SLACK_WORKSPACE_DOMAIN_NAME", "yuppai"),
+        ):
+            result = await _resolve_pr_attribution(VALID_SESSION)
+
+        assert result is not None
+        assert f"session_id={VALID_SESSION}" in result
+        # Slack permalink format: archives/<channel>/p<ts-no-dot>?thread_ts=...&cid=...
+        assert "[Slack](https://yuppai.slack.com/archives/C01ABCDEF/p1234567890123456" in result
+        assert "thread_ts=1234567890.123456" in result
+        assert "cid=C01ABCDEF" in result
+
+    async def test_slack_link_omitted_when_workspace_domain_unset(self) -> None:
+        """When ``SLACK_WORKSPACE_DOMAIN_NAME`` is empty, the Slack link is silently omitted."""
+        context = {
+            "user_name": "Jane Doe",
+            "slack_channel_id": "C01ABCDEF",
+            "slack_thread_ts": "1234567890.123456",
+        }
+        mock_ctx = _mock_db_session(fetchone_return=("eng-raccoon", context))
+
+        with (
+            patch("ypl.agent_harness_service.tools.mcp_instance.get_async_session", return_value=mock_ctx),
+            patch("ypl.agent_harness_service.common.constants.SLACK_WORKSPACE_DOMAIN_NAME", ""),
+        ):
+            result = await _resolve_pr_attribution(VALID_SESSION)
+
+        assert result is not None
+        assert f"session_id={VALID_SESSION}" in result
+        assert "[Slack]" not in result
+
+    async def test_non_slack_session_has_no_slack_link(self) -> None:
+        """When the session has no Slack context fields, no Slack link is emitted
+        even if the workspace domain is configured."""
+        mock_ctx = _mock_db_session(fetchone_return=("eng-raccoon", {"user_name": "Jane Doe"}))
+
+        with (
+            patch("ypl.agent_harness_service.tools.mcp_instance.get_async_session", return_value=mock_ctx),
+            patch("ypl.agent_harness_service.common.constants.SLACK_WORKSPACE_DOMAIN_NAME", "yuppai"),
+        ):
+            result = await _resolve_pr_attribution(VALID_SESSION)
+
+        assert result is not None
+        assert "[Slack]" not in result

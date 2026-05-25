@@ -18,6 +18,7 @@ from sqlmodel import select
 
 from ypl.agent_harness_service.common.constants import AHS_LIT_BASE_URL
 from ypl.backend.db import get_async_session
+from ypl.backend.utils.slack_utils import create_slack_link
 from ypl.db.agent_harness import AgentSession, AgentTask
 from ypl.structured_logger import get_logger
 
@@ -187,7 +188,8 @@ async def _resolve_pr_attribution(session_id: str) -> str | None:
 
     Returns a markdown attribution block — always including the agent name and
     the Lit session link, plus a project/task link when the session is task-
-    triggered.  The session link is what downstream review-fix loop tooling
+    triggered and a Slack thread link when the session was initiated from
+    Slack.  The session link is what downstream review-fix loop tooling
     (e.g. master-reviewer) parses to route follow-up notifications back to the
     author session, so it must be emitted for every AHS-driven trigger
     (TASK, SLACK, AGENT, API, CRON), not just TASK.
@@ -222,6 +224,8 @@ async def _resolve_pr_attribution(session_id: str) -> str | None:
         project_id = context.get("project_id")
         project_name = context.get("project_name", "")
         user_name = context.get("user_name", "")
+        slack_channel_id = context.get("slack_channel_id", "")
+        slack_thread_ts = context.get("slack_thread_ts", "")
 
         # Fetch task title for the project/task link line.  Only relevant when
         # a task is actually associated with this session — otherwise the
@@ -255,10 +259,21 @@ async def _resolve_pr_attribution(session_id: str) -> str | None:
         attribution += f" · \U0001f4cb [{label}]({task_url})"
     lines.append(attribution)
 
-    # Line 2: session link — always emitted, downstream tooling parses
-    # session_id from this URL to wire up review-fix notifications, etc.
+    # Line 2: session link (always) + Slack thread link (when the session was
+    # initiated from Slack and the workspace domain is configured).  The
+    # session link must be first — downstream tooling parses ``session_id=...``
+    # from it to wire up review-fix notifications.
     session_url = f"{AHS_LIT_BASE_URL}/agent_harness_console?session_id={session_id}"
-    lines.append(f"\U0001f517 [Session]({session_url})")
+    line2 = f"\U0001f517 [Session]({session_url})"
+    if slack_channel_id and slack_thread_ts:
+        # Use the thread root ts for both the message ts (deep-link target)
+        # and ``main_thread_ts`` (opens the side panel).  Returns None when
+        # ``SLACK_WORKSPACE_DOMAIN_NAME`` is unset — silently omit the link
+        # rather than emitting a broken URL.
+        slack_url = create_slack_link(slack_channel_id, slack_thread_ts, slack_thread_ts)
+        if slack_url:
+            line2 += f" · [Slack]({slack_url})"
+    lines.append(line2)
 
     return "\n".join(lines)
 
