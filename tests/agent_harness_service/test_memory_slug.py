@@ -200,13 +200,37 @@ class TestIsSafeSlug:
             ".foo",  # leading dot (hidden file)
             "/foo",  # leading slash (absolute path)
             "foo bar",  # whitespace
-            "foo\nbar",  # newline
+            "foo\nbar",  # embedded newline
+            # Trailing whitespace / control chars: Python's ``$`` anchor
+            # matches before a final ``\n``, so without the ``\A``/``\Z``
+            # anchors used by ``_SLUG_RE`` these would slip through and
+            # produce filenames with literal control chars.
+            "foo\n",
+            "\nfoo",
+            "foo\r",
+            "foo\x00",
             "über",  # non-ascii
             "z" * (MAX_SLUG_LEN + 1),  # one over the limit
         ],
     )
     def test_rejects_regex_violations(self, slug: str) -> None:
         assert is_safe_slug(slug) is False
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            None,
+            0,
+            42,
+            b"foo",
+            ["foo"],
+            {"slug": "foo"},
+        ],
+    )
+    def test_rejects_non_string_input(self, value: object) -> None:
+        # Bulk-import (T6) may forward arbitrary JSON; the validator
+        # must say "no" rather than raise ``TypeError``.
+        assert is_safe_slug(value) is False  # type: ignore[arg-type]
 
     @pytest.mark.parametrize(
         "slug",

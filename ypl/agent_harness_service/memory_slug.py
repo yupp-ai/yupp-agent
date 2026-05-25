@@ -44,7 +44,12 @@ MAX_SLUG_LEN = 255
 # hyphen. The materializer relied on the same regex before this module
 # was extracted; the constant is re-exported so anything that needs to
 # spell out the rule (docs, validators) has one source of truth.
-_SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_./-]{0,254}$")
+#
+# ``\A`` / ``\Z`` (not ``^`` / ``$``) so a trailing ``\n`` cannot sneak
+# past the validator — Python's ``$`` matches before a final newline,
+# which would let ``"foo\n"`` produce a filename ``foo\n.md`` once
+# joined.
+_SLUG_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_./-]{0,254}\Z")
 
 # Any single character outside the allow-list. Matched non-greedily and
 # replaced with ``-`` during normalization so that runs of arbitrary
@@ -147,9 +152,14 @@ def is_safe_slug(slug: str) -> bool:
     Applies the same three rules the materializer enforces before
     writing a file into ``agent_memories/{scope}/``:
 
-    1. Matches :data:`_SLUG_RE` — leading alphanumeric, allowed chars
+    1. Input is a non-empty ``str``. Non-string inputs (``None``, ``int``,
+       arbitrary JSON values forwarded by the bulk-import endpoint T6)
+       are rejected without raising — the materializer is defensive on
+       its own path, but external callers may forward unvalidated values
+       from request bodies.
+    2. Matches :data:`_SLUG_RE` — leading alphanumeric, allowed chars
        throughout, total length 1..255.
-    2. No segment equal to ``""``, ``"."`` or ``".."`` when split on
+    3. No segment equal to ``""``, ``"."`` or ``".."`` when split on
        ``/`` — these would let the slug escape the memory root once it
        is joined with a filesystem path.
 
@@ -158,7 +168,19 @@ def is_safe_slug(slug: str) -> bool:
     next-to-last ``/``), so the segment check is a belt-and-braces
     defense aimed specifically at embedded traversal like
     ``ok/../escape``.
+
+    Note: the validator accepts **mixed-case** slugs even though
+    :func:`normalize_path_to_slug` always lower-cases its output. The
+    asymmetry is deliberate — historical ``save_memory`` writes (made
+    before this module existed) may have stored mixed-case slugs in the
+    DB, and the materializer must still be able to validate and
+    rematerialize those rows. Producers that need a canonical form
+    (notably the ``ahs-memory`` CLI, T2) should call
+    :func:`normalize_path_to_slug` first and treat slug comparisons as
+    case-insensitive when deciding create-vs-update.
     """
+    if not isinstance(slug, str) or not slug:
+        return False
     if not _SLUG_RE.match(slug):
         return False
     return all(part not in ("", ".", "..") for part in slug.split("/"))
