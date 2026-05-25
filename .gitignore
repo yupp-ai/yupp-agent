@@ -103,6 +103,8 @@ dmypy.json
 # temp
 tmp/
 temp/
+.mac-install-pyshim/
+ahs-data/
 
 # Redis
 *.rdb

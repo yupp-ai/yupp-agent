@@ -45,6 +45,9 @@ COMPOSE_FILE="$REPO_ROOT/docker-compose.one-box.yml"
 COMPOSE="docker compose -f $COMPOSE_FILE"
 CLOUDFLARED_DIR="$HOME/.cloudflared"
 CLOUDFLARED_CONFIG="$CLOUDFLARED_DIR/config.yml"
+CLOUDFLARED_LOG="$CLOUDFLARED_DIR/cloudflared.log"
+CLOUDFLARED_LAUNCH_AGENT_LABEL="com.yupp.cloudflared-tunnel"
+CLOUDFLARED_LAUNCH_AGENT_PLIST="$HOME/Library/LaunchAgents/${CLOUDFLARED_LAUNCH_AGENT_LABEL}.plist"
 
 RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'
 BLUE=$'\033[0;34m'; BOLD=$'\033[1m'; NC=$'\033[0m'
@@ -101,10 +104,17 @@ generate_secret() {
 }
 
 generate_fernet_key() {
-    # 32 url-safe bytes base64-encoded — Fernet-compatible.  Required for
+    # 32 random bytes, urlsafe-base64-encoded — what
+    # cryptography.fernet.Fernet.generate_key() returns.  Doing it with the
+    # stdlib avoids importing `cryptography` from whatever python3 happens to
+    # be on PATH (on a fresh Mac that's often Homebrew's python@3.14, which
+    # does not have cryptography installed).  Required for
     # SLACK_AGENT_GW_ENCRYPTION_KEY and MCP_OAUTH_STORAGE_ENCRYPTION_KEY;
     # secrets.token_urlsafe(32) is the wrong length/encoding for Fernet.
-    python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    local key
+    key="$(python3 -c 'import base64, secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())')"
+    [[ -n "$key" ]] || error "generate_fernet_key produced empty output — python3 may be broken."
+    echo "$key"
 }
 
 pgdata_volume_exists() {
@@ -145,6 +155,52 @@ env_set() {
     else
         printf '%s=%s\n' "$key" "$value" >> "$ENV_FILE"
     fi
+}
+
+install_cloudflared_launch_agent() {
+    local cloudflared_bin uid
+    cloudflared_bin="$(command -v cloudflared)"
+    uid="$(id -u)"
+
+    mkdir -p "$(dirname "$CLOUDFLARED_LAUNCH_AGENT_PLIST")" "$CLOUDFLARED_DIR"
+    touch "$CLOUDFLARED_LOG"
+
+    cat > "$CLOUDFLARED_LAUNCH_AGENT_PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${CLOUDFLARED_LAUNCH_AGENT_LABEL}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${cloudflared_bin}</string>
+        <string>--config</string>
+        <string>${CLOUDFLARED_CONFIG}</string>
+        <string>tunnel</string>
+        <string>run</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>WorkingDirectory</key>
+    <string>${HOME}</string>
+    <key>StandardOutPath</key>
+    <string>${CLOUDFLARED_LOG}</string>
+    <key>StandardErrorPath</key>
+    <string>${CLOUDFLARED_LOG}</string>
+</dict>
+</plist>
+EOF
+
+    # Homebrew's generic cloudflared LaunchAgent runs the bare binary without
+    # `tunnel run`, which leaves named tunnels unresolved (Cloudflare 1033).
+    brew services stop cloudflared >/dev/null 2>&1 || true
+    launchctl bootout "gui/${uid}" "$CLOUDFLARED_LAUNCH_AGENT_PLIST" >/dev/null 2>&1 || true
+    launchctl bootstrap "gui/${uid}" "$CLOUDFLARED_LAUNCH_AGENT_PLIST"
+    launchctl enable "gui/${uid}/${CLOUDFLARED_LAUNCH_AGENT_LABEL}"
+    launchctl kickstart -k "gui/${uid}/${CLOUDFLARED_LAUNCH_AGENT_LABEL}"
 }
 
 banner "yupp-agent — macOS one-box installer"
@@ -188,8 +244,30 @@ fi
 
 PYTHON_VERSION="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
 if [[ "$PYTHON_VERSION" != "3.12" ]]; then
-    warn "Detected Python $PYTHON_VERSION; the setup wizard expects 3.12."
-    warn "  brew install python@3.12 && brew link --force python@3.12"
+    # Try to recover.  Homebrew's python@3.12 keg is keg-only by default, so
+    # `brew install python@3.12` does NOT put `python3` on PATH — it only
+    # exposes the version-suffixed `python3.12`.  We build a tiny shim dir
+    # ($REPO_ROOT/.mac-install-pyshim) with `python3 -> python3.12` and
+    # prepend it for this run so every `python3 -c …` further down (including
+    # generate_fernet_key) resolves to 3.12 without forcing the user to
+    # `brew link --force` and shadow Apple's python globally.
+    PY312_BIN="$(command -v python3.12 || true)"
+    if [[ -z "$PY312_BIN" ]]; then
+        PY312_PREFIX="$(brew --prefix python@3.12 2>/dev/null || true)"
+        [[ -n "$PY312_PREFIX" && -x "$PY312_PREFIX/bin/python3.12" ]] && PY312_BIN="$PY312_PREFIX/bin/python3.12"
+    fi
+    if [[ -n "$PY312_BIN" ]]; then
+        PY_SHIM_DIR="$REPO_ROOT/.mac-install-pyshim"
+        mkdir -p "$PY_SHIM_DIR"
+        ln -sf "$PY312_BIN" "$PY_SHIM_DIR/python3"
+        ln -sf "$PY312_BIN" "$PY_SHIM_DIR/python"
+        export PATH="$PY_SHIM_DIR:$PATH"
+        info "Using $PY312_BIN via shim at $PY_SHIM_DIR."
+        PYTHON_VERSION="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+    fi
+fi
+if [[ "$PYTHON_VERSION" != "3.12" ]]; then
+    error "Detected Python $PYTHON_VERSION; the setup wizard requires 3.12. Run: brew install python@3.12 && brew link --force python@3.12"
 fi
 
 if ! command -v poetry >/dev/null 2>&1; then
@@ -253,7 +331,8 @@ fi
 # to a shared .env would poison the host (poetry-dotenv-plugin, the setup
 # wizard, future dev tooling) by resolving AHS_REPOS_DIR / AHS_SESSIONS_DIR to
 # /data/ahs, which doesn't exist on macOS.
-[[ -z "$(env_get ENVIRONMENT)" ]]                       && env_set ENVIRONMENT                       "selfhosted"
+env_set ENVIRONMENT "selfhosted"
+env_set DEFAULT_DB "agentdb"
 [[ -z "$(env_get SANDBOX_ENABLED)" ]]                   && env_set SANDBOX_ENABLED                   "false"
 [[ -z "$(env_get AHS_MONO_ENABLE_GATEWAY_SERVICE)" ]]   && env_set AHS_MONO_ENABLE_GATEWAY_SERVICE   "true"
 [[ -z "$(env_get GATEWAY_SLACK_ENABLED)" ]]             && env_set GATEWAY_SLACK_ENABLED             "true"
@@ -278,6 +357,18 @@ if [[ -z "$_existing_pw" ]] || [[ "$_existing_pw" == "postgres" ]] || [[ "$_exis
     env_set POSTGRES_PASSWORD "${POSTGRES_PASSWORD:-$(generate_secret)}"
     info "Wrote a strong POSTGRES_PASSWORD (initdb will pick it up on first start)."
 fi
+
+# POSTGRES_CONNECTION_AGENTDB — the host-run setup wizard (step 7) reads this
+# JSON line, not the individual POSTGRES_USER / POSTGRES_DB / POSTGRES_PASSWORD
+# components.  Use localhost:5432 for the host's perspective; the `app` and
+# `streamlit` containers override this back to host="postgres" via their
+# environment: block in docker-compose.one-box.yml.  Rewrite on every run so a
+# regenerated POSTGRES_PASSWORD propagates into the JSON.
+_pg_user="$(env_get POSTGRES_USER)"
+_pg_db="$(env_get POSTGRES_DB)"
+_pg_pw="$(env_get POSTGRES_PASSWORD)"
+_pg_json="$(python3 -c "import json,sys; print(json.dumps({'user':sys.argv[1],'password':sys.argv[2],'host':'localhost:5432','database':sys.argv[3]}))" "$_pg_user" "$_pg_pw" "$_pg_db")"
+env_set POSTGRES_CONNECTION_AGENTDB "$_pg_json"
 
 # Internal AHS API key.
 if [[ -z "$(env_get AGENT_HARNESS_SERVICE_API_KEY)" ]]; then
@@ -404,11 +495,11 @@ ingress:
   - service: http_status:404
 EOF
 
-        # brew services start cloudflared launches it as a LaunchAgent so it
-        # survives reboots.  brew's cloudflared service reads
-        # ~/.cloudflared/config.yml automatically.
-        info "Starting cloudflared as a brew service..."
-        brew services restart cloudflared >/dev/null
+        # Install a dedicated LaunchAgent that runs the named tunnel using the
+        # config we just wrote. Homebrew's stock cloudflared service runs the
+        # bare binary with no `tunnel run`, which yields Cloudflare 1033.
+        info "Starting cloudflared tunnel as a LaunchAgent..."
+        install_cloudflared_launch_agent
 
         # Stash hostnames in .env for downstream services.
         env_set AGENT_HOST                "$AGENT_HOST"
@@ -549,6 +640,18 @@ fi
 if ! poetry env info --path >/dev/null 2>&1; then
     info "First-time poetry install — this takes a few minutes."
     poetry install --no-root --without dev
+fi
+
+# greenlet ships only as a SQLAlchemy extras_require entry
+# (`[package.extras] asyncio = ["greenlet (>=1)"]`).  Even with
+# `sqlalchemy[asyncio]` in pyproject.toml, `poetry install` can skip greenlet
+# when reconciling against an existing venv where sqlalchemy is already at the
+# pinned version — poetry short-circuits without revisiting extras.  The
+# setup wizard's async session needs greenlet, so verify and fall back to a
+# direct install if it's missing.
+if ! poetry run python -c "import greenlet" >/dev/null 2>&1; then
+    info "greenlet missing from poetry venv (SQLAlchemy asyncio extra) — installing."
+    poetry run pip install greenlet
 fi
 
 info "Running ypl.mono_server.setup against the dockerized postgres."
