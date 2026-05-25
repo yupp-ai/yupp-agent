@@ -11,11 +11,15 @@ RUN pip install --no-cache-dir poetry==1.8.5 && \
     poetry config virtualenvs.create false
 
 # Dependency layer — cached until pyproject.toml / poetry.lock change.
-COPY pyproject.toml poetry.lock README.md /app/
+COPY pyproject.toml poetry.lock README.md alembic.ini /app/
 RUN set -e && \
     apt-get update && \
     apt-get install -y --no-install-recommends cmake g++ git make && \
     poetry install --no-root --without dev --no-interaction --no-ansi --compile && \
+    # Poetry itself has no runtime role; drop it (and its now-orphaned deps,
+    # notably the keyring 24.x it pins which clashes with the project's
+    # keyring 25.x and makes `pip check` further down fail).
+    pip uninstall -y poetry poetry-core poetry-plugin-export && \
     apt-get purge -y --auto-remove cmake g++ make && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* ~/.cache /root/.cache /tmp/* /var/tmp/* && \

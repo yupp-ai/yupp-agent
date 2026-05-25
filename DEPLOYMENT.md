@@ -152,6 +152,27 @@ docker compose -f docker-compose.one-box.yml exec postgres \
     psql -U postgres yupp_agent
 ```
 
+### Stable config/data outside the checkout
+
+If you want a clean deployment checkout plus stable secrets and runtime data,
+set these two environment variables before running Compose:
+
+```bash
+export AHS_ENV_FILE="$HOME/deploy/voltcouch/config/.env"
+export AHS_HOST_DATA_DIR="$HOME/deploy/voltcouch/data"
+
+docker compose -f docker-compose.one-box.yml up -d
+```
+
+That keeps:
+
+- secrets/config in `~/deploy/voltcouch/config/.env`
+- session/repos/memories/artifacts in `~/deploy/voltcouch/data/`
+- code in a disposable git checkout such as `~/deploy/voltcouch/yupp-agent`
+
+For a simple wrapper around that layout, use `~/scripts/voltcouch.sh` with
+`deploy`, `start`, and `stop`.
+
 ---
 
 ## 4. Option B — Bare-Metal VM (systemd)
@@ -340,7 +361,7 @@ when a full pass succeeds; on the next run it asks before starting over.
 | 1 | Toolchain check (Docker Desktop, brew, Python 3.12, Poetry, jq) — installs what's missing. | no |
 | 2 | Creates host-side `./ahs-data/{sessions,repos,agent_memories,artifacts}` for the bind mounts and clones `yupp-agent` into `./ahs-data/repos/yupp-agent` so agent sessions have a repo to operate on (mirrors `deploy/bare-metal/install.sh`'s `DEFAULT_AGENT_REPOS` loop). | no |
 | 3 | Generates `.env` from `.env.example` plus auto-generated internal secrets (`POSTGRES_PASSWORD`, `AGENT_HARNESS_SERVICE_API_KEY`, `VIEWER_SESSION_SECRET_KEY`, `GOOGLE_AUTH_COOKIE_SECRET`). Defaults `ENVIRONMENT=selfhosted`, `SANDBOX_ENABLED=false`, `AHS_MONO_ENABLE_GATEWAY_SERVICE=true`, `GATEWAY_SLACK_ENABLED=true`. | no |
-| 4 | Cloudflare tunnel — installs `cloudflared`, runs `tunnel login/create`, routes DNS for `agent.<apex>`, `agent-ui.<apex>`, `artifacts.<apex>`, writes `~/.cloudflared/config.yml`, `brew services start cloudflared`. | `SKIP_CLOUDFLARE=1` |
+| 4 | Cloudflare tunnel — installs `cloudflared`, runs `tunnel login/create`, routes DNS for `agent.<apex>`, `agent-ui.<apex>`, `artifacts.<apex>`, writes `~/.cloudflared/config.yml`, and installs `~/Library/LaunchAgents/com.yupp.cloudflared-tunnel.plist` to run `cloudflared --config ~/.cloudflared/config.yml tunnel run`. | `SKIP_CLOUDFLARE=1` |
 | 5 | Google OAuth — prompts for the Web Application client ID + secret you created at https://console.cloud.google.com/apis/credentials and writes the OAuth env vars for both Streamlit (`GOOGLE_AUTH_*`, `STREAMLIT_GOOGLE_AUTH_REDIRECT_URI`) and the Artifact Viewer (`VIEWER_GOOGLE_CLIENT_*`, `VIEWER_OAUTH_REDIRECT_URL`). | `SKIP_OAUTH=1` |
 | 6 | `docker compose up -d postgres redis` and waits for `postgres` to become healthy. | no |
 | 7 | `poetry install --no-root --without dev` + `poetry run python -m ypl.mono_server.setup` against the dockerized Postgres on `localhost:5432`. | no |
@@ -395,7 +416,7 @@ docker compose -f docker-compose.one-box.yml exec app python -m alembic upgrade 
 ```bash
 docker compose -f docker-compose.one-box.yml down            # stop containers, keep data
 docker compose -f docker-compose.one-box.yml down -v         # also wipe postgres + redis volumes
-brew services stop cloudflared                                # stop the tunnel
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.yupp.cloudflared-tunnel.plist
 rm -rf ./ahs-data                                             # wipe session / repo / memory / artifact bind mounts
 ```
 
