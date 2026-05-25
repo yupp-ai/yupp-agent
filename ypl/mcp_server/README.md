@@ -2,46 +2,63 @@
 
 Internal development tooling that allows engineers' AI agents (Claude Code, Cursor, etc.) to access Yupp production infrastructure for debugging and analysis.
 
+> ⚠️ **Dev tokens (`yupp_dev_*`) are deprecated.** OAuth is now the recommended auth path for all MCP clients. Dev tokens continue to work during the deprecation window but will be removed entirely after **2026-06-15**. See [Legacy: Dev Tokens (deprecated)](#legacy-dev-tokens-deprecated) for migration guidance, or watch for the `X-Auth-Deprecation` response header on any dev-token request.
+
 ## Use the service
 
-Here's how to set it up to work with Claude Code:
-- Type /create-mcp-token slack command in `#agentic-couch` slack channel, and dialog will show up.
-- Upon submission, a token will be created and email to the example.com email you specified. (Create for other agcouchs are supported, but logged!)
-- Copy your Access Token from the email you received, and add it to your bash environment.
-  - e.g. `echo "export AGCOUCH_MCP_TOKEN=yupp_dev_{...}" >> ~/.zshrc` if you use zsh, or any other places where you keep environment variables. (Remember to `source ~/.zshrc` when you are done, so it's part of current terminal)
-  - or `export AGCOUCH_MCP_TOKEN=yupp_dev_{...}` directly on your terminal if you don't want to it set for every terminal session.
-- In your Claude Code, run `/mcp` command in the yupp-agent repo, it should automatically discover the MCP server, and authenticate for you.
-- Just ask Claude some question that requires knowledge of our DB, Bigquery, Redis, GCP (BE) and Vercel (FE) logs
+The recommended path for all clients (Claude Code, Cursor, Claude Cowork, web UIs) is the OAuth-secured remote MCP endpoint. You sign in once with your `@example.com` Google account; the client manages the token from there.
 
-For using Claude code on Web UI (remote agent). You should:
-- go to https://claude.ai/code
-- Click the ☁️ (environment) button (☁️ is located on the right bottom corner of the main chat box)
-- Click the settings icon (⚙️) 
-- Add `AGCOUCH_MCP_TOKEN=yupp_dev_{...}` to your environment variables
-- Also, please set the Network Access to "Full", so claude code can access our MCP server.
+### Claude Code (terminal)
 
-To use Agcouch MCP server on Claude Cowork:
-- Go to Settings -> Connectors;
-- Click "Add Custom Connector" button
-- Enter "Agcouch MCP" as the name.
-- Enter `https://agcouch-mcp-oauth.example.com/mcp` on the Remote MCP server URL field
-- After a little bit when the "Connect" button lights up, click the button and follow the steps to finish oauth setup
-- Optional: if you want to setup staging server instead, please use `https://agcouch-mcp-oauth-staging.example.com/mcp`
+```bash
+# Add the OAuth-secured remote MCP server (no token to copy/paste)
+claude mcp add --transport http agcouch-mcp-server --scope user \
+  https://agcouch-mcp-oauth.example.com/mcp
+```
+
+When you next launch Claude Code in the yupp-agent repo, run `/mcp`. You'll be prompted to authenticate with Google — sign in with your `@example.com` account and the connection is permanent for that workstation.
+
+### Claude Code on the web (Cloud Agent)
+
+1. Go to https://claude.ai/code
+2. Click the ☁️ environment button (bottom-right of the chat box)
+3. Click the settings icon (⚙️)
+4. Add `https://agcouch-mcp-oauth.example.com/mcp` as a Custom MCP Server (OAuth)
+5. Set Network Access to **Full** so Cloud Agent can reach the MCP endpoint
+
+You will not need an environment variable. The OAuth flow runs on first connect.
+
+### Claude Cowork
+
+1. Settings → Connectors
+2. **Add Custom Connector**
+3. Name: `Agcouch MCP`
+4. Remote MCP server URL: `https://agcouch-mcp-oauth.example.com/mcp`
+5. When the **Connect** button activates, click it and complete the Google OAuth flow.
+6. (Optional staging:) repeat with `https://agcouch-mcp-oauth-staging.example.com/mcp`.
+
+### Cursor / other MCP clients
+
+Any MCP client that supports OAuth-secured streamable-HTTP transports will work. Point it at `https://agcouch-mcp-oauth.example.com/mcp` and complete the Google flow on first connect.
 
 To set up the staging MCP server to debug staging issues, please refer to [Staging Server Setup](#staging-server-setup).
 
 ## Architecture
 
 ```
-Engineer's Cloud Agent (Claude Code Web)    or    Browser-based MCP Client
-         ↓                                              ↓
-    HTTPS with Bearer token                    HTTPS with OAuth
-         ↓                                              ↓
+Engineer's MCP Client (Claude Code / Cursor / Cowork / Web)
+         ↓
+    HTTPS — OAuth (Google) → JWT bearer
+         ↓
     ┌───────────────────────────────────────────────────┐
     │           Cloud Run (yupp-agent:mcp mode)         │
     │                                                   │
-    │   MCP_SERVER_MODE=DEV_TOKEN  │  MCP_SERVER_MODE=OAUTH
-    │   DevTokenAuthMiddleware     │  GoogleProvider (FastMCP)
+    │     MCP_SERVER_MODE=OAUTH (recommended)           │
+    │     GoogleProvider (FastMCP)                      │
+    │                                                   │
+    │     [Legacy] MCP_SERVER_MODE=DEV_TOKEN            │
+    │     DevTokenAuthMiddleware → response carries     │
+    │       X-Auth-Deprecation header                   │
     │                                                   │
     │              FastMCP /mcp endpoint                │
     │              (validates auth, logs audit)         │
@@ -69,17 +86,7 @@ Search Google Cloud Logging for Yupp MIND production logs.
 - `max_results` (optional): Max results to return (default: 100)
 
 **Example:**
-```bash
-curl -X POST https://agcouch-mcp.example.com/mcp/tools/search_gcp_logs \
-  -H "Authorization: Bearer yupp_dev_xxx" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "arguments": {
-      "query": "severity=ERROR AND labels.user_id=\"abc123\"",
-      "hours_back": 24
-    }
-  }'
-```
+The MCP client invokes `search_gcp_logs` directly via the MCP protocol over the OAuth-secured connection — no manual HTTP / Bearer token plumbing required.
 
 ### 2. `search_vercel_logs`
 Search Vercel deployment logs (via GCP logging).
@@ -125,63 +132,67 @@ LIMIT 10
 
 ## Authentication
 
-The MCP server supports two authentication modes, controlled by the `MCP_SERVER_MODE` environment variable:
+The MCP server supports two authentication modes, controlled by the `MCP_SERVER_MODE` environment variable. **OAuth is the recommended mode for new deployments.** DevToken mode remains available during the deprecation window. Note that the in-code default of `MCP_SERVER_MODE` is still `DEV_TOKEN` until phase 5b flips it — when bringing up a new deployment, set `MCP_SERVER_MODE=OAUTH` explicitly in your `.env` (the `setup.py` wizard and `.env.example` still seed `DEV_TOKEN` to preserve existing-deployment behavior).
 
-### DEV_TOKEN Mode (Default)
+### OAUTH mode (recommended)
 
-Uses Bearer tokens created via CLI for engineer access:
+Uses Google OAuth via FastMCP's `GoogleProvider` for browser-based authentication:
+
+- Users authenticate via the standard Google OAuth flow
+- Email-domain validation ensures only allowed domains (e.g. `example.com`) can access
+- Session tokens are stored encrypted in Redis
+- No manual token issuance, no token revocation drills, no shell-profile editing
+- Per-engineer identity is verified end-to-end — every `mcp_audit_logs` row is tied to a verified Google identity
+
+This mode is ideal for:
+- Web-based MCP clients (Claude Cowork, Cloud Agent)
+- Interactive desktop clients (Claude Code, Cursor, etc.)
+- Self-service access for authorized engineers
+
+### DEV_TOKEN mode (deprecated, kept for backwards compatibility)
+
+Uses Bearer tokens issued via the admin Streamlit page or the `manage create-mcp-token` CLI command:
 
 ```
 Authorization: Bearer yupp_dev_<token>
 ```
 
 Tokens are:
-- **Scoped to engineer email** - Each token belongs to a specific Yupp engineer
-- **Hashed with bcrypt** - Never stored in plaintext
-- **Optionally expiring** - Can set expiration date
-- **Revocable** - Can be revoked at any time with reason
+- **Scoped to engineer email** — each token belongs to a specific Yupp engineer
+- **Hashed with bcrypt** — never stored in plaintext
+- **Optionally expiring** — can set expiration date
+- **Revocable** — can be revoked at any time with reason
 
-This mode is ideal for:
-- Local development
-- CI/CD pipelines
-- Automated agents (Claude Code, Cursor)
+**Deprecation status (phase 5a, started 2026-05-08):**
 
-### OAUTH Mode
+- Every dev-token request now carries an `X-Auth-Deprecation` response header.
+- The admin Streamlit page (`/admin_mcp_tokens`) shows a deprecation banner; please do not issue new dev tokens.
+- Dev tokens remain accepted at least until **2026-06-15**. Phase 5b (PR-B) deletes the middleware, the `mcp_dev_token` table, and all related CLI / Slack tooling. Coordinate with the platform team if a use case absolutely requires a dev token after the cutover.
 
-Uses Google OAuth via FastMCP's GoogleProvider for browser-based authentication:
+See [Legacy: Dev Tokens (deprecated)](#legacy-dev-tokens-deprecated) for the historical setup steps and migration guidance.
 
-- Users authenticate via Google OAuth flow
-- Email domain validation ensures only allowed domains (e.g., `example.com`) can access
-- Tokens are stored encrypted in Redis
-- No manual token management required
-
-This mode is ideal for:
-- Web-based MCP clients
-- Interactive browser sessions
-- Self-service access for authorized users
-
-### Mode Configuration
+### Mode configuration
 
 Set the mode via environment variable:
 
 ```bash
-# DevToken mode (default)
-MCP_SERVER_MODE=DEV_TOKEN
-
-# OAuth mode
+# OAuth mode (recommended)
 MCP_SERVER_MODE=OAUTH
+
+# DevToken mode (deprecated; kept for migration period)
+MCP_SERVER_MODE=DEV_TOKEN
 ```
 
 For OAuth mode, additional configuration is required:
-- `MCP_OAUTH_GOOGLE_CLIENT_ID` - Google OAuth client ID
-- `MCP_OAUTH_GOOGLE_CLIENT_SECRET` - Google OAuth client secret
-- `MCP_OAUTH_JWT_SIGNING_KEY` - JWT signing key for token management
-- `MCP_OAUTH_STORAGE_ENCRYPTION_KEY` - Fernet key for Redis token encryption
+- `MCP_OAUTH_GOOGLE_CLIENT_ID` — Google OAuth client ID
+- `MCP_OAUTH_GOOGLE_CLIENT_SECRET` — Google OAuth client secret
+- `MCP_OAUTH_JWT_SIGNING_KEY` — JWT signing key for token management
+- `MCP_OAUTH_STORAGE_ENCRYPTION_KEY` — Fernet key for Redis token encryption
 
 ## Audit Logging
 
 Every tool invocation is logged to `mcp_audit_logs` table with:
-- **Who**: Engineer email and token type (DEV_TOKEN or OAUTH)
+- **Who**: Engineer email and token type (`OAUTH` — or `DEV_TOKEN` during the deprecation window)
 - **What**: Tool name and parameters
 - **Result**: Success/failure, error message, result summary
 - **When**: Timestamp
@@ -190,213 +201,49 @@ Every tool invocation is logged to `mcp_audit_logs` table with:
 
 Audit logging works identically for both authentication modes, ensuring complete traceability regardless of how users authenticate.
 
-## Token Management
-
-**IMPORTANT**: Token management commands should be executed through GitHub Actions workflows, not locally. This ensures all token operations write to the production database with proper audit trails.
-
-### Requesting a Token
-
-To request a new MCP token, trigger the GitHub Actions workflow with your details. The workflow will execute the token creation command against the production database.
-
-**GitHub Actions Command:**
-python -m ypl.cli mcp-create-token \
-  --email engineer@example.com \
-  --description "Token for debugging prod issues" \
-  --expires-days 90
-
-
-### List Tokens
-
-**GitHub Actions Command:**
-```bash
-# All tokens
-python -m ypl.cli mcp-list-tokens
-
-# Filter by engineer
-python -m ypl.cli mcp-list-tokens --email engineer@example.com
-
-# Only active tokens
-python -m ypl.cli mcp-list-tokens --active-only
-```
-
-### Revoke a Token
-
-**GitHub Actions Command:**
-```bash
-python -m ypl.cli mcp-revoke-token <token-id> \
-  --revoked-by <email@example.com> \
-  --reason "Engineer left company"
-```
-
-### View Audit Logs
-
-**GitHub Actions Command:**
-```bash
-# Last 24 hours
-python -m ypl.cli mcp-audit-log
-
-# Filter by engineer
-python -m ypl.cli mcp-audit-log --email engineer@example.com
-
-# Filter by tool
-python -m ypl.cli mcp-audit-log --tool search_gcp_logs
-
-# Last 7 days, limit 100
-python -m ypl.cli mcp-audit-log --hours 168 --limit 100
-```
-
-### Usage Statistics
-
-**GitHub Actions Command:**
-```bash
-# Last 7 days
-python -m ypl.cli mcp-stats
-
-# Last 30 days
-python -m ypl.cli mcp-stats --days 30
-```
-
-**Output:**
-```
-MCP Usage Statistics (Last 7 days)
-
-============================================================
-Total Calls: 1234
-  Successful: 1180
-  Failed: 54
-Average Execution Time: 245ms
-
-Top Engineers:
-  alice@example.com: 450 calls
-  bob@example.com: 320 calls
-  charlie@example.com: 280 calls
-
-Top Tools:
-  search_gcp_logs: 720 calls
-  query_database: 350 calls
-  search_vercel_logs: 164 calls
-```
-
 ## Agent Configuration
 
 ### Project Configuration (`.mcp.json`)
 
-The repository includes a project-level `.mcp.json` that configures the agcouch-mcp server for all engineers and CI/agent workflows:
+The repository includes a project-level `.mcp.json` that points the agcouch MCP server at the OAuth endpoint by default. After phase 5b ships, this is the only path that will keep working:
 
 ```json
 {
   "mcpServers": {
     "agcouch-mcp-server": {
       "type": "http",
-      "url": "https://agcouch-mcp.example.com/mcp",
-      "headers": {
-        "Authorization": "Bearer ${AGCOUCH_MCP_TOKEN}"
-      }
-    },
-    "agcouch-mcp-server-staging": {
-      "type": "http",
-      "url": "https://agcouch-mcp-staging.example.com/mcp",
-      "headers": {
-        "Authorization": "Bearer ${AGCOUCH_MCP_TOKEN_STAGING}"
-      },
-      "disabled": true
+      "url": "https://agcouch-mcp-oauth.example.com/mcp"
     }
   }
 }
 ```
 
-The `${AGCOUCH_MCP_TOKEN}` placeholder is expanded from environment variables at runtime. See setup instructions below.
+The MCP client manages OAuth tokens itself; no shell environment variables required.
 
 ### Staging Server Setup
 
-A staging MCP server is available for debugging staging-specific issues. It's disabled by default to avoid confusion with the production server.
+A staging MCP server is available for debugging staging-specific issues. Connect any OAuth-capable MCP client to:
 
-**Step 1: Create a staging token**
+```
+https://agcouch-mcp-oauth-staging.example.com/mcp
+```
 
-Run the `Create MCP Token` GitHub Action to create a token for the staging environment. Select "staging" as the target environment.
+For Claude Code:
 
-**Step 2: Configure your staging token**
-
-Add to your shell profile (`~/.zshrc` or `~/.bashrc`):
 ```bash
-export AGCOUCH_MCP_TOKEN_STAGING="yupp_dev_YOUR_STAGING_TOKEN_HERE"
+claude mcp add --transport http agcouch-mcp-server-staging --scope user \
+  https://agcouch-mcp-oauth-staging.example.com/mcp
 ```
 
-Then restart your terminal or run `source ~/.zshrc`.
-
-**Step 3: Enable the staging server**
-
-In Claude Code, run `/mcp` and enable `agcouch-mcp-server-staging` for your session.
-
-### Engineer Setup (Local/Interactive Mode)
-
-For local development, each engineer needs to configure their personal MCP token:
-
-**Step 1: Request a token**
-
-Run the GitHub Actions workflow or contact a team lead to create a token for your email.
-
-**Step 2: Configure your token (choose one option)**
-
-**Option A: Environment variable (recommended)**
-
-Add to your shell profile (`~/.zshrc` or `~/.bashrc`):
-```bash
-export AGCOUCH_MCP_TOKEN="yupp_dev_YOUR_TOKEN_HERE"
-```
-
-Then restart your terminal or run `source ~/.zshrc`.
-
-**Option B: User-scoped Claude Code config**
-
-Add the server directly to your personal Claude Code configuration (stored in `~/.claude.json`):
-```bash
-claude mcp add --transport http agcouch-mcp-server --scope user \
-  https://agcouch-mcp.example.com/mcp \
-  --header "Authorization: Bearer yupp_dev_YOUR_TOKEN_HERE"
-```
-
-This user-scoped config takes precedence over the project `.mcp.json` and keeps your token private.
-
-**Step 3: Verify**
-
-Start Claude Code and check that `agcouch-mcp-server` appears in your available MCP servers:
-```bash
-claude mcp list
-```
-
-### CI/Agent Mode Setup (GitHub Actions)
-
-For automated workflows and agent mode, configure the token via GitHub Secrets:
-
-**Step 1: Add the secret**
-
-1. Go to repository Settings → Secrets and variables → Actions
-2. Add a new secret: `AGCOUCH_MCP_TOKEN` with the token value
-
-**Step 2: Reference in workflow**
-
-```yaml
-jobs:
-  claude-agent:
-    runs-on: ubuntu-latest
-    env:
-      AGCOUCH_MCP_TOKEN: ${{ secrets.AGCOUCH_MCP_TOKEN }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run Claude Code
-        run: claude -p "Your prompt here"
-```
-
-The `.mcp.json` in the repository will automatically use the `AGCOUCH_MCP_TOKEN` environment variable.
+Sign in with your `@example.com` Google account on first connect.
 
 ### MCP Protocol Details
 
 **Endpoint:**
-- `POST /mcp/` - Streamable HTTP transport for bidirectional JSON-RPC messages
+- `POST /mcp/` — Streamable HTTP transport for bidirectional JSON-RPC messages
 
-**Required Headers:**
-- `Authorization: Bearer <token>`
+**Required Headers (OAuth):**
+- `Authorization: Bearer <oauth_jwt>` — managed by the MCP client itself
 - `Content-Type: application/json`
 - `Accept: application/json`
 
@@ -407,18 +254,12 @@ The server uses Streamable HTTP transport (modern replacement for SSE):
 
 ### REST API (for testing)
 
-For simpler integrations or testing, REST convenience endpoints are also available:
+For simpler integrations or testing, REST convenience endpoints are also available. Use them with a short-lived OAuth JWT obtained out-of-band:
 
 ```bash
 # List available tools
-curl https://agcouch-mcp.example.com/mcp/tools \
-  -H "Authorization: Bearer yupp_dev_xxx"
-
-# Invoke a tool
-curl -X POST https://agcouch-mcp.example.com/mcp/tools/search_gcp_logs \
-  -H "Authorization: Bearer yupp_dev_xxx" \
-  -H "Content-Type: application/json" \
-  -d '{"arguments": {"query": "severity=ERROR"}}'
+curl https://agcouch-mcp-oauth.example.com/mcp/tools \
+  -H "Authorization: Bearer <oauth_jwt>"
 ```
 
 **Note:** The REST endpoints are a convenience layer. Use the `/mcp` endpoint for full MCP protocol compliance.
@@ -434,42 +275,41 @@ curl -X POST https://agcouch-mcp.example.com/mcp/tools/search_gcp_logs \
 ### Cloud Run Configuration
 
 ```bash
-# Build and deploy
-gcloud run deploy agcouch-mcp-server \
+# Build and deploy in OAuth mode
+gcloud run deploy agcouch-mcp-oauth \
   --source . \
   --region us-central1 \
-  --set-env-vars="BACKEND_OPERATING_MODE=mcp" \
+  --set-env-vars="BACKEND_OPERATING_MODE=mcp,MCP_SERVER_MODE=OAUTH" \
   --service-account yupp-mcp-server@yupp-llms.iam.gserviceaccount.com
 ```
 
 ### Environment Variables
 
 Required:
-- `BACKEND_OPERATING_MODE=mcp` - Enables MCP server mode
-- `GCP_PROJECT_ID=yupp-llms` - Google Cloud project
-- `POSTGRES_HOST`, `POSTGRES_PASSWORD`, etc. - Database credentials
+- `BACKEND_OPERATING_MODE=mcp` — Enables MCP server mode
+- `GCP_PROJECT_ID=yupp-llms` — Google Cloud project
+- `POSTGRES_HOST`, `POSTGRES_PASSWORD`, etc. — Database credentials
 
 Authentication Mode:
-- `MCP_SERVER_MODE=DEV_TOKEN` - Use DevToken authentication (default)
-- `MCP_SERVER_MODE=OAUTH` - Use Google OAuth authentication
+- `MCP_SERVER_MODE=OAUTH` — Use Google OAuth authentication (**recommended**)
+- `MCP_SERVER_MODE=DEV_TOKEN` — Use DevToken authentication (deprecated; will be removed after 2026-06-15)
 
 OAuth Mode (required when `MCP_SERVER_MODE=OAUTH`):
-- `MCP_OAUTH_GOOGLE_CLIENT_ID` - Google OAuth client ID
-- `MCP_OAUTH_GOOGLE_CLIENT_SECRET` - Google OAuth client secret
-- `MCP_OAUTH_JWT_SIGNING_KEY` - JWT signing key (generate with `python -c "import secrets; print(secrets.token_urlsafe(32))"`)
-- `MCP_OAUTH_STORAGE_ENCRYPTION_KEY` - Fernet encryption key (generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`)
-- `REDIS_URL` - Redis URL for OAuth token storage
+- `MCP_OAUTH_GOOGLE_CLIENT_ID` — Google OAuth client ID
+- `MCP_OAUTH_GOOGLE_CLIENT_SECRET` — Google OAuth client secret
+- `MCP_OAUTH_JWT_SIGNING_KEY` — JWT signing key (generate with `python -c "import secrets; print(secrets.token_urlsafe(32))"`)
+- `MCP_OAUTH_STORAGE_ENCRYPTION_KEY` — Fernet encryption key (generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`)
+- `REDIS_URL` — Redis URL for OAuth token storage
 
 Optional:
-- `ALLOWED_MCP_EMAIL_DOMAINS=example.com` - Restrict access to specific email domains (applies to both modes)
+- `ALLOWED_MCP_EMAIL_DOMAINS=example.com` — Restrict access to specific email domains (applies to both modes)
 
 ## Security Considerations
 
-### Token Security
-- Tokens are hashed with bcrypt (never stored plaintext)
-- Each token tied to engineer email for accountability
-- Tokens can be revoked instantly
-- Optional expiration dates
+### Identity & Tokens
+- OAuth: identity verified end-to-end via Google; tokens are short-lived, rotated by the MCP client
+- DevToken (legacy): tokens hashed with bcrypt, scoped to engineer email, revocable, optional expiration
+- Per-engineer accountability — every audit-log row is attributable to a verified identity
 
 ### Database Security
 - Only SELECT queries allowed
@@ -503,10 +343,12 @@ Potential additions:
 
 ## Troubleshooting
 
-### "Invalid or expired token"
-- Check token hasn't been revoked: `python -m ypl.cli mcp-list-tokens`
-- Verify token hasn't expired
-- Ensure correct format: `Authorization: Bearer yupp_dev_xxx`
+### "Invalid token" / "Token expired"
+- (OAuth) Re-run the OAuth flow in your client (`/mcp` in Claude Code re-auths automatically)
+- (Dev token, deprecated) Confirm the token has not been revoked from the admin page; if it has, please migrate to OAuth instead of issuing a new dev token
+
+### `X-Auth-Deprecation` header in responses
+- That's expected on every dev-token response. Migrate the affected client to OAuth before 2026-06-15.
 
 ### "Only SELECT queries are allowed"
 - Database queries must start with SELECT
@@ -543,8 +385,8 @@ ypl/mcp_server/
 ├── __init__.py
 ├── server.py          # Starlette app with routes, mode-based middleware, lifespan
 ├── core.py            # FastMCP instance creation (mode-aware) and audit logging
-├── auth_dev_token.py  # DevToken authentication (create, validate, revoke, middleware)
 ├── auth_oauth.py      # OAuth authentication (GoogleProvider with domain validation)
+├── auth_dev_token.py  # [Deprecated] DevToken authentication (create, validate, revoke, middleware)
 ├── mcp_tools.py       # Tool implementations (GCP logs, DB queries)
 ├── tasks.py           # TaskIQ tasks for async token management
 ├── entrypoint.sh      # Production startup script
@@ -552,21 +394,21 @@ ypl/mcp_server/
 ```
 
 The MCP protocol is implemented using:
-- **FastMCP** - High-level MCP server framework (tools registered via decorators)
-- **Streamable HTTP transport** - Modern replacement for SSE (single `/mcp` endpoint)
-- **Starlette** - Lightweight ASGI framework for routing and middleware
+- **FastMCP** — High-level MCP server framework (tools registered via decorators)
+- **Streamable HTTP transport** — Modern replacement for SSE (single `/mcp` endpoint)
+- **Starlette** — Lightweight ASGI framework for routing and middleware
 - **Mode-based authentication**:
-  - DEV_TOKEN mode: `DevTokenAuthMiddleware` validates yupp_dev_* tokens
-  - OAUTH mode: FastMCP's GoogleProvider handles OAuth flow
+  - OAUTH mode: FastMCP's GoogleProvider handles OAuth flow (recommended)
+  - DEV_TOKEN mode: `DevTokenAuthMiddleware` validates `yupp_dev_*` tokens (deprecated)
 
 ```
 MCP_SERVER_MODE selection:
 
-DEV_TOKEN mode                      OAUTH mode
+OAUTH mode (recommended)            DEV_TOKEN mode (deprecated)
       │                                  │
       ▼                                  ▼
-DevTokenAuthMiddleware          FastMCP GoogleProvider
-   (Starlette)                    (FastMCP internal)
+FastMCP GoogleProvider          DevTokenAuthMiddleware
+   (FastMCP internal)              (Starlette)
       │                                  │
       └──────────────┬───────────────────┘
                      ▼
@@ -577,22 +419,6 @@ DevTokenAuthMiddleware          FastMCP GoogleProvider
 All database functions manage their own sessions internally with `@retry_db` decorator for resilience against intermittent DB issues.
 
 ### Testing Tools Locally
-
-```python
-import asyncio
-
-# Test token creation (manages its own DB session)
-from ypl.mcp_server.auth_dev_token import create_token
-
-async def test_create():
-    token, db_token = await create_token(
-        email="test@example.com",
-        description="Test token",
-    )
-    print(f"Token: {token}")
-
-asyncio.run(test_create())
-```
 
 ```python
 import asyncio
@@ -629,29 +455,6 @@ asyncio.run(test_query())
 
 ## Database Schema
 
-### `mcp_dev_tokens` table
-```sql
--- Enum type for token status
-CREATE TYPE mcptokenstatus AS ENUM ('ACTIVE', 'REVOKED', 'EXPIRED');
-
-CREATE TABLE mcp_dev_tokens (
-    mcp_dev_token_id UUID PRIMARY KEY,
-    token_lookup_key VARCHAR(8) NOT NULL,
-    token_hash TEXT UNIQUE NOT NULL,
-    email VARCHAR(255) NOT NULL,
-    description TEXT,
-    created_at TIMESTAMP NOT NULL,
-    modified_at TIMESTAMP NOT NULL,
-    deleted_at TIMESTAMP,
-    last_used_at TIMESTAMP,
-    expires_at TIMESTAMP,
-    status mcptokenstatus NOT NULL DEFAULT 'ACTIVE',
-    revoked_at TIMESTAMP,
-    revoked_by VARCHAR(255),
-    revoked_reason TEXT
-);
-```
-
 ### `mcp_audit_logs` table
 ```sql
 -- Enum types
@@ -661,10 +464,10 @@ CREATE TYPE mcptokentype AS ENUM ('DEV_TOKEN', 'OAUTH');
 CREATE TABLE mcp_audit_logs (
     mcp_audit_log_id UUID PRIMARY KEY,
     -- Who (supports both DevToken and OAuth)
-    mcp_dev_token_id UUID REFERENCES mcp_dev_tokens(mcp_dev_token_id),  -- NULL for OAuth
+    mcp_dev_token_id UUID REFERENCES mcp_dev_tokens(mcp_dev_token_id),  -- NULL for OAuth (and removed entirely after phase 5b)
     email VARCHAR(255),              -- User email (from token or OAuth claims)
     callback_url TEXT,               -- OAuth callback origin (NULL for DevToken)
-    token_type mcptokentype NOT NULL DEFAULT 'DEV_TOKEN',
+    token_type mcptokentype NOT NULL DEFAULT 'DEV_TOKEN',  -- flipped to 'OAUTH' in phase 5b along with mcp_dev_token table removal
     -- What
     tool_name VARCHAR(255) NOT NULL,
     tool_parameters JSONB NOT NULL,
@@ -687,6 +490,112 @@ CREATE TABLE mcp_audit_logs (
 ## Support
 
 For issues or questions:
-- Check audit logs: `python -m ypl.cli mcp-audit-log`
-- Review token status: `python -m ypl.cli mcp-list-tokens`
+- (OAuth) Re-run the OAuth flow in your client; check `mcp_audit_logs` for failed entries
+- (Dev token, deprecated) Review token status in the admin Streamlit page (`/admin_mcp_tokens`) — but please migrate to OAuth rather than issue/replace dev tokens
 - Contact platform team for access issues
+
+---
+
+## Legacy: Dev Tokens (deprecated)
+
+> ⚠️ **This section is preserved for users who have not yet migrated.** The `yupp_dev_*` token machinery — middleware, admin page, CLI commands, `mcp_dev_token` DB table — will be removed in phase 5b after **2026-06-15**. Please migrate to OAuth following the [Use the service](#use-the-service) section above. Every dev-token response now carries an `X-Auth-Deprecation` response header for self-service detection.
+
+### Why migrate
+
+- Dev tokens require manual issuance, manual rotation, and manual revocation drills.
+- Every dev token sits in shell profiles and `.env` files — broad surface area for accidental leakage.
+- OAuth ties every audit-log entry to a verified Google identity, no shared-secret middleman.
+- Phase 5b (after the deprecation window closes) deletes the middleware and the DB table — pre-existing tokens stop working.
+
+### How to migrate
+
+1. Pick the OAuth setup section above that matches your client (Claude Code / Cloud Agent / Cowork / Cursor).
+2. After confirming OAuth works, remove `AGCOUCH_MCP_TOKEN` (and `AGCOUCH_MCP_TOKEN_STAGING`) from your shell profile / `.env` files.
+3. Drop the `headers.Authorization` line from any project-local `.mcp.json` you maintain — the OAuth client manages its own token.
+
+### Legacy setup (pre-OAuth)
+
+These instructions are kept for reference only and **should not be used for new setups**.
+
+#### Issue a dev token
+
+Token issuance previously ran through the `/create-mcp-token` Slack command in `#agentic-couch` or the admin Streamlit page (`/admin_mcp_tokens`). The Streamlit page now shows a deprecation banner. Please do **not** request new dev tokens — switch to OAuth instead.
+
+#### Configure a dev token (legacy)
+
+```bash
+export AGCOUCH_MCP_TOKEN="yupp_dev_YOUR_TOKEN_HERE"
+```
+
+Or, in `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "agcouch-mcp-server": {
+      "type": "http",
+      "url": "https://agcouch-mcp.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${AGCOUCH_MCP_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+#### CLI commands (legacy)
+
+The token-management CLI is still present during the deprecation window:
+
+```bash
+# Issue
+python -m ypl.cli mcp-create-token \
+  --email engineer@example.com \
+  --description "Token for debugging prod issues" \
+  --expires-days 90
+
+# List
+python -m ypl.cli mcp-list-tokens
+python -m ypl.cli mcp-list-tokens --email engineer@example.com
+python -m ypl.cli mcp-list-tokens --active-only
+
+# Revoke
+python -m ypl.cli mcp-revoke-token <token-id> \
+  --revoked-by <email@example.com> \
+  --reason "Migrated to OAuth"
+
+# Audit
+python -m ypl.cli mcp-audit-log
+python -m ypl.cli mcp-audit-log --email engineer@example.com
+python -m ypl.cli mcp-audit-log --tool search_gcp_logs
+
+# Stats
+python -m ypl.cli mcp-stats
+python -m ypl.cli mcp-stats --days 30
+```
+
+These commands and the underlying `mcp_dev_token` DB table will be deleted in phase 5b.
+
+### `mcp_dev_tokens` table (to be dropped in phase 5b)
+
+```sql
+-- Enum type for token status
+CREATE TYPE mcptokenstatus AS ENUM ('ACTIVE', 'REVOKED', 'EXPIRED');
+
+CREATE TABLE mcp_dev_tokens (
+    mcp_dev_token_id UUID PRIMARY KEY,
+    token_lookup_key VARCHAR(8) NOT NULL,
+    token_hash TEXT UNIQUE NOT NULL,
+    email VARCHAR(255) NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP NOT NULL,
+    modified_at TIMESTAMP NOT NULL,
+    deleted_at TIMESTAMP,
+    last_used_at TIMESTAMP,
+    expires_at TIMESTAMP,
+    status mcptokenstatus NOT NULL DEFAULT 'ACTIVE',
+    revoked_at TIMESTAMP,
+    revoked_by VARCHAR(255),
+    revoked_reason TEXT
+);
+```

@@ -39,6 +39,7 @@ from starlette.responses import JSONResponse, Response
 from ypl.agent_harness_service.common.constants import AHS_MCP_SECRET
 from ypl.agent_harness_service.tools.local_mcp_server import mcp as harness_mcp
 from ypl.mcp_common.auth_context import RequestContext, mcp_session_id_var, request_context
+from ypl.mcp_server.auth_dev_token import DEPRECATION_HEADER, DEPRECATION_NOTICE
 from ypl.mcp_server.core import mcp_server as agcouch_mcp
 from ypl.structured_logger import get_logger
 
@@ -150,6 +151,36 @@ class AgcouchMcpAuthMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(
+        self,
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        """Validate dev-token before processing request.
+
+        Wraps :meth:`_dispatch_authenticated` and stamps the
+        :data:`~ypl.mcp_server.auth_dev_token.DEPRECATION_HEADER` only when
+        the caller actually presented a ``Bearer yupp_dev_*`` token. We
+        deliberately do **not** stamp the header on:
+
+        * requests with no ``Authorization`` header (early 401),
+        * requests bearing an OAuth JWT misrouted to ``/mcp/agcouch``, or
+        * requests bearing an ``x-ahs-token`` agent-secret bearer
+          misrouted here from ``/mcp/harness``.
+
+        Telling those callers to "switch to OAuth" would be at best
+        confusing (OAuth callers are already on it) and at worst
+        actively wrong (agent callers never used dev tokens). The
+        invariant matches the standalone
+        :class:`DevTokenAuthMiddleware`: stamp only when the request
+        actually flowed through dev-token auth.
+        """
+        is_dev_token_request = request.headers.get("authorization", "").startswith("Bearer yupp_dev_")
+        response = await self._dispatch_authenticated(request, call_next)
+        if is_dev_token_request:
+            response.headers[DEPRECATION_HEADER] = DEPRECATION_NOTICE
+        return response
+
+    async def _dispatch_authenticated(
         self,
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],

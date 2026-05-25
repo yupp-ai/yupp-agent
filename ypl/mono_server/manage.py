@@ -192,7 +192,25 @@ async def cmd_add_role(email: str, role: str) -> int:
 
 
 async def cmd_create_mcp_token(email: str, description: str) -> int:
-    """Create an MCP developer token for the given user email."""
+    """Create an MCP developer token for the given user email.
+
+    Emits a deprecation warning before issuing the token (phase 5a — see
+    ``ypl/mcp_server/README.md``). The CLI still issues the token so
+    existing callers can migrate at their own pace; phase 5b removes
+    this command entirely along with the underlying ``mcp_dev_token``
+    table.
+    """
+    # Lazy import: keep the constant available alongside the rest of the
+    # dev-token machinery so phase 5b deletes it in one place.
+    from ypl.mcp_server.auth_dev_token import DEPRECATION_NOTICE
+
+    console.print(
+        f"[yellow]⚠️  yupp_dev_* dev tokens are deprecated.[/yellow] "
+        f"[dim]{DEPRECATION_NOTICE}[/dim]\n"
+        "[dim]Prefer the OAuth-secured MCP endpoint for new users — "
+        "see ypl/mcp_server/README.md.[/dim]"
+    )
+
     engine = _get_async_engine()
     try:
         token = await create_mcp_dev_token(engine, email=email, description=description)
@@ -202,9 +220,11 @@ async def cmd_create_mcp_token(email: str, description: str) -> int:
             Panel(
                 f"[bold green]{token}[/bold green]\n\n"
                 "[dim]Store this token securely — it cannot be retrieved later.\n"
-                "Use it as a Bearer token when connecting to the MCP server.[/dim]",
-                title=f"[bold]MCP Dev Token — {email}[/bold]",
-                border_style="green",
+                "Use it as a Bearer token when connecting to the MCP server.[/dim]\n"
+                "[yellow]Note:[/yellow] [dim]every request made with this token returns an "
+                "X-Auth-Deprecation response header.[/dim]",
+                title=f"[bold]MCP Dev Token — {email}[/bold] [dim](deprecated)[/dim]",
+                border_style="yellow",
             )
         )
         return 0

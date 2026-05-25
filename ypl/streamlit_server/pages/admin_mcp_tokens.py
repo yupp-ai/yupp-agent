@@ -22,6 +22,21 @@ require_admin_role()
 
 st.title("🔑 MCP Tokens")
 
+# ── Deprecation banner ──────────────────────────────────────────────────────
+# Phase 5a (started 2026-05-08): yupp_dev_* dev tokens are being retired.
+# Phase 5b will delete this page along with the underlying mcp_dev_token
+# table. Do not issue new dev tokens — direct callers to OAuth instead.
+st.error(
+    "⚠️ **Dev tokens (`yupp_dev_*`) are deprecated.** Please do **not** issue new "
+    "dev tokens. Direct users to the OAuth-secured MCP endpoint "
+    "(`https://agcouch-mcp-oauth.example.com/mcp`) instead — see "
+    "`ypl/mcp_server/README.md` for client setup. "
+    "Existing dev tokens continue to work until **2026-06-15**, after which "
+    "this page, the middleware, and the `mcp_dev_token` table are deleted. "
+    "Every dev-token request already returns an `X-Auth-Deprecation` header "
+    "so callers can self-detect."
+)
+
 logger = get_logger()
 
 _SELECTED_KEY = "mcp_token_selected_id"
@@ -282,6 +297,15 @@ def _render_browse() -> None:
 
 def _render_issue_form() -> None:
     st.subheader("Issue new token")
+    # Repeat the deprecation warning inside the form so admins who scrolled
+    # past the page-level banner still see it next to the submit button.
+    # The page-level `st.error` at the top of this file fires once at page
+    # load and may be out of view by the time an admin clicks submit.
+    st.warning(
+        "⚠️ Dev tokens are deprecated. Only issue a new token if the recipient "
+        "genuinely cannot use OAuth. The token will return `X-Auth-Deprecation` "
+        "on every request and will stop working after **2026-06-15**."
+    )
     with st.form("mcp_issue_token_form", clear_on_submit=False):
         new_email = st.text_input("Email", key="mcp_issue_email")
         new_description = st.text_input(
@@ -294,7 +318,7 @@ def _render_issue_form() -> None:
             value=None,
             key="mcp_issue_expires",
         )
-        submitted = st.form_submit_button("Issue token", type="primary")
+        submitted = st.form_submit_button("Issue token (deprecated)", type="primary")
 
     if not submitted:
         return
