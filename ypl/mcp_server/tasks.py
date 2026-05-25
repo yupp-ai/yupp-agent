@@ -47,6 +47,19 @@ async def create_mcp_token_task(
     if expires_days < 1 or expires_days > 365:
         raise ValueError(f"expires_days must be between 1 and 365, got {expires_days}")
 
+    # Phase 5a deprecation signal: every issuance path logs a warning so
+    # operators see deprecated calls in the logs even when the issuance
+    # request comes in via Slack (where the user-facing DM is templated
+    # in a separate repo and we can't modify the wording from here).
+    # Phase 5b deletes this entire function along with the rest of the
+    # dev-token machinery.
+    logger.warning(
+        "Issuing deprecated yupp_dev_* token via create_mcp_token_task; "
+        "callers should migrate to OAuth (see ypl/mcp_server/README.md).",
+        email_local_part=email.split("@")[0] if "@" in email else email,
+        github_actor=github_actor,
+    )
+
     # Calculate expiration date
     expires_at = datetime.now(UTC) + timedelta(days=expires_days)
 

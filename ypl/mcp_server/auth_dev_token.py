@@ -48,6 +48,19 @@ TOKEN_LENGTH = 32  # Length of the random suffix
 # Paths that skip authentication
 PUBLIC_PATHS = {"/health", "/healthz"}
 
+# ---------------------------------------------------------------------------
+# Deprecation notice (phase 5a — issued for ≥4 weeks before phase 5b removes
+# the dev-token machinery entirely).
+# ---------------------------------------------------------------------------
+#: Response header advertised on every dev-token request (success or failure)
+#: so callers can detect deprecated auth without parsing logs. Removed in
+#: phase 5b together with the dev-token middleware.
+DEPRECATION_HEADER = "X-Auth-Deprecation"
+#: Human-readable deprecation notice. The cutover date is the conservative
+#: 4-week-plus-buffer mark from the phase 5a release; final date is set by
+#: the operator-facing announcement.
+DEPRECATION_NOTICE = "yupp_dev tokens are deprecated; switch to OAuth by 2026-06-15"
+
 
 # ---------------------------------------------------------------------------
 # Transitional DevToken audit metadata
@@ -389,6 +402,21 @@ class DevTokenAuthMiddleware(BaseHTTPMiddleware):
         self.request_context_var = request_context_var or request_context
 
     async def dispatch(self, request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
+        """Validate Bearer token before processing request.
+
+        Wraps :meth:`_dispatch_authenticated` to stamp the
+        :data:`DEPRECATION_HEADER` on every dev-token response (success or
+        failure). Public health endpoints are exempt — they did not flow
+        through dev-token auth.
+        """
+        response = await self._dispatch_authenticated(request, call_next)
+        if request.url.path not in PUBLIC_PATHS:
+            response.headers[DEPRECATION_HEADER] = DEPRECATION_NOTICE
+        return response
+
+    async def _dispatch_authenticated(
+        self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
         """Validate Bearer token before processing request."""
         path = request.url.path
 
