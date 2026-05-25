@@ -148,6 +148,7 @@ class CodexRunner(AgentRunner):
                 additional_system_prompt=self.config.additional_system_prompt,
                 has_native_skills=True,
                 required_tools=self.config.required_tools or None,
+                workspace=context.workspace,
             )
             if system_prompt:
                 escaped = self._toml_escape(system_prompt)

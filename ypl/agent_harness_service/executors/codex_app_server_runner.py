@@ -431,6 +431,7 @@ class CodexAppServerRunner(AgentRunner):
             additional_system_prompt=self.config.additional_system_prompt,
             has_native_skills=True,
             required_tools=self.config.required_tools or None,
+            workspace=context.workspace,
         )
         if system_prompt:
             params["developerInstructions"] = system_prompt

@@ -407,6 +407,7 @@ class ClaudeAgentSdkRunner(AgentRunner):
             # there is no native /skill command for this executor type.
             has_native_skills=False,
             required_tools=self.config.required_tools or None,
+            workspace=context.workspace,
         )
 
         # ------------------------------------------------------------------ #

@@ -352,6 +352,11 @@ def _build_system_prompt(
     raw_executor_prompt = _load_raw_executor_prompt()
     combined_additional = "\n\n".join(filter(None, [raw_executor_prompt, agent.additional_system_prompt]))
 
+    # Raw executor doesn't carry a RunContext through here, but the
+    # workspace is always ``get_session_dir(session_id)`` when a session
+    # exists — same lookup we already do for ``working_dir`` below — so we
+    # can pass that through for ``_always_inject`` materialization.
+    workspace = get_session_dir(session_id) if session_id else None
     base = build_system_prompt(
         name=agent.name,
         session_id=session_id,
@@ -362,6 +367,7 @@ def _build_system_prompt(
         additional_system_prompt=combined_additional or None,
         has_native_skills=False,  # Raw executor uses load_skill() MCP tool
         required_tools=agent.required_tools or None,
+        workspace=workspace,
     )
 
     # Everything below is session-specific and intentionally placed after the
