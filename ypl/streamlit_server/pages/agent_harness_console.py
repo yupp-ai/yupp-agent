@@ -287,6 +287,7 @@ async def fetch_sessions(
                 "slack_user_id": ctx.get("slack_user_id"),
                 "slack_agent_name": ctx.get("slack_agent_name"),
                 "parent_session_id": str(s.parent_session_id) if s.parent_session_id else None,
+                "forked_from_session_id": str(s.forked_from_session_id) if s.forked_from_session_id else None,
                 "session_id": str(s.agent_session_id),
             }
         )
@@ -350,10 +351,46 @@ async def fetch_child_sessions(parent_ids: list[uuid.UUID]) -> list[dict[str, An
                 "slack_user_id": ctx.get("slack_user_id"),
                 "slack_agent_name": ctx.get("slack_agent_name"),
                 "parent_session_id": str(s.parent_session_id) if s.parent_session_id else None,
+                "forked_from_session_id": str(s.forked_from_session_id) if s.forked_from_session_id else None,
                 "session_id": str(s.agent_session_id),
             }
         )
     return out
+
+
+@retry_db
+async def fetch_fork_descendants(source_ids: list[uuid.UUID]) -> list[dict[str, Any]]:
+    """Fetch all sessions forked from any of *source_ids*.
+
+    Mirrors ``fetch_child_sessions`` but follows the ``forked_from_session_id``
+    edge instead of ``parent_session_id``. Used to render fork-lineage panels
+    in the session detail view.
+    """
+    if not source_ids:
+        return []
+    async with get_async_session_read_replica() as session:
+        query = (
+            select(AgentSession)
+            .options(selectinload(AgentSession.agent))  # type: ignore[arg-type]
+            .where(col(AgentSession.forked_from_session_id).in_(source_ids))
+            .order_by(col(AgentSession.created_at))
+        )
+        result = await session.exec(query)
+        rows = list(result.all())
+
+    return [
+        {
+            "session_id": str(s.agent_session_id),
+            "agent_name": s.agent.display_name if s.agent else "?",
+            "agent_slug": s.agent.name if s.agent else "?",
+            "created_at": s.created_at,
+            "forked_from_session_id": str(s.forked_from_session_id) if s.forked_from_session_id else None,
+            "title": s.title or "",
+            "status": s.status.value,
+            "trigger": s.trigger.value,
+        }
+        for s in rows
+    ]
 
 
 # ── Role styling ─────────────────────────────────────────────────────────────
@@ -1044,6 +1081,39 @@ def _render_chat_thread(agent_session: AgentSession) -> None:
     if agent_session.llm_session_id:
         st.markdown(f"**LLM session** `{agent_session.llm_session_id}`")
 
+    # ── Fork lineage ────────────────────────────────────────────────────────
+    # Shows the source this session was forked from (if any) and any forks
+    # that descend from this session. Both edges follow ``forked_from_session_id``.
+    forked_from_id = agent_session.forked_from_session_id
+    try:
+        fork_descendants = run_coroutine_in_lit_worker(
+            fetch_fork_descendants([agent_session.agent_session_id]), timeout=30
+        )
+    except Exception:
+        logger.warning("Failed to fetch fork descendants", exc_info=True)
+        fork_descendants = []
+
+    if forked_from_id or fork_descendants:
+        st.markdown("**🍴 Fork lineage**")
+        if forked_from_id:
+            src_short = str(forked_from_id)[:8]
+            src_link = f"?session_id={forked_from_id}"
+            st.markdown(
+                f"&nbsp;&nbsp;↑ Forked from session [`{src_short}…`]({src_link}) `{forked_from_id}`",
+                unsafe_allow_html=True,
+            )
+        if fork_descendants:
+            st.markdown(f"&nbsp;&nbsp;↓ {len(fork_descendants)} fork(s) of this session:")
+            for fd in fork_descendants:
+                fd_short = fd["session_id"][:8]
+                fd_link = f"?session_id={fd['session_id']}"
+                fd_title = fd["title"] or fd["agent_slug"]
+                st.markdown(
+                    f"&nbsp;&nbsp;&nbsp;&nbsp;• [`{fd_short}…`]({fd_link}) — "
+                    f"{html.escape(fd_title)} · `{fd['status']}` · `{fd['trigger']}`",
+                    unsafe_allow_html=True,
+                )
+
     st.divider()
 
     # Sort messages: chronological (oldest first)
@@ -1181,6 +1251,8 @@ def _render_session(data: dict[str, Any], indent_level: int = 0) -> None:
     row2_parts.append(f"· {data['message_count']} messages")
     row2_parts.append(f"· {s.status.value}")
     row2_parts.append(f"· `{sid}`")
+    if data.get("forked_from_session_id"):
+        row2_parts.append(f"· \U0001f374 forked from `{data['forked_from_session_id'][:8]}…`")
     row2 = " ".join(row2_parts)
 
     # Outer layout: indent margin proportional to nesting level, then content + view button

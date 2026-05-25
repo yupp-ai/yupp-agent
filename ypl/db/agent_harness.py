@@ -224,6 +224,18 @@ class AgentSession(BaseModel, table=True):
         default=None,
         sa_column=Column(sa.Uuid, sa.ForeignKey("agent_sessions.agent_session_id"), nullable=True, index=True),
     )
+    # Lineage pointer for /fork — peer session, not a subagent child. Distinct from
+    # parent_session_id so fork lineage doesn't inherit subagent semantics (cost
+    # cascade, stop-signal propagation). NULL for sessions that weren't forked.
+    forked_from_session_id: uuid.UUID | None = Field(
+        default=None,
+        sa_column=Column(
+            sa.Uuid,
+            sa.ForeignKey("agent_sessions.agent_session_id", ondelete="SET NULL"),
+            nullable=True,
+            index=True,
+        ),
+    )
     # User who created this session (no FK constraint — user may not exist in this DB)
     creator_user_id: str | None = Field(default=None, nullable=True, sa_type=sa.Text, index=True)
     slack_session_id: str | None = Field(default=None, sa_type=sa.Text, unique=True)
