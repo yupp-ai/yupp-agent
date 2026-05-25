@@ -1,25 +1,38 @@
-# One-box deployment: AHS monolith + Streamlit + PostgreSQL + Redis
+# One-box deployment: AHS monolith + Streamlit + Artifact Viewer + PostgreSQL + Redis
 #
 # Quick start:
 #   cp .env.example .env && $EDITOR .env   # set POSTGRES_PASSWORD and secrets
 #   python -m ypl.mono_server.setup        # first run: runs migrations, seeds roles
 #   docker compose -f docker-compose.one-box.yml up -d
 #
-# Both 'app' and 'streamlit' are built from the same Dockerfile.
+# For a fully-automated Mac install (Docker Desktop + Cloudflare + OAuth):
+#   bash deploy/mac/install.sh
+#
+# 'app', 'streamlit', and 'artifact-viewer' are all built from the same
+# Dockerfile and select their service by SCRIPT_TO_RUN.
 # Set SANDBOX_ENABLED=false in your .env when running in unprivileged Docker
 # (bwrap is unavailable without --privileged; agents will still work,
 # just without filesystem-level sandboxing).
 #
 # Port map:
-#   8090 — AHS + MCP + gateways (uvicorn)     — all interfaces (intentionally reachable)
-#   8501 — Streamlit dashboards               — all interfaces (intentionally reachable)
-#   5432 — PostgreSQL 16                      — 127.0.0.1 only (host-side psql / alembic)
-#   6379 — Redis 7                            — 127.0.0.1 only (host-side redis-cli)
+#   8090 — AHS + MCP + gateways (uvicorn)      — all interfaces (intentionally reachable)
+#   8501 — Streamlit dashboards                — all interfaces (intentionally reachable)
+#   8095 — Artifact viewer (OAuth-gated)       — all interfaces (intentionally reachable)
+#   5432 — PostgreSQL 16                       — 127.0.0.1 only (host-side psql / alembic)
+#   6379 — Redis 7                             — 127.0.0.1 only (host-side redis-cli)
 #
 # Required .env variables (set BEFORE running setup):
 #   POSTGRES_USER      — e.g. postgres
 #   POSTGRES_PASSWORD  — choose a strong password; default is INSECURE
 #   POSTGRES_DB        — e.g. yadb
+#
+# Workspace bind mounts:
+#   The app service binds the host's ./ahs-data/{sessions,repos,agent_memories}
+#   into /data/ahs/* so agent sessions, checked-out repos, and per-agent
+#   memory snapshots survive container restarts and are inspectable from the
+#   host.  AHS_DATA_DIR=/data/ahs is set explicitly so all downstream code
+#   (ypl/agent_harness_service/common/constants.py) resolves to the bind
+#   mount rather than the in-container /tmp/ahs fallback.
 
 services:
   postgres:
@@ -78,13 +91,37 @@ services:
       SANDBOX_ENABLED: "false"
       USE_GOOGLE_CLOUD_LOGGING: "false"
       DISABLE_WRITE_GOOGLE_CLOUD_METRICS: "true"
+      # Workspace root — must match the bind mounts below so sessions persist
+      # across container restarts.
+      AHS_DATA_DIR: /data/ahs
+      # Default the laptop deploy to AHS+SAG.  Operators who want a pure-AHS
+      # one-box can override both back to "false" in .env.
+      AHS_MONO_ENABLE_GATEWAY_SERVICE: ${AHS_MONO_ENABLE_GATEWAY_SERVICE:-true}
+      GATEWAY_SLACK_ENABLED: ${GATEWAY_SLACK_ENABLED:-true}
+    volumes:
+      # Host-side bind mounts for agent state.  Created on first
+      # `docker compose up -d` if they don't already exist.
+      # - sessions: per-session workspaces; also contains attachments/
+      #   (see ypl/agent_harness_service/service/resolvers.py — attachments
+      #   live under the workspace, so no separate bind mount is needed).
+      # - repos: shared read-only checkouts agents request worktrees from.
+      # - agent_memories: per-agent memory snapshots.
+      # - artifacts: textual artifact bodies + binary attachments stored
+      #   under BLOB_STORE_LOCAL_DIR (ypl/backend/utils/blob_store_local.py).
+      #   Without this mount, `docker compose down -v` or a container
+      #   rebuild orphans the DB rows while the underlying files vanish.
+      - ./ahs-data/sessions:/data/ahs/sessions
+      - ./ahs-data/repos:/data/ahs/repos
+      - ./ahs-data/agent_memories:/data/ahs/agent_memories
+      - ./ahs-data/artifacts:/data/ahs/artifacts
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8090/health || exit 1"]
+      # python:3.12-slim doesn't ship curl, so use the stdlib urllib client.
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8090/health', timeout=5).status==200 else 1)\""]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -110,11 +147,39 @@ services:
       app:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8501/_stcore/health || exit 1"]
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=5).status==200 else 1)\""]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
+    restart: unless-stopped
+
+  artifact-viewer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ahs-mono:local
+    ports:
+      - "8095:8095"
+    env_file: .env
+    environment:
+      SCRIPT_TO_RUN: /app/apps/artifact-viewer/entrypoint.sh
+      VIEWER_HOST: "0.0.0.0"
+      VIEWER_PORT: "8095"
+      # The viewer proxies AHS over HTTP; reach the mono server via the
+      # internal Docker network.
+      VIEWER_AHS_BASE_URL: "http://app:8090"
+      USE_GOOGLE_CLOUD_LOGGING: "false"
+      DISABLE_WRITE_GOOGLE_CLOUD_METRICS: "true"
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8095/healthz', timeout=5).status==200 else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     restart: unless-stopped
 
 volumes:

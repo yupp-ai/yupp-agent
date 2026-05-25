@@ -22,6 +22,7 @@ The monolith is the primary deployment shape for self-hosted setups: one process
 3. [Option A — Docker Compose (recommended)](#3-option-a--docker-compose-recommended)
 4. [Option B — Bare-Metal VM (systemd)](#4-option-b--bare-metal-vm-systemd)
 5. [Option C — MacBook (local development)](#5-option-c--macbook-local-development)
+5b. [Option D — MacBook (Docker + Cloudflare + Google OAuth)](#5b-option-d--macbook-docker--cloudflare--google-oauth)
 6. [Cloudflare Tunnel (optional)](#6-cloudflare-tunnel-optional)
 7. [Verification](#7-verification)
 8. [Upgrades](#8-upgrades)
@@ -303,6 +304,109 @@ Use [Overmind](https://github.com/DarthSim/overmind) or [Foreman](https://github
 brew install overmind
 overmind start
 ```
+
+---
+
+## 5b. Option D — MacBook (Docker + Cloudflare + Google OAuth)
+
+**Best for:** running a personal "lab" instance of the full platform on your
+laptop, reachable from the public internet (so Slack can hit SAG and you can
+share artifact links with teammates), with Streamlit and the artifact viewer
+sitting behind Google OAuth.
+
+> The full suite is included: AHS+SAG (mono server), Streamlit dashboards,
+> Artifact Viewer, Postgres, Redis — all in Docker with the host filesystem
+> bind-mounted for session / repo / memory state. cloudflared runs on the
+> host (via `brew services`) and routes three subdomains at the containers.
+
+### One-command bootstrap
+
+```bash
+git clone https://github.com/yupp-ai/yupp-agent.git
+cd yupp-agent
+bash deploy/mac/install.sh
+```
+
+The script is re-runnable. It writes a sentinel at `./ahs-data/.mac-install-done`
+when a full pass succeeds; on the next run it asks before starting over.
+
+### What the installer does (8 steps)
+
+| # | Step | Skippable? |
+|---|------|------------|
+| 1 | Toolchain check (Docker Desktop, brew, Python 3.12, Poetry, jq) — installs what's missing. | no |
+| 2 | Creates host-side `./ahs-data/{sessions,repos,agent_memories,artifacts}` for the bind mounts and clones `yupp-agent` into `./ahs-data/repos/yupp-agent` so agent sessions have a repo to operate on (mirrors `deploy/bare-metal/install.sh`'s `DEFAULT_AGENT_REPOS` loop). | no |
+| 3 | Generates `.env` from `.env.example` plus auto-generated internal secrets (`POSTGRES_PASSWORD`, `AGENT_HARNESS_SERVICE_API_KEY`, `VIEWER_SESSION_SECRET_KEY`, `GOOGLE_AUTH_COOKIE_SECRET`). Defaults `ENVIRONMENT=selfhosted`, `SANDBOX_ENABLED=false`, `AHS_MONO_ENABLE_GATEWAY_SERVICE=true`, `GATEWAY_SLACK_ENABLED=true`. | no |
+| 4 | Cloudflare tunnel — installs `cloudflared`, runs `tunnel login/create`, routes DNS for `agent.<apex>`, `agent-ui.<apex>`, `artifacts.<apex>`, writes `~/.cloudflared/config.yml`, `brew services start cloudflared`. | `SKIP_CLOUDFLARE=1` |
+| 5 | Google OAuth — prompts for the Web Application client ID + secret you created at https://console.cloud.google.com/apis/credentials and writes the OAuth env vars for both Streamlit (`GOOGLE_AUTH_*`, `STREAMLIT_GOOGLE_AUTH_REDIRECT_URI`) and the Artifact Viewer (`VIEWER_GOOGLE_CLIENT_*`, `VIEWER_OAUTH_REDIRECT_URL`). | `SKIP_OAUTH=1` |
+| 6 | `docker compose up -d postgres redis` and waits for `postgres` to become healthy. | no |
+| 7 | `poetry install --no-root --without dev` + `poetry run python -m ypl.mono_server.setup` against the dockerized Postgres on `localhost:5432`. | no |
+| 8 | `docker compose up -d --build app streamlit artifact-viewer`, then polls `/health` on each. | no |
+
+### Subdomain → service map
+
+| Subdomain | Container | Port | Auth |
+|-----------|-----------|------|------|
+| `agent.<apex>` | `app` (mono — AHS + SAG + MCP) | 8090 | `AGENT_HARNESS_SERVICE_API_KEY` for REST, Slack signature verify for SAG, MCP dev tokens for `/mcp/*` |
+| `agent-ui.<apex>` | `streamlit` | 8501 | Google OAuth |
+| `artifacts.<apex>` | `artifact-viewer` | 8095 | Google OAuth (proxies AHS read-only) |
+
+### Prerequisites you supply
+
+- A domain you control in Cloudflare (e.g. `tian.dev`).
+- A Google Cloud project with an **OAuth 2.0 Web Application** client. Add these two authorized redirect URIs (both required if you're tunneling):
+  - `https://agent-ui.<your-apex>/oauth2callback`
+  - `https://artifacts.<your-apex>/auth/callback`
+- Docker Desktop running.
+- LLM provider API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …) — add to `.env` after install.
+
+### After install — adding a Slack bot
+
+This deploy *does not* use BotFather. Register Slack bots through the Streamlit
+admin UI:
+
+1. Visit `https://agent-ui.<your-apex>`, log in with Google.
+2. Open the Slack Agents page.
+3. Create the bot. When configuring it on api.slack.com, point the *Request URL* under **Event Subscriptions** at:
+   ```
+   https://agent.<your-apex>/gw/slack/slack/events
+   ```
+   And the *Request URL* under **Interactivity** at:
+   ```
+   https://agent.<your-apex>/gw/slack/slack/interactions
+   ```
+4. Paste the bot token + signing secret back into the Streamlit form. They're stored encrypted in the `slack_agents` table.
+
+### Upgrades
+
+```bash
+cd yupp-agent
+git pull
+docker compose -f docker-compose.one-box.yml build app streamlit artifact-viewer
+docker compose -f docker-compose.one-box.yml up -d
+docker compose -f docker-compose.one-box.yml exec app python -m alembic upgrade head
+```
+
+### Tearing down
+
+```bash
+docker compose -f docker-compose.one-box.yml down            # stop containers, keep data
+docker compose -f docker-compose.one-box.yml down -v         # also wipe postgres + redis volumes
+brew services stop cloudflared                                # stop the tunnel
+rm -rf ./ahs-data                                             # wipe session / repo / memory / artifact bind mounts
+```
+
+⚠️ `rm -rf ./ahs-data` is destructive — it deletes every artifact body
+under `./ahs-data/artifacts/` even though their DB rows remain in Postgres.
+Pair it with `down -v` if you want a clean slate. To preserve artifacts
+across rebuilds, leave `./ahs-data/artifacts/` in place.
+
+### Sandbox / bwrap on macOS
+
+`bwrap` is unavailable on macOS *and* in unprivileged Docker, so
+`SANDBOX_ENABLED=false` is the installer default. Agent tool isolation comes
+from the container boundary alone — fine for personal use, not appropriate
+for multi-tenant production. Use Option B (bare-metal VM) for that.
 
 ---
 
