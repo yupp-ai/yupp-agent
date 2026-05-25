@@ -321,9 +321,11 @@ _RESTRICTED_HARNESS_TOOLS_CLI = [
 # bare string ``"Answer questions?"`` as the tool's error body, which is
 # opaque to the model and indistinguishable from the session having gone
 # dormant.  Denying it at the CLI flag level removes it from the model's
-# tool list entirely so it never gets attempted; the model falls back to
-# asking inline in plain text instead (which the Slack relay surfaces back
-# to the human just fine).
+# tool list entirely so it never gets attempted.  Agents that need to ask a
+# structured multiple-choice question should use the harness MCP equivalent
+# (``mcp__harness__ask_question``) which renders clickable buttons in the
+# Slack thread and routes the response back as the next turn; for non-Slack
+# triggers the model falls back to asking inline in plain text.
 _ALWAYS_DISALLOWED_CLI_TOOLS: list[str] = ["AskUserQuestion"]
 
 # For harnessed (CLI) executors: MCP harness tools that are superseded by Claude Code's own
