@@ -660,6 +660,7 @@ class ClaudeCodeRunner(AgentRunner):
             session_context=context.session_context,
             additional_system_prompt=self.config.additional_system_prompt,
             required_tools=self.config.required_tools or None,
+            workspace=context.workspace,
         )
 
         args = [
