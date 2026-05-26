@@ -252,13 +252,17 @@ async def insert_user(
             user_type=user_type,
         )
         session.add(row)
-        for rid in role_ids:
-            session.add(UserRoleAssociation(user_id=new_user_id, role_id=rid))
         try:
+            # Flush the parent users INSERT before staging child user_roles
+            # rows — without this, the unit-of-work has been observed to emit
+            # user_roles INSERTs first, tripping fk_user_roles_user_id_users.
+            await session.flush()
+            for rid in role_ids:
+                session.add(UserRoleAssociation(user_id=new_user_id, role_id=rid))
             await session.commit()
         except IntegrityError as exc:
             await session.rollback()
-            return False, f"Could not create user (duplicate email?): {exc.orig}", None
+            return False, f"Could not create user: {exc.orig}", None
     return True, f"User '{normalized_email}' created.", new_user_id
 
 
