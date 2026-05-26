@@ -1,9 +1,18 @@
 # ahs-memory
 
 Bulk-import a local Markdown workspace into AHS as `scope=user`
-`MEMORY` artifacts via the AHS REST API. Use this when migrating a
-notes / OpenClaw / ClawBot workspace into AHS so personal agents can
-grep / search / `_always_inject` from it.
+`MEMORY` artifacts via the AHS REST API. Point it at any directory
+of `.md` files — a personal notes folder, an exported wiki, an
+Obsidian / Logseq / Bear vault, a dumped Notion export — and it
+mirrors the folder tree into per-user memory artifacts so personal
+agents can grep / search / `_always_inject` from them.
+
+The tool is workspace-agnostic: it walks the directory you point it
+at, normalizes every `*.md` path into a slug, and pushes it. The
+subfolder structure becomes the slug namespace (`projects/foo/notes`,
+`team/weekly/2026-05`, etc.); the optional `--prefix` lets you stash
+a whole workspace under one slug root without renaming anything on
+disk.
 
 Self-contained sub-package — has its own `pyproject.toml` and does not
 import from the AHS monorepo. The slug rules in `ahs_memory/slug.py`
@@ -56,7 +65,7 @@ sanity-checking the slug list before pushing.
 
 ```bash
 ahs-memory walk fixtures/sample-workspace
-ahs-memory walk ~/openclaw --prefix openclaw/ --exclude 'archive/*'
+ahs-memory walk ~/my-notes --prefix notes/ --exclude 'archive/*'
 ```
 
 ### `ahs-memory push PATH --user-id ID`
@@ -76,7 +85,7 @@ For each `*.md` file, `POST /ahs/artifacts` with `type=MEMORY`,
 
 ```bash
 ahs-memory push fixtures/sample-workspace --user-id $AHS_USER_ID
-ahs-memory push ~/openclaw --user-id $AHS_USER_ID --prefix openclaw/ --skip-unchanged
+ahs-memory push ~/my-notes --user-id $AHS_USER_ID --prefix notes/ --skip-unchanged
 ```
 
 ### `ahs-memory diff PATH --user-id ID`
@@ -87,7 +96,7 @@ MEMORY rows. Statuses: `local-only`, `changed`, `remote-only`,
 that would collide.
 
 ```bash
-ahs-memory diff ~/openclaw --user-id $AHS_USER_ID --prefix openclaw/
+ahs-memory diff ~/my-notes --user-id $AHS_USER_ID --prefix notes/
 ```
 
 ## Slug rules

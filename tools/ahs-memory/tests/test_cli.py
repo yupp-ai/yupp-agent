@@ -20,10 +20,10 @@ class TestWalkSubcommand:
         assert "walked 4 files" in captured.out
 
     def test_prefix_flag(self, sample_workspace: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        rc = main(["walk", str(sample_workspace), "--prefix", "openclaw/"])
+        rc = main(["walk", str(sample_workspace), "--prefix", "vault/"])
         captured = capsys.readouterr()
         assert rc == 0
-        assert "openclaw/notes/daily" in captured.err
+        assert "vault/notes/daily" in captured.err
 
     def test_include_filter(self, sample_workspace: Path, capsys: pytest.CaptureFixture[str]) -> None:
         rc = main(["walk", str(sample_workspace), "--include", "notes/*"])

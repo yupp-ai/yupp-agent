@@ -36,10 +36,11 @@ class TestNormalizePathToSlug:
         assert normalize_path_to_slug("café/münch.md") == "caf/m-nch"
 
     def test_prefix_prepended_and_normalized(self) -> None:
-        assert normalize_path_to_slug("daily.md", prefix="OpenClaw/") == "openclaw/daily"
+        # Mixed-case prefix is lower-cased and trailing slash kept consistent.
+        assert normalize_path_to_slug("daily.md", prefix="Vault/") == "vault/daily"
 
     def test_prefix_only_returns_prefix(self) -> None:
-        assert normalize_path_to_slug("", prefix="openclaw") == "openclaw"
+        assert normalize_path_to_slug("", prefix="vault") == "vault"
 
     def test_path_only_returns_path_when_prefix_normalizes_to_empty(self) -> None:
         assert normalize_path_to_slug("daily.md", prefix="!!!") == "daily"
@@ -78,7 +79,7 @@ class TestIsSafeSlug:
 
 def test_normalized_slugs_pass_validator() -> None:
     """Normalizer output should be safe (modulo the empty / overlong cases)."""
-    samples = ["notes/daily.md", "Notes/Weekly Plan.md", "openclaw/2026/05/25.md"]
+    samples = ["notes/daily.md", "Notes/Weekly Plan.md", "vault/2026/05/25.md"]
     for rel in samples:
         slug = normalize_path_to_slug(rel)
         assert is_safe_slug(slug), f"{rel!r} → {slug!r} did not pass is_safe_slug"

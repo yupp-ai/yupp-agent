@@ -55,7 +55,7 @@ def normalize_path_to_slug(rel_path: str, prefix: str | None = None) -> str:
         rel_path: Relative filesystem path, typically the path of a
             ``.md`` file relative to the workspace root being imported.
         prefix: Optional slug prefix to namespace the result under (e.g.
-            ``openclaw/``). The prefix is normalized through the same
+            ``notes/``). The prefix is normalized through the same
             pipeline so callers don't have to pre-clean it.
 
     Returns:

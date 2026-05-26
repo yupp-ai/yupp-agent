@@ -179,7 +179,7 @@ def _add_walk_args(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--prefix",
         metavar="STR",
-        help="Prefix prepended to every slug (e.g. 'openclaw/').",
+        help="Prefix prepended to every slug (e.g. 'notes/').",
     )
     p.add_argument(
         "--max-bytes",

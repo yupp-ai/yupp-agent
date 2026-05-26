@@ -29,13 +29,13 @@ class TestWalkFixtureWorkspace:
         assert by_path["notes/Weekly Plan.md"].slug == "notes/weekly-plan"
 
     def test_prefix_is_applied(self, sample_workspace: Path) -> None:
-        rows = walk_workspace(sample_workspace, prefix="openclaw/")
+        rows = walk_workspace(sample_workspace, prefix="vault/")
         slugs = sorted(r.slug for r in rows)
         assert slugs == [
-            "openclaw/notes/daily",
-            "openclaw/notes/weekly-plan",
-            "openclaw/projects/yupp-agent/api-notes",
-            "openclaw/readme",
+            "vault/notes/daily",
+            "vault/notes/weekly-plan",
+            "vault/projects/yupp-agent/api-notes",
+            "vault/readme",
         ]
 
     def test_skips_dotfiles_and_non_md(self, sample_workspace: Path) -> None:
