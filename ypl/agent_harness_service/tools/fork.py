@@ -431,6 +431,25 @@ async def fork_session(
                 db.add(copy)
 
             max_turn = max((m.turn_number for m in src_messages), default=0)
+            # Marker placement matters for dispatch: ``send_message`` (called in
+            # step 7) consults ``_has_inflight_turn`` which finds the latest
+            # USER/FELLOW_AGENT turn in the new session and treats it as
+            # "in-flight" unless that turn has at least one non-inbound,
+            # non-IN_PROGRESS message (an AGENT or SYSTEM row). Because
+            # ``fork_session`` is invoked from within the source session's own
+            # in-flight turn, the source's most recent USER message is
+            # snapshotted but its matching AGENT response is still
+            # IN_PROGRESS and therefore excluded by the SUCCESS-only filter
+            # above. If we wrote the marker at ``max_turn + 1`` it would be
+            # treated as a brand-new system turn rather than as a response
+            # to the latest snapshotted USER — and ``_has_inflight_turn``
+            # would return True, causing the additional_instructions to be
+            # queued into ``_pending_messages`` with no active task to ever
+            # drain it. Co-locating the marker on the same turn as the
+            # latest snapshotted USER both (a) reads naturally as the
+            # system's closing reply to the prior conversation and (b)
+            # satisfies the inflight check so step 7 dispatches normally.
+            marker_turn = max(max_turn, 1)
             marker_text = (
                 f"[Forked from session {src_id} at turn {max_turn}. "
                 "The conversation above is replayed from the original session; "
@@ -438,7 +457,7 @@ async def fork_session(
             )
             marker = AgentSessionMessage(
                 agent_session_id=new_session_uuid,
-                turn_number=max_turn + 1,
+                turn_number=marker_turn,
                 role=AgentSessionMessageRole.SYSTEM,
                 content=marker_text,
                 completion_status=AgentSessionMessageCompletionStatus.SUCCESS,
