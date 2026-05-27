@@ -23,6 +23,8 @@
 #   8090 — AHS + MCP + gateways (uvicorn)      — all interfaces (intentionally reachable)
 #   8501 — Streamlit dashboards                — all interfaces (intentionally reachable)
 #   8095 — Artifact viewer (OAuth-gated)       — all interfaces (intentionally reachable)
+#   8082 — Dozzle log viewer                   — 127.0.0.1 only (served via admin tunnel)
+#  19999 — Netdata metrics                     — 127.0.0.1 only (served via admin tunnel)
 #   5432 — PostgreSQL 16                       — 127.0.0.1 only (host-side psql / alembic)
 #   6379 — Redis 7                             — 127.0.0.1 only (host-side redis-cli)
 #
@@ -58,6 +60,9 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "5" }
 
   redis:
     image: redis:7.2-alpine
@@ -73,6 +78,9 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "5" }
 
   app:
     build:
@@ -103,6 +111,14 @@ services:
       # one-box can override both back to "false" in .env.
       AHS_MONO_ENABLE_GATEWAY_SERVICE: ${AHS_MONO_ENABLE_GATEWAY_SERVICE:-true}
       GATEWAY_SLACK_ENABLED: ${GATEWAY_SLACK_ENABLED:-true}
+      # Claude Code 2.x refuses --dangerously-skip-permissions as root.  The
+      # container runs as root (python:3.12-slim default) and the harness
+      # always adds that flag when agent sandbox.enabled=true.  IS_SANDBOX=1
+      # is Claude Code's documented escape hatch — it tells the CLI "the
+      # caller has already sandboxed me (Docker), so the root check is
+      # redundant."  Without this, every claude-code-cli agent crashes on
+      # startup with "cannot be used with root/sudo privileges".
+      IS_SANDBOX: "1"
     volumes:
       # Host-side bind mounts for agent state.  Created on first
       # `docker compose up -d` if they don't already exist.
@@ -119,6 +135,14 @@ services:
       - ${AHS_HOST_DATA_DIR:-./ahs-data}/repos:/data/ahs/repos
       - ${AHS_HOST_DATA_DIR:-./ahs-data}/agent_memories:/data/ahs/agent_memories
       - ${AHS_HOST_DATA_DIR:-./ahs-data}/artifacts:/data/ahs/artifacts
+      # Share the host operator's Claude Code + Codex CLI auth with the
+      # container so agent runners use the laptop owner's Claude.ai Max /
+      # Codex subscription instead of API keys.  Mounted rw because both
+      # CLIs write session state, cache, and shell snapshots back to these
+      # dirs during normal use; mounting ro will break Claude Code's
+      # session resume and Codex's logs_*.sqlite WAL writes.
+      - ${HOME}/.claude:/root/.claude
+      - ${HOME}/.codex:/root/.codex
     depends_on:
       postgres:
         condition: service_healthy
@@ -132,6 +156,9 @@ services:
       retries: 12
       start_period: 40s
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "100m", max-file: "5" }
 
   streamlit:
     build:
@@ -158,6 +185,9 @@ services:
       retries: 3
       start_period: 30s
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "5" }
 
   artifact-viewer:
     build:
@@ -186,7 +216,62 @@ services:
       retries: 3
       start_period: 20s
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "5" }
+
+  # ---------------------------------------------------------------------------
+  # Operator tooling for the admin console (admin.voltcouch.com).
+  # Both bind 127.0.0.1 only — the admin daemon and cloudflared expose them
+  # at logs.voltcouch.com / metrics.voltcouch.com behind the same CF Access
+  # app, so single sign-on covers all three subdomains.
+  # ---------------------------------------------------------------------------
+
+  dozzle:
+    image: amir20/dozzle:latest
+    ports:
+      - "127.0.0.1:8082:8080"
+    environment:
+      DOZZLE_NO_ANALYTICS: "true"
+      DOZZLE_LEVEL: "info"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "3" }
+
+  netdata-sidecar:
+    image: netdata/netdata:stable
+    container_name: voltcouch-netdata
+    hostname: voltcouch
+    ports:
+      - "127.0.0.1:19999:19999"
+    cap_add:
+      - SYS_PTRACE
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
+    environment:
+      DOCKER_HOST: unix:///var/run/docker.sock
+      NETDATA_CLAIM_TOKEN: ""
+      NETDATA_CLAIM_URL: ""
+    volumes:
+      - netdataconfig:/etc/netdata
+      - netdatalib:/var/lib/netdata
+      - netdatacache:/var/cache/netdata
+      - /etc/passwd:/host/etc/passwd:ro
+      - /etc/group:/host/etc/group:ro
+      - /etc/os-release:/host/etc/os-release:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "3" }
 
 volumes:
   pgdata:
   redisdata:
+  netdataconfig:
+  netdatalib:
+  netdatacache:

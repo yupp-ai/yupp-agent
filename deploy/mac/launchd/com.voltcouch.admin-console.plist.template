@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.voltcouch.admin-console</string>
+
+  <!-- Working dir is the repo root so .env and pyproject.toml resolve. -->
+  <key>WorkingDirectory</key>
+  <string>__REPO_ROOT__</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__POETRY_BIN__</string>
+    <string>run</string>
+    <string>uvicorn</string>
+    <string>ypl.admin_console.server:app</string>
+    <string>--host</string>
+    <string>127.0.0.1</string>
+    <string>--port</string>
+    <string>8099</string>
+    <string>--log-level</string>
+    <string>info</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>StandardOutPath</key>
+  <string>__LOG_DIR__/admin-console.log</string>
+  <key>StandardErrorPath</key>
+  <string>__LOG_DIR__/admin-console.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- Homebrew + Poetry + docker live under /opt/homebrew on Apple Silicon
+         (or /usr/local on Intel). Both are added so the plist is portable. -->
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+
+    <!-- Single source of truth for the deploy checkout the daemon controls.
+         This is the clone whose docker-compose.one-box.yml IS the running
+         stack — separate from the workspace where the code is edited. -->
+    <key>VOLTCOUCH_DEPLOY_REPO</key>
+    <string>__DEPLOY_REPO__</string>
+
+    <!-- .env consumed by both the admin daemon and docker compose. -->
+    <key>AHS_ENV_FILE</key>
+    <string>__ENV_FILE__</string>
+
+    <!-- Where the admin daemon stores its audit log, cron state, and pg_dump
+         backups. Keep this outside any repo so a `git clean` won't trash it. -->
+    <key>VOLTCOUCH_ADMIN_DIR</key>
+    <string>__ADMIN_DIR__</string>
+  </dict>
+</dict>
+</plist>

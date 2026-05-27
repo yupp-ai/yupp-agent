@@ -247,6 +247,19 @@ class Settings(BaseSettings):
     # Slack Agent Gateway encryption key (base64-encoded 32-byte key for Fernet)
     SLACK_AGENT_GW_ENCRYPTION_KEY: str = ""
 
+    # External-MCP per-user grant encryption key (Fernet).  Protects the
+    # OAuth access / refresh tokens and per-user API keys stored in
+    # ``mcp_user_grants``, plus the OAuth client_secret + M2M_SHARED token
+    # on ``mcp_server_secrets``.  Generate with the same recipe as
+    # SLACK_AGENT_GW_ENCRYPTION_KEY (deploy/mac/install.sh does this).
+    MCP_USER_GRANT_ENCRYPTION_KEY: str = ""
+
+    # Streamlit hub branding — title shown on the browser tab and the
+    # login/landing/access-denied screens.  Per-deployment override so
+    # self-hosted boxes (e.g. voltcouch.com → "VoltCouch Hub") don't
+    # have to fork app.py.
+    STREAMLIT_HUB_TITLE: str = "Agentic Couch Hub"
+
     # Sentry
     SENTRY_AUTH_TOKEN: str = ""
 

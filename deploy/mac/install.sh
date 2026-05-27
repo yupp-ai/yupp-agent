@@ -49,6 +49,12 @@ CLOUDFLARED_LOG="$CLOUDFLARED_DIR/cloudflared.log"
 CLOUDFLARED_LAUNCH_AGENT_LABEL="com.yupp.cloudflared-tunnel"
 CLOUDFLARED_LAUNCH_AGENT_PLIST="$HOME/Library/LaunchAgents/${CLOUDFLARED_LAUNCH_AGENT_LABEL}.plist"
 
+ADMIN_LAUNCH_AGENT_LABEL="com.voltcouch.admin-console"
+ADMIN_LAUNCH_AGENT_PLIST="$HOME/Library/LaunchAgents/${ADMIN_LAUNCH_AGENT_LABEL}.plist"
+ADMIN_LAUNCH_AGENT_TEMPLATE="$REPO_ROOT/deploy/mac/launchd/com.voltcouch.admin-console.plist.template"
+ADMIN_LOG_DIR="$HOME/Library/Logs/voltcouch"
+ADMIN_DATA_DIR="$HOME/.voltcouch-admin"
+
 RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'
 BLUE=$'\033[0;34m'; BOLD=$'\033[1m'; NC=$'\033[0m'
 
@@ -203,6 +209,51 @@ EOF
     launchctl kickstart -k "gui/${uid}/${CLOUDFLARED_LAUNCH_AGENT_LABEL}"
 }
 
+install_admin_launch_agent() {
+    # Run the admin console (ypl.admin_console.server) as a host LaunchAgent.
+    # Bound to 127.0.0.1; reachable from the outside only via cloudflared.
+    require_cmd poetry "Install poetry via 'curl -sSL https://install.python-poetry.org | python3 -'"
+    [[ -f "$ADMIN_LAUNCH_AGENT_TEMPLATE" ]] || \
+        error "Missing $ADMIN_LAUNCH_AGENT_TEMPLATE"
+
+    local poetry_bin; poetry_bin="$(command -v poetry)"
+    mkdir -p "$(dirname "$ADMIN_LAUNCH_AGENT_PLIST")" \
+             "$ADMIN_LOG_DIR" "$ADMIN_DATA_DIR/backups"
+
+    # Deploy clone — the dedicated checkout that backs the running stack.
+    # install.sh's earlier step puts it at $HOME/deploy/voltcouch/yupp-agent
+    # (the externalized layout). If a single-tree dev box is running this,
+    # fall back to the workspace itself.
+    local deploy_repo="$HOME/deploy/voltcouch/yupp-agent"
+    [[ -d "$deploy_repo/.git" ]] || deploy_repo="$REPO_ROOT"
+
+    info "Writing $ADMIN_LAUNCH_AGENT_PLIST"
+    sed -e "s|__REPO_ROOT__|$REPO_ROOT|g" \
+        -e "s|__POETRY_BIN__|$poetry_bin|g" \
+        -e "s|__LOG_DIR__|$ADMIN_LOG_DIR|g" \
+        -e "s|__ENV_FILE__|$ENV_FILE|g" \
+        -e "s|__ADMIN_DIR__|$ADMIN_DATA_DIR|g" \
+        -e "s|__DEPLOY_REPO__|$deploy_repo|g" \
+        "$ADMIN_LAUNCH_AGENT_TEMPLATE" > "$ADMIN_LAUNCH_AGENT_PLIST"
+
+    local uid; uid="$(id -u)"
+    info "Bootstrapping admin console LaunchAgent..."
+    launchctl bootout "gui/${uid}" "$ADMIN_LAUNCH_AGENT_PLIST" >/dev/null 2>&1 || true
+    launchctl bootstrap "gui/${uid}" "$ADMIN_LAUNCH_AGENT_PLIST"
+    launchctl enable "gui/${uid}/${ADMIN_LAUNCH_AGENT_LABEL}"
+    launchctl kickstart -k "gui/${uid}/${ADMIN_LAUNCH_AGENT_LABEL}"
+
+    # Poll healthz so the installer fails loudly if it didn't come up.
+    for _ in $(seq 1 15); do
+        if curl -sf http://127.0.0.1:8099/healthz >/dev/null 2>&1; then
+            info "Admin daemon healthy at http://127.0.0.1:8099/"
+            return 0
+        fi
+        sleep 2
+    done
+    warn "Admin daemon didn't respond on 8099 — see $ADMIN_LOG_DIR/admin-console.log"
+}
+
 banner "yupp-agent — macOS one-box installer"
 
 if [[ "$(uname)" != "Darwin" ]]; then
@@ -218,7 +269,7 @@ if [[ -f "$SENTINEL" ]]; then
     rm -f "$SENTINEL"
 fi
 
-TOTAL_STEPS=8
+TOTAL_STEPS=9
 
 # ---------------------------------------------------------------------------
 step 1 $TOTAL_STEPS "Toolchain check"
@@ -333,9 +384,20 @@ fi
 # /data/ahs, which doesn't exist on macOS.
 env_set ENVIRONMENT "selfhosted"
 env_set DEFAULT_DB "agentdb"
+env_set AGENT_HARNESS_SERVICE_BASE_URL "http://localhost:8090"
 [[ -z "$(env_get SANDBOX_ENABLED)" ]]                   && env_set SANDBOX_ENABLED                   "false"
 [[ -z "$(env_get AHS_MONO_ENABLE_GATEWAY_SERVICE)" ]]   && env_set AHS_MONO_ENABLE_GATEWAY_SERVICE   "true"
 [[ -z "$(env_get GATEWAY_SLACK_ENABLED)" ]]             && env_set GATEWAY_SLACK_ENABLED             "true"
+
+# `.env.example` ships with these flags set to "false" (the conservative
+# enterprise default).  The check above only overrides empty values, so a
+# straight copy from .env.example leaves the laptop deploy with SAG and MCP
+# disabled — the gateway router doesn't mount, every `/gw/slack/slack/events`
+# POST returns 404, and SAG never reacts to Slack messages.  Force-flip both
+# flags to "true" on the laptop deploy; operators who want a pure-AHS box
+# can override back in .env.
+[[ "$(env_get AHS_MONO_ENABLE_GATEWAY_SERVICE)" == "false" ]] && env_set AHS_MONO_ENABLE_GATEWAY_SERVICE "true"
+[[ "$(env_get AHS_MONO_ENABLE_MCP)" == "false" ]]             && env_set AHS_MONO_ENABLE_MCP             "true"
 [[ -z "$(env_get USE_GOOGLE_CLOUD_LOGGING)" ]]          && env_set USE_GOOGLE_CLOUD_LOGGING          "false"
 [[ -z "$(env_get DISABLE_WRITE_GOOGLE_CLOUD_METRICS)" ]] && env_set DISABLE_WRITE_GOOGLE_CLOUD_METRICS "true"
 
@@ -412,6 +474,10 @@ fi
 if [[ -z "$(env_get MCP_OAUTH_STORAGE_ENCRYPTION_KEY)" ]]; then
     env_set MCP_OAUTH_STORAGE_ENCRYPTION_KEY "$(generate_fernet_key)"
 fi
+# External-MCP grant encryption (per-user OAuth/M2M tokens + server secrets).
+if [[ -z "$(env_get MCP_USER_GRANT_ENCRYPTION_KEY)" ]]; then
+    env_set MCP_USER_GRANT_ENCRYPTION_KEY "$(generate_fernet_key)"
+fi
 
 chmod 600 "$ENV_FILE"
 info ".env updated (mode 0600)."
@@ -443,6 +509,9 @@ if [[ "$SKIP_CF" != "1" ]]; then
         AGENT_HOST="ahs.$APEX"
         AGENT_UI_HOST="lit.$APEX"
         ARTIFACTS_HOST="a.$APEX"
+        ADMIN_HOST="admin.$APEX"
+        LOGS_HOST="logs.$APEX"
+        METRICS_HOST="metrics.$APEX"
 
         TUNNEL_NAME="${TUNNEL_NAME:-yupp-agent}"
         # Parse the JSON output rather than the text-table — cloudflared has
@@ -463,7 +532,8 @@ if [[ "$SKIP_CF" != "1" ]]; then
         [[ -z "$TUNNEL_UUID" ]] && error "Could not resolve tunnel UUID for $TUNNEL_NAME."
 
         # DNS routes.
-        for host in "$AGENT_HOST" "$AGENT_UI_HOST" "$ARTIFACTS_HOST"; do
+        for host in "$AGENT_HOST" "$AGENT_UI_HOST" "$ARTIFACTS_HOST" \
+                    "$ADMIN_HOST" "$LOGS_HOST" "$METRICS_HOST"; do
             info "Routing $host → $TUNNEL_NAME"
             cloudflared tunnel route dns "$TUNNEL_NAME" "$host" || warn "DNS route for $host failed (already routed? continuing)"
         done
@@ -492,6 +562,18 @@ ingress:
     service: http://127.0.0.1:8095
     originRequest:
       connectTimeout: 10s
+  - hostname: $ADMIN_HOST
+    service: http://127.0.0.1:8099
+    originRequest:
+      connectTimeout: 10s
+  - hostname: $LOGS_HOST
+    service: http://127.0.0.1:8082
+    originRequest:
+      connectTimeout: 10s
+  - hostname: $METRICS_HOST
+    service: http://127.0.0.1:19999
+    originRequest:
+      connectTimeout: 10s
   - service: http_status:404
 EOF
 
@@ -505,6 +587,10 @@ EOF
         env_set AGENT_HOST                "$AGENT_HOST"
         env_set AGENT_UI_HOST             "$AGENT_UI_HOST"
         env_set ARTIFACTS_HOST            "$ARTIFACTS_HOST"
+        env_set ADMIN_HOST                "$ADMIN_HOST"
+        env_set LOGS_HOST                 "$LOGS_HOST"
+        env_set METRICS_HOST              "$METRICS_HOST"
+        env_set ADMIN_OAUTH_REDIRECT_URI  "https://$ADMIN_HOST/auth/callback"
         # Tell SAG manifest builders (if anyone ever calls them) the public
         # base URL.  Streamlit + the viewer read their redirect URIs below.
         env_set GATEWAY_BASE_URL          "https://$AGENT_HOST"
@@ -514,6 +600,9 @@ EOF
         info "  AHS / SAG          https://$AGENT_HOST"
         info "  Streamlit UI       https://$AGENT_UI_HOST"
         info "  Artifact Viewer    https://$ARTIFACTS_HOST"
+        info "  Admin console      https://$ADMIN_HOST"
+        info "  Logs (Dozzle)      https://$LOGS_HOST"
+        info "  Metrics (Netdata)  https://$METRICS_HOST"
     else
         warn "Skipped Cloudflare tunnel — SAG will not receive Slack events without one."
     fi
@@ -535,9 +624,10 @@ if [[ "$SKIP_OAUTH_FLAG" != "1" ]]; then
   Create a Google Cloud OAuth 2.0 Web Application client at:
     https://console.cloud.google.com/apis/credentials
 
-  Configure the following Authorized redirect URIs (both required):
+  Configure the following Authorized redirect URIs (all three required):
     https://$AGENT_UI_HOST_CURR/oauth2callback
     https://$ARTIFACTS_HOST_CURR/auth/callback
+    https://$(env_get ADMIN_HOST)/auth/callback
 
 EOF
     else
@@ -547,9 +637,11 @@ EOF
     https://console.cloud.google.com/apis/credentials
 
   Authorized redirect URIs — fill in whatever hostnames you'll reach the
-  Streamlit (8501) and Artifact Viewer (8095) at; the most common pair is:
+  Streamlit (8501), Artifact Viewer (8095), and Admin Console (8099) at;
+  the most common set is:
     http://127.0.0.1:8501/oauth2callback     (Streamlit, localhost-only)
     http://127.0.0.1:8095/auth/callback      (Artifact Viewer, localhost-only)
+    http://127.0.0.1:8099/auth/callback      (Admin Console, localhost-only)
 
   Note: Streamlit's auth helper *requires* a redirect URI; if you skipped the
   Cloudflare step and intend to keep it localhost-only, you can still configure
@@ -675,8 +767,9 @@ fi
 # ---------------------------------------------------------------------------
 step 8 $TOTAL_STEPS "Bring up the rest of the stack"
 # ---------------------------------------------------------------------------
-info "Building images and starting app, streamlit, artifact-viewer..."
+info "Building images and starting app, streamlit, artifact-viewer, dozzle, netdata..."
 $COMPOSE up -d --build app streamlit artifact-viewer
+$COMPOSE up -d dozzle netdata-sidecar
 
 info "Waiting for /health on each service..."
 wait_for_url() {
@@ -695,6 +788,56 @@ wait_for_url() {
 wait_for_url "app"             "http://localhost:8090/health"
 wait_for_url "streamlit"       "http://localhost:8501/_stcore/health"
 wait_for_url "artifact-viewer" "http://localhost:8095/healthz"
+wait_for_url "dozzle"          "http://localhost:8082/"
+wait_for_url "netdata"         "http://localhost:19999/"
+
+# ---------------------------------------------------------------------------
+step 9 $TOTAL_STEPS "Admin console (host LaunchAgent)"
+# ---------------------------------------------------------------------------
+# The admin console runs on the host, not inside docker, because it has to
+# control docker (compose ps / up -d / build) and read the host filesystem
+# (workspace du, git status). It binds 127.0.0.1:8099 and is exposed via
+# cloudflared at https://admin.$APEX (see step 4).
+
+if prompt_yes_no "Install the voltcouch admin console as a host LaunchAgent?" "y"; then
+    # Decide whether to require Google OAuth: production tunnel → yes, pure
+    # localhost → no (set ADMIN_OAUTH_ENABLED=true in .env to force it).
+    if [[ -n "$(env_get ADMIN_HOST)" ]]; then
+        if [[ -z "$(env_get ADMIN_OAUTH_ENABLED)" ]]; then
+            env_set ADMIN_OAUTH_ENABLED "true"
+        fi
+        if [[ -z "$(env_get ADMIN_ALLOWED_EMAILS)" ]]; then
+            DEFAULT_EMAIL="$(git config user.email 2>/dev/null || echo '')"
+            ALLOWED="$(prompt_value 'Comma-separated emails allowed to use the admin console' "$DEFAULT_EMAIL")"
+            [[ -z "$ALLOWED" ]] && error "ADMIN_ALLOWED_EMAILS cannot be empty when the admin console is publicly exposed."
+            env_set ADMIN_ALLOWED_EMAILS "$ALLOWED"
+        else
+            info "Admin allowlist already set: $(env_get ADMIN_ALLOWED_EMAILS)"
+        fi
+        if [[ -z "$(env_get ADMIN_SESSION_SECRET)" ]]; then
+            env_set ADMIN_SESSION_SECRET "$(generate_secret)"
+        fi
+    else
+        env_set ADMIN_OAUTH_ENABLED "false"
+        info "No Cloudflare tunnel — leaving admin console as localhost-only (no OAuth required)."
+    fi
+
+    install_admin_launch_agent
+
+    if [[ -n "$(env_get ADMIN_HOST)" ]]; then
+        info "Admin console: https://$(env_get ADMIN_HOST)/   (local: http://127.0.0.1:8099/)"
+        info "Logs (Dozzle): https://$(env_get LOGS_HOST)/    (local: http://127.0.0.1:8082/)"
+        info "Metrics (Netdata): https://$(env_get METRICS_HOST)/  (local: http://127.0.0.1:19999/)"
+    else
+        info "Admin console: http://127.0.0.1:8099/"
+    fi
+
+    info "Remember: add https://$(env_get ADMIN_HOST 2>/dev/null || echo 'admin.<your-apex>')/auth/callback"
+    info "          to your Google OAuth client's Authorized redirect URIs."
+else
+    warn "Skipped admin console. Reachable manually via:"
+    warn "  poetry run uvicorn ypl.admin_console.server:app --host 127.0.0.1 --port 8099"
+fi
 
 touch "$SENTINEL"
 
@@ -709,6 +852,9 @@ Local URLs:
     OpenAPI docs             http://localhost:8090/docs
   Streamlit dashboards       http://localhost:8501
   Artifact Viewer            http://localhost:8095
+  Admin console              http://127.0.0.1:8099
+  Logs (Dozzle)              http://127.0.0.1:8082
+  Metrics (Netdata)          http://127.0.0.1:19999
 
 EOF
 
@@ -718,6 +864,9 @@ Public URLs (via your Cloudflare tunnel):
   https://$(env_get AGENT_HOST)            — AHS / SAG / MCP
   https://$(env_get AGENT_UI_HOST)         — Streamlit (Google OAuth)
   https://$(env_get ARTIFACTS_HOST)        — Artifact Viewer (Google OAuth)
+  https://$(env_get ADMIN_HOST)         — Admin console (Google OAuth)
+  https://$(env_get LOGS_HOST)          — Dozzle logs
+  https://$(env_get METRICS_HOST)       — Netdata metrics
 
 Slack bot setup — register the bot through Streamlit (Agent Console → Slack
 Agents page) and point the Slack app's request_url at:

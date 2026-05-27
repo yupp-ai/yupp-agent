@@ -4,11 +4,16 @@ from pathlib import Path
 
 import streamlit as st
 
+from ypl.backend.config import settings
 from ypl.db.all_models import *  # noqa
 from ypl.streamlit_server.auth import auth_required, is_allowed_email, is_auth_configured
 
+# Per-deployment branding.  Default to "Agentic Couch Hub"; self-hosted
+# boxes override via ``STREAMLIT_HUB_TITLE`` in .env (e.g. "VoltCouch Hub").
+_HUB_TITLE = settings.STREAMLIT_HUB_TITLE or "Agentic Couch Hub"
+
 st.set_page_config(
-    page_title="Agentic Couch Hub",
+    page_title=_HUB_TITLE,
     page_icon="🛋️",
     layout="wide",
 )
@@ -27,14 +32,14 @@ def login_screen() -> None:
     )
     st.markdown(
         "<div style='font-size: 2rem; font-weight: 700; text-align: center; "
-        "margin: 1rem 0 2rem 0'>Agentic Couch Hub</div>",
+        f"margin: 1rem 0 2rem 0'>{_HUB_TITLE}</div>",
         unsafe_allow_html=True,
     )
     st.button("Sign in with Google", on_click=st.login, type="primary")
 
 
 def access_denied_screen() -> None:
-    st.title("🛋️ Agentic Couch Hub")
+    st.title(f"🛋️ {_HUB_TITLE}")
     st.error("Access Denied")
     email = st.user.email if st.user is not None else "Unknown"
     st.warning(
@@ -77,7 +82,7 @@ if AUTH_ENABLED:
         access_denied_screen()
         st.stop()
 
-    st.title("🛋️ Agentic Couch Hub")
+    st.title(f"🛋️ {_HUB_TITLE}")
     st.markdown(f"Welcome, {st.user.name}! 👋")
     st.markdown("<div style='margin-bottom: 2rem;'></div>", unsafe_allow_html=True)
 
@@ -85,12 +90,12 @@ if AUTH_ENABLED:
         st.markdown(f"**Logged in as:** {st.user.email}")
         st.button("Log out", on_click=st.logout)
 else:
-    st.title("🛋️ Agentic Couch Hub")
+    st.title(f"🛋️ {_HUB_TITLE}")
     st.warning(
         "⚠️ **Authentication Not Configured** - Running in development mode. "
         "See AUTHENTICATION.md for setup instructions."
     )
-    st.markdown("Welcome to the Agentic Couch Hub. Select a page below to get started.")
+    st.markdown(f"Welcome to the {_HUB_TITLE}. Select a page below to get started.")
 
 pages = {
     "Agents": [
@@ -184,6 +189,27 @@ pages = {
             "description": (
                 "Issue, view, and revoke MCP developer tokens. "
                 "Generate new yupp_dev_* tokens for authorized users. Admin-only."
+            ),
+        },
+        {
+            "name": "External MCPs",
+            "link": "admin_external_mcps",
+            "emoji": "🧩",
+            "description": (
+                "Register external MCP servers (Gmail, Drive, Calendar, …), "
+                "configure OAuth or M2M credentials, and grant role-based access. "
+                "Admin-only."
+            ),
+        },
+    ],
+    "Me": [
+        {
+            "name": "My MCPs",
+            "link": "my_mcps",
+            "emoji": "🔌",
+            "description": (
+                "Connect external MCPs (Gmail, Drive, Calendar, …) to your account. "
+                "Once connected, agents your roles allow can use these tools on your behalf."
             ),
         },
     ],

@@ -1,0 +1,998 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>voltcouch admin</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root {
+    --paper: #faf8f3; --soft: #f0ece2; --softer: #f6f3eb;
+    --ink: #1a1a1a; --mute: #7a7a72; --rule: #d8d4c8;
+    --accent: #2d4a7a; --ok: #3d8a5b; --warn: #b07e1a; --err: #b13b2e;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    --serif: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { background: var(--paper); color: var(--ink); margin: 0;
+               font: 14px/1.5 -apple-system, system-ui, sans-serif;
+               font-feature-settings: "tnum" 1; }
+  header { display: flex; align-items: baseline; gap: 24px;
+           padding: 16px 28px 12px; border-bottom: 1px solid var(--ink); }
+  .brand { font-family: var(--serif); font-size: 22px; font-weight: 600;
+           letter-spacing: -.01em; }
+  .brand em { font-style: italic; color: var(--mute); font-weight: 400; }
+  nav a { color: var(--mute); text-decoration: none; margin-right: 16px;
+          font-size: 13px; border-bottom: 1px solid transparent;
+          padding-bottom: 2px; cursor: pointer; }
+  nav a.active, nav a:hover { color: var(--ink); border-bottom-color: var(--ink); }
+  .who { margin-left: auto; color: var(--mute); font-size: 12px;
+         font-family: var(--mono); display: flex; align-items: center; gap: 14px; }
+  .who img { width: 22px; height: 22px; border-radius: 50%; }
+  .who a { color: var(--mute); text-decoration: underline; }
+
+  main { padding: 22px 28px; max-width: 1320px; }
+  section { margin-bottom: 32px; }
+  .tab-page { display: none; }
+  .tab-page.active { display: block; }
+  h2 { font-family: var(--serif); font-size: 18px; font-style: italic;
+       font-weight: 400; margin: 0 0 4px;
+       border-bottom: 1px solid var(--rule); padding-bottom: 6px;
+       display: flex; align-items: baseline; }
+  h2 .sub { font-family: -apple-system, system-ui, sans-serif; font-style: normal;
+            color: var(--mute); font-size: 11px; margin-left: 10px;
+            text-transform: uppercase; letter-spacing: .08em; flex: 1; }
+  h2 .head-actions { display: flex; gap: 6px; }
+  h3 { font-size: 13px; font-weight: 600; margin: 0 0 6px; }
+  .caption { color: var(--mute); font-size: 11px; font-style: italic;
+             margin-top: 6px; }
+  code { font-family: var(--mono); font-size: 12px; }
+
+  .grid { display: grid; gap: 22px 28px; margin-top: 12px; }
+  .row-4 { grid-template-columns: repeat(4, 1fr); }
+  .row-3 { grid-template-columns: repeat(3, 1fr); }
+  .row-2 { grid-template-columns: 1fr 1fr; }
+
+  .stat .lbl { color: var(--mute); font-size: 11px; text-transform: uppercase;
+               letter-spacing: .08em; margin-bottom: 6px; }
+  .stat .n { font-family: var(--serif); font-size: 28px; font-weight: 600;
+             line-height: 1; letter-spacing: -.02em; }
+  .stat .u { color: var(--mute); font-size: 12px; margin-left: 3px;
+             font-family: -apple-system, system-ui, sans-serif; }
+  .stat .sub { color: var(--mute); font-size: 12px; margin-top: 6px;
+               font-family: var(--mono); }
+  .stat .bar { display: block; height: 3px; background: var(--soft);
+               margin-top: 8px; }
+  .stat .bar > span { display: block; height: 100%; background: var(--accent); }
+  .stat .bar.warn > span { background: var(--warn); }
+
+  table { width: 100%; border-collapse: collapse;
+          font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 8px 6px;
+           border-bottom: 1px solid var(--rule); vertical-align: middle; }
+  th { font-weight: 500; font-size: 11px; color: var(--mute);
+       text-transform: uppercase; letter-spacing: .06em; }
+  td.num { text-align: right; font-family: var(--mono); font-size: 12px; }
+  td.name { font-weight: 600; }
+  td.sha { font-family: var(--mono); font-size: 11px; color: var(--mute); }
+  tbody tr:hover { background: var(--soft); }
+
+  .health { display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+            margin-right: 6px; vertical-align: middle; background: var(--mute); }
+  .health.ok   { background: var(--ok); }
+  .health.warn { background: var(--warn); }
+  .health.err  { background: var(--err); }
+
+  button { background: transparent; color: var(--ink); border: 1px solid var(--ink);
+           border-radius: 0; padding: 4px 10px; font: inherit; font-size: 11px;
+           cursor: pointer; font-family: -apple-system, system-ui, sans-serif; }
+  button:hover { background: var(--ink); color: var(--paper); }
+  button.ghost { border-color: var(--rule); color: var(--mute); }
+  button.ghost:hover { background: var(--soft); color: var(--ink);
+                       border-color: var(--mute); }
+  button.warn { border-color: var(--err); color: var(--err); }
+  button.warn:hover { background: var(--err); color: var(--paper); }
+  button:disabled { opacity: .4; cursor: not-allowed; pointer-events: none; }
+  .actbar { display: flex; gap: 4px; justify-content: flex-end; }
+
+  /* env config */
+  .env-group { background: var(--soft); border: 1px solid var(--rule);
+               padding: 12px 14px; margin-top: 14px; }
+  .env-group h3 { font-family: var(--serif); font-style: italic;
+                  font-weight: 400; margin-bottom: 10px; font-size: 14px; }
+  dl.env { display: grid; grid-template-columns: max-content 1fr;
+           gap: 6px 16px; margin: 0; font-family: var(--mono); font-size: 11px;
+           align-items: baseline; }
+  dl.env dt { color: var(--ink); white-space: nowrap; }
+  dl.env dd { margin: 0; color: var(--ink); word-break: break-all; }
+  dl.env dd.red { color: var(--err); }
+  dl.env dd.unset { color: var(--mute); font-style: italic; }
+  dl.env .anno { color: var(--mute); font-size: 10px;
+                 font-family: -apple-system, system-ui, sans-serif;
+                 font-style: italic; grid-column: 1 / -1; margin-left: 6px;
+                 margin-top: -2px; padding-bottom: 4px;
+                 border-bottom: 1px dotted var(--rule); }
+
+  /* topology */
+  .diagram { background: var(--soft); border: 1px solid var(--rule);
+             padding: 14px; overflow-x: auto; }
+  .diagram svg { display: block; margin: 0 auto; }
+
+  /* modal overlay */
+  .overlay { position: fixed; inset: 0; background: rgba(26, 26, 26, .35);
+             display: none; align-items: flex-start; justify-content: center;
+             padding-top: 6vh; z-index: 100; }
+  .overlay.show { display: flex; }
+  .modal { background: var(--paper); border: 1px solid var(--ink);
+           min-width: 580px; max-width: 90vw; max-height: 85vh;
+           display: flex; flex-direction: column; }
+  .modal header { padding: 12px 18px; border-bottom: 1px solid var(--rule);
+                  display: flex; align-items: baseline; gap: 16px;
+                  font-family: var(--serif); font-size: 16px; font-style: italic; }
+  .modal header .x { margin-left: auto; cursor: pointer; color: var(--mute);
+                     font-family: var(--mono); font-size: 18px; padding: 0 4px; }
+  .modal-body { padding: 14px 18px; overflow: auto; }
+  .modal-footer { padding: 12px 18px; border-top: 1px solid var(--rule);
+                  display: flex; gap: 8px; justify-content: flex-end;
+                  background: var(--softer); }
+
+  /* job log streaming pane */
+  .joblog { background: #1a1a1a; color: #e8e6e1; font-family: var(--mono);
+            font-size: 11px; line-height: 1.5; padding: 12px;
+            max-height: 50vh; overflow: auto;
+            border: 1px solid var(--ink); white-space: pre-wrap; word-break: break-word; }
+  .joblog .l-cmd  { color: #f0e1a3; }
+  .joblog .l-err  { color: #f08a78; }
+  .joblog .l-warn { color: #f0c878; }
+  .joblog .l-info { color: #a3c7f0; }
+  .joblog .l-rc   { color: #7a7a72; }
+  .joblog .l-health { color: #7af0b8; }
+  .joblog .l-done { color: #7af0b8; font-weight: 700; }
+
+  .badge { display: inline-block; padding: 1px 7px; border: 1px solid var(--rule);
+           font-size: 10px; font-family: var(--mono);
+           text-transform: uppercase; letter-spacing: .05em; }
+  .badge.ok  { color: var(--ok);  border-color: var(--ok); }
+  .badge.warn{ color: var(--warn); border-color: var(--warn); }
+  .badge.err { color: var(--err); border-color: var(--err); }
+
+  #loading { padding: 60px; text-align: center; color: var(--mute);
+             font-family: var(--serif); font-style: italic; font-size: 18px; }
+  .err-banner { background: #fdebea; border: 1px solid var(--err);
+                color: var(--err); padding: 10px 14px; margin-bottom: 16px;
+                font-family: var(--mono); font-size: 12px; }
+  footer { padding: 24px; color: var(--mute); font-size: 11px;
+           text-align: center; border-top: 1px solid var(--rule); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">voltcouch <em>admin console</em></div>
+  <nav>
+    <a data-tab="dashboard" class="active">Dashboard</a>
+    <a data-tab="config">Config</a>
+    <a data-tab="topology">Topology</a>
+    <a id="nav-logs"    target="_blank" rel="noopener">Logs ↗</a>
+    <a id="nav-metrics" target="_blank" rel="noopener">Metrics ↗</a>
+  </nav>
+  <div class="who" id="who">—</div>
+</header>
+
+<main>
+<div id="loading">loading…</div>
+
+<!-- =========================================================== DASHBOARD -->
+<div id="tab-dashboard" class="tab-page">
+
+  <section>
+    <h2>At a glance <span class="sub" id="refresh-info">—</span></h2>
+    <div class="grid row-4">
+      <div class="stat">
+        <div class="lbl">Sessions, last 30 d</div>
+        <div><span class="n" id="kpi-sessions-30d">—</span></div>
+        <div class="sub" id="kpi-sessions-today">—</div>
+      </div>
+      <div class="stat">
+        <div class="lbl">Workspace size</div>
+        <div><span class="n" id="kpi-workspace-gb">—</span><span class="u">GB</span></div>
+        <div class="sub" id="kpi-workspace-detail">—</div>
+      </div>
+      <div class="stat">
+        <div class="lbl">Host CPU</div>
+        <div><span class="n" id="kpi-cpu">—</span><span class="u">%</span></div>
+        <div class="sub" id="kpi-load">—</div>
+        <div class="bar"><span id="kpi-cpu-bar" style="width:0%"></span></div>
+      </div>
+      <div class="stat">
+        <div class="lbl">Host disk free</div>
+        <div><span class="n" id="kpi-disk">—</span><span class="u">GB</span></div>
+        <div class="sub" id="kpi-disk-detail">—</div>
+        <div class="bar"><span id="kpi-disk-bar" style="width:0%"></span></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="grid row-3">
+      <div>
+        <h3>Per-container memory · current</h3>
+        <svg id="chart-mem" width="100%" height="180" viewBox="0 0 360 180"
+             preserveAspectRatio="none"></svg>
+        <div class="caption" id="chart-mem-caption">—</div>
+      </div>
+      <div>
+        <h3>Sessions / day · last 30 days</h3>
+        <svg id="chart-sessions" width="100%" height="180" viewBox="0 0 480 180"
+             preserveAspectRatio="none"></svg>
+        <div class="caption" id="chart-sessions-caption">—</div>
+      </div>
+      <div>
+        <h3>Turn-size distribution · all sessions</h3>
+        <svg id="chart-turns" width="100%" height="180" viewBox="0 0 360 180"
+             preserveAspectRatio="none"></svg>
+        <div class="caption" id="chart-turns-caption">—</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Services <span class="sub" id="svc-summary">—</span>
+        <span class="head-actions">
+          <button id="btn-deploy-all">Deploy…</button>
+          <button id="btn-rollback" class="warn">Rollback…</button>
+        </span>
+    </h2>
+    <table>
+      <thead>
+        <tr><th>service</th><th>state</th>
+            <th style="text-align:right;">cpu</th>
+            <th style="text-align:right;">mem</th>
+            <th>image / status</th>
+            <th></th></tr>
+      </thead>
+      <tbody id="svc-tbody"></tbody>
+    </table>
+    <div class="caption">
+      branch <code id="git-branch">—</code> ·
+      <code id="git-sha">—</code> ·
+      <span id="git-subject" style="color:var(--ink);">—</span> ·
+      <span id="git-behind">—</span>
+    </div>
+  </section>
+
+  <section>
+    <div class="grid row-2">
+      <div>
+        <h3>Workspace</h3>
+        <table id="ws-table"></table>
+        <div class="caption" style="margin-top:6px;">
+          <span id="ws-path">—</span>
+          · measured <span id="ws-measured">—</span>
+          · <button class="ghost" id="ws-refresh">refresh now</button>
+        </div>
+      </div>
+      <div>
+        <h3>Host maintenance crons
+          <span style="color:var(--mute); font-weight:400; font-size:11px;
+                       margin-left:8px;" id="crons-summary">—</span></h3>
+        <table>
+          <thead><tr>
+            <th>name</th><th>every</th><th>next</th><th>last</th><th></th>
+          </tr></thead>
+          <tbody id="crons-tbody"></tbody>
+        </table>
+        <div class="caption">runs in the admin daemon's asyncio scheduler.</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Recent deploys <span class="sub">audit log · ~/.voltcouch-admin/deploys.jsonl</span></h2>
+    <table>
+      <thead><tr>
+        <th>when</th><th>action</th><th>target</th><th>sha</th>
+        <th style="text-align:right;">dur</th><th>health</th><th>by</th>
+      </tr></thead>
+      <tbody id="deploys-tbody">
+        <tr><td colspan="7" class="caption" style="padding:12px;">loading…</td></tr>
+      </tbody>
+    </table>
+  </section>
+</div>
+
+<!-- =============================================================== CONFIG -->
+<div id="tab-config" class="tab-page">
+  <section>
+    <h2>Configuration <span class="sub">.env · functional keys · credentials redacted</span></h2>
+    <div id="config-body"></div>
+  </section>
+</div>
+
+<!-- ============================================================ TOPOLOGY -->
+<div id="tab-topology" class="tab-page">
+  <section>
+    <h2>Topology <span class="sub">what's inside docker · who calls whom</span></h2>
+    <div class="diagram">
+      <svg id="topology" width="940" height="600" viewBox="0 0 940 600"></svg>
+    </div>
+    <div class="caption">
+      Solid arrows = primary data flow. Dashed = secondary read or control.
+      Admin daemon, cloudflared, Netdata's host probes live on the host
+      (launchd / managed by you); the rest of the boxes are docker containers.
+    </div>
+  </section>
+</div>
+</main>
+
+<!-- ================================================================ MODAL -->
+<div class="overlay" id="overlay">
+  <div class="modal" id="modal">
+    <header>
+      <span id="modal-title">—</span>
+      <span class="x" onclick="closeModal()">✕</span>
+    </header>
+    <div class="modal-body" id="modal-body">—</div>
+    <div class="modal-footer" id="modal-footer"></div>
+  </div>
+</div>
+
+<footer>voltcouch admin · v1 · <span id="env-loc">—</span></footer>
+
+<script>
+// ============================================================== utilities
+const $ = (id) => document.getElementById(id);
+const html = (s) => s.replace(/[&<>"]/g, c =>
+  ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;'}[c]));
+
+const fmt = {
+  bytes(n) {
+    if (!n) return "0";
+    const u = ["B","KB","MB","GB","TB"];
+    let i = 0;
+    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+    return (i >= 3 ? n.toFixed(2) : n.toFixed(1)) + " " + u[i];
+  },
+  age(seconds) {
+    if (seconds == null) return "—";
+    const s = Math.floor(seconds);
+    if (s < 60)   return s + "s ago";
+    if (s < 3600) return Math.floor(s / 60) + "m ago";
+    if (s < 86400) return Math.floor(s / 3600) + "h ago";
+    return Math.floor(s / 86400) + "d ago";
+  },
+  in(seconds) {
+    if (seconds == null) return "—";
+    if (seconds < 0) return "due";
+    const s = Math.floor(seconds);
+    if (s < 60)   return "in " + s + "s";
+    if (s < 3600) return "in " + Math.floor(s / 60) + "m";
+    if (s < 86400) return "in " + Math.floor(s / 3600) + "h";
+    return "in " + Math.floor(s / 86400) + "d";
+  },
+  dur(seconds) {
+    if (seconds == null) return "—";
+    const d = Math.floor(seconds / 86400);
+    const h = Math.floor((seconds % 86400) / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    if (d > 0) return `${d}d ${h}h`;
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
+  },
+  every(seconds) {
+    if (seconds < 3600) return Math.round(seconds / 60) + " min";
+    if (seconds < 86400) return Math.round(seconds / 3600) + " h";
+    return Math.round(seconds / 86400) + " d";
+  },
+  shortts(iso) {
+    if (!iso) return "—";
+    try { return new Date(iso).toISOString().slice(5, 16).replace("T", " "); }
+    catch { return iso; }
+  },
+};
+
+// ============================================================ chart helpers
+function clearSvg(svg) { while (svg.firstChild) svg.removeChild(svg.firstChild); }
+
+function chartBars(svg, items, {color="#2d4a7a", labelEvery=0,
+                                 valueFn=(d)=>d.value, labelFn=(d)=>d.label}={}) {
+  clearSvg(svg);
+  if (!items || !items.length) {
+    svg.insertAdjacentHTML("beforeend",
+      `<text x="50%" y="50%" text-anchor="middle" fill="#7a7a72"
+             font-style="italic" font-size="12">no data</text>`);
+    return;
+  }
+  const vb = svg.viewBox.baseVal;
+  const W = vb.width, H = vb.height, padL = 24, padR = 6, padT = 8, padB = 26;
+  const n = items.length;
+  const max = Math.max(1, ...items.map(valueFn));
+  const bw = (W - padL - padR) / n;
+  let s = "";
+  [0, 0.5, 1].forEach(f => {
+    const y = H - padB - f * (H - padB - padT);
+    const v = Math.round(f * max);
+    s += `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}"
+                stroke="#d8d4c8" stroke-width=".5"/>
+          <text x="${padL - 4}" y="${y + 3}" text-anchor="end"
+                font-size="9" fill="#7a7a72">${v}</text>`;
+  });
+  items.forEach((d, i) => {
+    const v = valueFn(d);
+    const bh = (v / max) * (H - padB - padT);
+    const x = padL + i * bw + 1;
+    const y = H - padB - bh;
+    s += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}"
+                width="${(bw - 2).toFixed(1)}" height="${bh.toFixed(1)}"
+                fill="${color}"><title>${labelFn(d)}: ${v}</title></rect>`;
+  });
+  s += `<line x1="${padL}" y1="${H - padB}" x2="${W - padR}" y2="${H - padB}"
+              stroke="#1a1a1a" stroke-width="1"/>`;
+  const step = labelEvery || Math.max(1, Math.ceil(n / 8));
+  items.forEach((d, i) => {
+    if (i % step !== 0 && i !== n - 1) return;
+    const x = padL + i * bw + bw / 2;
+    s += `<text x="${x.toFixed(1)}" y="${H - padB + 12}" text-anchor="middle"
+                font-size="9" fill="#7a7a72">${labelFn(d)}</text>`;
+  });
+  svg.insertAdjacentHTML("beforeend", s);
+}
+
+// ============================================================== rendering
+function renderDashboard(data) {
+  const sess = data.sessions || {};
+  const per = sess.per_day_30d || [];
+  const total30 = per.reduce((a, b) => a + (b.count || 0), 0);
+  const today = per.length ? per[per.length - 1].count : 0;
+  $("kpi-sessions-30d").textContent = total30.toLocaleString();
+  $("kpi-sessions-today").textContent = today + " today";
+
+  const ws = data.workspace || {};
+  $("kpi-workspace-gb").textContent = ((ws.total_bytes || 0) / 1e9).toFixed(1);
+  $("kpi-workspace-detail").textContent =
+    `${(ws.session_dir_count || 0).toLocaleString()} session dirs`;
+
+  const sys = data.system || {};
+  $("kpi-cpu").textContent = (sys.cpu_percent || 0).toFixed(0);
+  $("kpi-load").textContent = "load " + (sys.load_avg || []).join(" / ");
+  $("kpi-cpu-bar").style.width = (sys.cpu_percent || 0) + "%";
+  $("kpi-disk").textContent = (sys.disk_free_gb || 0).toLocaleString();
+  $("kpi-disk-detail").textContent =
+    `${sys.disk_used_gb || 0} of ${sys.disk_total_gb || 0} used`;
+  $("kpi-disk-bar").style.width = (sys.disk_percent || 0) + "%";
+  $("kpi-disk-bar").parentElement.className =
+    "bar" + ((sys.disk_percent || 0) > 80 ? " warn" : "");
+
+  // chart: per-container memory
+  const composeNames = new Set((data.docker || []).map(s => s.name));
+  const stats = data.docker_stats || {};
+  const memItems = Object.entries(stats)
+    .filter(([name]) => composeNames.has(name))
+    .map(([name, v]) => ({
+      label: name.replace(/^yupp-agent-/, "").replace(/-1$/, ""),
+      value: Math.round((v.mem_used_bytes || 0) / 1e6),
+    }))
+    .sort((a, b) => b.value - a.value);
+  chartBars($("chart-mem"), memItems, {labelEvery: 1});
+  $("chart-mem-caption").textContent = memItems.length
+    ? `MB resident · ${memItems.length} containers · total ${memItems.reduce((a,b)=>a+b.value,0)} MB`
+    : "no containers reported";
+
+  // chart: sessions per day
+  const sessItems = per.map(d => ({label: d.date.slice(5), value: d.count}));
+  chartBars($("chart-sessions"), sessItems, {labelEvery: 5});
+  const sorted = sessItems.map(x => x.value).sort((a, b) => a - b);
+  const med = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
+  $("chart-sessions-caption").textContent =
+    `total ${total30.toLocaleString()} · median/day ${med}`;
+
+  // chart: turn-size distribution
+  const turns = (sess.turn_distribution || []).map(d => ({
+    label: d.bucket, value: d.sessions,
+  }));
+  chartBars($("chart-turns"), turns, {labelEvery: 1});
+  $("chart-turns-caption").textContent = turns.length
+    ? `${turns.reduce((a,b)=>a+b.value,0).toLocaleString()} sessions classified by message count`
+    : "no sessions yet";
+
+  // services
+  const svcs = data.docker || [];
+  $("svc-tbody").innerHTML = svcs.map(s => {
+    const stat = (data.docker_stats || {})[s.name] || {};
+    const cls = s.health === "healthy" ? "ok"
+        : (s.state === "running" ? "warn" : "err");
+    const cpu = stat.cpu_percent != null ? stat.cpu_percent.toFixed(1) + "%" : "—";
+    const mem = stat.mem_used_bytes ? fmt.bytes(stat.mem_used_bytes) : "—";
+    return `<tr>
+      <td class="name"><span class="health ${cls}"></span>${html(s.service)}</td>
+      <td><span style="color:var(--mute); font-size:12px;">${html(s.health || s.state || "?")}</span></td>
+      <td class="num">${cpu}</td>
+      <td class="num">${mem}</td>
+      <td class="sha">${html((s.image || "").split(":").slice(-1)[0])} · ${html(s.status || "")}</td>
+      <td><div class="actbar">
+        <button class="ghost" onclick="showLogs('${html(s.service)}')">logs</button>
+        <button class="ghost" onclick="confirmRestart('${html(s.service)}')">restart</button>
+      </div></td>
+    </tr>`;
+  }).join("");
+  const healthy = svcs.filter(s => s.health === "healthy").length;
+  $("svc-summary").textContent = `${healthy} of ${svcs.length} healthy`;
+
+  // git
+  const git = data.git || {};
+  $("git-branch").textContent = git.branch || "?";
+  $("git-sha").textContent = git.sha || "?";
+  $("git-subject").textContent = git.subject || "";
+  const behindNote = git.commits_behind
+    ? `${git.commits_behind} commits behind origin/${git.branch}` + (git.dirty ? " · dirty tree" : "")
+    : (git.dirty ? "dirty working tree" : "up to date with origin");
+  $("git-behind").textContent = behindNote;
+  $("git-behind").style.color = (git.commits_behind || git.dirty) ? "var(--warn)" : "var(--mute)";
+
+  // workspace breakdown
+  const breakdown = ws.breakdown_bytes || {};
+  $("ws-table").innerHTML = `
+    <tr><th>subdir</th><th style="text-align:right;">size</th></tr>
+    ${Object.entries(breakdown).map(([k, v]) =>
+      `<tr><td>${html(k)}</td><td class="num">${fmt.bytes(v)}</td></tr>`).join("")}
+    <tr><td class="name">total</td>
+        <td class="num"><b>${fmt.bytes(ws.total_bytes || 0)}</b></td></tr>`;
+  $("ws-path").textContent = ws.path || "—";
+  $("ws-measured").textContent = ws.measured_at
+    ? fmt.age(Date.now() / 1000 - ws.measured_at) : "—";
+
+  $("refresh-info").textContent = "refreshed " + new Date().toLocaleTimeString();
+  $("env-loc").textContent = `env: ${ws.path || "?"}`;
+}
+
+function renderConfig(data) {
+  $("config-body").innerHTML = (data.groups || []).map(g => `
+    <div class="env-group">
+      <h3>${html(g.label)}</h3>
+      <dl class="env">
+        ${g.items.map(it => `
+          <dt>${html(it.key)}</dt>
+          <dd class="${it.set ? (it.redacted ? 'red' : '') : 'unset'}">${html(it.value || '')}</dd>
+          ${it.annotation ? `<div class="anno">${html(it.annotation)}</div>` : ''}
+        `).join("")}
+      </dl>
+    </div>
+  `).join("");
+}
+
+function renderCrons(crons) {
+  const now = Date.now() / 1000;
+  $("crons-tbody").innerHTML = crons.map(c => {
+    const statusCls = c.last_status === "ok" ? "ok"
+        : (c.last_status === "fail" ? "err" : "");
+    const nextStr = c.enabled
+      ? (c.running ? "running…" : fmt.in((c.next_run || 0) - now))
+      : "(disabled)";
+    return `<tr>
+      <td class="name">${html(c.name)}</td>
+      <td class="sha">${fmt.every(c.interval_seconds)}</td>
+      <td class="sha">${nextStr}</td>
+      <td class="sha">
+        ${c.last_status ? `<span class="badge ${statusCls}">${html(c.last_status)}</span>` : '—'}
+        ${c.last_result ? ` <span style="font-style:italic;">${html(c.last_result).slice(0,40)}</span>` : ''}
+      </td>
+      <td><div class="actbar">
+        <button class="ghost" onclick="runCron('${html(c.name)}')">run</button>
+        <button class="ghost" onclick="toggleCron('${html(c.name)}', ${!c.enabled})">${c.enabled ? 'off' : 'on'}</button>
+      </div></td>
+    </tr>`;
+  }).join("");
+  const okCount = crons.filter(c => c.last_status === "ok").length;
+  const failCount = crons.filter(c => c.last_status === "fail").length;
+  $("crons-summary").textContent = `${crons.length} jobs · ${okCount} ok · ${failCount} fail`;
+}
+
+function renderDeploys(deploys) {
+  if (!deploys.length) {
+    $("deploys-tbody").innerHTML =
+      `<tr><td colspan="7" class="caption" style="padding:12px;">
+        No deploys recorded yet. Run one from the Services panel.
+       </td></tr>`;
+    return;
+  }
+  $("deploys-tbody").innerHTML = deploys.map(d => {
+    const h = d.health || "—";
+    const hcls = h === "ok" ? "ok" : (h === "flapped" || h === "build-failed" ? "err" : "warn");
+    const sha = d.action === "rollback" ? d.target_sha : (d.sha_after || "");
+    return `<tr>
+      <td class="sha">${html(fmt.shortts(d.ts))}</td>
+      <td>${html(d.action || "—")}</td>
+      <td class="sha">${html(d.target || d.branch || "—")}</td>
+      <td class="sha">${html(sha || "—")}</td>
+      <td class="num">${d.duration_s != null ? d.duration_s + "s" : "—"}</td>
+      <td><span class="badge ${hcls}">${html(h)}</span></td>
+      <td class="sha">${html(d.actor || "—")}</td>
+    </tr>`;
+  }).join("");
+}
+
+// ============================================================ topology svg
+function renderTopology() {
+  const svg = $("topology");
+  const box = (x, y, w, h, title, sub, opt={}) => {
+    const fill = opt.fill || "#faf8f3", stroke = opt.stroke || "#1a1a1a", sw = opt.sw || "1";
+    return `<g>
+      <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="3"
+            fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>
+      <text x="${x + w/2}" y="${y + (sub ? h/2 - 4 : h/2 + 4)}"
+            text-anchor="middle" font-family="Georgia,serif"
+            font-size="${opt.fs || 13}" font-weight="600" fill="#1a1a1a">${title}</text>
+      ${sub ? `<text x="${x + w/2}" y="${y + h/2 + 12}"
+              text-anchor="middle" font-size="10" fill="#7a7a72"
+              font-family="ui-monospace,monospace">${sub}</text>` : ''}
+    </g>`;
+  };
+  const arrow = (x1, y1, x2, y2, label="", opt={}) => {
+    const stroke = opt.stroke || "#1a1a1a", dash = opt.dash || "", sw = opt.sw || "1";
+    const lx = opt.lx ?? (x1 + x2) / 2 + 4, ly = opt.ly ?? (y1 + y2) / 2 - 3;
+    return `<g>
+      <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"
+            stroke="${stroke}" stroke-width="${sw}"
+            stroke-dasharray="${dash}" marker-end="url(#arr)"/>
+      ${label ? `<text x="${lx}" y="${ly}" font-size="9.5"
+              fill="#7a7a72" font-family="ui-monospace,monospace">${label}</text>` : ''}
+    </g>`;
+  };
+
+  let s = `<defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1a1a1a"/>
+    </marker>
+  </defs>`;
+
+  s += box(20, 18, 100, 32, "Browser", "", {fs: 12});
+  s += box(160, 18, 160, 32, "Cloudflare Access", "", {fs: 12});
+  s += box(360, 18, 140, 32, "cloudflared", "host · launchd", {fill: "#f0ece2", fs: 12});
+  s += arrow(120, 34, 160, 34, "admin.voltcouch.com", {lx: 122, ly: 30});
+  s += arrow(320, 34, 360, 34);
+
+  s += box(750, 14, 170, 60, "Admin daemon", "FastAPI · host :8099",
+           {fill: "#e8e2d2", stroke: "#2d4a7a", sw: 1.3});
+  s += arrow(500, 34, 750, 44, "JWT", {lx: 595, ly: 32});
+
+  s += `<rect x="20" y="95" width="700" height="490" rx="4" fill="#fbf7ec"
+              stroke="#7a7a72" stroke-width="1" stroke-dasharray="6,4"/>
+        <text x="36" y="115" font-family="Georgia,serif" font-style="italic"
+              font-size="13" fill="#7a7a72">docker compose · one-box.yml</text>
+        <text x="704" y="115" text-anchor="end" font-size="10" fill="#7a7a72"
+              font-family="ui-monospace,monospace">internal bridge network</text>`;
+
+  s += box(60, 145, 140, 80, "streamlit", ":8501 · lit");
+  s += box(280, 145, 180, 80, "app", ":8090 · AHS+SAG+MCP",
+           {fill: "#e8e2d2", stroke: "#2d4a7a", sw: 1.3});
+  s += box(540, 145, 140, 80, "viewer", ":8095 · artifacts");
+
+  s += arrow(415, 74, 130, 145, "lit.", {sw: 0.7, lx: 200, ly: 130});
+  s += arrow(430, 74, 370, 145, "ahs.", {sw: 0.7, lx: 405, ly: 130});
+  s += arrow(445, 74, 610, 145, "a.",   {sw: 0.7, lx: 565, ly: 130});
+
+  s += box(190, 285, 140, 60, "postgres", ":5432 · pgvector");
+  s += box(430, 285, 130, 60, "redis", ":6379");
+
+  s += arrow(340, 225, 280, 285, "SQL", {lx: 245, ly: 260});
+  s += arrow(400, 225, 470, 285, "queue", {lx: 425, ly: 260});
+  s += arrow(540, 185, 460, 185, "HTTP :8090", {lx: 460, ly: 178});
+  s += arrow(130, 225, 230, 285, "read", {sw: 0.7, dash: "3,3", lx: 145, ly: 268});
+  s += arrow(580, 225, 320, 285, "", {sw: 0.7, dash: "3,3"});
+
+  s += box(60, 410, 160, 70, "dozzle", ":8082 · logs.voltcouch.com",
+           {fill: "#f0ece2"});
+  s += box(260, 410, 180, 70, "netdata-sidecar",
+           ":19999 · metrics.voltcouch.com", {fill: "#f0ece2"});
+  s += `<text x="470" y="430" font-size="11" fill="#7a7a72"
+              font-family="ui-monospace,monospace">↖ both mount</text>
+        <text x="470" y="446" font-size="11" fill="#7a7a72"
+              font-family="ui-monospace,monospace">/var/run/docker.sock</text>
+        <text x="470" y="460" font-size="11" fill="#7a7a72"
+              font-family="ui-monospace,monospace">(read-only)</text>`;
+
+  s += `<text x="370" y="525" text-anchor="middle" font-size="10" fill="#7a7a72"
+              font-family="ui-monospace,monospace">
+        bind-mount: ~/deploy/voltcouch/data → /data/ahs (sessions, repos, agent_memories)
+        </text>
+        <text x="370" y="555" text-anchor="middle" font-size="10" fill="#7a7a72"
+              font-family="ui-monospace,monospace">
+        app calls out → Slack · OpenAI · Anthropic · Gemini · MCP servers · git
+        </text>`;
+
+  s += arrow(835, 74, 720, 130, "docker · git · launchctl",
+             {sw: 0.7, dash: "3,3", lx: 580, ly: 105});
+  s += arrow(845, 74, 220, 410, "logs.voltcouch.com",
+             {sw: 0.6, dash: "2,3", stroke: "#7a7a72", lx: 760, ly: 290});
+  s += arrow(840, 74, 440, 410, "metrics.voltcouch.com",
+             {sw: 0.6, dash: "2,3", stroke: "#7a7a72", lx: 760, ly: 330});
+
+  svg.innerHTML = s;
+}
+
+// ================================================================== modal
+function openModal(title, bodyHtml, footerHtml="") {
+  $("modal-title").textContent = title;
+  $("modal-body").innerHTML = bodyHtml;
+  $("modal-footer").innerHTML = footerHtml;
+  $("overlay").classList.add("show");
+}
+function closeModal() { $("overlay").classList.remove("show"); }
+$("overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") closeModal(); });
+
+// ====================================================== job streaming pane
+function jobLogContainer() {
+  return `<div class="joblog" id="joblog"></div>`;
+}
+function appendLogLine(line) {
+  const pane = $("joblog");
+  if (!pane) return;
+  const div = document.createElement("div");
+  div.className = "l-" + (line.kind || "out");
+  div.textContent = line.text;
+  pane.appendChild(div);
+  pane.scrollTop = pane.scrollHeight;
+}
+function streamJob(jobId, onDone) {
+  const es = new EventSource(`/api/jobs/${jobId}/stream`);
+  es.onmessage = (e) => {
+    try { appendLogLine(JSON.parse(e.data)); }
+    catch (err) { console.error(err); }
+  };
+  es.addEventListener("done", (e) => {
+    let data = {};
+    try { data = JSON.parse(e.data); } catch {}
+    appendLogLine({kind: "done",
+      text: `── job ${data.status || "ended"} (exit ${data.exit_code ?? "?"}, ${data.duration_s ?? "?"}s) ──`});
+    es.close();
+    if (onDone) onDone(data);
+    refresh();
+  });
+  es.onerror = () => {
+    appendLogLine({kind: "err", text: "[stream disconnected]"});
+    es.close();
+  };
+}
+
+// ============================================================ confirmations
+async function confirmRestart(service) {
+  openModal(`Restart "${service}"`,
+    `<p>This runs <code>docker compose restart ${html(service)}</code> and
+        waits up to 60 s for the health-check to come back green.</p>
+     ${jobLogContainer()}`,
+    `<button class="ghost" onclick="closeModal()">cancel</button>
+     <button class="warn" id="btn-confirm">restart</button>`);
+  $("btn-confirm").onclick = async () => {
+    $("btn-confirm").disabled = true;
+    const r = await fetch(`/api/services/${encodeURIComponent(service)}/restart`,
+                          {method: "POST"});
+    if (!r.ok) {
+      appendLogLine({kind: "err", text: `HTTP ${r.status}: ${await r.text()}`});
+      return;
+    }
+    const {job_id} = await r.json();
+    streamJob(job_id);
+  };
+}
+
+async function confirmDeploy() {
+  openModal("Deploy",
+    `<p>Runs <code>git fetch &amp;&amp; git pull --ff-only &amp;&amp;
+        docker compose up -d --build</code> on the current branch,
+        then polls health-checks for up to 120 s.</p>
+     <p>Optional branch override (leave blank to stay on current):</p>
+     <p><input id="deploy-branch" placeholder="main"
+               style="font-family:var(--mono); padding:6px 8px;
+                      width:240px; border:1px solid var(--rule);"></p>
+     ${jobLogContainer()}`,
+    `<button class="ghost" onclick="closeModal()">cancel</button>
+     <button id="btn-confirm">deploy</button>`);
+  $("btn-confirm").onclick = async () => {
+    $("btn-confirm").disabled = true;
+    const branch = $("deploy-branch").value.trim();
+    const url = "/api/deploy" + (branch ? "?branch=" + encodeURIComponent(branch) : "");
+    const r = await fetch(url, {method: "POST"});
+    if (!r.ok) {
+      appendLogLine({kind: "err", text: `HTTP ${r.status}: ${await r.text()}`});
+      return;
+    }
+    const {job_id} = await r.json();
+    streamJob(job_id);
+  };
+}
+
+async function showRollbackPicker() {
+  const r = await fetch("/api/deploys?limit=20");
+  const {deploys} = await r.json();
+  const candidates = deploys.filter(d => d.sha_before)
+    .map(d => ({sha: d.sha_before, ts: d.ts,
+                action: d.action, branch: d.branch}));
+  if (!candidates.length) {
+    openModal("Rollback",
+      "<p>No prior deploys recorded — rollback needs a known good sha to "
+      + "check out. The audit log is empty.</p>",
+      `<button onclick="closeModal()">close</button>`);
+    return;
+  }
+  const list = candidates.map((c, i) =>
+    `<tr><td>${i+1}</td>
+         <td class="sha">${html(fmt.shortts(c.ts))}</td>
+         <td>${html(c.action)}</td>
+         <td class="sha">${html(c.branch || '—')}</td>
+         <td class="sha">${html(c.sha)}</td>
+         <td><button onclick="confirmRollback('${html(c.sha)}')">pick</button></td>
+     </tr>`).join("");
+  openModal("Rollback — pick a previous sha",
+    `<p>Each row is the <em>sha_before</em> of a prior deploy.
+        Selecting one runs <code>git checkout &amp;&amp;
+        docker compose up -d --build</code>.</p>
+     <table>
+       <thead><tr><th>#</th><th>ts</th><th>action</th>
+                   <th>branch</th><th>sha</th><th></th></tr></thead>
+       <tbody>${list}</tbody>
+     </table>
+     <p class="caption" style="margin-top:8px;">
+       ⚠ if the rollback crosses an alembic migration the daemon will warn but
+       still proceed — you may need to <code>alembic downgrade</code> manually.
+     </p>`,
+    `<button class="ghost" onclick="closeModal()">cancel</button>`);
+}
+
+function confirmRollback(sha) {
+  openModal(`Rollback to ${sha}`,
+    `<p>Run <code>git checkout ${html(sha)}</code> +
+        <code>docker compose up -d --build</code>, then health-gate?</p>
+     ${jobLogContainer()}`,
+    `<button class="ghost" onclick="closeModal()">cancel</button>
+     <button class="warn" id="btn-confirm">rollback</button>`);
+  $("btn-confirm").onclick = async () => {
+    $("btn-confirm").disabled = true;
+    const r = await fetch(`/api/rollback?sha=${encodeURIComponent(sha)}`,
+                          {method: "POST"});
+    if (!r.ok) {
+      appendLogLine({kind: "err", text: `HTTP ${r.status}: ${await r.text()}`});
+      return;
+    }
+    const {job_id} = await r.json();
+    streamJob(job_id);
+  };
+}
+
+async function showLogs(service) {
+  openModal(`${service} · last 500 lines`,
+    `<div class="joblog" id="loglog">fetching…</div>`,
+    `<button class="ghost"
+       onclick="window.open('http://127.0.0.1:8082/container/${html(service)}', '_blank')">
+       open in Dozzle ↗
+     </button>
+     <button onclick="closeModal()">close</button>`);
+  try {
+    const r = await fetch(`/api/services/${encodeURIComponent(service)}/logs?tail=500`);
+    const data = await r.json();
+    $("loglog").innerHTML = (data.lines || [])
+      .map(l => `<div>${html(l)}</div>`).join("");
+    $("loglog").scrollTop = $("loglog").scrollHeight;
+  } catch (e) {
+    $("loglog").textContent = "failed: " + e;
+  }
+}
+
+async function runCron(name) {
+  const tr = [...$("crons-tbody").querySelectorAll("tr")]
+    .find(r => r.firstChild.textContent === name);
+  if (tr) tr.style.opacity = 0.5;
+  try {
+    await fetch(`/api/crons/${encodeURIComponent(name)}/run`, {method: "POST"});
+  } finally {
+    await refreshCrons();
+  }
+}
+
+async function toggleCron(name, enabled) {
+  await fetch(`/api/crons/${encodeURIComponent(name)}/toggle?enabled=${enabled}`,
+              {method: "POST"});
+  refreshCrons();
+}
+
+// ============================================================ tab switching
+function showTab(name) {
+  document.querySelectorAll("nav a[data-tab]").forEach(a =>
+    a.classList.toggle("active", a.dataset.tab === name));
+  document.querySelectorAll(".tab-page").forEach(t =>
+    t.classList.toggle("active", t.id === "tab-" + name));
+  if (history.replaceState) history.replaceState(null, "", "#" + name);
+}
+
+// ================================================================ bootstrap
+async function refreshCrons() {
+  try {
+    const r = await fetch("/api/crons");
+    const {crons} = await r.json();
+    renderCrons(crons || []);
+  } catch (e) { console.error(e); }
+}
+
+async function refreshDeploys() {
+  try {
+    const r = await fetch("/api/deploys?limit=20");
+    const {deploys} = await r.json();
+    renderDeploys(deploys || []);
+  } catch (e) { console.error(e); }
+}
+
+async function refreshWhoami() {
+  try {
+    const r = await fetch("/auth/whoami");
+    const w = await r.json();
+    if (w.enabled && w.email) {
+      $("who").innerHTML =
+        `${w.picture ? `<img src="${w.picture}">` : ''}${html(w.email)}
+         · <a href="/auth/logout">sign out</a>`;
+    } else if (w.enabled) {
+      $("who").innerHTML = `<a href="/auth/login">sign in</a>`;
+    } else {
+      $("who").textContent = "auth disabled · local dev";
+    }
+  } catch (e) {
+    $("who").textContent = "—";
+  }
+}
+
+async function refresh() {
+  try {
+    const [status, config] = await Promise.all([
+      fetch("/api/status").then(r => r.json()),
+      fetch("/api/config").then(r => r.json()),
+    ]);
+    renderDashboard(status);
+    renderConfig(config);
+    refreshCrons();
+    refreshDeploys();
+    $("loading").style.display = "none";
+    $("tab-dashboard").classList.add("active");
+  } catch (e) {
+    $("loading").innerHTML =
+      `<div class="err-banner">failed to load: ${html(String(e))}</div>`;
+    console.error(e);
+  }
+}
+
+// External-tool tab links: prefer subdomains in production, host ports locally.
+function wireToolLinks() {
+  const isLocal = /^(127\.0\.0\.1|localhost)/.test(location.host);
+  $("nav-logs").href = isLocal
+    ? "http://127.0.0.1:8082/" : "https://logs.voltcouch.com/";
+  $("nav-metrics").href = isLocal
+    ? "http://127.0.0.1:19999/" : "https://metrics.voltcouch.com/";
+}
+
+document.querySelectorAll("nav a[data-tab]").forEach(a =>
+  a.addEventListener("click", e => { e.preventDefault(); showTab(a.dataset.tab); }));
+
+$("ws-refresh").addEventListener("click", async () => {
+  $("ws-refresh").disabled = true;
+  $("ws-refresh").textContent = "measuring…";
+  try {
+    await fetch("/api/workspace/refresh", {method: "POST"});
+    await refresh();
+  } finally {
+    $("ws-refresh").disabled = false;
+    $("ws-refresh").textContent = "refresh now";
+  }
+});
+
+$("btn-deploy-all").addEventListener("click", confirmDeploy);
+$("btn-rollback").addEventListener("click", showRollbackPicker);
+
+wireToolLinks();
+renderTopology();
+refreshWhoami();
+refresh();
+setInterval(refresh, 30_000);
+setInterval(refreshCrons, 15_000);
+
+// honor #tab on load
+const hashTab = location.hash.replace("#", "");
+if (["config", "topology"].includes(hashTab)) showTab(hashTab);
+</script>
+</body></html>

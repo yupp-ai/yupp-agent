@@ -184,6 +184,11 @@ _ALLOWED_EXACT: frozenset[str] = frozenset(
         "LANGUAGE",
         # Claude CLI
         "ANTHROPIC_API_KEY",
+        # Claude Code's escape hatch for "running as root inside a container
+        # is already sandboxed; trust me and allow --dangerously-skip-permissions".
+        # Without forwarding this through the subprocess env, claude-code-cli
+        # crashes on startup with "cannot be used with root/sudo privileges".
+        "IS_SANDBOX",
         # Note: AHS no longer forwards ``AGCOUCH_MCP_TOKEN`` — agents reach
         # every shared / external-data tool via the harness MCP using
         # ``AHS_MCP_SECRET`` (handled inside ``mcp_config.resolve_mcp_servers``,
@@ -752,8 +757,8 @@ class ClaudeCodeRunner(AgentRunner):
 
         return args
 
-    @staticmethod
     def _ensure_workspace_mcp_config(
+        self,
         workspace: str,
         session_id: str = "",
         session_context: dict[str, Any] | None = None,
@@ -765,7 +770,14 @@ class ClaudeCodeRunner(AgentRunner):
         Delegates to the shared ensure_workspace_mcp_config() so all harnessed
         executors (Claude Code, Codex, etc.) use the same MCP setup logic.
         """
-        ensure_workspace_mcp_config(workspace, session_id, session_context, is_slack, agent_name=agent_name)
+        ensure_workspace_mcp_config(
+            workspace,
+            session_id,
+            session_context,
+            is_slack,
+            agent_name=agent_name,
+            external_mcps=list(self.config.external_mcps or []),
+        )
 
     async def pre_spawn(self, prompt: str, context: RunContext) -> asyncio.subprocess.Process:
         """Build args, write .mcp.json, and spawn the subprocess early.

@@ -253,9 +253,12 @@ async def insert_user(
         )
         session.add(row)
         try:
-            # Flush the parent users INSERT before staging child user_roles
-            # rows — without this, the unit-of-work has been observed to emit
-            # user_roles INSERTs first, tripping fk_user_roles_user_id_users.
+            # Flush the User row first so the FK from user_roles.user_id is
+            # satisfiable before we insert the role-assoc rows.  Without this
+            # explicit flush the unit-of-work occasionally orders the role
+            # inserts ahead of the user insert (the dep is by FK string, not
+            # ORM relationship), yielding a confusing ForeignKeyViolationError
+            # that hides the real cause (e.g. duplicate email, empty name).
             await session.flush()
             for rid in role_ids:
                 session.add(UserRoleAssociation(user_id=new_user_id, role_id=rid))
