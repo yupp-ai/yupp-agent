@@ -262,8 +262,30 @@ async def insert_user(
             await session.commit()
         except IntegrityError as exc:
             await session.rollback()
-            return False, f"Could not create user: {exc.orig}", None
+            return False, _format_insert_user_integrity_error(exc, normalized_email), None
     return True, f"User '{normalized_email}' created.", new_user_id
+
+
+def _format_insert_user_integrity_error(exc: IntegrityError, normalized_email: str) -> str:
+    """Map an IntegrityError from insert_user to a human-readable admin-facing message.
+
+    The precheck on email + the DB unique constraint are not atomic, so concurrent
+    submissions can land here on `users_email_key`. We also see FK failures when a
+    role is deleted between the role-picker render and submit. Anything else is
+    genuinely unexpected — log it so we have a server-side trail.
+    """
+    constraint = (getattr(exc.orig, "constraint_name", "") or "").lower()
+    detail = str(exc.orig)
+
+    if "users_email_key" in constraint or "idx_users_lower_email" in constraint or "users_email_key" in detail:
+        return f"A user with email '{normalized_email}' was just created by another session. Please refresh and retry."
+    if constraint.startswith("fk_user_roles_role_id") or "fk_user_roles_role_id" in detail:
+        return "One of the selected roles no longer exists. Please refresh and retry."
+    if constraint.startswith("fk_user_roles_user_id") or "fk_user_roles_user_id" in detail:
+        return f"Could not create user (internal error attaching roles): {detail}"
+
+    logger.exception("admin_users.insert_user_unexpected_integrity_error", constraint=constraint)
+    return f"Could not create user: {detail}"
 
 
 # ── Cached wrappers ───────────────────────────────────────────────────────────
