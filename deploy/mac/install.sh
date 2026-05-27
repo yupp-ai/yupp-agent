@@ -566,6 +566,15 @@ ingress:
     service: http://127.0.0.1:8099
     originRequest:
       connectTimeout: 10s
+  # WARNING: Dozzle and Netdata have NO in-process authentication.  These
+  # entries expose the full container log stream (which may contain tokens,
+  # JWTs, and request bodies) and host metrics to the internet unless you
+  # separately configure a Cloudflare Access policy for $LOGS_HOST and
+  # $METRICS_HOST in the Cloudflare dashboard.  The admin daemon at $ADMIN_HOST
+  # enforces its own email-allowlist OAuth; Dozzle/Netdata do not.
+  # TODO: Route Dozzle and Netdata through the admin daemon's AuthMiddleware
+  # (reverse-proxy at /dozzle/ and /netdata/) so the same allowlist governs all
+  # observability surfaces without requiring a separate CF Access policy.
   - hostname: $LOGS_HOST
     service: http://127.0.0.1:8082
     originRequest:

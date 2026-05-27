@@ -167,8 +167,8 @@ async def api_deploy(request: Request, branch: str | None = None) -> dict:
 
 @app.post("/api/rollback")
 async def api_rollback(request: Request, sha: str) -> dict:
-    if not sha or len(sha) < 4:
-        raise HTTPException(400, "sha required")
+    if not sha or not jobs._SAFE_SHA_RE.match(sha):
+        raise HTTPException(400, "sha must be 4-40 hex characters")
     job = jobs.start_rollback(sha, auth.current_actor(request))
     return {"job_id": job.id, "action": "rollback", "target": sha}
 

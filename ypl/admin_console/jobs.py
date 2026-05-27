@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from collections.abc import AsyncGenerator
@@ -27,11 +28,16 @@ from typing import Any
 
 import httpx
 
+from ypl.admin_console.status import COMPOSE_FILE, REPO_ROOT
+
 logger = logging.getLogger(__name__)
 
-# Single source of truth lives in status.py — it auto-detects the *deploy*
-# checkout (~/deploy/voltcouch/yupp-agent) rather than the dev workspace.
-from ypl.admin_console.status import COMPOSE_FILE, REPO_ROOT  # noqa: E402
+# Allowlist patterns for user-supplied git refs.  Git treats argv tokens
+# starting with ``-`` as option flags even after the subcommand name; injecting
+# ``--upload-pack=/tmp/x.sh`` or ``-b`` is therefore possible without shell
+# involvement.  Validate all branch names and shas before passing them as argv.
+_SAFE_BRANCH_RE = re.compile(r"^[A-Za-z0-9/._-]+$")
+_SAFE_SHA_RE = re.compile(r"^[0-9a-fA-F]{4,40}$")
 
 ADMIN_DIR = Path(os.environ.get("VOLTCOUCH_ADMIN_DIR") or (Path.home() / ".voltcouch-admin"))
 AUDIT_LOG = ADMIN_DIR / "deploys.jsonl"
@@ -288,6 +294,14 @@ async def _do_deploy(job: Job, branch: str | None) -> None:
         await _stash_if_dirty(job)
 
         if branch:
+            if not _SAFE_BRANCH_RE.match(branch):
+                job.add(
+                    f"branch {branch!r} rejected — must match [A-Za-z0-9/._-]+. "
+                    "Branches starting with '-' or containing shell chars are not allowed.",
+                    "err",
+                )
+                _finish_failed(job)
+                return
             if await _run_streaming(["git", "-C", str(REPO_ROOT), "checkout", branch], job) != 0:
                 _finish_failed(job)
                 return
@@ -386,6 +400,16 @@ async def _do_rollback(job: Job, sha: str) -> None:
         job.status = "running"
         job.started_at = time.time()
         job.add(f"deploy target: {REPO_ROOT}", "info")
+
+        if not _SAFE_SHA_RE.match(sha):
+            job.add(
+                f"sha {sha!r} rejected — must be 4-40 hex characters. "
+                "Values starting with '-' or containing non-hex chars are not allowed.",
+                "err",
+            )
+            _finish_failed(job)
+            return
+
         sha_before = await _git_sha()
         job.add(f"sha before: {sha_before}", "info")
         job.add(f"target sha: {sha}", "info")

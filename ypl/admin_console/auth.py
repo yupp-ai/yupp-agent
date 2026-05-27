@@ -10,6 +10,7 @@ requests to `/auth/login` and returns 401 JSON for API requests.
 """
 
 from __future__ import annotations
+import html as _html
 import logging
 import os
 import secrets
@@ -30,7 +31,17 @@ def _truthy(s: str | None) -> bool:
     return (s or "").strip().lower() in ("1", "true", "yes", "on")
 
 
-OAUTH_ENABLED = _truthy(os.environ.get("ADMIN_OAUTH_ENABLED"))
+# Fail-secure: default to enabled so an unset env var never leaves the control
+# plane open.  Local development that genuinely needs to skip OAuth must
+# explicitly set ADMIN_OAUTH_ENABLED=false in .env — the noisy startup warning
+# below makes the choice visible in logs.
+OAUTH_ENABLED = _truthy(os.environ.get("ADMIN_OAUTH_ENABLED", "true"))
+if not OAUTH_ENABLED:
+    logger.warning(
+        "ADMIN_OAUTH_ENABLED=false — admin control plane is UNAUTHENTICATED. "
+        "Restart / deploy / rollback endpoints are open to any caller. "
+        "Set ADMIN_OAUTH_ENABLED=true for any non-local deployment."
+    )
 # Reuse the OAuth client already configured for Streamlit + Artifact Viewer.
 # Falls back to GOOGLE_OAUTH_* for installations that follow newer install.sh.
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_AUTH_CLIENT_ID") or os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
@@ -47,7 +58,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 def _public_path(path: str) -> bool:
     """Paths that bypass the auth gate."""
-    if path in ("/healthz",):
+    if path == "/healthz":
         return True
     return path.startswith("/auth/")
 
@@ -93,6 +104,14 @@ async def login(request: Request, next: str = "/") -> Any:
             "and <code>GOOGLE_OAUTH_CLIENT_SECRET</code> in .env.</p>",
             status_code=500,
         )
+    # Reject absolute URLs in `next` to prevent open redirect: an attacker who
+    # sends a victim to /auth/login?next=https://evil.com/ would get them
+    # redirected there after a legitimate Google sign-in.  Only relative paths
+    # (no scheme, no netloc) are safe to store and replay.
+    _parsed_next = urllib.parse.urlparse(next)
+    if _parsed_next.scheme or _parsed_next.netloc:
+        logger.warning("login: rejecting non-relative next= param: %r", next)
+        next = "/"
     state = secrets.token_urlsafe(24)
     request.session["oauth_state"] = state
     request.session["oauth_next"] = next
@@ -112,7 +131,7 @@ async def login(request: Request, next: str = "/") -> Any:
 @router.get("/callback")
 async def callback(request: Request, code: str = "", state: str = "", error: str = "") -> Any:
     if error:
-        return HTMLResponse(f"<h2>OAuth error</h2><pre>{error}</pre>", 400)
+        return HTMLResponse(f"<h2>OAuth error</h2><pre>{_html.escape(error)}</pre>", 400)
     if not OAUTH_ENABLED:
         raise HTTPException(404)
     if not state or state != request.session.get("oauth_state"):
@@ -145,7 +164,7 @@ async def callback(request: Request, code: str = "", state: str = "", error: str
     if not info.get("email_verified") or email not in ALLOWED_EMAILS:
         return HTMLResponse(
             f"<h2>Access denied</h2>"
-            f"<p><code>{email}</code> is not on the admin allowlist.</p>"
+            f"<p><code>{_html.escape(email)}</code> is not on the admin allowlist.</p>"
             f"<p><a href='/auth/logout'>sign out and try a different account</a></p>",
             status_code=403,
         )

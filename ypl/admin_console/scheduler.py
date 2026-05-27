@@ -94,19 +94,39 @@ async def _docker_prune() -> str:
 
 
 async def _pg_backup() -> str:
+    import gzip as _gzip
+
     out_dir = jobs_mod.ADMIN_DIR / "backups"
     out_dir.mkdir(parents=True, exist_ok=True)
     ts = time.strftime("%Y%m%d-%H%M%S")
     out_file = out_dir / f"yadb-{ts}.sql.gz"
-    cmd = f'docker compose -f {status.COMPOSE_FILE} exec -T postgres pg_dump -U postgres yadb | gzip > "{out_file}"'
-    proc = await asyncio.create_subprocess_shell(
-        cmd,
+
+    # Use create_subprocess_exec (not shell) so COMPOSE_FILE and out_file path
+    # components cannot inject shell metacharacters regardless of $HOME or
+    # VOLTCOUCH_DEPLOY_REPO content.  The dump bytes are gzip-compressed in
+    # Python and written directly to out_file.
+    dump_proc = await asyncio.create_subprocess_exec(
+        "docker",
+        "compose",
+        "-f",
+        str(status.COMPOSE_FILE),
+        "exec",
+        "-T",
+        "postgres",
+        "pg_dump",
+        "-U",
+        "postgres",
+        "yadb",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    _out, err = await proc.communicate()
-    if proc.returncode != 0:
+    dump_out, err = await dump_proc.communicate()
+    if dump_proc.returncode != 0:
         raise RuntimeError(err.decode(errors="replace").strip()[:200])
+
+    with _gzip.open(out_file, "wb") as fh:
+        fh.write(dump_out)
+
     # prune old backups (keep last 14)
     backups = sorted(out_dir.glob("yadb-*.sql.gz"))
     for old in backups[:-14]:

@@ -141,6 +141,17 @@ services:
       # CLIs write session state, cache, and shell snapshots back to these
       # dirs during normal use; mounting ro will break Claude Code's
       # session resume and Codex's logs_*.sqlite WAL writes.
+      #
+      # SECURITY NOTE: These mounts give every agent process running inside
+      # the container read-write access to the operator's entire Claude.ai and
+      # Codex identity (session tokens, conversation history, ~/.claude/
+      # settings).  A rogue prompt-injection or compromised dependency could
+      # exfiltrate session tokens or mint requests against the Max subscription.
+      # This is an accepted trade-off for the one-box laptop deployment; do NOT
+      # use this compose file on multi-tenant or shared hosts.
+      # TODO: Scope the mount to only the auth/session subdirectory needed by
+      # each CLI (e.g. ~/.claude/sessions/) rather than the entire ~/.claude
+      # tree, and run the app container as a non-root user.
       - ${HOME}/.claude:/root/.claude
       - ${HOME}/.codex:/root/.codex
     depends_on:

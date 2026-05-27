@@ -148,20 +148,44 @@ def resolve_mcp_servers(
         # this session" rather than killing the agent runner.
         ext_servers: dict[str, Any] = {}
         unavailable: list[dict[str, str]] = []
-        try:
-            import concurrent.futures
+        import concurrent.futures
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(
-                    asyncio.run,
-                    build_external_mcp_entries(
-                        user_id=user_id,
-                        agent_id=agent_uuid,
-                        requested_slugs=external_mcps,
-                        agent_session_id=sess_uuid,
-                    ),
-                )
-                ext_servers, unavailable = future.result(timeout=20)
+        # Run the async resolver on a fresh worker-thread loop so it doesn't
+        # inherit connections that asyncpg cached on a different event loop.
+        #
+        # IMPORTANT: do NOT use `with ThreadPoolExecutor(...) as pool:` here.
+        # The context manager calls shutdown(wait=True) on __exit__, so even
+        # when future.result(timeout=20) raises TimeoutError the process blocks
+        # until the worker thread actually finishes — making the timeout
+        # effectively cosmetic.  We instead call shutdown(wait=False) in a
+        # finally block to let the worker die in the background while the
+        # session continues without external MCPs.
+        #
+        # TODO: The AsyncEngine pool is a process-level singleton; connections
+        # checked out on the worker thread's loop are returned to the pool when
+        # the thread exits and can cause "Future attached to a different loop"
+        # on the *next* session that reuses them.  A proper fix is to pin one
+        # dedicated thread+loop for the lifetime of the AHS process and submit
+        # coroutines via asyncio.run_coroutine_threadsafe().
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = pool.submit(
+            asyncio.run,
+            build_external_mcp_entries(
+                user_id=user_id,
+                agent_id=agent_uuid,
+                requested_slugs=external_mcps,
+                agent_session_id=sess_uuid,
+            ),
+        )
+        try:
+            ext_servers, unavailable = future.result(timeout=20)
+        except concurrent.futures.TimeoutError:
+            logger.warning(
+                "external MCP resolution timed out (20 s); agent will run without external MCP servers",
+                external_mcps=external_mcps,
+                session_id=session_id,
+            )
+            unavailable = [{"slug": s, "reason": "resolver timed out"} for s in external_mcps]
         except Exception as e:
             logger.warning(
                 "external MCP resolution failed; agent will run without external MCP servers this session",
@@ -171,6 +195,9 @@ def resolve_mcp_servers(
                 session_id=session_id,
             )
             unavailable = [{"slug": s, "reason": f"resolver crashed: {type(e).__name__}"} for s in external_mcps]
+        finally:
+            # Let the worker thread finish in the background; don't block the runner.
+            pool.shutdown(wait=False, cancel_futures=True)
         servers.update(ext_servers)
         if unavailable:
             logger.info(

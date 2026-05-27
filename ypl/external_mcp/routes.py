@@ -22,12 +22,11 @@ without a side channel.
 """
 
 from __future__ import annotations
-
+import html as _html
 import os
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
-import sqlalchemy as sa
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
@@ -77,11 +76,18 @@ async def start_oauth(
     """Begin an OAuth authorization flow.  Lit calls this on a Connect click.
 
     The ``user_id`` query param is the trust boundary: this endpoint *trusts*
-    the caller (the Lit Python process) to assert which user is connecting.
-    Lit gates its page on the Google OAuth session it already runs for
-    every visitor, so the equivalent of a per-request bearer is the Google
-    cookie on the originating browser.  If you wire a public client to this
-    endpoint, add your own auth here.
+    the caller to assert which user is connecting.  Because the OAuth flow
+    redirects the user's browser here, a traditional server-side bearer token
+    cannot be used.
+
+    TODO: Replace the bare ``user_id`` query param with a short-lived,
+    server-signed ticket that Lit generates right before building the Connect
+    URL (HMAC-SHA256 of ``user_id + server + timestamp_floor_to_minute`` using
+    a shared ``INTERNAL_HMAC_SECRET``).  The ticket expires in ~2 minutes,
+    preventing an attacker who knows a victim's user_id from minting a grant
+    under that identity.  Until this is implemented this endpoint should only
+    be reachable from trusted network paths (e.g. behind Cloudflare Access on
+    the same domain as the Lit UI).
     """
     srv = await _get_server_by_slug(server)
     if srv.auth_type != McpAuthType.OAUTH_OBO:
@@ -172,6 +178,13 @@ async def oauth_callback(
         await session.commit()
 
     if return_to:
+        # Validate same-origin to prevent open redirect — reject any absolute
+        # URL (scheme or netloc present means external destination).
+        _parsed = urlparse(return_to)
+        if _parsed.scheme or _parsed.netloc:
+            logger.warning("MCP OAuth callback: rejecting non-relative return_to", return_to=return_to)
+            return_to = ""
+    if return_to:
         return RedirectResponse(return_to, status_code=302)
     return _result_page(ok=True, message=f"Connected to {srv.display_name}.", return_to="")
 
@@ -195,7 +208,15 @@ class M2MSetBody(BaseModel):
 
 @router.post("/m2m/set")
 async def m2m_set(server: str, body: M2MSetBody) -> dict[str, Any]:
-    """Accept a user-supplied API key for an M2M_PER_USER server."""
+    """Accept a user-supplied API key for an M2M_PER_USER server.
+
+    TODO: Like ``/start``, this endpoint trusts the caller's ``user_id``
+    assertion.  For POST endpoints (called server-side from the Lit Python
+    process, not from the browser), add an ``X-Internal-Token`` header check
+    using a shared ``INTERNAL_HMAC_SECRET`` env var to prevent any network
+    caller from overwriting any user's M2M bearer.  Same fix applies to
+    ``/revoke``.
+    """
     srv = await _get_server_by_slug(server)
     if srv.auth_type != McpAuthType.M2M_PER_USER:
         raise HTTPException(status_code=400, detail=f"{server!r} is not M2M_PER_USER")
@@ -215,17 +236,30 @@ def _result_page(*, ok: bool, message: str, return_to: str) -> HTMLResponse:
 
     Production deploys *should* always pass return_to; this is the fallback
     so a misconfigured Connect link still produces a readable result.
+
+    All interpolated values are HTML-escaped to prevent XSS.  ``return_to``
+    is additionally validated to be a relative URL (no scheme/netloc) so it
+    cannot be used as an open redirect in the "Back to Lit" link.
     """
-    href = return_to or ""
     badge = "✓ Connected" if ok else "✗ Failed"
     color = "#1a7f37" if ok else "#cf222e"
-    link = f'<p><a href="{href}">Back to Lit</a></p>' if href else ""
+    safe_badge = _html.escape(badge)
+    safe_message = _html.escape(message)
     qs = urlencode({"slug_result": "ok" if ok else "fail"})
+
+    # Only emit the Back link when return_to is a safe relative path.
+    safe_href = ""
+    if return_to:
+        _p = urlparse(return_to)
+        if not _p.scheme and not _p.netloc:
+            safe_href = _html.escape(return_to)
+    link = f'<p><a href="{safe_href}">Back to Lit</a></p>' if safe_href else ""
+
     html = f"""<!doctype html><meta charset=utf-8>
-<title>{badge}</title>
+<title>{safe_badge}</title>
 <style>body{{font:15px -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;color:#1f2328;
   max-width:560px;margin:60px auto;padding:0 24px}}
   h1{{color:{color}}}</style>
-<h1>{badge}</h1><p>{message}</p>{link}
+<h1>{safe_badge}</h1><p>{safe_message}</p>{link}
 <p style="color:#57606a;font-size:12px">{qs}</p>"""
     return HTMLResponse(html)
