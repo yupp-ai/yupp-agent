@@ -277,7 +277,12 @@ def _format_insert_user_integrity_error(exc: IntegrityError, normalized_email: s
     constraint = (getattr(exc.orig, "constraint_name", "") or "").lower()
     detail = str(exc.orig)
 
-    if "users_email_key" in constraint or "idx_users_lower_email" in constraint or "users_email_key" in detail:
+    if (
+        "users_email_key" in constraint
+        or "idx_users_lower_email" in constraint
+        or "users_email_key" in detail
+        or "idx_users_lower_email" in detail
+    ):
         return f"A user with email '{normalized_email}' was just created by another session. Please refresh and retry."
     if constraint.startswith("fk_user_roles_role_id") or "fk_user_roles_role_id" in detail:
         return "One of the selected roles no longer exists. Please refresh and retry."
