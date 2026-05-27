@@ -80,7 +80,23 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-SESSION_SECRET = os.environ.get("ADMIN_SESSION_SECRET") or secrets.token_urlsafe(32)
+_raw_session_secret = os.environ.get("ADMIN_SESSION_SECRET")
+if not _raw_session_secret:
+    # Fall back to a per-process random — means every daemon restart invalidates
+    # all existing cookies (forced re-login). For production, set
+    # ADMIN_SESSION_SECRET to a stable secret in .env.
+    # When OAuth is enabled, a missing stable secret is a usability bug and a
+    # mild security foot-gun (forces re-auth on every deploy, and prevents
+    # multi-worker setups from sharing cookies), so warn loudly.
+    if auth.OAUTH_ENABLED:
+        logger.warning(
+            "ADMIN_SESSION_SECRET is unset — using a per-process random. "
+            "All admin sessions will be invalidated on every daemon restart. "
+            "Set ADMIN_SESSION_SECRET=<stable-secret> in .env."
+        )
+    _raw_session_secret = secrets.token_urlsafe(32)
+SESSION_SECRET = _raw_session_secret
+
 # Order matters: Starlette wraps middlewares such that the LAST added is the
 # OUTERMOST. We want SessionMiddleware to be outer (populates scope.session)
 # so AuthMiddleware sees it on the way in. Therefore add AuthMiddleware first.

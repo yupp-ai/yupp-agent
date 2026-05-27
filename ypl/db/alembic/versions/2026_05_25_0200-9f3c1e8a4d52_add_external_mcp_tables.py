@@ -122,6 +122,7 @@ def upgrade() -> None:
             ["user_id"],
             ["users.user_id"],
             name=op.f("fk_mcp_user_grants_user_id_users"),
+            ondelete="CASCADE",  # removing a user removes their encrypted tokens
         ),
         sa.ForeignKeyConstraint(
             ["mcp_server_id"],
@@ -155,7 +156,10 @@ def upgrade() -> None:
         sa.Column("occurred_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("meta", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.ForeignKeyConstraint(
-            ["user_id"], ["users.user_id"], name=op.f("fk_mcp_grant_events_user_id_users")
+            ["user_id"],
+            ["users.user_id"],
+            name=op.f("fk_mcp_grant_events_user_id_users"),
+            ondelete="CASCADE",  # audit events travel with the user — remove when user is removed
         ),
         sa.ForeignKeyConstraint(
             ["mcp_server_id"],

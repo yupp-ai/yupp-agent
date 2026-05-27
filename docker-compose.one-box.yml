@@ -252,6 +252,14 @@ services:
       driver: json-file
       options: { max-size: "20m", max-file: "3" }
 
+  # SECURITY NOTE: Netdata requires elevated capabilities (SYS_PTRACE,
+  # SYS_ADMIN) and apparmor:unconfined to collect host metrics.  Combined with
+  # the docker.sock mount below, a Netdata RCE exploit inside this container
+  # would yield control over the entire compose stack and the host Docker
+  # daemon.  This is standard Netdata configuration; the tradeoff is accepted
+  # for the single-operator laptop one-box.  Do NOT run this compose file on
+  # shared or multi-tenant hosts.  For a hardened alternative, replace Netdata
+  # with a metrics exporter that needs no elevated capabilities.
   netdata-sidecar:
     image: netdata/netdata:stable
     container_name: voltcouch-netdata

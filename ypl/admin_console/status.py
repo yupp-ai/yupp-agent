@@ -464,7 +464,7 @@ CONFIG_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         [
             ("MCP_OAUTH_JWT_SIGNING_KEY", "Signs MCP-issued OAuth JWTs."),
             ("MCP_OAUTH_STORAGE_ENCRYPTION_KEY", "Fernet key for OAuth grant store."),
-            ("EXTERNAL_MCP_GRANT_ENCRYPTION_KEY", "Fernet key for per-user external MCP grants."),
+            ("MCP_USER_GRANT_ENCRYPTION_KEY", "Fernet key for per-user external MCP grants."),
         ],
     ),
     (

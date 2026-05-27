@@ -145,26 +145,35 @@ async def oauth_callback(
     srv = await _get_server_by_slug(slug)
     cfg = srv.oauth_config or {}
 
+    # Phase 1: read the client_secret without holding a session across network IO.
+    # Keeping the DB session open through exchange_code() (a multi-second network
+    # call) pins a pooled asyncpg connection unnecessarily and can exhaust the
+    # pool under concurrent OAuth completions.
     async with get_async_session() as session:
-        secrets = await session.get(McpServerSecrets, srv.mcp_server_id)
-        if not secrets or not secrets.oauth_client_secret_enc:
+        server_secrets = await session.get(McpServerSecrets, srv.mcp_server_id)
+        if not server_secrets or not server_secrets.oauth_client_secret_enc:
             return _result_page(ok=False, message=f"Server {slug!r} missing client_secret", return_to=return_to)
-        client_secret = crypto.decrypt(secrets.oauth_client_secret_enc)
+        client_secret = crypto.decrypt(server_secrets.oauth_client_secret_enc)
         if not client_secret:
             return _result_page(ok=False, message="client_secret decrypt failed", return_to=return_to)
 
-        try:
-            payload = await oauth_client.exchange_code(
-                token_url=cfg["token_url"],
-                client_id=cfg["client_id"],
-                client_secret=client_secret,
-                code=code,
-                redirect_uri=_redirect_uri(request),
-            )
-        except Exception as e:
-            logger.warning("MCP OAuth code exchange failed", slug=slug, user_id=user_id, error=str(e))
-            return _result_page(ok=False, message=f"Token exchange failed: {e}", return_to=return_to)
+    # Phase 2: exchange the auth code for tokens — outside any DB session so the
+    # connection is free while the provider responds.  If exchange_code raises,
+    # the code has been burned but no DB write was attempted.
+    try:
+        payload = await oauth_client.exchange_code(
+            token_url=cfg["token_url"],
+            client_id=cfg["client_id"],
+            client_secret=client_secret,
+            code=code,
+            redirect_uri=_redirect_uri(request),
+        )
+    except Exception as e:
+        logger.warning("MCP OAuth code exchange failed", slug=slug, user_id=user_id, error=str(e))
+        return _result_page(ok=False, message=f"Token exchange failed: {e}", return_to=return_to)
 
+    # Phase 3: persist the grant in a fresh session.
+    async with get_async_session() as session:
         await grants.upsert_oauth_grant(
             session,
             user_id=user_id,
