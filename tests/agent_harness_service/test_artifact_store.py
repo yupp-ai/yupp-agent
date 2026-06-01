@@ -17,16 +17,18 @@ and are covered by alembic/integration tests, not this file.
 from __future__ import annotations
 import uuid
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from ypl.agent_harness_service.artifact_store import (
     CONTENT_TYPE_EXTENSIONS,
     MAX_ATTACHMENT_SIZE_BYTES,
+    SLUG_UNKNOWN_HINT,
     VALID_MEMORY_SCOPES,
     ArtifactError,
     Attachment,
     MemoryCallerContext,
+    _resolve_next_version,
     attachment_path_for,
     caller_can_write_memory,
     content_path_for,
@@ -35,6 +37,7 @@ from ypl.agent_harness_service.artifact_store import (
     validate_memory_scope_shape,
     validate_named_slug,
 )
+from ypl.db.agent_harness import AgentArtifactType
 
 FAKE_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 
@@ -76,6 +79,39 @@ class TestValidateNamedSlug:
     def test_rejects_invalid_slug(self, slug: str) -> None:
         with pytest.raises(ArtifactError):
             validate_named_slug(slug)
+
+
+# ---------------------------------------------------------------------------
+# _resolve_next_version — slug-unknown error wording
+# ---------------------------------------------------------------------------
+
+
+class TestResolveNextVersionUnknownSlug:
+    """Pin the slug-unknown error wording that external clients key off.
+
+    The ``ahs-memory`` CLI (and ``ahs_artifact_cli.py``) decide create-vs-append
+    by substring-matching :data:`SLUG_UNKNOWN_HINT` in the 400 detail. A reword
+    here must break this test rather than silently breaking that retry path.
+    """
+
+    async def test_append_to_unknown_slug_message_contains_hint(self) -> None:
+        with (
+            patch(
+                "ypl.agent_harness_service.artifact_store._max_version_for_slug",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "ypl.agent_harness_service.artifact_store._slug_has_active_version",
+                new=AsyncMock(return_value=False),
+            ),
+            pytest.raises(ArtifactError) as excinfo,
+        ):
+            await _resolve_next_version(
+                slug="never-seen",
+                create_new_slug=False,
+                artifact_type=AgentArtifactType.MEMORY,
+            )
+        assert SLUG_UNKNOWN_HINT in str(excinfo.value)
 
 
 # ---------------------------------------------------------------------------

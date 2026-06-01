@@ -533,6 +533,19 @@ class TestReadBySlugRoute:
             resp = client.get("/ahs/artifacts/by-slug/nope")
         assert resp.status_code == 404
 
+    def test_multi_segment_slug_round_trips(self, client: TestClient) -> None:
+        # Hierarchical memory slugs contain ``/`` — the ``{slug:path}``
+        # converter must forward the full path to the handler instead of
+        # 404ing at the first separator.
+        fake = _mock_artifact(named_slug="openclaw/notes/daily")
+        with patch(
+            "ypl.agent_harness_service.artifact_routes.get_artifact_by_slug",
+            new=AsyncMock(return_value=fake),
+        ) as mock_get:
+            resp = client.get("/ahs/artifacts/by-slug/openclaw/notes/daily")
+        assert resp.status_code == 200
+        assert mock_get.call_args.args[0] == "openclaw/notes/daily"
+
 
 class TestListVersionsRoute:
     def test_returns_ordered_versions(self, client: TestClient) -> None:
@@ -547,6 +560,20 @@ class TestListVersionsRoute:
         body = resp.json()
         assert body["named_slug"] == "my-slug"
         assert [v["version"] for v in body["versions"]] == [1, 2]
+
+    def test_multi_segment_slug_not_shadowed_by_catch_all(self, client: TestClient) -> None:
+        # The bare ``/by-slug/{slug:path}`` route is registered after this one;
+        # confirm a multi-segment slug + ``/versions`` suffix still reaches the
+        # versions handler (slug excludes the suffix) rather than being swallowed.
+        v1 = _mock_artifact(version=1)
+        with patch(
+            "ypl.agent_harness_service.artifact_routes.list_artifact_versions",
+            new=AsyncMock(return_value=[v1]),
+        ) as mock_list:
+            resp = client.get("/ahs/artifacts/by-slug/openclaw/notes/daily/versions")
+        assert resp.status_code == 200
+        assert resp.json()["named_slug"] == "openclaw/notes/daily"
+        assert mock_list.call_args.args[0] == "openclaw/notes/daily"
 
 
 # ---------------------------------------------------------------------------

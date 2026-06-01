@@ -19,6 +19,11 @@ exclude = [
     "tmp/",
     # Self-contained sub-apps with their own pyproject/tests/deps.
     "apps/",
+    # Self-contained CLI sub-package with its own pyproject/tests/deps.
+    # Narrow to the actual package, not all of ``tools/`` — a future
+    # ``tools/quickfix.py`` dropped at the repo root should still be linted
+    # by this config unless it ships its own pyproject.
+    "tools/ahs-memory/",
 ]
 
 line-length = 120
@@ -223,7 +228,7 @@ warn_no_return = true
 strict_equality = true
 ignore_missing_imports = true
 plugins = ["pydantic.mypy"]
-exclude = ["ypl/db/alembic/", "tmp/", "scripts/", "apps/"]
+exclude = ["ypl/db/alembic/", "tmp/", "scripts/", "apps/", "tools/ahs-memory/"]
 cache_dir = ".mypy_cache"
 incremental = true
 

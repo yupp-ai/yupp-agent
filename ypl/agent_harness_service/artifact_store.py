@@ -222,6 +222,13 @@ async def _slug_has_active_version(
         return result.first() is not None
 
 
+# Stable hint substring in the "append to an unknown slug" error. Clients
+# (e.g. the ``ahs-memory`` CLI's pusher) key their create-vs-append retry off
+# this substring; ``tests/agent_harness_service/test_artifact_store.py`` guards
+# it so a reword here trips a test instead of silently breaking those callers.
+SLUG_UNKNOWN_HINT = "does not exist yet"
+
+
 async def _resolve_next_version(
     *,
     slug: str | None,
@@ -260,7 +267,7 @@ async def _resolve_next_version(
 
     # Append to existing slug.
     if existing_max is None:
-        raise ArtifactError(f"named_slug {slug!r} does not exist yet; set create_new_slug=True to create it.")
+        raise ArtifactError(f"named_slug {slug!r} {SLUG_UNKNOWN_HINT}; set create_new_slug=True to create it.")
     return existing_max + 1
 
 

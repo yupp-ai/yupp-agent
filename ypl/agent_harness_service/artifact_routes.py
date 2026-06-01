@@ -577,7 +577,42 @@ async def read_attachment_route(artifact_id: uuid.UUID, filename: str) -> Respon
 _TYPE_QUERY = Query(AgentArtifactType.TEXT, alias="type")
 
 
-@artifact_router.get("/by-slug/{slug}", response_model=ArtifactResponse)
+# NOTE: ``{slug:path}`` (not the default converter) so hierarchical memory
+# slugs like ``openclaw/notes/daily`` — which legitimately contain ``/`` —
+# round-trip through these routes. The default converter stops at the first
+# ``/`` and would 404 every multi-segment slug.
+#
+# Route ORDER matters with a path converter: the ``.../versions`` route must
+# be registered BEFORE the bare ``/by-slug/{slug:path}`` route, otherwise the
+# greedy catch-all would swallow ``/by-slug/foo/versions`` as ``slug="foo/versions"``
+# and the versions endpoint would never be reached.
+@artifact_router.get("/by-slug/{slug:path}/versions", response_model=ArtifactVersionsResponse)
+async def list_versions_route(
+    slug: str,
+    artifact_type: AgentArtifactType = _TYPE_QUERY,
+    scope: str | None = MEMORY_SCOPE_QUERY,
+    subject: str | None = MEMORY_SUBJECT_QUERY,
+    caller: MemoryCallerContext = CALLER_CTX_DEP,
+) -> ArtifactVersionsResponse:
+    eff_scope, eff_subject = resolve_memory_slug_scope(
+        artifact_type=artifact_type, scope=scope, subject=subject, caller=caller
+    )
+    try:
+        rows = await list_artifact_versions(
+            slug,
+            artifact_type=artifact_type,
+            memory_scope=eff_scope,
+            memory_scope_subject=eff_subject,
+        )
+    except ArtifactError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ArtifactVersionsResponse(
+        named_slug=slug,
+        versions=await _artifacts_to_response_list(rows),
+    )
+
+
+@artifact_router.get("/by-slug/{slug:path}", response_model=ArtifactResponse)
 async def read_artifact_by_slug_route(
     slug: str,
     version: int | None = None,
@@ -614,32 +649,6 @@ async def read_artifact_by_slug_route(
     return _artifact_to_response(artifact, user_names=user_names, agent_names=agent_names)
 
 
-@artifact_router.get("/by-slug/{slug}/versions", response_model=ArtifactVersionsResponse)
-async def list_versions_route(
-    slug: str,
-    artifact_type: AgentArtifactType = _TYPE_QUERY,
-    scope: str | None = MEMORY_SCOPE_QUERY,
-    subject: str | None = MEMORY_SUBJECT_QUERY,
-    caller: MemoryCallerContext = CALLER_CTX_DEP,
-) -> ArtifactVersionsResponse:
-    eff_scope, eff_subject = resolve_memory_slug_scope(
-        artifact_type=artifact_type, scope=scope, subject=subject, caller=caller
-    )
-    try:
-        rows = await list_artifact_versions(
-            slug,
-            artifact_type=artifact_type,
-            memory_scope=eff_scope,
-            memory_scope_subject=eff_subject,
-        )
-    except ArtifactError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return ArtifactVersionsResponse(
-        named_slug=slug,
-        versions=await _artifacts_to_response_list(rows),
-    )
-
-
 @artifact_router.delete("/{artifact_id}", status_code=204)
 async def archive_artifact_route(
     artifact_id: uuid.UUID,
@@ -665,7 +674,11 @@ async def archive_artifact_route(
     return Response(status_code=204)
 
 
-@artifact_router.delete("/by-slug/{slug}", response_model=ArchiveBySlugResponse)
+# ``{slug:path}`` for the same reason as the GET routes above — hierarchical
+# memory slugs contain ``/``. No reorder needed here: the only other DELETE
+# under this prefix is ``/{artifact_id}`` (a single UUID segment), which a
+# multi-segment slug path can never collide with.
+@artifact_router.delete("/by-slug/{slug:path}", response_model=ArchiveBySlugResponse)
 async def archive_by_slug_route(
     slug: str,
     artifact_type: AgentArtifactType = _TYPE_QUERY,
