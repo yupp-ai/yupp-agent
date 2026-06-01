@@ -398,14 +398,15 @@ class TestBuildArgs:
         ctx = _make_context()
         with _patch_system_prompt("You are a helpful agent."):
             params = runner._build_thread_params(ctx)
-        assert params.get("developerInstructions") == "You are a helpful agent."
+        assert "You are a helpful agent." in params.get("developerInstructions", "")
+        assert "Codex Runtime Notes" in params.get("developerInstructions", "")
 
-    def test_build_thread_params_no_developer_instructions_when_empty(self) -> None:
+    def test_build_thread_params_includes_codex_instructions_when_base_prompt_empty(self) -> None:
         runner = CodexAppServerRunner(_make_config())
         ctx = _make_context()
         with _patch_system_prompt(""):
             params = runner._build_thread_params(ctx)
-        assert "developerInstructions" not in params
+        assert "Codex Runtime Notes" in params.get("developerInstructions", "")
 
 
 # ---------------------------------------------------------------------------
@@ -731,6 +732,36 @@ class TestMcpServerUrlInjection:
         call_kwargs = mock_mcp.call_args
         assert call_kwargs.kwargs.get("session_id") == "ffffffff-0000-1111-2222-333333333333"
 
+    def test_build_server_args_passes_agent_and_external_mcp_context(self) -> None:
+        runner = CodexAppServerRunner(_make_config(name="veronia", external_mcps=["gmail"]))
+        ctx = _make_context(session_context={"user_id": "user-1"})
+
+        with patch(
+            "ypl.agent_harness_service.executors.codex_app_server_runner.build_codex_mcp_args",
+            return_value=[],
+        ) as mock_mcp:
+            runner._build_server_args(8888, ctx)
+
+        mock_mcp.assert_called_once()
+        assert mock_mcp.call_args.kwargs["agent_name"] == "veronia"
+        assert mock_mcp.call_args.kwargs["external_mcps"] == ["gmail"]
+
+    def test_build_system_prompt_uses_load_skill_catalog_not_native_skills(self) -> None:
+        runner = CodexAppServerRunner(_make_config(required_tools=["mcp__harness__read_slack_thread"]))
+        ctx = _make_context()
+
+        with patch(
+            "ypl.agent_harness_service.executors.codex_app_server_runner.build_system_prompt",
+            return_value="base prompt",
+        ) as mock_prompt:
+            prompt = runner._build_system_prompt(ctx)
+
+        assert "Codex Runtime Notes" in prompt
+        assert "load_skill" in prompt
+        mock_prompt.assert_called_once()
+        assert mock_prompt.call_args.kwargs["has_native_skills"] is False
+        assert mock_prompt.call_args.kwargs["required_tools"] is None
+
     def test_build_server_args_harness_and_agcouch_urls_in_args(self) -> None:
         runner = CodexAppServerRunner(_make_config())
         ctx = _make_context()
@@ -768,6 +799,10 @@ class TestMcpServerUrlInjection:
             ),
             patch(
                 "ypl.agent_harness_service.executors.codex_app_server_runner._ensure_eviction_loop",
+            ),
+            patch(
+                "ypl.agent_harness_service.executors.codex_app_server_runner._find_free_port",
+                return_value=61234,
             ),
             patch(
                 "ypl.agent_harness_service.executors.codex_app_server_runner.build_codex_mcp_env",

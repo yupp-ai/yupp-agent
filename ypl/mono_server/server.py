@@ -384,6 +384,14 @@ def create_app() -> FastAPI:
                 if plugin.name == "slack":
                     application.include_router(router, prefix="/slack-agent-gateway")
 
+    # --- External-MCP OAuth + grant routes -----------------------------------
+    # Drives the per-user OAuth flow that backs the "My MCPs" Lit page and
+    # the resolver's bearer-token injection.  Mounted unconditionally — if
+    # the registry table is empty, no route does anything user-visible.
+    from ypl.external_mcp.routes import router as external_mcp_router
+
+    application.include_router(external_mcp_router, prefix="/mcp_oauth")
+
     # --- Health check (always registered, no auth) ---------------------------
     @application.get("/health", tags=["health"])
     async def health() -> dict[str, str]:

@@ -757,8 +757,8 @@ class ClaudeCodeRunner(AgentRunner):
 
         return args
 
-    @staticmethod
     def _ensure_workspace_mcp_config(
+        self,
         workspace: str,
         session_id: str = "",
         session_context: dict[str, Any] | None = None,
@@ -770,7 +770,14 @@ class ClaudeCodeRunner(AgentRunner):
         Delegates to the shared ensure_workspace_mcp_config() so all harnessed
         executors (Claude Code, Codex, etc.) use the same MCP setup logic.
         """
-        ensure_workspace_mcp_config(workspace, session_id, session_context, is_slack, agent_name=agent_name)
+        ensure_workspace_mcp_config(
+            workspace,
+            session_id,
+            session_context,
+            is_slack,
+            agent_name=agent_name,
+            external_mcps=list(self.config.external_mcps or []),
+        )
 
     async def pre_spawn(self, prompt: str, context: RunContext) -> asyncio.subprocess.Process:
         """Build args, write .mcp.json, and spawn the subprocess early.

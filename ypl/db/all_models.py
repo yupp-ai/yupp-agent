@@ -4,6 +4,7 @@ from ypl.db import (
     agent_harness,
     agent_memory_index,
     artifact_comments,
+    external_mcp,
     mcp,
     rbac,
     slack_agent,
@@ -15,10 +16,11 @@ all_models = [
     # Please keep sorted.
     agent_harness,
     agent_memory_index,
+    artifact_comments,
+    external_mcp,
     mcp,
     rbac,
     slack_agent,
     slack_oauth_token,
     users,
-    artifact_comments,
 ]

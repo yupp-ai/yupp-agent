@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from ypl.agent_harness_service.common.types import SessionPermissions
 from ypl.agent_harness_service.executors.mcp_config import (
@@ -168,6 +169,27 @@ class TestBuildCodexMcpArgs:
         args_str = " ".join(args)
         assert "AGCOUCH_MCP_TOKEN" not in args_str
         assert "agcouch" not in args_str
+
+    def test_passes_agent_and_external_mcp_context_to_resolver(self) -> None:
+        with patch(
+            "ypl.agent_harness_service.executors.mcp_config.resolve_mcp_servers",
+            return_value={"harness": {"url": "http://127.0.0.1:8090/mcp/harness/"}},
+        ) as mock_resolve:
+            build_codex_mcp_args(
+                session_id="sess-1",
+                session_context={"user_id": "user-1"},
+                is_slack=True,
+                agent_name="veronia",
+                external_mcps=["gmail"],
+            )
+
+        mock_resolve.assert_called_once_with(
+            "sess-1",
+            {"user_id": "user-1"},
+            True,
+            agent_name="veronia",
+            external_mcps=["gmail"],
+        )
 
 
 class TestBuildCodexMcpEnv:

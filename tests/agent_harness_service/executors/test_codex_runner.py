@@ -131,6 +131,20 @@ class TestBuildArgs:
         assert 'mcp_servers.harness.url="http://127.0.0.1:8090/mcp/harness/"' in args
         assert 'mcp_servers.harness.bearer_token_env_var="AHS_MCP_BEARER"' in args
 
+    def test_mcp_config_gets_agent_and_external_mcp_context(self) -> None:
+        runner = CodexRunner(_make_config(name="veronia", external_mcps=["gmail"]))
+        ctx = _make_context(session_context={"user_id": "user-1"})
+
+        with patch(
+            "ypl.agent_harness_service.executors.codex_runner.build_codex_mcp_args",
+            return_value=[],
+        ) as mock_mcp:
+            runner._build_args("prompt", ctx)
+
+        mock_mcp.assert_called_once()
+        assert mock_mcp.call_args.kwargs["agent_name"] == "veronia"
+        assert mock_mcp.call_args.kwargs["external_mcps"] == ["gmail"]
+
     def test_developer_instructions_included(self) -> None:
         runner = CodexRunner(_make_config())
         ctx = _make_context()
@@ -168,6 +182,22 @@ class TestBuildArgs:
         assert '\\"great\\"' in config_val
         # Newlines should be escaped
         assert "\\n" in config_val
+
+    def test_system_prompt_uses_load_skill_catalog_not_native_skills(self) -> None:
+        runner = CodexRunner(_make_config(required_tools=["mcp__harness__read_slack_thread"]))
+        ctx = _make_context()
+
+        with patch(
+            "ypl.agent_harness_service.executors.codex_runner.build_system_prompt",
+            return_value="base prompt",
+        ) as mock_prompt:
+            prompt = runner._build_system_prompt(ctx)
+
+        assert "Codex Runtime Notes" in prompt
+        assert "load_skill" in prompt
+        mock_prompt.assert_called_once()
+        assert mock_prompt.call_args.kwargs["has_native_skills"] is False
+        assert mock_prompt.call_args.kwargs["required_tools"] is None
 
 
 # ---------------------------------------------------------------------------

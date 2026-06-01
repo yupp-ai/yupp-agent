@@ -23,10 +23,21 @@ from ypl.agent_harness_service.executors.runner import (
     build_subprocess_env,
     extract_excerpt,
 )
-from ypl.agent_harness_service.executors.system_prompt import build_system_prompt
+from ypl.agent_harness_service.executors.system_prompt import (
+    SKILL_BACKED_NAMES,
+    build_skill_catalog_section,
+    build_system_prompt,
+)
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
+
+_CODEX_ENVIRONMENT_PROMPT = """## Codex Runtime Notes
+
+You are running under Codex in AHS. Do not use Claude Code slash skills or ToolSearch; those are not
+available in this executor.
+Use MCP tools directly by their exposed names. For skill guidance, use `load_skill(skill_name="<skill-name>")`.
+"""
 
 
 def _extract_mcp_tool_name(item: dict[str, object]) -> str:
@@ -138,18 +149,7 @@ class CodexRunner(AgentRunner):
 
         # System prompt via config override (only for new sessions — resume inherits)
         if not is_resume:
-            system_prompt = build_system_prompt(
-                self.config.name,
-                session_id=context.session_id,
-                slack_session_id=context.slack_session_id,
-                is_slack=context.is_slack,
-                is_task=context.is_task,
-                session_context=context.session_context,
-                additional_system_prompt=self.config.additional_system_prompt,
-                has_native_skills=True,
-                required_tools=self.config.required_tools or None,
-                workspace=context.workspace,
-            )
+            system_prompt = self._build_system_prompt(context)
             if system_prompt:
                 escaped = self._toml_escape(system_prompt)
                 args += ["-c", f'developer_instructions="{escaped}"']
@@ -162,9 +162,37 @@ class CodexRunner(AgentRunner):
             session_id=context.session_id,
             session_context=context.session_context,
             is_slack=context.is_slack,
+            agent_name=self.config.name,
+            external_mcps=self.config.external_mcps or None,
         )
 
         return args
+
+    def _build_system_prompt(self, context: RunContext) -> str:
+        """Build Codex-specific instructions.
+
+        Codex does not load the repo's Claude-style slash skills from
+        ``AHS_SKILLS_DIR``. Treat it like other non-native skill executors:
+        inline skill-backed shared files and advertise the ``load_skill`` MCP
+        tool for the remaining catalog.
+        """
+        base = build_system_prompt(
+            self.config.name,
+            session_id=context.session_id,
+            slack_session_id=context.slack_session_id,
+            is_slack=context.is_slack,
+            is_task=context.is_task,
+            session_context=context.session_context,
+            additional_system_prompt=self.config.additional_system_prompt,
+            has_native_skills=False,
+            required_tools=None,
+            workspace=context.workspace,
+        )
+        parts = [base, _CODEX_ENVIRONMENT_PROMPT]
+        skill_catalog = build_skill_catalog_section(exclude=SKILL_BACKED_NAMES)
+        if skill_catalog:
+            parts.append(skill_catalog)
+        return "\n\n".join(part for part in parts if part)
 
     @staticmethod
     async def _drain_stderr(proc: asyncio.subprocess.Process) -> str:
