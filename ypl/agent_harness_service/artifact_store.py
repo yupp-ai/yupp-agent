@@ -38,7 +38,7 @@ from ypl.agent_harness_service.memory_store import (
 from ypl.backend.config import settings
 from ypl.backend.db import get_async_session, get_async_session_read_replica, retry_db
 from ypl.backend.utils.blob_store import BlobStore, get_blob_store
-from ypl.db.agent_harness import Agent, AgentArtifact, AgentArtifactType
+from ypl.db.agent_harness import SCOPED_INLINE_ARTIFACT_TYPES, Agent, AgentArtifact, AgentArtifactType
 from ypl.db.users import User
 from ypl.structured_logger import get_logger
 
@@ -148,24 +148,27 @@ def _scope_slug_filter(
 ) -> list[Any]:
     """Build the WHERE clauses that locate a slug's versions.
 
-    For MEMORY artifacts uniqueness is (scope, subject, slug, version) — the
-    same slug can live under multiple scopes/subjects. Non-MEMORY artifacts
-    fall back to global slug uniqueness.
+    For scoped-inline artifacts (MEMORY, SKILL) uniqueness is
+    (scope, subject, slug, version) — the same slug can live under multiple
+    scopes/subjects. Other types fall back to global slug uniqueness.
     """
     clauses: list[Any] = [
         AgentArtifact.named_slug == slug,
         AgentArtifact.artifact_type == artifact_type,
     ]
-    if artifact_type == AgentArtifactType.MEMORY:
+    if artifact_type in SCOPED_INLINE_ARTIFACT_TYPES:
         if memory_scope is None:
-            raise ArtifactError("MEMORY slug lookups require memory_scope (and memory_scope_subject for user/agent).")
+            raise ArtifactError(
+                f"{artifact_type.value} slug lookups require memory_scope (and memory_scope_subject for user/agent)."
+            )
         clauses.append(AgentArtifact.memory_scope == memory_scope)
         if memory_scope == "topic":
             clauses.append(col(AgentArtifact.memory_scope_subject).is_(None))
         else:
             if not memory_scope_subject:
                 raise ArtifactError(
-                    f"MEMORY slug lookups with memory_scope={memory_scope!r} require memory_scope_subject."
+                    f"{artifact_type.value} slug lookups with memory_scope={memory_scope!r} "
+                    "require memory_scope_subject."
                 )
             clauses.append(AgentArtifact.memory_scope_subject == memory_scope_subject)
     return clauses
@@ -307,10 +310,11 @@ async def create_artifact(
 ) -> AgentArtifact:
     """Create an artifact: upload content + attachments (blob) OR store inline, then insert row.
 
-    For ``artifact_type=MEMORY`` pass ``inline_content`` (a str) and the
-    ``memory_scope`` + ``memory_scope_subject`` pair — the body is written
-    directly to the ``agent_artifacts.inline_content`` column, the blob
-    store is skipped entirely, and no canonical ``url`` is generated
+    For scoped-inline types (``MEMORY``, ``SKILL`` — see
+    :data:`SCOPED_INLINE_ARTIFACT_TYPES`) pass ``inline_content`` (a str) and
+    the ``memory_scope`` + ``memory_scope_subject`` pair — the body is
+    written directly to the ``agent_artifacts.inline_content`` column, the
+    blob store is skipped entirely, and no canonical ``url`` is generated
     (viewers resolve the row by ID / scope+slug).
 
     For every other type pass ``content`` bytes — the main blob is uploaded
@@ -323,50 +327,53 @@ async def create_artifact(
     if len(attachments) > MAX_ATTACHMENTS_PER_ARTIFACT:
         raise ArtifactError(f"Too many attachments (>{MAX_ATTACHMENTS_PER_ARTIFACT})")
 
-    is_memory = artifact_type == AgentArtifactType.MEMORY
+    is_inline = artifact_type in SCOPED_INLINE_ARTIFACT_TYPES
 
-    if is_memory:
-        # MEMORY: inline body; no blobs, no attachments.
+    if is_inline:
+        # Scoped-inline (MEMORY / SKILL): inline body; no blobs, no attachments.
         if inline_content is None:
-            raise ArtifactError("MEMORY artifacts require inline_content")
+            raise ArtifactError(f"{artifact_type.value} artifacts require inline_content")
         if content is not None:
-            raise ArtifactError("MEMORY artifacts must not carry 'content' bytes — use inline_content")
+            raise ArtifactError(f"{artifact_type.value} artifacts must not carry 'content' bytes — use inline_content")
         if attachments:
-            raise ArtifactError("MEMORY artifacts do not support attachments")
+            raise ArtifactError(f"{artifact_type.value} artifacts do not support attachments")
         if memory_scope is None:
-            raise ArtifactError("MEMORY artifacts require memory_scope")
+            raise ArtifactError(f"{artifact_type.value} artifacts require memory_scope")
         validate_memory_scope_shape(memory_scope, memory_scope_subject)
         if len(inline_content.encode("utf-8")) > MAX_CONTENT_SIZE_BYTES:
             raise ArtifactError(f"inline_content exceeds {MAX_CONTENT_SIZE_BYTES} bytes")
     else:
-        # Non-MEMORY: blob-backed body.
+        # Blob-backed body for non-scoped types.
         if inline_content is not None:
-            raise ArtifactError(f"inline_content is only valid for MEMORY artifacts (got type={artifact_type.value})")
+            raise ArtifactError(
+                f"inline_content is only valid for scoped-inline artifacts (got type={artifact_type.value})"
+            )
         if memory_scope is not None or memory_scope_subject is not None:
             raise ArtifactError(
-                f"memory_scope / memory_scope_subject only apply to MEMORY artifacts (got type={artifact_type.value})"
+                f"memory_scope / memory_scope_subject only apply to scoped-inline artifacts "
+                f"(got type={artifact_type.value})"
             )
         if content is None:
             raise ArtifactError(f"{artifact_type.value} artifacts require 'content' bytes")
         if len(content) > MAX_CONTENT_SIZE_BYTES:
             raise ArtifactError(f"Content exceeds {MAX_CONTENT_SIZE_BYTES} bytes")
 
-    # 1. Resolve version (may raise). For MEMORY the (scope, subject) tuple is
-    # part of the slug-uniqueness key; other types use global slug uniqueness.
+    # 1. Resolve version (may raise). For scoped-inline types the (scope, subject)
+    # tuple is part of the slug-uniqueness key; other types use global slug uniqueness.
     version = await _resolve_next_version(
         slug=named_slug,
         create_new_slug=create_new_slug,
         artifact_type=artifact_type,
-        memory_scope=memory_scope if is_memory else None,
-        memory_scope_subject=memory_scope_subject if is_memory else None,
+        memory_scope=memory_scope if is_inline else None,
+        memory_scope_subject=memory_scope_subject if is_inline else None,
     )
 
-    # 2. Generate ID + upload blobs (non-MEMORY only).
+    # 2. Generate ID + upload blobs (non-inline types only).
     artifact_id = uuid.uuid4()
     attachment_infos: list[dict[str, Any]] = []
     url: str | None = None
 
-    if not is_memory:
+    if not is_inline:
         assert content is not None  # narrowed above
         store = blob_store or get_blob_store()
         main_path = content_path_for(artifact_id, content_type)
@@ -498,15 +505,15 @@ async def read_artifact_content(
 ) -> tuple[bytes, str]:
     """Return ``(content_bytes, content_type)`` for an artifact's main body.
 
-    MEMORY artifacts with ``inline_content`` resolve directly from the row
-    — no blob store round-trip. Any artifact (MEMORY or otherwise) with
+    Scoped-inline artifacts (MEMORY, SKILL) with ``inline_content`` resolve
+    directly from the row — no blob store round-trip. Any artifact with
     ``inline_content`` set takes the inline path; otherwise the main file
     is fetched from the blob store using the canonical ``content_path_for``
     layout.
     """
     if artifact.inline_content is not None:
-        # Inline-content path (MEMORY). content_type may still be NULL in weird
-        # rows — default to text/markdown to keep downstream consumers happy.
+        # Inline-content path (MEMORY / SKILL). content_type may still be NULL
+        # in weird rows — default to text/markdown to keep downstream consumers happy.
         content_type = artifact.content_type or "text/markdown"
         return artifact.inline_content.encode("utf-8"), content_type
 
@@ -624,6 +631,7 @@ async def list_artifacts(
     memory_caller: MemoryCallerContext | None = None,
     memory_scope: str | None = None,
     memory_scope_subject: str | None = None,
+    latest_version_only: bool = False,
 ) -> list[AgentArtifact]:
     """List artifacts matching the given filters.
 
@@ -637,6 +645,14 @@ async def list_artifacts(
       MEMORY rows to a specific scope/subject. Non-MEMORY rows are excluded
       from the response when either is set because scope columns are NULL
       for those rows.
+
+    ``latest_version_only`` — when ``True``, collapse to one row per
+    ``(memory_scope, memory_scope_subject, named_slug)`` keeping the highest
+    ``version`` (via ``DISTINCT ON``). This bounds the result to one row per
+    logical slug-per-scope so a single heavily-versioned slug can't crowd
+    others out of the ``limit`` window — used by the SKILL catalog merger.
+    Rows are ordered by the distinct key (then ``version DESC``) rather than
+    ``created_at`` in this mode.
     """
     async with get_async_session_read_replica() as session:
         stmt = select(AgentArtifact).where(col(AgentArtifact.deleted_at).is_(None))
@@ -662,7 +678,23 @@ async def list_artifacts(
             memory_scope=memory_scope,
             memory_scope_subject=memory_scope_subject,
         )
-        stmt = stmt.order_by(col(AgentArtifact.created_at).desc()).limit(limit).offset(offset)
+        if latest_version_only:
+            # DISTINCT ON requires its key columns to lead the ORDER BY; within
+            # each key the highest version wins. NULL subjects (topic scope)
+            # collapse together, matching the scope-qualified unique indexes.
+            distinct_cols = (
+                col(AgentArtifact.memory_scope),
+                col(AgentArtifact.memory_scope_subject),
+                col(AgentArtifact.named_slug),
+            )
+            stmt = (
+                stmt.distinct(*distinct_cols)
+                .order_by(*distinct_cols, col(AgentArtifact.version).desc())
+                .limit(limit)
+                .offset(offset)
+            )
+        else:
+            stmt = stmt.order_by(col(AgentArtifact.created_at).desc()).limit(limit).offset(offset)
         result = await session.execute(stmt)
         return list(result.scalars().all())
 

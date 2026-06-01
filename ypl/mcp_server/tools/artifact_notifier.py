@@ -81,6 +81,7 @@ _TYPE_VISUALS: dict[AgentArtifactType, dict[str, str]] = {
     AgentArtifactType.CODE_REVIEW: {"emoji": ":octocat:", "color": "#2eb886"},
     AgentArtifactType.OTHER: {"emoji": ":link:", "color": "#9aa0a6"},
     AgentArtifactType.MEMORY: {"emoji": ":brain:", "color": "#a371f7"},
+    AgentArtifactType.SKILL: {"emoji": ":sparkles:", "color": "#f0a020"},
 }
 
 # Verb used in the header for each lifecycle event. Past tense reads cleanly
@@ -274,7 +275,7 @@ def build_notification_payload(
         version_suffix = f" · v{artifact.version}" if artifact.version is not None else ""
         fields.append({"type": "mrkdwn", "text": f"*Slug*\n`{slug}`{version_suffix}"})
 
-    if artifact_type == AgentArtifactType.MEMORY:
+    if artifact_type in (AgentArtifactType.MEMORY, AgentArtifactType.SKILL):
         scope_label = _format_memory_scope(artifact.memory_scope, artifact.memory_scope_subject)
         if scope_label:
             fields.append({"type": "mrkdwn", "text": f"*Scope*\n{scope_label}"})

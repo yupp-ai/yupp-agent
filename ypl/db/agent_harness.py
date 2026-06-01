@@ -31,6 +31,16 @@ class AgentArtifactType(str, enum.Enum):
     CODE_REVIEW = "CODE_REVIEW"  # GitHub PR review
     OTHER = "OTHER"  # Catch-all for future types
     MEMORY = "MEMORY"  # Agent memory (inline content + scope/subject)
+    SKILL = "SKILL"  # Agent skill (inline markdown + scope/subject; parsed frontmatter in artifact_metadata)
+
+
+# Types whose body lives in ``inline_content`` and is qualified by the
+# ``memory_scope`` / ``memory_scope_subject`` columns. Both MEMORY and SKILL
+# use this pattern — the scope columns are reused for SKILL (the historical
+# ``memory_`` prefix predates that; the columns themselves are generic).
+SCOPED_INLINE_ARTIFACT_TYPES: frozenset[AgentArtifactType] = frozenset(
+    {AgentArtifactType.MEMORY, AgentArtifactType.SKILL}
+)
 
 
 class AgentSessionTrigger(str, enum.Enum):
@@ -677,7 +687,11 @@ class AgentArtifact(BaseModel, table=True):
     # one of (inline_content, url) is non-NULL per row.
     inline_content: str | None = Field(default=None, nullable=True, sa_type=sa.Text)
 
-    # Memory scoping. Only populated when artifact_type = 'MEMORY'.
+    # Scope qualifier — populated for MEMORY and SKILL artifacts.
+    # (Historical naming: the columns were introduced for MEMORY first, then
+    # SKILL adopted the same scoping pattern. The columns themselves are
+    # type-agnostic; the ``ck_agent_artifacts_memory_scope_matches_type``
+    # check constraint controls which artifact types may set them.)
     #   memory_scope         ∈ {'user', 'agent', 'topic'}
     #   memory_scope_subject = users.user_id (scope=user)
     #                        | agents.name    (scope=agent)
@@ -709,15 +723,17 @@ class AgentArtifact(BaseModel, table=True):
         Index("ix_agent_artifacts_type", "artifact_type"),
         Index("ix_agent_artifacts_session_type", "agent_session_id", "artifact_type"),
         # Partial unique index mirrors the migration: only enforces uniqueness when both are non-NULL.
-        # MEMORY artifacts are excluded — their uniqueness is scope-qualified
-        # via uix_memory_scope_slug_version below, so the same slug can live in
-        # both a user scope and an agent scope.
+        # MEMORY and SKILL artifacts are excluded — their uniqueness is scope-qualified
+        # via uix_memory_scope_slug_version / uix_skill_scope_slug_version below, so
+        # the same slug can live in (e.g.) both a user scope and an agent scope.
         Index(
             "uix_agent_artifacts_slug_version",
             "named_slug",
             "version",
             unique=True,
-            postgresql_where=text("named_slug IS NOT NULL AND version IS NOT NULL AND artifact_type <> 'MEMORY'"),
+            postgresql_where=text(
+                "named_slug IS NOT NULL AND version IS NOT NULL AND artifact_type NOT IN ('MEMORY', 'SKILL')"
+            ),
         ),
         # Per-scope slug/version uniqueness for MEMORY artifacts. Parallel MEMORY
         # saves across different (scope, subject) tuples don't collide, while
@@ -738,12 +754,34 @@ class AgentArtifact(BaseModel, table=True):
             postgresql_where=text("artifact_type = 'MEMORY' AND named_slug IS NOT NULL AND version IS NOT NULL"),
             postgresql_nulls_not_distinct=True,
         ),
+        # Per-scope slug/version uniqueness for SKILL artifacts. Mirrors the
+        # MEMORY index — SKILL artifacts share the scope columns but live in
+        # their own (scope, subject, slug) namespace, so the same slug can
+        # appear as both a MEMORY topic and a SKILL topic without colliding.
+        Index(
+            "uix_skill_scope_slug_version",
+            "memory_scope",
+            "memory_scope_subject",
+            "named_slug",
+            "version",
+            unique=True,
+            postgresql_where=text("artifact_type = 'SKILL' AND named_slug IS NOT NULL AND version IS NOT NULL"),
+            postgresql_nulls_not_distinct=True,
+        ),
         # Fast scope-filtered reads (e.g. "all memory for user X").
         Index(
             "ix_memory_scope_subject",
             "memory_scope",
             "memory_scope_subject",
             postgresql_where=text("artifact_type = 'MEMORY'"),
+        ),
+        # Fast scope-filtered reads for SKILL artifacts (catalog merging in
+        # the system-prompt builder uses these).
+        Index(
+            "ix_skill_scope_subject",
+            "memory_scope",
+            "memory_scope_subject",
+            postgresql_where=text("artifact_type = 'SKILL'"),
         ),
         CheckConstraint(
             "content_type IN ('text/plain', 'text/markdown', 'text/html')",
@@ -754,10 +792,13 @@ class AgentArtifact(BaseModel, table=True):
             "(inline_content IS NOT NULL) <> (url IS NOT NULL)",
             name="ck_agent_artifacts_content_location",
         ),
-        # MEMORY <=> scope is set. Non-MEMORY rows must have both scope columns NULL.
+        # MEMORY or SKILL <=> scope is set. Other types must have both scope columns NULL.
+        # (The constraint name is kept for back-compat with the original MEMORY-only
+        # migration; SKILL was added by a follow-up migration that broadens the predicate.)
         CheckConstraint(
-            "(artifact_type = 'MEMORY' AND memory_scope IN ('user', 'agent', 'topic')) "
-            "OR (artifact_type <> 'MEMORY' AND memory_scope IS NULL AND memory_scope_subject IS NULL)",
+            "(artifact_type IN ('MEMORY', 'SKILL') AND memory_scope IN ('user', 'agent', 'topic')) "
+            "OR (artifact_type NOT IN ('MEMORY', 'SKILL') "
+            "    AND memory_scope IS NULL AND memory_scope_subject IS NULL)",
             name="ck_agent_artifacts_memory_scope_matches_type",
         ),
         # topic scope has no subject; user/agent scopes require one.
