@@ -184,6 +184,11 @@ _ALLOWED_EXACT: frozenset[str] = frozenset(
         "LANGUAGE",
         # Claude CLI
         "ANTHROPIC_API_KEY",
+        # Claude Code's escape hatch for "running as root inside a container
+        # is already sandboxed; trust me and allow --dangerously-skip-permissions".
+        # Without forwarding this through the subprocess env, claude-code-cli
+        # crashes on startup with "cannot be used with root/sudo privileges".
+        "IS_SANDBOX",
         # Note: AHS no longer forwards ``AGCOUCH_MCP_TOKEN`` — agents reach
         # every shared / external-data tool via the harness MCP using
         # ``AHS_MCP_SECRET`` (handled inside ``mcp_config.resolve_mcp_servers``,
