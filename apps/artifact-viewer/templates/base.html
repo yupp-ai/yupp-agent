@@ -9,6 +9,9 @@
     {% block head_extra %}{% endblock %}
 </head>
 <body>
+{#- The artifact page replaces this whole bar so the nav merges into its
+    single compact top box. -#}
+{% block topbar %}
 <header class="topbar">
     <div class="topbar-inner">
         <a href="/" class="brand">Artifact Viewer</a>
@@ -28,6 +31,7 @@
         </div>
     </div>
 </header>
+{% endblock %}
 <main class="main">
 {% block content %}{% endblock %}
 </main>

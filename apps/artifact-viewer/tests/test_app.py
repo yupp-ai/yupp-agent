@@ -155,9 +155,9 @@ class TestArtifactPage:
         assert "sandbox=" in body
 
     def test_full_page_button_visible_on_html_artifact(self, client: TestClient) -> None:
-        # The "Full Page" link should appear on HTML artifacts only and
-        # point at the /raw route in a new tab with rel=noopener so the
-        # opened page can't navigate this one back via window.opener.
+        # The "Full Page View" chip appears on every doc type and points at the
+        # same row with ``?v=full`` (the sandboxed full view — see
+        # TestFullPageView). URLs use the short /a/{uuid} scheme.
         _sign_in(client)
         with (
             patch(
@@ -172,10 +172,9 @@ class TestArtifactPage:
             resp = client.get(f"/artifacts/{ART_ID}")
         assert resp.status_code == 200
         body = resp.text
-        assert "Full Page" in body
-        assert f'href="/artifacts/{ART_ID}/raw"' in body
-        assert 'target="_blank"' in body
-        assert "noopener" in body
+        assert "Full Page View" in body
+        assert "full-page-btn" in body
+        assert f'href="/a/{ART_ID}?v=full"' in body
 
     def test_width_toggle_js_filters_anchors_without_data_width(self, client: TestClient) -> None:
         # Regression: the width-toggle JS used to pick up any element with
@@ -206,7 +205,8 @@ class TestArtifactPage:
         assert ".width-toggle-btn')" not in resp.text
         assert '.width-toggle-btn")' not in resp.text
 
-    def test_full_page_button_hidden_on_markdown_artifact(self, client: TestClient) -> None:
+    def test_full_page_button_visible_on_markdown_artifact(self, client: TestClient) -> None:
+        # Full page view works for all docs, including markdown.
         _sign_in(client)
         with (
             patch(
@@ -220,12 +220,11 @@ class TestArtifactPage:
         ):
             resp = client.get(f"/artifacts/{ART_ID}")
         assert resp.status_code == 200
-        # Match the anchor (not the substring "Full Page", which now also
-        # appears in a JS-handler comment further down the page).
-        assert f"/artifacts/{ART_ID}/raw" not in resp.text
-        assert "full-page-btn" not in resp.text
+        assert "full-page-btn" in resp.text
+        assert f'href="/a/{ART_ID}?v=full"' in resp.text
 
-    def test_full_page_button_hidden_on_plain_artifact(self, client: TestClient) -> None:
+    def test_full_page_button_visible_on_plain_artifact(self, client: TestClient) -> None:
+        # ...and plain text.
         _sign_in(client)
         with (
             patch(
@@ -239,8 +238,8 @@ class TestArtifactPage:
         ):
             resp = client.get(f"/artifacts/{ART_ID}")
         assert resp.status_code == 200
-        assert f"/artifacts/{ART_ID}/raw" not in resp.text
-        assert "full-page-btn" not in resp.text
+        assert "full-page-btn" in resp.text
+        assert f'href="/a/{ART_ID}?v=full"' in resp.text
 
     def test_upstream_404_surfaces_as_error_page(self, client: TestClient) -> None:
         from artifact_viewer.ahs_client import AHSError
@@ -277,9 +276,10 @@ class TestHome:
         assert resp.status_code == 200
         assert "row-a" in resp.text
         assert "row-b" in resp.text
-        # Filter row + apply button must be on the page.
-        assert 'class="filter-bar"' in resp.text
-        assert "Apply" in resp.text
+        # The merged, auto-applying search+filter bar replaces the old
+        # filter-bar + Apply button.
+        assert 'class="controls-bar"' in resp.text
+        assert "Apply" not in resp.text
 
     def test_default_page_size_is_50(self, client: TestClient) -> None:
         _sign_in(client)
@@ -298,11 +298,10 @@ class TestHome:
         assert kwargs["limit"] == 50
         assert kwargs["offset"] == 0
         assert kwargs["include_total"] is True
-        # Default landing view: type=TEXT and "From me" ON (filtered to the
-        # signed-in user) — both meant to keep the default list short and
-        # personally relevant.
+        # Default landing view: type=TEXT, but "From me" is OFF by default so
+        # the landing page shows ALL docs (no creator_user_id filter).
         assert kwargs["artifact_type"] == "TEXT"
-        assert kwargs["creator_user_id"] == "user-alice"
+        assert kwargs["creator_user_id"] is None
 
     def test_type_filter_can_be_explicitly_cleared(self, client: TestClient) -> None:
         # ``?type=`` (empty) is the explicit "all types" opt-out from the
@@ -449,13 +448,10 @@ class TestHome:
         ):
             resp = client.get("/", params={"offset": 20, "limit": 20})
         assert resp.status_code == 200
-        # Pager links round-trip the offset.
+        # Pager links round-trip the offset. (The "Showing N of M" indicator
+        # was removed from the UI, so we only assert the Prev/Next links.)
         assert "offset=0" in resp.text  # Prev (max(0, 20-20))
         assert "offset=40" in resp.text  # Next (20+20)
-        # Window indicator: "Showing 21-40 of 50" (en dash in the rendered text).
-        assert "21" in resp.text
-        assert "40" in resp.text
-        assert "50" in resp.text
 
     def test_no_pagination_links_when_only_one_page(self, client: TestClient) -> None:
         _sign_in(client)
@@ -498,7 +494,7 @@ class TestHome:
         # The page still renders even though the creator dropdown couldn't be
         # populated — we don't want a 502 every time the optional sub-call fails.
         assert resp.status_code == 200
-        assert "filter-bar" in resp.text
+        assert "controls-bar" in resp.text
 
 
 class TestSearch:
@@ -553,20 +549,32 @@ class TestBySlug:
         assert resp.status_code == 200
         assert mock_by_slug.call_args.kwargs.get("version") == 2
 
-    def test_versions_list(self, client: TestClient) -> None:
+    def test_legacy_versions_url_redirects_to_slug_search(self, client: TestClient) -> None:
+        # The dedicated versions page was retired; the legacy URL now 303s to
+        # a ``slug:`` search, which lists every version of that slug.
         _sign_in(client)
-        with patch(
-            "artifact_viewer.ahs_client.list_versions",
-            new=AsyncMock(
-                return_value={
-                    "named_slug": "sample",
-                    "versions": [_meta(version=1), _meta(version=2)],
-                }
+        resp = client.get("/artifacts/by-slug/sample/versions")
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/search?q=slug:sample"
+
+    def test_canonical_short_routes(self, client: TestClient) -> None:
+        # /a/{uuid}, /s/{slug} and /s/{slug}/{version} all resolve.
+        _sign_in(client)
+        with (
+            patch("artifact_viewer.ahs_client.get_artifact_meta", new=AsyncMock(return_value=_meta())),
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_by_slug",
+                new=AsyncMock(return_value=_meta(version=2)),
+            ) as mock_by_slug,
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_content",
+                new=AsyncMock(return_value=(b"# hi", "text/markdown")),
             ),
         ):
-            resp = client.get("/artifacts/by-slug/sample/versions")
-        assert resp.status_code == 200
-        assert "v1" in resp.text and "v2" in resp.text
+            assert client.get(f"/a/{ART_ID}").status_code == 200
+            assert client.get("/s/sample").status_code == 200
+            assert client.get("/s/sample/2").status_code == 200
+        assert mock_by_slug.call_args.kwargs.get("version") == 2
 
 
 class TestEdit:
@@ -739,7 +747,7 @@ class TestEdit:
             )
         # 303 See Other so a refresh after POST doesn't replay the submit.
         assert resp.status_code == 303
-        assert resp.headers["location"] == "/artifacts/by-slug/doc/v/5"
+        assert resp.headers["location"] == "/s/doc/5"
         kwargs = create_mock.await_args.kwargs
         assert kwargs["named_slug"] == "doc"
         assert kwargs["content"] == "the new body"
@@ -832,8 +840,8 @@ class TestEdit:
             resp = client.post(f"/artifacts/{ART_ID}/edit", data={"content": "fresh body"})
         assert resp.status_code == 303
         # Critical: the redirect must NOT use /by-slug/.../v/N for MEMORY rows.
-        assert resp.headers["location"] == f"/artifacts/{new_id}"
-        assert "by-slug" not in resp.headers["location"]
+        assert resp.headers["location"] == f"/a/{new_id}"
+        assert "/s/" not in resp.headers["location"]
 
     def test_edit_post_forwards_provenance_metadata(self, client: TestClient) -> None:
         # Edits must persist (a) the source version we forked from and
@@ -987,50 +995,6 @@ class TestEdit:
         assert "(number assigned by the server)" in resp.text
 
 
-class TestVersionsPage:
-    """Versions listing page (separate from individual artifact edit gating).
-
-    The Edit column is conditional on whether the slug is editable at all
-    — agent-scope MEMORY, foreign user-scope MEMORY, HTML-typed artifacts,
-    CODE_REVIEW/OTHER pointer types — instead of rendering rows that
-    always 403 on click.
-    """
-
-    def test_edit_column_hidden_for_agent_scope_memory(self, client: TestClient) -> None:
-        _sign_in(client)
-        agent_meta = _meta(
-            type="MEMORY",
-            named_slug="agent-notes",
-            version=1,
-            memory_scope="agent",
-            memory_scope_subject="some-agent",
-        )
-        with patch(
-            "artifact_viewer.ahs_client.list_versions",
-            new=AsyncMock(return_value={"named_slug": "agent-notes", "versions": [agent_meta]}),
-        ):
-            resp = client.get("/artifacts/by-slug/agent-notes/versions")
-        assert resp.status_code == 200
-        # Slug rendered, but no per-row edit links.
-        assert "agent-notes" in resp.text
-        assert "Edit →" not in resp.text
-
-    def test_edit_column_visible_for_text_slug(self, client: TestClient) -> None:
-        _sign_in(client)
-        with patch(
-            "artifact_viewer.ahs_client.list_versions",
-            new=AsyncMock(
-                return_value={
-                    "named_slug": "doc",
-                    "versions": [_meta(version=1, named_slug="doc"), _meta(version=2, named_slug="doc")],
-                }
-            ),
-        ):
-            resp = client.get("/artifacts/by-slug/doc/versions")
-        assert resp.status_code == 200
-        assert "Edit →" in resp.text
-
-
 class TestResolveNextVersionHttpxError:
     """Direct cover for the broadened exception catch in _resolve_next_version.
 
@@ -1180,7 +1144,7 @@ class TestRawHtml:
         ):
             resp = client.get(f"/artifacts/{ART_ID}/raw")
         assert resp.status_code == 303
-        assert resp.headers["location"] == f"/artifacts/{ART_ID}"
+        assert resp.headers["location"] == f"/a/{ART_ID}"
 
     def test_refuses_image_artifact(self, client: TestClient) -> None:
         _sign_in(client)
@@ -1190,7 +1154,7 @@ class TestRawHtml:
         ):
             resp = client.get(f"/artifacts/{ART_ID}/raw")
         assert resp.status_code == 303
-        assert resp.headers["location"] == f"/artifacts/{ART_ID}"
+        assert resp.headers["location"] == f"/a/{ART_ID}"
 
     def test_handles_charset_suffix_on_content_type(self, client: TestClient) -> None:
         # ``text/html; charset=utf-8`` is the common form upstream — the
@@ -1215,6 +1179,58 @@ class TestRawHtml:
             resp = client.get(f"/artifacts/{ART_ID}/raw")
         assert resp.status_code == 404
         assert "Upstream error" in resp.text
+
+
+class TestFullPageView:
+    """``?v=full`` — a nicer-styled alias for the sandboxed /raw view. It must
+    carry the *exact* same protection (a CSP ``sandbox`` directive, no JS, no
+    same-origin) and work for every doc type."""
+
+    def _assert_sandboxed(self, resp: httpx.Response) -> None:
+        from artifact_viewer import render
+
+        assert resp.headers["content-security-policy"] == (
+            f"sandbox {render.HTML_SANDBOX_FLAGS}; frame-ancestors 'none'"
+        )
+        assert resp.headers.get("x-frame-options") == "DENY"
+        assert resp.headers.get("x-content-type-options") == "nosniff"
+        assert resp.headers.get("referrer-policy") == "no-referrer"
+        assert resp.headers.get("cache-control") == "private, no-store"
+
+    def test_html_matches_raw_protection(self, client: TestClient) -> None:
+        _sign_in(client)
+        with (
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_meta",
+                new=AsyncMock(return_value=_meta(content_type="text/html")),
+            ),
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_content",
+                new=AsyncMock(return_value=(b"<h1>Hello</h1>", "text/html; charset=utf-8")),
+            ),
+        ):
+            full = client.get(f"/a/{ART_ID}?v=full")
+            raw = client.get(f"/a/{ART_ID}/raw")
+        assert full.status_code == 200
+        assert full.content == b"<h1>Hello</h1>"
+        self._assert_sandboxed(full)
+        for h in ("content-security-policy", "x-frame-options", "cache-control"):
+            assert full.headers.get(h) == raw.headers.get(h)
+
+    def test_markdown_rendered_and_sandboxed(self, client: TestClient) -> None:
+        _sign_in(client)
+        with (
+            patch("artifact_viewer.ahs_client.get_artifact_meta", new=AsyncMock(return_value=_meta())),
+            patch(
+                "artifact_viewer.ahs_client.get_artifact_content",
+                new=AsyncMock(return_value=(b"# Heading", "text/markdown")),
+            ),
+        ):
+            resp = client.get(f"/a/{ART_ID}?v=full")
+        assert resp.status_code == 200
+        assert "<h1>Heading</h1>" in resp.text
+        assert "full-artifact-body" in resp.text
+        self._assert_sandboxed(resp)
 
 
 # ---------------------------------------------------------------------------

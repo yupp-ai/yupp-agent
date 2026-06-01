@@ -16,8 +16,24 @@
 })();
 </script>
 {% endblock %}
+{# Merge the global nav bar into this page's single compact top box. #}
+{% block topbar %}{% endblock %}
 {% block content %}
 <article class="artifact">
+  <div class="artifact-topbox">
+    <div class="abox-nav">
+        <a href="/" class="brand">Artifact Viewer</a>
+        <form class="search" action="/" method="get">
+            <input type="search" name="q" placeholder="Search title, slug, label:triage…" autocomplete="off">
+        </form>
+        <div class="user">
+            {% if user and user.email %}
+                {% if user.picture %}<img class="avatar" src="{{ user.picture }}" alt="">{% endif %}
+                <span class="user-email">{{ user.email }}</span>
+                <a href="/auth/logout" class="logout">Sign out</a>
+            {% endif %}
+        </div>
+    </div>
     <header class="artifact-header">
         <div class="artifact-header-main">
             <h1>{{ meta.title or '(untitled)' }}</h1>
@@ -51,34 +67,27 @@
                     </a>
                 </dd>
             {% endif %}
-            <dt>Status</dt>
-            <dd>
-                {% if meta.metadata and meta.metadata.is_archived %}
-                    <span class="tag archived">archived</span>
-                {% else %}
-                    <span class="tag active">active</span>
-                {% endif %}
-            </dd>
         </dl>
 
         {#- Controls live inside the shaded header so the whole upper block is
             one surface. The header is a stable-width column (see .artifact-header
-            CSS) — only the body below responds to the width toggle. JS toggles a
-            class on <html> and persists the choice; head_extra re-applies it on
-            load to avoid a flash. -#}
+            CSS) — only the body below responds to the width toggle. Full Page +
+            Width sit on the left, Labels on the right. -#}
         <div class="artifact-controls width-toggle" role="group" aria-label="View controls">
-            <a class="width-toggle-btn full-page-btn"
-               href="/a/{{ meta.artifact_id }}?v=full"
-               title="Open only the artifact content in a full page">
-                Full Page View
-            </a>
-            <span class="width-toggle-label muted small">Width</span>
-            <button type="button" class="width-toggle-btn" data-width="narrow" aria-pressed="false">Narrow</button>
-            <button type="button" class="width-toggle-btn is-active" data-width="medium" aria-pressed="true">Medium</button>
-            <button type="button" class="width-toggle-btn" data-width="wide" aria-pressed="false">Wide</button>
+            <div class="controls-left">
+                <a class="width-toggle-btn full-page-btn"
+                   href="/a/{{ meta.artifact_id }}?v=full"
+                   title="Open only the artifact content in a full page">
+                    Full Page View
+                </a>
+                <span class="width-toggle-label muted small">Width</span>
+                <button type="button" class="width-toggle-btn" data-width="narrow" aria-pressed="false">Narrow</button>
+                <button type="button" class="width-toggle-btn is-active" data-width="medium" aria-pressed="true">Medium</button>
+                <button type="button" class="width-toggle-btn" data-width="wide" aria-pressed="false">Wide</button>
+            </div>
             <form class="label-editor" method="post" action="/a/{{ meta.artifact_id }}/labels">
-                <input type="hidden" name="labels" value="{{ labels|join(',') }}">
                 <span class="label-editor-label muted small">Labels</span>
+                <input type="hidden" name="labels" value="{{ labels|join(',') }}">
                 <span class="label-chip-row" data-label-list>
                     {% for label in labels %}
                         <button class="label-chip label-chip-edit" type="button" data-label="{{ label }}" title="Remove label">{{ label }} ×</button>
@@ -89,6 +98,7 @@
             </form>
         </div>
     </header>
+  </div>
 
     <section class="artifact-body artifact-body-{{ display_mode }}">
         {{ body_html|safe }}

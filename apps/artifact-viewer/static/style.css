@@ -139,11 +139,9 @@ pre.plain { white-space: pre-wrap; }
    wider than narrow) / "wide" (full viewport). The toggle is a class JS sets
    on <html>; head_extra re-applies it before paint to avoid a flash. */
 .main:has(.artifact) { max-width: none; }
-.artifact-header,
-body:has(.artifact) .topbar-inner {
+.artifact-topbox {
     max-width: 912px;
-    margin-left: auto;
-    margin-right: auto;
+    margin: 0 auto 24px;
 }
 .artifact-body { max-width: 912px; margin-left: auto; margin-right: auto; }
 html.artifact-width-narrow .artifact-body { max-width: 760px; }
@@ -256,10 +254,17 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
    standalone-row spacing / right alignment. */
 .artifact-controls {
     grid-column: 1 / -1;
-    justify-content: flex-start;
+    justify-content: space-between;
+    flex-wrap: nowrap;
     margin: 2px 0 0;
     padding-top: 10px;
     border-top: 1px solid var(--border);
+}
+.controls-left {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
 }
 
 /* Home merged search + filter bar (one auto-applying row). The search input
@@ -401,16 +406,38 @@ a.label-chip:hover {
 
 /* --- Artifact page --- */
 
+/* The single compact top box: nav row + metadata + controls, one surface. */
+.artifact-topbox {
+    background: var(--bg-alt);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 16px;
+}
+.abox-nav {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding-bottom: 10px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+}
+.abox-nav .brand { font-weight: 600; font-size: 15px; white-space: nowrap; }
+.abox-nav .search { flex: 1; }
+.abox-nav .search input {
+    width: 100%;
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--fg);
+    font: inherit;
+}
+
 .artifact-header {
     display: grid;
     grid-template-columns: 6fr 4fr;
     gap: 20px;
     align-items: start;
-    margin-bottom: 24px;
-    padding: 12px 16px;
-    background: var(--bg-alt);
-    border: 1px solid var(--border);
-    border-radius: 6px;
 }
 
 .artifact-header-main {
