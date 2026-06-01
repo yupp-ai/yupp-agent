@@ -6,8 +6,11 @@ self-contained sub-package under ``tools/ahs-memory/`` with its own
 ``pyproject.toml`` — it does not import from the AHS monorepo, so we keep
 a byte-for-byte copy of the slug rules here. Both the AHS module and this
 file rely on the same regex, the same character class and the same
-segment-cleanup pipeline; keep them in sync (a regression test asserts
-the parity).
+segment-cleanup pipeline; keep them in sync. ``tests/test_slug.py``
+(``test_parity_with_canonical_memory_slug``) loads the canonical module
+off disk and asserts both copies agree across a fixture battery, so
+editing one without the other trips a test (the check is skipped only in a
+standalone checkout where the canonical module isn't present).
 """
 
 from __future__ import annotations

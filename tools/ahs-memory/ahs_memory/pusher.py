@@ -62,6 +62,12 @@ PushStatus = Literal[
 DiffStatus = Literal["local-only", "remote-only", "changed", "unchanged"]
 """Allowed statuses for one row in a 3-way diff between local + remote."""
 
+# Substring the server embeds in its "append to an unknown slug" 400. We key
+# the create-vs-append retry below off it. Mirrors ``SLUG_UNKNOWN_HINT`` in
+# ``ypl/agent_harness_service/artifact_store.py``; that module has a regression
+# test pinning the wording, so this duplicated literal can't silently drift.
+_SLUG_UNKNOWN_HINT = "does not exist yet"
+
 
 @dataclass(frozen=True)
 class PushOutcome:
@@ -97,14 +103,16 @@ def _sha256(text: str) -> str:
 def _title_from(rel_path: str) -> str:
     """Default artifact title for a markdown file.
 
-    The artifact viewer renders the title prominently; using the file
-    stem keeps imported memories scannable in the artifact list without
-    needing to crack the file open.
+    The artifact viewer renders the title prominently. We use the full
+    relative path (minus a trailing ``.md``) rather than just the file
+    stem so the title lines up with the slug column and stays unique:
+    a bare stem collapses every ``README.md`` across the tree to the same
+    ``README`` title, and loses the directory context for nested files.
     """
-    stem = rel_path.rsplit("/", 1)[-1]
-    if stem.lower().endswith(".md"):
-        stem = stem[:-3]
-    return stem or rel_path
+    title = rel_path.replace("\\", "/")
+    if title.lower().endswith(".md"):
+        title = title[:-3]
+    return title or rel_path
 
 
 def push_workspace(
@@ -217,7 +225,7 @@ def _push_one(
             create_new_slug=False,
         )
     except AHSAPIError as exc:
-        if exc.status_code == 400 and "does not exist yet" in exc.detail:
+        if exc.status_code == 400 and _SLUG_UNKNOWN_HINT in exc.detail:
             # Append failed because the slug is unknown — retry as a fresh slug.
             try:
                 data = client.create_memory_artifact(

@@ -234,10 +234,7 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 2
-    except FileNotFoundError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
-    except NotADirectoryError as exc:
+    except (FileNotFoundError, NotADirectoryError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     except AHSAPIError as exc:

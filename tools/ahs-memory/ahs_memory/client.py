@@ -141,15 +141,27 @@ class AHSMemoryClient:
         )
 
     def fetch_inline_content(self, artifact_id: str) -> str:
-        """Fetch raw body bytes for an artifact id and decode as UTF-8.
+        """Fetch raw body bytes for an artifact id and decode as strict UTF-8.
 
-        Used by ``--skip-unchanged`` to compare server content against the
-        local file.
+        Used by ``--skip-unchanged`` and ``diff`` to compare server content
+        against the local file. We decode strictly (symmetric with the
+        strict ``Path.read_text(encoding="utf-8")`` on the local side):
+        MEMORY rows are stored as ``str`` server-side, so valid UTF-8 is the
+        contract. A row that fails to decode is a real corruption we surface
+        as an :class:`AHSAPIError` rather than papering over with ``\\ufffd``
+        replacement chars — callers already absorb ``AHSAPIError`` into an
+        ``error`` outcome.
         """
         resp = self._http.get(f"/ahs/artifacts/{artifact_id}")
         if resp.status_code >= 400:
             self._raise_for(resp)
-        return resp.content.decode("utf-8", errors="replace")
+        try:
+            return resp.content.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise AHSAPIError(
+                resp.status_code,
+                f"artifact {artifact_id} body is not valid UTF-8: {exc}",
+            ) from exc
 
     def create_memory_artifact(
         self,

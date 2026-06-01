@@ -22,7 +22,7 @@ from pathlib import Path
 
 import httpx
 import pytest
-from ahs_memory.client import AHSAPIError, AHSMemoryClient
+from ahs_memory.client import AHSMemoryClient
 from ahs_memory.pusher import push_workspace
 from ahs_memory.walker import walk_workspace
 
@@ -116,4 +116,7 @@ def test_invalid_user_id_returns_clear_error(tmp_path: Path) -> None:
     # Either a 403 (refused) or 404 (no such user) is acceptable — the
     # important thing is the outcome is ``error`` with a meaningful detail.
     assert outcomes[0].status == "error"
-    assert isinstance(AHSAPIError, type)  # sanity import touch
+    # The whole point of this case: the failure carries a meaningful,
+    # operator-readable detail (the server's 403/404 message) rather than an
+    # empty string.
+    assert outcomes[0].detail

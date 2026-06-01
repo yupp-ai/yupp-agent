@@ -148,7 +148,6 @@ def _classify(slug: str, size_bytes: int, max_bytes: int) -> tuple[str, tuple[st
     The tags surface in tables to highlight rows; the skip_reason is the
     operator-visible string explaining why the row wouldn't push.
     """
-    tags: list[str] = []
     if not slug:
         return ("slug-empty (path normalizes to nothing)", ("unsafe",))
     if not is_safe_slug(slug):
@@ -157,4 +156,4 @@ def _classify(slug: str, size_bytes: int, max_bytes: int) -> tuple[str, tuple[st
         return ("slug-unsafe (failed validator)", ("unsafe",))
     if size_bytes > max_bytes:
         return (f"oversize ({size_bytes} > {max_bytes} bytes)", ("oversize",))
-    return ("", tuple(tags))
+    return ("", ())
