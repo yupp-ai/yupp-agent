@@ -1,0 +1,1 @@
+Plain-text file — should be skipped because it's not .md.
