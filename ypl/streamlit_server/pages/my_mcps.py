@@ -5,7 +5,6 @@ import os
 import uuid
 from datetime import UTC, datetime
 
-import sqlalchemy as sa
 import streamlit as st
 from sqlmodel import col, select
 from ypl.backend.db import get_async_session, get_async_session_read_replica

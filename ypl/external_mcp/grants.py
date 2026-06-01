@@ -21,7 +21,6 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import sqlalchemy as sa
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -269,9 +268,7 @@ async def resolve_bearer(
     # OAUTH_OBO path
     if not grant.access_token_enc:
         return None
-    needs_refresh = (
-        grant.expires_at is not None and grant.expires_at - datetime.now(UTC) < _REFRESH_SAFETY_WINDOW
-    )
+    needs_refresh = grant.expires_at is not None and grant.expires_at - datetime.now(UTC) < _REFRESH_SAFETY_WINDOW
     if needs_refresh:
         secrets = await session.get(McpServerSecrets, server.mcp_server_id)
         client_secret_enc = secrets.oauth_client_secret_enc if secrets else None
