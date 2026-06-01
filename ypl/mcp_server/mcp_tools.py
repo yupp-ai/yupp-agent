@@ -33,6 +33,7 @@ import ypl.mcp_server.tools.project_tasks
 import ypl.mcp_server.tools.redis
 import ypl.mcp_server.tools.security_incidents
 import ypl.mcp_server.tools.sentry
+import ypl.mcp_server.tools.skill_artifacts
 import ypl.mcp_server.tools.slack
 import ypl.mcp_server.tools.twitter
 from ypl.mcp_server.core import mcp_server
