@@ -3,16 +3,19 @@
 Mount layout::
 
     GET /                                → home (search + recent)
-    GET /search?q=...                    → search results
-    GET /artifacts/{uuid}                → rendered artifact
-    GET /artifacts/{uuid}/raw            → full-page sandboxed HTML (text/html only)
-    GET /artifacts/{uuid}/download       → download raw body as a file
-    GET /artifacts/{uuid}/edit           → full-screen edit form (creates a new version on POST)
-    POST /artifacts/{uuid}/edit          → submit new content; redirects to the new version
-    GET /artifacts/{uuid}/attachments/{filename} → stream attachment
-    GET /artifacts/by-slug/{slug}        → latest version by slug
-    GET /artifacts/by-slug/{slug}/v/{N}  → pinned version
-    GET /artifacts/by-slug/{slug}/versions → version list
+    GET /search?q=...                    → search results (supports label: / slug: tokens)
+    GET /artifacts/a/{uuid}              → rendered artifact (a = by id)
+    GET /artifacts/a/{uuid}/raw          → full-page sandboxed HTML (text/html only)
+    GET /artifacts/a/{uuid}/download     → download raw body as a file
+    GET /artifacts/a/{uuid}/edit         → full-screen edit form (creates a new version on POST)
+    POST /artifacts/a/{uuid}/edit        → submit new content; redirects to the new version
+    GET /artifacts/a/{uuid}/attachments/{filename} → stream attachment
+    GET /artifacts/s/{slug}              → latest version by slug (s = by slug)
+    GET /artifacts/s/{slug}/{N}          → pinned version
+
+    A slug's full history is a ``slug:{slug}`` search — there is no dedicated
+    versions page. Legacy /artifacts/{uuid} and /artifacts/by-slug/... paths
+    still resolve (the old /versions URL 303-redirects to the slug: search).
 
     GET /auth/{login,callback,logout,error}
     GET /healthz
@@ -26,6 +29,7 @@ import os
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from starlette.applications import Starlette
@@ -68,6 +72,7 @@ _DEFAULT_ARTIFACT_TYPE = "TEXT"
 
 # YYYY-MM-DD — what the date inputs in the filter row produce.
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_LABEL_TOKEN_RE = re.compile(r"(?:^|\s)label:([^\s]+)", re.IGNORECASE)
 
 
 def _logger() -> logging.Logger:
@@ -97,6 +102,73 @@ def _normalize_date(raw: str | None, *, end_of_day: bool) -> str | None:
             return None
         return datetime.combine(d + timedelta(days=1), datetime.min.time(), tzinfo=UTC).isoformat()
     return f"{raw}T00:00:00+00:00"
+
+
+def _normalize_labels(labels: list[str] | str | None) -> list[str]:
+    if labels is None:
+        return []
+    raw_labels = [part.strip() for part in labels.split(",")] if isinstance(labels, str) else labels
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_labels:
+        label = raw.strip().removeprefix("#").lower()
+        if not label or not re.match(r"^[a-z0-9][a-z0-9._-]{0,62}$", label):
+            continue
+        if label not in seen:
+            normalized.append(label)
+            seen.add(label)
+    return normalized
+
+
+def _extract_label_terms(query: str, explicit: list[str] | None = None) -> tuple[str, list[str]]:
+    labels = list(explicit or [])
+    labels.extend(match.group(1) for match in _LABEL_TOKEN_RE.finditer(query))
+    text_query = _LABEL_TOKEN_RE.sub(" ", query)
+    text_query = re.sub(r"\s+", " ", text_query).strip()
+    return text_query, _normalize_labels(labels)
+
+
+def _full_page_headers() -> dict[str, str]:
+    """Response headers that pin a full-page artifact to the same sandboxed
+    posture as the in-page iframe.
+
+    Shared by the ``/raw`` route and the ``?v=full`` query-param alias so the
+    two URL styles are byte-for-byte identical in protection: a CSP ``sandbox``
+    directive (no ``allow-scripts`` / ``allow-same-origin``) gives the
+    top-level document an opaque origin with no JS and no access to the
+    viewer's cookies, plus defense-in-depth framing / sniffing / referrer /
+    caching headers. See ``raw_html`` for the full rationale.
+    """
+    return {
+        "Content-Security-Policy": f"sandbox {render.HTML_SANDBOX_FLAGS}; frame-ancestors 'none'",
+        "X-Frame-Options": "DENY",
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "no-referrer",
+        "Cache-Control": "private, no-store",
+    }
+
+
+def _full_page_response(artifact_id: str, content_bytes: bytes, content_str: str, content_type: str) -> Response:
+    """Build the sandboxed full-page response for an HTML or markdown artifact.
+
+    HTML is served as-is (already the raw agent-authored body); markdown is
+    rendered to the same bleach-sanitized fragment as the normal view, wrapped
+    in a minimal chrome-free shell. Both carry the identical protective headers
+    from :func:`_full_page_headers`, so ``?v=full`` is exactly ``/raw`` with a
+    nicer URL.
+    """
+    if content_type.split(";", 1)[0].strip().lower() == "text/html":
+        return Response(content=content_bytes, media_type="text/html; charset=utf-8", headers=_full_page_headers())
+    body_html, display_mode = render.render_artifact_body(content_str, content_type, artifact_id)
+    page = (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        "<link rel='stylesheet' href='/static/style.css'>"
+        "<title></title></head><body class='full-artifact-body'>"
+        f"<main class='artifact-body artifact-body-{display_mode}'>{body_html}</main>"
+        "</body></html>"
+    )
+    return Response(content=page, media_type="text/html; charset=utf-8", headers=_full_page_headers())
 
 
 # ---------------------------------------------------------------------------
@@ -153,28 +225,42 @@ async def home(request: Request) -> Response:
     # Default-ON when signed in. If we have no user_id (rare — would mean
     # the session pre-dates the user_id stamping) we can't filter, so default
     # to OFF rather than send an empty creator_user_id and match nothing.
+    # Default OFF: the landing page shows ALL docs (not just the viewer's own).
+    # "From me" is an opt-in filter the user ticks; it only engages when the
+    # query param is explicitly "1".
     raw_from_me = request.query_params.get("from_me")
-    from_me = bool(user["user_id"]) if raw_from_me is None else raw_from_me.strip() == "1"
+    from_me = raw_from_me is not None and raw_from_me.strip() == "1"
     creator_user_id = user["user_id"] if from_me and user["user_id"] else None
+    explicit_creator_user_id = (request.query_params.get("creator_user_id") or "").strip() or None
+    if explicit_creator_user_id:
+        creator_user_id = explicit_creator_user_id
+        from_me = bool(user["user_id"] and explicit_creator_user_id == user["user_id"])
     creator_agent_id = (request.query_params.get("creator_agent_id") or "").strip() or None
     created_after = (request.query_params.get("created_after") or "").strip() or None
     created_before = (request.query_params.get("created_before") or "").strip() or None
+    query = (request.query_params.get("q") or "").strip()
+    text_query, label_terms = _extract_label_terms(query)
     limit = _int_query(request, "limit", HOME_PAGE_SIZE, cap=200)
     if limit <= 0:
         limit = HOME_PAGE_SIZE
     offset = _int_query(request, "offset", 0)
 
     try:
-        recent = await ahs_client.list_recent(
-            limit=limit,
-            offset=offset,
-            artifact_type=artifact_type,
-            creator_user_id=creator_user_id,
-            creator_agent_id=creator_agent_id,
-            created_after=_normalize_date(created_after, end_of_day=False),
-            created_before=_normalize_date(created_before, end_of_day=True),
-            include_total=True,
-        )
+        if query:
+            recent = await ahs_client.search(query, limit=limit, offset=offset, latest_per_slug=True)
+        else:
+            recent = await ahs_client.list_recent(
+                limit=limit,
+                offset=offset,
+                artifact_type=artifact_type,
+                creator_user_id=creator_user_id,
+                creator_agent_id=creator_agent_id,
+                created_after=_normalize_date(created_after, end_of_day=False),
+                created_before=_normalize_date(created_before, end_of_day=True),
+                labels=label_terms,
+                latest_per_slug=True,
+                include_total=True,
+            )
     except AHSError as exc:
         return _error_page(request, exc, status_code=502)
 
@@ -196,10 +282,13 @@ async def home(request: Request) -> Response:
         {
             "user": user,
             "artifacts": artifacts,
-            "query": "",
+            "query": query,
+            "label_terms": label_terms,
+            "text_query": text_query,
             "filters": {
                 "type": artifact_type or "",
                 "from_me": from_me,
+                "creator_user_id": explicit_creator_user_id or "",
                 "creator_agent_id": creator_agent_id or "",
                 "created_after": created_after or "",
                 "created_before": created_before or "",
@@ -225,7 +314,7 @@ async def search_page(request: Request) -> Response:
     results: list[dict[str, Any]] = []
     if query:
         try:
-            data = await ahs_client.search(query, limit=limit, offset=offset)
+            data = await ahs_client.search(query, limit=limit, offset=offset, latest_per_slug=True)
         except AHSError as exc:
             return _error_page(request, exc, status_code=502)
         results = data.get("artifacts", [])
@@ -240,6 +329,23 @@ async def search_page(request: Request) -> Response:
             "offset": offset,
         },
     )
+
+
+async def update_labels(request: Request) -> Response:
+    artifact_id = request.path_params["artifact_id"]
+    user = _current_user(request)
+    form = await request.form()
+    raw_labels = form.get("labels")
+    labels = _normalize_labels(raw_labels if isinstance(raw_labels, str) else "")
+    try:
+        meta = await ahs_client.update_labels(
+            artifact_id=artifact_id,
+            labels=labels,
+            user_id=user.get("user_id") or None,
+        )
+    except AHSError as exc:
+        return _error_page(request, exc)
+    return JSONResponse({"ok": True, "labels": meta.get("labels", [])})
 
 
 async def artifact_by_id(request: Request) -> Response:
@@ -266,30 +372,16 @@ async def artifact_by_slug_version(request: Request) -> Response:
     return await _render_artifact(request, meta["artifact_id"], meta=meta)
 
 
-async def versions_page(request: Request) -> Response:
+async def slug_versions_redirect(request: Request) -> Response:
+    """Legacy ``/artifacts/by-slug/{slug}/versions`` → a ``slug:`` search.
+
+    The dedicated versions page was retired: a slug's full history is now just
+    a search-result listing for ``slug:{slug}`` (the AHS search route returns
+    every version, newest first, when a ``slug:`` token is present). Clicking a
+    slug anywhere in the UI lands here.
+    """
     slug = request.path_params["slug"]
-    try:
-        data = await ahs_client.list_versions(slug)
-    except AHSError as exc:
-        return _error_page(request, exc)
-    versions = data.get("versions", []) or []
-    user = _current_user(request)
-    # Editability is a property of the slug (type, content_type, scope/subject
-    # are all uniform across versions of the same slug), not of any individual
-    # version, so we compute the gate once and either render the Edit column
-    # for every row or omit it entirely. That keeps non-editable slugs (e.g.
-    # agent-scope MEMORY) from showing per-row Edit links that always 403.
-    can_edit_slug = bool(versions) and _can_edit(versions[0], user)
-    return templates.TemplateResponse(
-        request,
-        "versions.html",
-        {
-            "user": user,
-            "slug": slug,
-            "versions": versions,
-            "can_edit_slug": can_edit_slug,
-        },
-    )
+    return RedirectResponse(f"/search?q=slug:{quote(slug, safe='')}", status_code=303)
 
 
 async def attachment(request: Request) -> Response:
@@ -339,31 +431,9 @@ async def raw_html(request: Request) -> Response:
         # rendered page rather than showing the viewer's error template —
         # the user's original tab still has the artifact open and a 404
         # in the new tab would be confusing UX with no extra signal.
-        return RedirectResponse(f"/artifacts/{artifact_id}", status_code=303)
-    return Response(
-        content=data,
-        media_type="text/html; charset=utf-8",
-        headers={
-            # Treat the document as sandboxed at the top level. Mirrors
-            # the iframe's ``sandbox`` flags so security posture matches
-            # (no JS, no same-origin storage / cookies).
-            "Content-Security-Policy": (f"sandbox {render.HTML_SANDBOX_FLAGS}; frame-ancestors 'none'"),
-            # Belt-and-suspenders: legacy framing protection in case a
-            # client somehow ignores the CSP frame-ancestors directive.
-            "X-Frame-Options": "DENY",
-            # Prevent the browser from second-guessing the declared MIME.
-            "X-Content-Type-Options": "nosniff",
-            # Don't leak the artifact URL out through outbound clicks.
-            "Referrer-Policy": "no-referrer",
-            # The body is per-user-authenticated agent content at a stable
-            # URL — without an explicit directive, browsers / shared proxies
-            # / any CDN in front of the viewer can keep the response and
-            # replay it to another signed-in user. ``private, no-store``
-            # forbids both shared and disk caching so the auth gate stays
-            # the sole source of truth for who sees what.
-            "Cache-Control": "private, no-store",
-        },
-    )
+        return RedirectResponse(f"/artifacts/a/{artifact_id}", status_code=303)
+    # Same sandboxed posture as the ``?v=full`` alias — see ``_full_page_headers``.
+    return Response(content=data, media_type="text/html; charset=utf-8", headers=_full_page_headers())
 
 
 async def download(request: Request) -> Response:
@@ -526,6 +596,7 @@ async def edit_artifact_post(request: Request) -> Response:
             memory_scope_subject=meta.get("memory_scope_subject") if is_memory else None,
             creator_user_id=user.get("user_id") or None,
             extra_metadata=edit_metadata,
+            labels=meta.get("labels") or [],
         )
     except AHSError as exc:
         return _error_page(request, exc)
@@ -540,15 +611,15 @@ async def edit_artifact_post(request: Request) -> Response:
     # like the edit failed. The by-id route doesn't share that pitfall.
     new_id = created.get("artifact_id") or artifact_id
     if is_memory:
-        return RedirectResponse(f"/artifacts/{new_id}", status_code=303)
+        return RedirectResponse(f"/artifacts/a/{new_id}", status_code=303)
     new_slug = created.get("named_slug") or meta.get("named_slug")
     new_version = created.get("version")
     if new_slug and new_version is not None:
-        return RedirectResponse(f"/artifacts/by-slug/{new_slug}/v/{new_version}", status_code=303)
+        return RedirectResponse(f"/artifacts/s/{new_slug}/{new_version}", status_code=303)
     # Fallback: by-id. Should be unreachable for slugged artifacts (which
     # is the only kind we allow to edit) but keeps the response well-formed
     # if AHS ever omits the version field.
-    return RedirectResponse(f"/artifacts/{new_id}", status_code=303)
+    return RedirectResponse(f"/artifacts/a/{new_id}", status_code=303)
 
 
 async def _resolve_next_version(meta: dict[str, Any], user: dict[str, str]) -> int | None:
@@ -633,6 +704,8 @@ async def _render_artifact(request: Request, artifact_id: str, *, meta: dict[str
         return _error_page(request, exc)
 
     content_str = content_bytes.decode("utf-8", errors="replace")
+    if (request.query_params.get("v") or "").lower() == "full":
+        return _full_page_response(artifact_id, content_bytes, content_str, content_type)
     body_html, display_mode = render.render_artifact_body(content_str, content_type, artifact_id)
     attachments = (meta.get("metadata") or {}).get("attachments", []) or []
     attach_html = render.attachment_view_html(artifact_id, attachments)
@@ -646,6 +719,7 @@ async def _render_artifact(request: Request, artifact_id: str, *, meta: dict[str
             "display_mode": display_mode,
             "attachments_html": attach_html,
             "can_edit": _can_edit(meta, _current_user(request)),
+            "labels": meta.get("labels") or [],
         },
     )
 
@@ -748,37 +822,30 @@ def build_app() -> Starlette:
     routes = [
         Route("/", home, name="home"),
         Route("/search", search_page, name="search"),
-        Route("/artifacts/{artifact_id}", artifact_by_id, name="artifact"),
-        Route("/artifacts/{artifact_id}/raw", raw_html, name="artifact_raw"),
-        Route("/artifacts/{artifact_id}/download", download, name="artifact_download"),
-        Route(
-            "/artifacts/{artifact_id}/edit",
-            edit_artifact_get,
-            methods=["GET"],
-            name="artifact_edit",
-        ),
-        Route(
-            "/artifacts/{artifact_id}/edit",
-            edit_artifact_post,
-            methods=["POST"],
-            name="artifact_edit_submit",
-        ),
-        Route(
-            "/artifacts/{artifact_id}/attachments/{filename:path}",
-            attachment,
-            name="attachment",
-        ),
-        Route("/artifacts/by-slug/{slug}", artifact_by_slug, name="by_slug"),
-        Route(
-            "/artifacts/by-slug/{slug}/v/{version:int}",
-            artifact_by_slug_version,
-            name="by_slug_version",
-        ),
-        Route(
-            "/artifacts/by-slug/{slug}/versions",
-            versions_page,
-            name="slug_versions",
-        ),
+        # --- Canonical URL scheme: a/{uuid} for a specific row, s/{slug}
+        #     for a slug (latest) and s/{slug}/{version} for a pinned version. ---
+        Route("/artifacts/a/{artifact_id}", artifact_by_id, name="artifact"),
+        Route("/artifacts/a/{artifact_id}/raw", raw_html, name="artifact_raw"),
+        Route("/artifacts/a/{artifact_id}/download", download, name="artifact_download"),
+        Route("/artifacts/a/{artifact_id}/labels", update_labels, methods=["POST"], name="artifact_labels"),
+        Route("/artifacts/a/{artifact_id}/edit", edit_artifact_get, methods=["GET"], name="artifact_edit"),
+        Route("/artifacts/a/{artifact_id}/edit", edit_artifact_post, methods=["POST"], name="artifact_edit_submit"),
+        Route("/artifacts/a/{artifact_id}/attachments/{filename:path}", attachment, name="attachment"),
+        Route("/artifacts/s/{slug}", artifact_by_slug, name="by_slug"),
+        Route("/artifacts/s/{slug}/{version:int}", artifact_by_slug_version, name="by_slug_version"),
+        # --- Legacy paths (pre-2026-06 scheme). Kept so stored ``url`` fields,
+        #     rendered attachment links, and external bookmarks keep resolving.
+        #     The old /versions page is gone — it now redirects to a slug: search. ---
+        Route("/artifacts/by-slug/{slug}/versions", slug_versions_redirect, name="slug_versions"),
+        Route("/artifacts/by-slug/{slug}/v/{version:int}", artifact_by_slug_version, name="by_slug_version_legacy"),
+        Route("/artifacts/by-slug/{slug}", artifact_by_slug, name="by_slug_legacy"),
+        Route("/artifacts/{artifact_id}/raw", raw_html, name="artifact_raw_legacy"),
+        Route("/artifacts/{artifact_id}/download", download, name="artifact_download_legacy"),
+        Route("/artifacts/{artifact_id}/labels", update_labels, methods=["POST"], name="artifact_labels_legacy"),
+        Route("/artifacts/{artifact_id}/edit", edit_artifact_get, methods=["GET"], name="artifact_edit_legacy"),
+        Route("/artifacts/{artifact_id}/edit", edit_artifact_post, methods=["POST"], name="artifact_edit_post_legacy"),
+        Route("/artifacts/{artifact_id}/attachments/{filename:path}", attachment, name="attachment_legacy"),
+        Route("/artifacts/{artifact_id}", artifact_by_id, name="artifact_legacy"),
         Route("/healthz", healthz, name="healthz"),
         *auth_routes,
         Mount("/static", app=StaticFiles(directory=str(_STATIC_DIR)), name="static"),

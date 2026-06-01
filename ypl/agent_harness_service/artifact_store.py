@@ -67,6 +67,7 @@ CONTENT_TYPE_EXTENSIONS: dict[str, str] = {
 
 # URL-safe slug pattern: 1-63 chars, starts alphanumeric, then alphanumeric / - / _.
 _NAMED_SLUG_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$")
+_LABEL_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,62}$")
 
 # Hard limit on content uploaded inline through the creation tools.
 MAX_CONTENT_SIZE_BYTES = 10 * 1024 * 1024  # 10 MiB
@@ -80,6 +81,33 @@ _INVALID_FILENAMES = frozenset({".", "..", ""})
 
 class ArtifactError(Exception):
     """Raised for validation / lifecycle errors in the artifact store."""
+
+
+def normalize_artifact_labels(labels: Any) -> list[str]:
+    """Normalize artifact labels for storage and exact-match search."""
+    if labels is None:
+        return []
+    if isinstance(labels, str):
+        labels = [part.strip() for part in labels.split(",")]
+    if not isinstance(labels, list):
+        raise ArtifactError("labels must be a list of strings")
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in labels:
+        if not isinstance(raw, str):
+            raise ArtifactError("labels must be strings")
+        label = raw.strip().removeprefix("#").lower()
+        if not label:
+            continue
+        if not _LABEL_PATTERN.match(label):
+            raise ArtifactError(
+                "labels must be 1-63 chars, start with a letter or number, "
+                "and contain only lowercase letters, numbers, dots, hyphens, or underscores."
+            )
+        if label not in seen:
+            normalized.append(label)
+            seen.add(label)
+    return normalized
 
 
 def validate_named_slug(slug: str) -> None:
@@ -274,6 +302,31 @@ async def _resolve_next_version(
     return existing_max + 1
 
 
+def _labels_filter(labels: list[str]) -> list[Any]:
+    clauses: list[Any] = []
+    for index, label in enumerate(normalize_artifact_labels(labels)):
+        param = f"label_{index}"
+        clauses.append(text(f"(agent_artifacts.artifact_metadata->'labels') ? :{param}").bindparams(**{param: label}))
+    return clauses
+
+
+def _latest_per_slug_filter() -> Any:
+    return text(
+        "("
+        "agent_artifacts.named_slug IS NULL OR NOT EXISTS ("
+        "SELECT 1 FROM agent_artifacts newer "
+        "WHERE newer.deleted_at IS NULL "
+        "AND newer.named_slug = agent_artifacts.named_slug "
+        "AND newer.artifact_type = agent_artifacts.artifact_type "
+        "AND COALESCE(newer.memory_scope, '') = COALESCE(agent_artifacts.memory_scope, '') "
+        "AND COALESCE(newer.memory_scope_subject, '') = COALESCE(agent_artifacts.memory_scope_subject, '') "
+        "AND (newer.artifact_metadata->>'is_archived') IS DISTINCT FROM 'true' "
+        "AND COALESCE(newer.version, 0) > COALESCE(agent_artifacts.version, 0)"
+        ")"
+        ")"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Create / read / delete
 # ---------------------------------------------------------------------------
@@ -403,6 +456,8 @@ async def create_artifact(
     }
     if extra_metadata:
         metadata.update(extra_metadata)
+    if "labels" in metadata:
+        metadata["labels"] = normalize_artifact_labels(metadata.get("labels"))
 
     artifact = AgentArtifact(
         agent_artifact_id=artifact_id,
@@ -423,6 +478,26 @@ async def create_artifact(
         artifact_metadata=metadata,
     )
     return await _insert_artifact_row(artifact)
+
+
+@retry_db
+async def set_artifact_labels(artifact_id: uuid.UUID, labels: list[str]) -> AgentArtifact | None:
+    """Replace an artifact's labels in metadata without creating a new version."""
+    normalized = normalize_artifact_labels(labels)
+    async with get_async_session() as session:
+        artifact = await session.get(AgentArtifact, artifact_id)
+        if artifact is None or artifact.deleted_at is not None:
+            return None
+        metadata = dict(artifact.artifact_metadata or {})
+        metadata["labels"] = normalized
+        await session.execute(
+            AgentArtifact.__table__.update()  # type: ignore[attr-defined]
+            .where(AgentArtifact.agent_artifact_id == artifact_id)
+            .values(artifact_metadata=metadata)
+        )
+        await session.commit()
+        await session.refresh(artifact)
+        return artifact
 
 
 @retry_db
@@ -626,6 +701,9 @@ async def list_artifacts(
     created_after: datetime | None = None,
     created_before: datetime | None = None,
     include_archived: bool = False,
+    labels: list[str] | None = None,
+    named_slug: str | None = None,
+    latest_per_slug: bool = False,
     limit: int = 50,
     offset: int = 0,
     memory_caller: MemoryCallerContext | None = None,
@@ -634,6 +712,9 @@ async def list_artifacts(
     latest_version_only: bool = False,
 ) -> list[AgentArtifact]:
     """List artifacts matching the given filters.
+
+    ``named_slug`` filters to one slug's rows (all versions, newest first);
+    typically used by the ``slug:`` search token to show a slug's history.
 
     MEMORY-scoped filtering:
 
@@ -672,6 +753,12 @@ async def list_artifacts(
             stmt = stmt.where(col(AgentArtifact.created_at) < created_before)
         if not include_archived:
             stmt = stmt.where(text("(agent_artifacts.artifact_metadata->>'is_archived') IS DISTINCT FROM 'true'"))
+        if named_slug is not None:
+            stmt = stmt.where(AgentArtifact.named_slug == named_slug)
+        for clause in _labels_filter(labels or []):
+            stmt = stmt.where(clause)
+        if latest_per_slug:
+            stmt = stmt.where(_latest_per_slug_filter())
         stmt = apply_memory_filters(
             stmt,
             memory_caller=memory_caller,
@@ -710,6 +797,8 @@ async def count_artifacts(
     created_after: datetime | None = None,
     created_before: datetime | None = None,
     include_archived: bool = False,
+    labels: list[str] | None = None,
+    latest_per_slug: bool = False,
     memory_caller: MemoryCallerContext | None = None,
     memory_scope: str | None = None,
     memory_scope_subject: str | None = None,
@@ -740,6 +829,10 @@ async def count_artifacts(
             stmt = stmt.where(col(AgentArtifact.created_at) < created_before)
         if not include_archived:
             stmt = stmt.where(text("(agent_artifacts.artifact_metadata->>'is_archived') IS DISTINCT FROM 'true'"))
+        for clause in _labels_filter(labels or []):
+            stmt = stmt.where(clause)
+        if latest_per_slug:
+            stmt = stmt.where(_latest_per_slug_filter())
         stmt = apply_memory_filters(
             stmt,
             memory_caller=memory_caller,
@@ -756,6 +849,9 @@ async def search_artifacts(
     *,
     artifact_type: AgentArtifactType | None = None,
     include_archived: bool = False,
+    labels: list[str] | None = None,
+    named_slug: str | None = None,
+    latest_per_slug: bool = False,
     limit: int = 50,
     offset: int = 0,
     memory_caller: MemoryCallerContext | None = None,
@@ -790,6 +886,12 @@ async def search_artifacts(
             stmt = stmt.where(AgentArtifact.artifact_type == artifact_type)
         if not include_archived:
             stmt = stmt.where(text("(agent_artifacts.artifact_metadata->>'is_archived') IS DISTINCT FROM 'true'"))
+        if named_slug is not None:
+            stmt = stmt.where(AgentArtifact.named_slug == named_slug)
+        for clause in _labels_filter(labels or []):
+            stmt = stmt.where(clause)
+        if latest_per_slug:
+            stmt = stmt.where(_latest_per_slug_filter())
         stmt = stmt.where(
             or_(
                 col(AgentArtifact.title).ilike(like_pattern),

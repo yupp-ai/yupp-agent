@@ -11,9 +11,10 @@
                      list view no longer carries a dedicated Link column.
     3. Creator     — creator_user_name when available, falls back to creator_user_id.
     4. Agent       — creator_agent_name when available, falls back to a short agent id.
-    5. Slug / Ver
-    6. Status
-    7. Created     — ISO timestamp in a <time> tag; the toggle below the table
+    5. Labels
+    6. Slug / Ver
+    7. Status
+    8. Created     — ISO timestamp in a <time> tag; the toggle below the table
                      flips the rendered value between local time (default) and UTC.
                      Lives at the end because the timestamp is the lowest-priority
                      piece of metadata for scanning the list.
@@ -74,6 +75,7 @@
             <th role="columnheader">Title</th>
             <th role="columnheader">Creator</th>
             <th role="columnheader">Agent</th>
+            <th role="columnheader">Labels</th>
             <th role="columnheader">Slug / Version</th>
             <th role="columnheader">Status</th>
             <th role="columnheader">
@@ -110,16 +112,29 @@
                 <span class="type-emoji" role="img" aria-label="{{ tmeta.label }}">{{ tmeta.emoji }}</span>
             </td>
             <td class="col-title" role="cell">
-                <a href="/artifacts/{{ a.artifact_id }}">
-                    {{ display_title }}
-                </a>
+                {#- Prefer the human-readable slug+version URL when the artifact
+                    has a slug; the UUID stays reachable via the ID row on the
+                    artifact page itself. -#}
+                {% if a.named_slug and a.version is not none %}
+                    <a href="/artifacts/s/{{ a.named_slug }}/{{ a.version }}">
+                        {{ display_title }}
+                    </a>
+                {% elif a.named_slug %}
+                    <a href="/artifacts/s/{{ a.named_slug }}">
+                        {{ display_title }}
+                    </a>
+                {% else %}
+                    <a href="/artifacts/a/{{ a.artifact_id }}">
+                        {{ display_title }}
+                    </a>
+                {% endif %}
             </td>
             <td class="col-creator" role="cell">
                 <span class="cell-label">Creator: </span>
                 {% if a.creator_user_name %}
-                    {{ a.creator_user_name }}
+                    <a href="/?creator_user_id={{ a.creator_user_id|urlencode }}&from_me=0">{{ a.creator_user_name }}</a>
                 {% elif a.creator_user_id %}
-                    <span class="mono muted">{{ a.creator_user_id }}</span>
+                    <a class="mono muted" href="/?creator_user_id={{ a.creator_user_id|urlencode }}&from_me=0">{{ a.creator_user_id }}</a>
                 {% else %}
                     <span class="muted">—</span>
                 {% endif %}
@@ -127,9 +142,21 @@
             <td class="col-agent" role="cell">
                 <span class="cell-label">Agent: </span>
                 {% if a.creator_agent_name %}
-                    {{ a.creator_agent_name }}
+                    <a href="/?creator_agent_id={{ a.creator_agent_id }}&from_me=0">{{ a.creator_agent_name }}</a>
                 {% elif a.creator_agent_id %}
-                    <span class="mono muted">{{ a.creator_agent_id|string|truncate(8, true, '') }}</span>
+                    <a class="mono muted" href="/?creator_agent_id={{ a.creator_agent_id }}&from_me=0">{{ a.creator_agent_id|string|truncate(8, true, '') }}</a>
+                {% else %}
+                    <span class="muted">—</span>
+                {% endif %}
+            </td>
+            <td class="col-labels" role="cell">
+                <span class="cell-label">Labels: </span>
+                {% if a.labels %}
+                    <span class="label-chip-row">
+                    {% for label in a.labels %}
+                        <a class="label-chip label-chip-table" href="/?q=label:{{ label|urlencode }}">{{ label }}</a>
+                    {% endfor %}
+                    </span>
                 {% else %}
                     <span class="muted">—</span>
                 {% endif %}
@@ -137,8 +164,12 @@
             <td class="col-slug" role="cell">
                 <span class="cell-label">Slug: </span>
                 {% if a.named_slug %}
-                    <a href="/artifacts/by-slug/{{ a.named_slug }}">{{ a.named_slug }}</a>
-                    {% if a.version is not none %}<span class="mono">v{{ a.version }}</span>{% endif %}
+                    {#- Slug → all versions (a slug: search). Version pill →
+                        that specific version's doc. -#}
+                    <a href="/search?q=slug:{{ a.named_slug|urlencode }}" title="Show all versions of this slug">{{ a.named_slug }}</a>
+                    {% if a.version is not none %}
+                        <a class="mono" href="/artifacts/s/{{ a.named_slug }}/{{ a.version }}" title="Open this version">v{{ a.version }}</a>
+                    {% endif %}
                 {% else %}
                     <span class="muted">—</span>
                 {% endif %}
@@ -174,7 +205,17 @@
     var STORAGE_KEY = 'artifactTimeMode';
     function pad(n) { return n < 10 ? '0' + n : '' + n; }
     function formatLocal(d) {
-        return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+        // Within the last day: relative ("3 min ago" / "5 hours ago").
+        // Older (or any future timestamp): absolute "MM/DD hh:mm:ss" local.
+        var diffMs = Date.now() - d.getTime();
+        if (diffMs >= 0) {
+            var diffMin = Math.floor(diffMs / 60000);
+            if (diffMin < 1) return 'just now';
+            if (diffMin < 60) return diffMin + ' min ago';
+            var diffHr = Math.floor(diffMin / 60);
+            if (diffHr < 24) return diffHr + (diffHr === 1 ? ' hour ago' : ' hours ago');
+        }
+        return pad(d.getMonth() + 1) + '/' + pad(d.getDate()) +
                ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
     }
     function formatUTC(d) {

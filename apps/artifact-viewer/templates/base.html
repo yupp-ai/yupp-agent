@@ -12,8 +12,8 @@
 <header class="topbar">
     <div class="topbar-inner">
         <a href="/" class="brand">Artifact Viewer</a>
-        <form class="search" action="/search" method="get">
-            <input type="search" name="q" placeholder="Search title, slug, or attachment…" value="{{ query or '' }}" autocomplete="off">
+        <form class="search" action="/" method="get">
+            <input type="search" name="q" placeholder="Search title, slug, label:triage…" value="{{ query or '' }}" autocomplete="off">
         </form>
         <div class="user">
             {% if user and user.email %}

@@ -58,7 +58,7 @@
 
     <div class="filter-actions">
         <button type="submit" class="filter-apply">Apply</button>
-        {% if filters.type or filters.from_me or filters.creator_agent_id or filters.created_after or filters.created_before %}
+        {% if query or filters.type or filters.from_me or filters.creator_user_id or filters.creator_agent_id or filters.created_after or filters.created_before %}
             {#- "Clear" resets every filter, including the default-ON "From me"
                 box, so we explicitly send ``from_me=0`` instead of just
                 linking to ``/`` (which would re-default it to ON). -#}
@@ -68,6 +68,9 @@
 </form>
 
 <p class="muted">
+    {% if query %}
+        Results for “<strong>{{ query }}</strong>”.
+    {% endif %}
     {% if total is not none %}
         {% set window_end = offset + (artifacts|length) %}
         {% if total == 0 %}
@@ -78,7 +81,7 @@
     {% else %}
         Showing the most recent non-archived artifacts.
     {% endif %}
-    Use search above to find by title, slug, or attachment filename.
+    Use search above to find by title, slug, attachment filename, or label:example.
 </p>
 
 {{ artifact_table(artifacts) }}
@@ -87,7 +90,9 @@
     filter so Prev/Next don't silently widen the result set. -#}
 {% set base_qs = {
     'type': filters.type,
+    'q': query,
     'from_me': '1' if filters.from_me else '0',
+    'creator_user_id': filters.creator_user_id,
     'creator_agent_id': filters.creator_agent_id,
     'created_after': filters.created_after,
     'created_before': filters.created_before,

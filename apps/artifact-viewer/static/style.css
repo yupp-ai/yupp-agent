@@ -142,6 +142,10 @@ html.artifact-width-narrow .main,
 html.artifact-width-narrow .topbar-inner { max-width: 760px; }
 html.artifact-width-wide .main,
 html.artifact-width-wide .topbar-inner { max-width: none; }
+.topbar-inner,
+.main {
+    max-width: 1280px;
+}
 
 h1 { font-size: 22px; margin: 0 0 16px; }
 h2 { font-size: 17px; margin: 24px 0 10px; }
@@ -211,6 +215,7 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
     gap: 6px;
     margin: -8px 0 16px;
     font-size: 12px;
+    flex-wrap: wrap;
 }
 .width-toggle-label {
     margin-right: 4px;
@@ -232,8 +237,7 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
 }
 /* Full-page link sits in the same strip as the width-toggle pills but is
    an action (not a toggle) — slightly stronger affordance, separator gap
-   on the right so it visually splits from the Narrow / Medium / Wide
-   group. Only rendered for ``text/html`` artifacts. */
+   on the right so it visually splits from the Narrow / Medium / Wide group. */
 .width-toggle-btn.full-page-btn {
     text-decoration: none;
     margin-right: 8px;
@@ -243,6 +247,85 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
 .width-toggle-btn.full-page-btn:hover {
     background: var(--accent);
     color: #fff;
+}
+
+.label-chip-row {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    vertical-align: middle;
+}
+
+.label-chip {
+    display: inline-flex;
+    align-items: center;
+    max-width: 120px;
+    min-height: 20px;
+    padding: 1px 7px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-alt);
+    color: var(--fg-muted);
+    font-size: 11px;
+    line-height: 1.4;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+a.label-chip:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+    text-decoration: none;
+}
+
+.label-editor {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-left: 10px;
+    min-width: 0;
+}
+
+.label-editor-label {
+    margin-left: 4px;
+}
+
+.label-chip-edit,
+.label-add-btn {
+    cursor: pointer;
+    font: inherit;
+}
+
+.label-chip-edit {
+    color: var(--fg);
+}
+
+.label-add-btn {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: var(--bg);
+    color: var(--fg);
+}
+
+.label-add-btn:hover,
+.label-chip-edit:hover {
+    border-color: var(--accent);
+}
+
+.label-save-status {
+    min-width: 44px;
+}
+
+.full-artifact-body {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 28px 20px 56px;
+    background: var(--bg);
+    color: var(--fg);
 }
 
 .tag {
@@ -714,7 +797,7 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
     }
     table.artifacts.artifacts-listing td.col-title a { font-weight: 500; }
 
-    /* Metadata cells (creator / agent / slug / status / created): inline-flow
+    /* Metadata cells (creator / agent / labels / slug / status / created): inline-flow
        on a second line, separated by a thin middle-dot via ``::after``.
        ``inline`` (not inline-block) lets the line wrap naturally between
        items on very narrow screens; ``overflow-wrap: anywhere`` covers
@@ -725,6 +808,7 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
        and they keep the layout predictable. */
     table.artifacts.artifacts-listing td.col-creator,
     table.artifacts.artifacts-listing td.col-agent,
+    table.artifacts.artifacts-listing td.col-labels,
     table.artifacts.artifacts-listing td.col-slug,
     table.artifacts.artifacts-listing td.col-status,
     table.artifacts.artifacts-listing td.col-created {
@@ -750,6 +834,7 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
        on the last cell so the row doesn't end with " · ". */
     table.artifacts.artifacts-listing td.col-creator::after,
     table.artifacts.artifacts-listing td.col-agent::after,
+    table.artifacts.artifacts-listing td.col-labels::after,
     table.artifacts.artifacts-listing td.col-slug::after,
     table.artifacts.artifacts-listing td.col-status::after {
         content: " · ";

@@ -29,6 +29,7 @@ from ypl.agent_harness_service.artifact_store import (
     ArtifactError,
     create_artifact,
     get_artifact_by_slug,
+    normalize_artifact_labels,
     read_artifact_content,
 )
 from ypl.agent_harness_service.artifact_store import (
@@ -102,6 +103,7 @@ async def save_memory(
     scope: str = "agent",
     subject: str | None = None,
     description: str | None = None,
+    labels: list[str] | None = None,
 ) -> dict[str, Any]:
     """Save (append a new version of) a MEMORY artifact for the caller.
 
@@ -123,6 +125,7 @@ async def save_memory(
         subject: Override subject — must match caller identity for
             user/agent scopes. Omit to use the caller's own identity.
         description: Optional short description stored on the row.
+        labels: Optional searchable labels for this memory artifact version.
 
     Returns:
         On success: ``{ success: True, artifact_id, address, scope, subject, slug, version, message }``
@@ -153,6 +156,10 @@ async def save_memory(
         }
 
     session_id, _user_id, agent_id = await _resolve_caller_context()
+    try:
+        normalized_labels = normalize_artifact_labels(labels)
+    except ArtifactError as exc:
+        return {"success": False, "error": str(exc)}
 
     # Versioning: check if the slug exists in this (scope, subject); if not, create fresh.
     try:
@@ -180,6 +187,7 @@ async def save_memory(
             artifact_type=AgentArtifactType.MEMORY,
             memory_scope=scope,
             memory_scope_subject=effective_subject,
+            extra_metadata={"labels": normalized_labels} if normalized_labels else None,
         )
     except ArtifactError as exc:
         return {"success": False, "error": str(exc)}
@@ -238,6 +246,7 @@ async def save_memory(
         "subject": effective_subject,
         "slug": topic,
         "version": artifact.version,
+        "labels": (artifact.artifact_metadata or {}).get("labels", []),
         "message": f"Memory '{address}' saved (version {artifact.version}).",
     }
 

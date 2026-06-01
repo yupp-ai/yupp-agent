@@ -24,23 +24,32 @@
             {% if meta.description %}<p class="description">{{ meta.description }}</p>{% endif %}
         </div>
         <dl class="artifact-meta">
-            <dt>ID</dt><dd class="mono"><a href="/artifacts/{{ meta.artifact_id }}">{{ meta.artifact_id }}</a></dd>
+            <dt>ID</dt><dd class="mono"><a href="/artifacts/a/{{ meta.artifact_id }}">{{ meta.artifact_id }}</a></dd>
             {% if meta.named_slug %}
                 <dt>Slug</dt>
                 <dd>
-                    <a href="/artifacts/by-slug/{{ meta.named_slug }}">{{ meta.named_slug }}</a>
+                    <a href="/search?q=slug:{{ meta.named_slug|urlencode }}" title="Show all versions of this slug">{{ meta.named_slug }}</a>
                     {% if meta.version is not none %}
-                        <span class="mono">v{{ meta.version }}</span>
-                        <a class="muted small" href="/artifacts/by-slug/{{ meta.named_slug }}/versions">(all versions)</a>
+                        <a class="mono" href="/artifacts/s/{{ meta.named_slug }}/{{ meta.version }}" title="Open this version">v{{ meta.version }}</a>
                     {% endif %}
                 </dd>
             {% endif %}
             <dt>Type</dt><dd class="mono">{{ meta.content_type or meta.type }}</dd>
             <dt>Created</dt><dd class="mono">{{ meta.created_at or '' }}</dd>
             {% if meta.creator_user_id %}
-                <dt>Creator</dt><dd>{{ meta.creator_user_id }}</dd>
+                <dt>Creator</dt>
+                <dd>
+                    <a href="/?creator_user_id={{ meta.creator_user_id|urlencode }}&from_me=0">
+                        {{ meta.creator_user_name or meta.creator_user_id }}
+                    </a>
+                </dd>
             {% elif meta.creator_agent_id %}
-                <dt>Agent</dt><dd class="mono">{{ meta.creator_agent_id }}</dd>
+                <dt>Agent</dt>
+                <dd>
+                    <a href="/?creator_agent_id={{ meta.creator_agent_id }}&from_me=0">
+                        {{ meta.creator_agent_name or meta.creator_agent_id }}
+                    </a>
+                </dd>
             {% endif %}
             <dt>Status</dt>
             <dd>
@@ -58,24 +67,26 @@
         on subsequent page loads to avoid a width flash. The default
         "medium" matches the existing 1100px max-width. -#}
     <div class="width-toggle" role="group" aria-label="Page width">
-        {%- if display_mode == 'html' %}
-            {#- For HTML artifacts only: open the raw body in a new tab so the
-                user can see the page in the full browser viewport instead of
-                the in-page iframe. The /raw route ships ``Content-Security-Policy:
-                sandbox`` headers that match the iframe's flags, so security
-                posture is identical (no scripts, opaque origin). -#}
-            <a class="width-toggle-btn full-page-btn"
-               href="/artifacts/{{ meta.artifact_id }}/raw"
-               target="_blank"
-               rel="noopener noreferrer"
-               title="Open this HTML in a new tab at full viewport (sandboxed)">
-                Full Page ↗
-            </a>
-        {%- endif %}
+        <a class="width-toggle-btn full-page-btn"
+           href="/artifacts/a/{{ meta.artifact_id }}?v=full"
+           title="Open only the artifact content in a full page">
+            Full Page View
+        </a>
         <span class="width-toggle-label muted small">Width</span>
         <button type="button" class="width-toggle-btn" data-width="narrow" aria-pressed="false">Narrow</button>
         <button type="button" class="width-toggle-btn is-active" data-width="medium" aria-pressed="true">Medium</button>
         <button type="button" class="width-toggle-btn" data-width="wide" aria-pressed="false">Wide</button>
+        <form class="label-editor" method="post" action="/artifacts/a/{{ meta.artifact_id }}/labels">
+            <input type="hidden" name="labels" value="{{ labels|join(',') }}">
+            <span class="label-editor-label muted small">Labels</span>
+            <span class="label-chip-row" data-label-list>
+                {% for label in labels %}
+                    <button class="label-chip label-chip-edit" type="button" data-label="{{ label }}" title="Remove label">{{ label }} ×</button>
+                {% endfor %}
+            </span>
+            <button class="label-add-btn" type="button" title="Add label">+</button>
+            <span class="label-save-status muted small" aria-live="polite"></span>
+        </form>
     </div>
 
     <section class="artifact-body artifact-body-{{ display_mode }}">
@@ -88,10 +99,10 @@
 
     <footer class="artifact-footer muted small">
         {% if can_edit %}
-            <a class="artifact-edit-link" href="/artifacts/{{ meta.artifact_id }}/edit">Edit (creates a new version)</a>
+            <a class="artifact-edit-link" href="/artifacts/a/{{ meta.artifact_id }}/edit">Edit (creates a new version)</a>
             <span aria-hidden="true">·</span>
         {% endif %}
-        <a href="/artifacts/{{ meta.artifact_id }}/download" rel="nofollow">Download</a>
+        <a href="/artifacts/a/{{ meta.artifact_id }}/download" rel="nofollow">Download</a>
     </footer>
 </article>
 <script>
@@ -131,6 +142,70 @@
                 try { window.localStorage.setItem(STORAGE_KEY, next); } catch (_) { /* ignore */ }
             });
         }
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
+</script>
+<script>
+(function () {
+    function normalize(raw) {
+        var label = (raw || '').trim().replace(/^#/, '').toLowerCase();
+        return /^[a-z0-9][a-z0-9._-]{0,62}$/.test(label) ? label : '';
+    }
+    function render(form, labels) {
+        form.querySelector('input[name="labels"]').value = labels.join(',');
+        var list = form.querySelector('[data-label-list]');
+        list.innerHTML = '';
+        labels.forEach(function (label) {
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'label-chip label-chip-edit';
+            btn.setAttribute('data-label', label);
+            btn.title = 'Remove label';
+            btn.textContent = label + ' ×';
+            list.appendChild(btn);
+        });
+    }
+    function save(form, labels) {
+        var status = form.querySelector('.label-save-status');
+        status.textContent = 'Saving...';
+        var data = new FormData();
+        data.set('labels', labels.join(','));
+        fetch(form.action, { method: 'POST', body: data, credentials: 'same-origin' })
+            .then(function (resp) { if (!resp.ok) throw new Error('save failed'); return resp.json(); })
+            .then(function (payload) {
+                render(form, payload.labels || labels);
+                status.textContent = 'Saved';
+                window.setTimeout(function () { status.textContent = ''; }, 1200);
+            })
+            .catch(function () { status.textContent = 'Save failed'; });
+    }
+    function init() {
+        var form = document.querySelector('.label-editor');
+        if (!form) return;
+        function labels() {
+            return form.querySelector('input[name="labels"]').value.split(',').map(normalize).filter(Boolean);
+        }
+        form.addEventListener('click', function (ev) {
+            var target = ev.target;
+            if (!(target instanceof HTMLElement)) return;
+            var current = labels();
+            if (target.matches('.label-add-btn')) {
+                var next = normalize(window.prompt('Add label') || '');
+                if (next && current.indexOf(next) === -1) current.push(next);
+                render(form, current);
+                save(form, current);
+            } else if (target.matches('.label-chip-edit')) {
+                var remove = target.getAttribute('data-label');
+                current = current.filter(function (label) { return label !== remove; });
+                render(form, current);
+                save(form, current);
+            }
+        });
     }
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);

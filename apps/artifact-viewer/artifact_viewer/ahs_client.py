@@ -119,6 +119,8 @@ async def list_recent(
     creator_agent_id: str | None = None,
     created_after: str | None = None,
     created_before: str | None = None,
+    labels: list[str] | None = None,
+    latest_per_slug: bool = False,
     include_total: bool = False,
 ) -> dict[str, Any]:
     """Fetch artifacts via ``GET /ahs/artifacts``.
@@ -138,15 +140,23 @@ async def list_recent(
         params["created_after"] = created_after
     if created_before:
         params["created_before"] = created_before
+    for label in labels or []:
+        params.setdefault("labels", [])
+        params["labels"].append(label)
+    if latest_per_slug:
+        params["latest_per_slug"] = "true"
     if include_total:
         params["include_total"] = "true"
     return cast(dict[str, Any], await _get_json("/ahs/artifacts", params=params))
 
 
-async def search(query: str, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+async def search(query: str, limit: int = 50, offset: int = 0, *, latest_per_slug: bool = False) -> dict[str, Any]:
+    params: dict[str, Any] = {"q": query, "limit": limit, "offset": offset}
+    if latest_per_slug:
+        params["latest_per_slug"] = "true"
     return cast(
         dict[str, Any],
-        await _get_json("/ahs/artifacts/search", params={"q": query, "limit": limit, "offset": offset}),
+        await _get_json("/ahs/artifacts/search", params=params),
     )
 
 
@@ -186,6 +196,7 @@ async def create_new_version(
     memory_scope_subject: str | None = None,
     creator_user_id: str | None = None,
     extra_metadata: dict[str, Any] | None = None,
+    labels: list[str] | None = None,
 ) -> dict[str, Any]:
     """Create a new version of an existing slugged artifact.
 
@@ -222,9 +233,23 @@ async def create_new_version(
         body["memory_scope_subject"] = memory_scope_subject
     if extra_metadata is not None:
         body["metadata"] = extra_metadata
+    if labels is not None:
+        body["labels"] = labels
 
     async with _client(user_id=creator_user_id) as http:
         resp = await http.post("/ahs/artifacts", json=body)
+    if resp.status_code >= 400:
+        try:
+            detail = resp.json().get("detail", resp.text)
+        except Exception:
+            detail = resp.text
+        raise AHSError(resp.status_code, str(detail))
+    return cast(dict[str, Any], resp.json())
+
+
+async def update_labels(*, artifact_id: str, labels: list[str], user_id: str | None = None) -> dict[str, Any]:
+    async with _client(user_id=user_id) as http:
+        resp = await http.patch(f"/ahs/artifacts/{artifact_id}/labels", json={"labels": labels})
     if resp.status_code >= 400:
         try:
             detail = resp.json().get("detail", resp.text)
