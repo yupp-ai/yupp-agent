@@ -26,6 +26,12 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
+    # --- Branding ---
+    # Per-deployment display name, shared with the AHS monolith (no VIEWER_
+    # prefix). Rendered in the top-left header as "<name> Artifacts" (e.g.
+    # "VoltCouch Artifacts"). Defaults to match the Streamlit hub branding.
+    DEPLOYMENT_NAME: str = "AgenticCouch"
+
     # --- Upstream AHS ---
     # URL to reach AHS from the viewer. The monolith deployment has AHS on the
     # same box, so the default is the public hostname; override for dev/staging.
