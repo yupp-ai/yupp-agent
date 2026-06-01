@@ -48,6 +48,15 @@ from artifact_viewer.templating import templates
 
 _STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
+# Cache-busting token for the stylesheet, derived from style.css's mtime so a
+# redeploy (which rewrites the file) forces browsers to refetch instead of
+# serving a stale cached CSS. Exposed to every template as ``static_version``.
+try:
+    _STATIC_VERSION = str(int((_STATIC_DIR / "style.css").stat().st_mtime))
+except OSError:
+    _STATIC_VERSION = "0"
+templates.env.globals["static_version"] = _STATIC_VERSION
+
 # Default page size for the listing page. The upstream AHS endpoint caps
 # results at 200, so 50 keeps a comfortable margin while showing enough
 # recent work to scan without paging.
