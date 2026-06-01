@@ -108,6 +108,13 @@ class AgentConfig(BaseModel):
     #   ["mcp__harness__query_agentdb", "mcp__harness__send_slack_message"]
     required_tools: list[str] = Field(default_factory=list)
 
+    # External MCPs this agent wants attached at session start (slugs from
+    # ``mcp_servers.slug``).  The resolver intersects this with the user's
+    # RBAC role grants and the per-server agent allowlist; missing grants
+    # are reported back as ``unavailable_mcps`` so the agent can ask the
+    # user to connect at https://lit.<apex>/my_mcps.
+    external_mcps: list[str] = Field(default_factory=list)
+
 
 _SAFE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
@@ -219,6 +226,7 @@ def load_agent_config(name: str) -> AgentConfig | None:
         allowed_subagents=raw.get("allowed_subagents", []),
         allowed_gateways=raw.get("allowed_gateways", ["*"]),
         required_tools=raw.get("required_tools", []),
+        external_mcps=raw.get("external_mcps", []),
         allowed_to_message=raw.get("allowed_to_message", []),
     )
 
@@ -286,6 +294,7 @@ def load_agent_config_from_db(agent: Any) -> AgentConfig:
         allowed_gateways=raw.get("allowed_gateways", ["*"]),
         additional_system_prompt=agent.additional_system_prompt,
         required_tools=raw.get("required_tools", []),
+        external_mcps=raw.get("external_mcps", []),
         allowed_to_message=raw.get("allowed_to_message", []),
     )
 

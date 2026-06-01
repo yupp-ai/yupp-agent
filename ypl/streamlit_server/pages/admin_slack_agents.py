@@ -14,6 +14,7 @@ from ypl.backend.utils.streamlit_utils import run_coroutine_in_lit_worker
 from ypl.db.agent_harness import Agent
 from ypl.db.slack_agent import SlackAgent, SlackAgentStatus
 from ypl.db.users import User, UserStatus
+from ypl.slack_agent_gateway.crypto import encrypt_secret
 from ypl.streamlit_server.auth import require_admin_role, require_auth
 
 st.set_page_config(page_title="Slack Agents", page_icon="💬", layout="wide")
@@ -43,6 +44,8 @@ async def _fetch_slack_agents_raw() -> list[dict[str, Any]]:
                 "bot_name": r.bot_name,
                 "display_name": r.display_name,
                 "status": r.status.value,
+                "has_bot_token_encrypted": bool(r.bot_token_encrypted),
+                "has_signing_secret_encrypted": bool(r.signing_secret_encrypted),
                 "created_by_user_id": r.created_by_user_id or "",
                 "bot_creation_request_id": r.bot_creation_request_id or "",
                 "created_at": r.created_at,
@@ -87,8 +90,15 @@ async def _insert_slack_agent(
     display_name: str,
     status: SlackAgentStatus,
     created_by_user_id: str | None,
+    bot_token: str | None = None,
+    signing_secret: str | None = None,
 ) -> tuple[bool, str]:
     """Insert a new SlackAgent row. Returns (success, message)."""
+    normalized_bot_token = (bot_token or "").strip()
+    normalized_signing_secret = (signing_secret or "").strip()
+    if bool(normalized_bot_token) != bool(normalized_signing_secret):
+        return False, "Provide both bot token and signing secret, or leave both blank."
+
     async with get_async_session() as session:
         row = SlackAgent(
             app_id=app_id,
@@ -97,6 +107,8 @@ async def _insert_slack_agent(
             display_name=display_name,
             status=status,
             created_by_user_id=created_by_user_id,
+            bot_token_encrypted=encrypt_secret(normalized_bot_token) if normalized_bot_token else None,
+            signing_secret_encrypted=encrypt_secret(normalized_signing_secret) if normalized_signing_secret else None,
         )
         session.add(row)
         try:
@@ -162,6 +174,42 @@ async def _soft_delete_slack_agent(slack_agent_id: uuid.UUID) -> bool:
     return True
 
 
+@retry_db
+async def _update_slack_agent_secrets(
+    slack_agent_id: uuid.UUID,
+    bot_token: str,
+    signing_secret: str,
+) -> tuple[bool, str]:
+    """Encrypt and store per-agent Slack secrets on the row."""
+    bot_token = bot_token.strip()
+    signing_secret = signing_secret.strip()
+    if not bot_token or not signing_secret:
+        return False, "Bot token and signing secret are both required."
+
+    try:
+        encrypted_bot_token = encrypt_secret(bot_token)
+        encrypted_signing_secret = encrypt_secret(signing_secret)
+    except Exception as exc:
+        return False, f"Could not encrypt secrets: {exc}"
+
+    async with get_async_session() as session:
+        query = (
+            select(SlackAgent)
+            .where(col(SlackAgent.slack_agent_id) == slack_agent_id)
+            .where(col(SlackAgent.deleted_at).is_(None))
+            .with_for_update()
+        )
+        result = await session.exec(query)
+        row = result.one_or_none()
+        if row is None:
+            return False, "Slack agent not found (may have been deleted)."
+        row.bot_token_encrypted = encrypted_bot_token
+        row.signing_secret_encrypted = encrypted_signing_secret
+        session.add(row)
+        await session.commit()
+    return True, "Encrypted Slack secrets stored on the agent row."
+
+
 # ── Cached loaders ───────────────────────────────────────────────────────────
 
 
@@ -220,6 +268,8 @@ def _render_list(rows: list[dict[str, Any]]) -> None:
             "bot_name": r["bot_name"],
             "display_name": r["display_name"],
             "status": r["status"],
+            "encrypted_bot_token": r["has_bot_token_encrypted"],
+            "encrypted_signing_secret": r["has_signing_secret_encrypted"],
             "created_at": r["created_at"],
         }
         for r in rows
@@ -237,6 +287,17 @@ def _render_add_form(agent_names: list[str]) -> None:
         agent_name = st.selectbox("Agent name", options=agent_names, index=0)
         bot_name = st.text_input("Bot name", help="Used for GCP secret lookup, e.g. 'giladovski'.").strip()
         display_name = st.text_input("Display name", help="Human-readable name shown in the UI.").strip()
+        st.caption("Optional: store bot token and signing secret encrypted on the Slack agent row during creation.")
+        bot_token = st.text_input(
+            "Bot token (optional)",
+            type="password",
+            help="Slack bot user OAuth token (xoxb-...). Leave blank to use env-var fallback instead.",
+        ).strip()
+        signing_secret = st.text_input(
+            "Signing secret (optional)",
+            type="password",
+            help="Slack app signing secret. Leave blank to use env-var fallback instead.",
+        ).strip()
         status_value = st.selectbox(
             "Status",
             options=_STATUS_VALUES,
@@ -273,6 +334,8 @@ def _render_add_form(agent_names: list[str]) -> None:
             display_name=display_name,
             status=SlackAgentStatus(status_value),
             created_by_user_id=created_by_user_id,
+            bot_token=bot_token,
+            signing_secret=signing_secret,
         ),
         timeout=10,
     )
@@ -294,6 +357,10 @@ def _render_edit_section(rows: list[dict[str, Any]], agent_names: list[str]) -> 
     selected_label = st.selectbox("Select a Slack agent", options=labels, index=0, key="slack_agent_edit_picker")
     row = label_to_row[selected_label]
     slack_agent_id = uuid.UUID(row["slack_agent_id"])
+
+    token_status = "present" if row["has_bot_token_encrypted"] else "missing"
+    secret_status = "present" if row["has_signing_secret_encrypted"] else "missing"
+    st.caption(f"Encrypted DB secrets: bot token {token_status}, signing secret {secret_status}.")
 
     # Build the agent-name dropdown: include the current value even if it's no longer in ``agents``.
     agent_options = list(agent_names)
@@ -357,6 +424,41 @@ def _render_edit_section(rows: list[dict[str, Any]], agent_names: list[str]) -> 
             _clear_caches_and_rerun()
         else:
             st.error("Could not delete Slack agent (already removed?).")
+        return
+
+    st.divider()
+    st.subheader("Store encrypted Slack secrets")
+    st.caption(
+        "These values are encrypted with SLACK_AGENT_GW_ENCRYPTION_KEY and stored on the slack_agents row. "
+        "Once saved, the gateway can use the DB-backed secrets instead of env-var fallback.",
+    )
+    with st.form(f"edit_slack_agent_secrets_form_{slack_agent_id}", clear_on_submit=True):
+        bot_token = st.text_input(
+            "Bot token",
+            type="password",
+            help="Slack bot user OAuth token (xoxb-...).",
+        ).strip()
+        signing_secret = st.text_input(
+            "Signing secret",
+            type="password",
+            help="Slack app signing secret.",
+        ).strip()
+        save_secrets_clicked = st.form_submit_button("Encrypt and save secrets", type="primary")
+
+    if save_secrets_clicked:
+        success, message = run_coroutine_in_lit_worker(
+            _update_slack_agent_secrets(
+                slack_agent_id=slack_agent_id,
+                bot_token=bot_token,
+                signing_secret=signing_secret,
+            ),
+            timeout=10,
+        )
+        if success:
+            st.toast(message, icon="🔐")
+            _clear_caches_and_rerun()
+        else:
+            st.error(message)
 
 
 # ── Page body ────────────────────────────────────────────────────────────────
