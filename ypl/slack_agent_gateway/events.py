@@ -589,6 +589,7 @@ async def handle_app_mention(
             agent_name=effective_agent_name,
             session_id=existing_ahs_session_id,
             message=message,
+            bot_token=app_config.bot_token,
         )
         logger.info(
             "Re-attached thread to existing AHS session",
@@ -606,6 +607,7 @@ async def handle_app_mention(
             channel_id=channel_id,
             thread_ts=thread_ts,
             slack_name=app_config.slack_name,
+            bot_token=app_config.bot_token,
             force_model=force_model,
         )
     else:
@@ -616,6 +618,7 @@ async def handle_app_mention(
             agent_name=session.agent_name,
             session_id=session.session_id,
             message=message,
+            bot_token=app_config.bot_token,
         )
 
     # If forwarding failed, clean up stale placeholder so it doesn't linger.

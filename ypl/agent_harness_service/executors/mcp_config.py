@@ -53,6 +53,7 @@ def resolve_mcp_servers(
     session_context: dict[str, Any] | None = None,
     is_slack: bool = False,
     agent_name: str = "",
+    external_mcps: list[str] | None = None,
 ) -> dict[str, Any]:
     """Resolve the set of MCP servers a session should have access to.
 
@@ -118,12 +119,73 @@ def resolve_mcp_servers(
     # Drop disabled servers
     servers = {k: v for k, v in base_servers.items() if not v.get("disabled")}
 
+    # Merge external MCPs (Gmail, Drive, Calendar, …).  Import is local so
+    # the runtime path doesn't pay for SQLAlchemy + Fernet on every resolve
+    # when no agent declares any external_mcps.
+    if external_mcps and user_id:
+        import asyncio
+        import uuid as _uuid
+
+        from ypl.external_mcp.resolver import build_external_mcp_entries
+
+        agent_id_raw = ctx.get("agent_id")
+        try:
+            agent_uuid = _uuid.UUID(agent_id_raw) if agent_id_raw else None
+        except (TypeError, ValueError):
+            agent_uuid = None
+        try:
+            sess_uuid = _uuid.UUID(session_id) if session_id else None
+        except (TypeError, ValueError):
+            sess_uuid = None
+
+        # The async resolver uses `ypl.backend.db.get_async_session()`, whose
+        # AsyncEngine pool is bound to whichever asyncio loop first touches
+        # it. Calling it via `asyncio.run()` from this sync code path spins
+        # up a fresh loop, and any cached connection in the pool then errors
+        # with "Future attached to a different loop" (or asyncpg's variant).
+        # Run the resolver inside a fresh worker thread so each call lands
+        # on a brand-new loop, and treat any failure as "no external MCPs
+        # this session" rather than killing the agent runner.
+        ext_servers: dict[str, Any] = {}
+        unavailable: list[dict[str, str]] = []
+        try:
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(
+                    asyncio.run,
+                    build_external_mcp_entries(
+                        user_id=user_id,
+                        agent_id=agent_uuid,
+                        requested_slugs=external_mcps,
+                        agent_session_id=sess_uuid,
+                    ),
+                )
+                ext_servers, unavailable = future.result(timeout=20)
+        except Exception as e:
+            logger.warning(
+                "external MCP resolution failed; agent will run without external MCP servers this session",
+                error=str(e),
+                error_type=type(e).__name__,
+                external_mcps=external_mcps,
+                session_id=session_id,
+            )
+            unavailable = [{"slug": s, "reason": f"resolver crashed: {type(e).__name__}"} for s in external_mcps]
+        servers.update(ext_servers)
+        if unavailable:
+            logger.info(
+                "External MCPs unavailable",
+                session_id=session_id,
+                unavailable=unavailable,
+            )
+
     logger.info(
         "Resolved MCP servers",
         session_id=session_id,
         mcp_servers=list(servers.keys()),
         allowed_servers=perms.allowed_servers,
         has_full_tool_access=perms.has_full_tool_access,
+        external_requested=external_mcps or [],
     )
     return servers
 
@@ -134,6 +196,7 @@ def ensure_workspace_mcp_config(
     session_context: dict[str, Any] | None = None,
     is_slack: bool = False,
     agent_name: str = "",
+    external_mcps: list[str] | None = None,
 ) -> None:
     """Write .mcp.json to the workspace root for Claude Code MCP server discovery.
 
@@ -143,7 +206,9 @@ def ensure_workspace_mcp_config(
     if not workspace:
         return
 
-    servers = resolve_mcp_servers(session_id, session_context, is_slack, agent_name=agent_name)
+    servers = resolve_mcp_servers(
+        session_id, session_context, is_slack, agent_name=agent_name, external_mcps=external_mcps
+    )
 
     mcp_json_path = os.path.join(workspace, ".mcp.json")
     tmp_path = mcp_json_path + ".tmp"

@@ -1,2 +1,6 @@
 # IMPORTANT! If there's a conflict here, please rebase, revise the alembic migration files and push.
+<<<<<<< HEAD
 a3f1c4d5e6b7
+=======
+9f3c1e8a4d52
+>>>>>>> efadf85 ([External MCPs] Add external MCP registry, per-user grants, and admin/user UI)

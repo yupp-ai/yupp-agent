@@ -67,13 +67,14 @@ async def _build_slack_context(
     thread_ts: str,
     channel_name: str | None = None,
     slack_name: str | None = None,
+    bot_token: str | None = None,
 ) -> dict:
     """Build the context dict with Slack metadata for AHS session creation."""
     slack_user_id = message.sender.slack_user_id
     yupp_user_id: str | None = None
     if slack_user_id:
         try:
-            yupp_user_id = await resolve_slack_user_to_yupp_user_id(slack_user_id)
+            yupp_user_id = await resolve_slack_user_to_yupp_user_id(slack_user_id, bot_token=bot_token)
         except Exception:
             logger.warning("Failed to resolve Slack user to Yupp user_id", slack_user_id=slack_user_id)
 
@@ -158,6 +159,7 @@ async def create_agent_session(
     thread_ts: str,
     channel_name: str | None = None,
     slack_name: str | None = None,
+    bot_token: str | None = None,
     force_model: str | None = None,
 ) -> dict | None:
     """Create a new session with the Agent Harness Service.
@@ -200,6 +202,7 @@ async def create_agent_session(
         thread_ts=thread_ts,
         channel_name=channel_name,
         slack_name=slack_name,
+        bot_token=bot_token,
     )
     payload: dict[str, Any] = {
         "agent_id": agent_name,
@@ -266,6 +269,7 @@ async def send_message_to_agent(
     agent_name: str,
     session_id: str,
     message: Message,
+    bot_token: str | None = None,
 ) -> dict | None:
     """Send a message to an existing AHS agent session.
 
@@ -296,7 +300,7 @@ async def send_message_to_agent(
     yupp_user_id: str | None = None
     if slack_user_id:
         try:
-            yupp_user_id = await resolve_slack_user_to_yupp_user_id(slack_user_id)
+            yupp_user_id = await resolve_slack_user_to_yupp_user_id(slack_user_id, bot_token=bot_token)
         except Exception:
             logger.warning("Failed to resolve Slack user to Yupp user_id", slack_user_id=slack_user_id)
 
