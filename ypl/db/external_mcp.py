@@ -36,7 +36,7 @@ import uuid
 from datetime import datetime
 
 import sqlalchemy as sa
-from sqlalchemy import Column, PrimaryKeyConstraint, Text, UniqueConstraint
+from sqlalchemy import Column, ForeignKey, PrimaryKeyConstraint, Text, UniqueConstraint
 from sqlalchemy import Enum as sa_Enum
 from sqlalchemy.dialects import postgresql
 from sqlmodel import Field, SQLModel
@@ -123,9 +123,12 @@ class McpServerSecrets(SQLModel, table=True):
     __tablename__ = "mcp_server_secrets"
 
     mcp_server_id: uuid.UUID = Field(
-        foreign_key="mcp_servers.mcp_server_id",
-        primary_key=True,
-        nullable=False,
+        sa_column=Column(
+            sa.Uuid(),
+            ForeignKey("mcp_servers.mcp_server_id", ondelete="CASCADE"),
+            primary_key=True,
+            nullable=False,
+        ),
     )
     oauth_client_secret_enc: str | None = Field(default=None, sa_type=Text)
     m2m_shared_token_enc: str | None = Field(default=None, sa_type=Text)
@@ -143,8 +146,20 @@ class McpServerRoleAccess(SQLModel, table=True):
 
     __tablename__ = "mcp_server_roles"
 
-    mcp_server_id: uuid.UUID = Field(foreign_key="mcp_servers.mcp_server_id", nullable=False)
-    role_id: uuid.UUID = Field(foreign_key="roles.role_id", nullable=False)
+    mcp_server_id: uuid.UUID = Field(
+        sa_column=Column(
+            sa.Uuid(),
+            ForeignKey("mcp_servers.mcp_server_id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+    )
+    role_id: uuid.UUID = Field(
+        sa_column=Column(
+            sa.Uuid(),
+            ForeignKey("roles.role_id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+    )
 
     __table_args__ = (PrimaryKeyConstraint("mcp_server_id", "role_id", name="pk_mcp_server_roles"),)
 
@@ -157,8 +172,20 @@ class McpServerAgent(SQLModel, table=True):
 
     __tablename__ = "mcp_server_agents"
 
-    mcp_server_id: uuid.UUID = Field(foreign_key="mcp_servers.mcp_server_id", nullable=False)
-    agent_id: uuid.UUID = Field(foreign_key="agents.agent_id", nullable=False)
+    mcp_server_id: uuid.UUID = Field(
+        sa_column=Column(
+            sa.Uuid(),
+            ForeignKey("mcp_servers.mcp_server_id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+    )
+    agent_id: uuid.UUID = Field(
+        sa_column=Column(
+            sa.Uuid(),
+            ForeignKey("agents.agent_id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+    )
 
     __table_args__ = (PrimaryKeyConstraint("mcp_server_id", "agent_id", name="pk_mcp_server_agents"),)
 
@@ -177,8 +204,22 @@ class McpUserGrant(BaseModel, table=True):
     __tablename__ = "mcp_user_grants"
 
     grant_id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True, nullable=False)
-    user_id: str = Field(foreign_key="users.user_id", nullable=False, index=True)
-    mcp_server_id: uuid.UUID = Field(foreign_key="mcp_servers.mcp_server_id", nullable=False, index=True)
+    user_id: str = Field(
+        sa_column=Column(
+            Text,
+            ForeignKey("users.user_id"),
+            nullable=False,
+            index=True,
+        ),
+    )
+    mcp_server_id: uuid.UUID = Field(
+        sa_column=Column(
+            sa.Uuid(),
+            ForeignKey("mcp_servers.mcp_server_id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        ),
+    )
     # OAUTH_OBO fields
     access_token_enc: str | None = Field(default=None, sa_type=Text)
     refresh_token_enc: str | None = Field(default=None, sa_type=Text)
@@ -214,12 +255,29 @@ class McpGrantEvent(SQLModel, table=True):
     __tablename__ = "mcp_grant_events"
 
     event_id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True, nullable=False)
-    user_id: str = Field(foreign_key="users.user_id", nullable=False, index=True)
-    mcp_server_id: uuid.UUID = Field(foreign_key="mcp_servers.mcp_server_id", nullable=False, index=True)
+    user_id: str = Field(
+        sa_column=Column(
+            Text,
+            ForeignKey("users.user_id"),
+            nullable=False,
+            index=True,
+        ),
+    )
+    mcp_server_id: uuid.UUID = Field(
+        sa_column=Column(
+            sa.Uuid(),
+            ForeignKey("mcp_servers.mcp_server_id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        ),
+    )
     agent_session_id: uuid.UUID | None = Field(
         default=None,
-        foreign_key="agent_sessions.agent_session_id",
-        nullable=True,
+        sa_column=Column(
+            sa.Uuid(),
+            ForeignKey("agent_sessions.agent_session_id", ondelete="SET NULL"),
+            nullable=True,
+        ),
     )
     event_type: McpGrantEventType = Field(
         sa_column=Column(sa_Enum(McpGrantEventType, name="mcp_grant_event_type"), nullable=False),
