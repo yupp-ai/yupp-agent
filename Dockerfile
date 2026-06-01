@@ -14,7 +14,10 @@ RUN pip install --no-cache-dir poetry==1.8.5 && \
 COPY pyproject.toml poetry.lock README.md alembic.ini /app/
 RUN set -e && \
     apt-get update && \
-    apt-get install -y --no-install-recommends cmake g++ git make && \
+    # `cmake g++ make` are build-only and purged below.
+    # `graphviz` is kept in the runtime image — it provides the `dot` binary
+    # used by SAG's rich-content rendering pipeline (DOT fence → PNG).
+    apt-get install -y --no-install-recommends cmake g++ git make graphviz && \
     poetry install --no-root --without dev --no-interaction --no-ansi --compile && \
     # Poetry itself has no runtime role; drop it (and its now-orphaned deps,
     # notably the keyring 24.x it pins which clashes with the project's
