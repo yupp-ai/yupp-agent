@@ -103,6 +103,14 @@ services:
       # one-box can override both back to "false" in .env.
       AHS_MONO_ENABLE_GATEWAY_SERVICE: ${AHS_MONO_ENABLE_GATEWAY_SERVICE:-true}
       GATEWAY_SLACK_ENABLED: ${GATEWAY_SLACK_ENABLED:-true}
+      # Claude Code 2.x refuses --dangerously-skip-permissions as root.
+      # The container runs as root (python:3.12-slim default) and the
+      # harness always adds that flag when sandbox.enabled=true.
+      # IS_SANDBOX=1 is Claude Code's documented escape hatch — it tells
+      # the CLI "the caller has already sandboxed me (Docker), so the
+      # root check is redundant." Without this every claude-code-cli
+      # agent crashes on startup with "cannot be used with root/sudo".
+      IS_SANDBOX: "1"
     volumes:
       # Host-side bind mounts for agent state.  Created on first
       # `docker compose up -d` if they don't already exist.
@@ -119,6 +127,14 @@ services:
       - ${AHS_HOST_DATA_DIR:-./ahs-data}/repos:/data/ahs/repos
       - ${AHS_HOST_DATA_DIR:-./ahs-data}/agent_memories:/data/ahs/agent_memories
       - ${AHS_HOST_DATA_DIR:-./ahs-data}/artifacts:/data/ahs/artifacts
+      # Share the host operator's Claude Code + Codex CLI auth with the
+      # container so agent runners use the operator's Claude.ai Max /
+      # Codex subscription instead of API keys. Mounted rw because both
+      # CLIs write session state, cache, and shell snapshots back to
+      # these dirs during normal use; mounting ro breaks Claude Code's
+      # session resume and Codex's logs_*.sqlite WAL writes.
+      - ${HOME}/.claude:/root/.claude
+      - ${HOME}/.codex:/root/.codex
     depends_on:
       postgres:
         condition: service_healthy

@@ -14,8 +14,9 @@ RUN pip install --no-cache-dir poetry==1.8.5 && \
 COPY pyproject.toml poetry.lock README.md alembic.ini /app/
 RUN set -e && \
     apt-get update && \
-    apt-get install -y --no-install-recommends cmake g++ git make && \
+    apt-get install -y --no-install-recommends ca-certificates cmake curl g++ git make nodejs npm && \
     poetry install --no-root --without dev --no-interaction --no-ansi --compile && \
+    npm install -g @anthropic-ai/claude-code @openai/codex && \
     # Poetry itself has no runtime role; drop it (and its now-orphaned deps,
     # notably the keyring 24.x it pins which clashes with the project's
     # keyring 25.x and makes `pip check` further down fail).
