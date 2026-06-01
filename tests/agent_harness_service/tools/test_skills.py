@@ -1,15 +1,16 @@
 """Tests for skills.py — load_skill MCP tool.
 
 ``load_skill`` is async because it falls back to a DB lookup for SKILL
-artifacts when no matching disk file exists. The DB path is mocked
-through the ``load_skill_artifact`` import seam so these tests stay
-pure unit tests with no DB requirement.
+artifacts when no matching disk file exists. That DB path resolves the
+slug directly via ``artifact_store`` (no mcp_server dependency), so the
+tests stub ``get_artifact_by_slug`` / ``read_artifact_content`` and the
+Layer-0 ``current_request_context`` — staying pure unit tests with no DB.
 """
 
 from __future__ import annotations
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from ypl.agent_harness_service.tools.skills import load_skill as _load_skill_tool
@@ -17,25 +18,54 @@ from ypl.agent_harness_service.tools.skills import load_skill as _load_skill_too
 load_skill = _load_skill_tool.fn  # unwrap FunctionTool to get the raw async callable
 
 
-def _stub_db_not_found(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
+def _stub_db(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    content: str | None,
+    user_id: str | None = None,
+    agent_name: str | None = None,
+) -> dict[str, list[tuple[str | None, str | None]]]:
+    """Stub the artifact_store DB-fallback path used by ``load_skill``.
+
+    ``content=None`` → the slug is "not found" in every scope. Otherwise the
+    first scope queried returns an artifact whose body is ``content``. The
+    caller's ``user_id`` / ``agent_name`` drive the implicit scope order.
+
+    Returns a record of the (scope, subject) tuples ``get_artifact_by_slug``
+    was called with, so tests can assert priority order / that the DB was hit.
+    """
+    calls: dict[str, list[tuple[str | None, str | None]]] = {"scopes": []}
+
+    class _FakeArtifact:
+        inline_content = content
+
+    async def _get(
+        slug: str,
+        *,
+        artifact_type: Any,
+        memory_scope: str | None = None,
+        memory_scope_subject: str | None = None,
+        version: int | None = None,
+    ) -> Any:
+        calls["scopes"].append((memory_scope, memory_scope_subject))
+        return None if content is None else _FakeArtifact()
+
+    async def _read(artifact: Any, blob_store: Any = None) -> tuple[bytes, str]:
+        return (content or "").encode("utf-8"), "text/markdown"
+
+    class _Ctx:
+        requesting_user_id = user_id
+        ahs_agent_name = agent_name
+
+    monkeypatch.setattr("ypl.agent_harness_service.artifact_store.get_artifact_by_slug", _get)
+    monkeypatch.setattr("ypl.agent_harness_service.artifact_store.read_artifact_content", _read)
+    monkeypatch.setattr("ypl.mcp_common.auth_context.current_request_context", lambda: _Ctx())
+    return calls
+
+
+def _stub_db_not_found(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[tuple[str | None, str | None]]]:
     """Force the DB fallback to "not found" so tests assert disk behaviour only."""
-
-    async def _stub(name: str, **_: Any) -> dict[str, Any]:
-        return {"success": False, "error": f"Skill {name!r} not found in the caller's visibility."}
-
-    # Build a fake module so the local import inside load_skill resolves to our stub
-    # without requiring an artifact_notifier / blob_store setup. Mimics the
-    # ``@shared_tool`` wrapper by exposing the stub via ``__wrapped__`` so
-    # load_skill uses the underlying coroutine.
-    import sys
-    import types as _types
-
-    fake_mod = _types.ModuleType("ypl.mcp_server.tools.skill_artifacts")
-    wrapped = AsyncMock(side_effect=_stub)
-    wrapped.__wrapped__ = _stub  # type: ignore[attr-defined]
-    fake_mod.load_skill_artifact = wrapped  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "ypl.mcp_server.tools.skill_artifacts", fake_mod)
-    return wrapped
+    return _stub_db(monkeypatch, content=None)
 
 
 class TestLoadSkill:
@@ -97,21 +127,7 @@ class TestLoadSkill:
 
     async def test_db_fallback_returns_content(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """When skill is missing on disk but present in DB, returns the DB body."""
-        # Stub the DB fallback to return a hit.
-        import sys
-        import types as _types
-
-        async def _hit(name: str, **_: Any) -> dict[str, Any]:
-            return {
-                "success": True,
-                "content": "---\ndescription: From DB\n---\n# DB Skill\n\nFrom database.\n",
-            }
-
-        fake_mod = _types.ModuleType("ypl.mcp_server.tools.skill_artifacts")
-        wrapped = AsyncMock(side_effect=_hit)
-        wrapped.__wrapped__ = _hit  # type: ignore[attr-defined]
-        fake_mod.load_skill_artifact = wrapped  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "ypl.mcp_server.tools.skill_artifacts", fake_mod)
+        _stub_db(monkeypatch, content="---\ndescription: From DB\n---\n# DB Skill\n\nFrom database.\n")
 
         with patch("ypl.agent_harness_service.common.constants.AHS_SKILLS_DIR", str(tmp_path)):
             result = await load_skill("only-in-db")
@@ -121,17 +137,7 @@ class TestLoadSkill:
 
     async def test_disk_wins_on_collision(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """When a skill exists both on disk and in DB, disk content wins."""
-        import sys
-        import types as _types
-
-        async def _db_hit(name: str, **_: Any) -> dict[str, Any]:
-            return {"success": True, "content": "# From DB (should not be used)"}
-
-        fake_mod = _types.ModuleType("ypl.mcp_server.tools.skill_artifacts")
-        wrapped = AsyncMock(side_effect=_db_hit)
-        wrapped.__wrapped__ = _db_hit  # type: ignore[attr-defined]
-        fake_mod.load_skill_artifact = wrapped  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "ypl.mcp_server.tools.skill_artifacts", fake_mod)
+        calls = _stub_db(monkeypatch, content="# From DB (should not be used)")
 
         skill_dir = tmp_path / "shadowed"
         skill_dir.mkdir()
@@ -142,8 +148,30 @@ class TestLoadSkill:
 
         assert "From disk" in result
         assert "From DB" not in result
-        # DB fallback should not have been invoked at all.
-        wrapped.assert_not_awaited()
+        # DB fallback should not have been consulted at all.
+        assert calls["scopes"] == []
+
+    async def test_db_fallback_scope_priority_agent_first(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Implicit scope order is agent > user > topic, matching the loader."""
+        calls = _stub_db(monkeypatch, content=None, user_id="user-1", agent_name="agent-x")
+
+        with patch("ypl.agent_harness_service.common.constants.AHS_SKILLS_DIR", str(tmp_path)):
+            await load_skill("missing-everywhere")
+
+        assert calls["scopes"] == [("agent", "agent-x"), ("user", "user-1"), ("topic", None)]
+
+    async def test_db_fallback_topic_only_without_identity(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With no caller identity, only the shared topic scope is queried."""
+        calls = _stub_db(monkeypatch, content=None)
+
+        with patch("ypl.agent_harness_service.common.constants.AHS_SKILLS_DIR", str(tmp_path)):
+            await load_skill("missing")
+
+        assert calls["scopes"] == [("topic", None)]
 
     async def test_empty_skill_name_returns_error(self) -> None:
         result = await load_skill("")

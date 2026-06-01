@@ -631,6 +631,7 @@ async def list_artifacts(
     memory_caller: MemoryCallerContext | None = None,
     memory_scope: str | None = None,
     memory_scope_subject: str | None = None,
+    latest_version_only: bool = False,
 ) -> list[AgentArtifact]:
     """List artifacts matching the given filters.
 
@@ -644,6 +645,14 @@ async def list_artifacts(
       MEMORY rows to a specific scope/subject. Non-MEMORY rows are excluded
       from the response when either is set because scope columns are NULL
       for those rows.
+
+    ``latest_version_only`` — when ``True``, collapse to one row per
+    ``(memory_scope, memory_scope_subject, named_slug)`` keeping the highest
+    ``version`` (via ``DISTINCT ON``). This bounds the result to one row per
+    logical slug-per-scope so a single heavily-versioned slug can't crowd
+    others out of the ``limit`` window — used by the SKILL catalog merger.
+    Rows are ordered by the distinct key (then ``version DESC``) rather than
+    ``created_at`` in this mode.
     """
     async with get_async_session_read_replica() as session:
         stmt = select(AgentArtifact).where(col(AgentArtifact.deleted_at).is_(None))
@@ -669,7 +678,23 @@ async def list_artifacts(
             memory_scope=memory_scope,
             memory_scope_subject=memory_scope_subject,
         )
-        stmt = stmt.order_by(col(AgentArtifact.created_at).desc()).limit(limit).offset(offset)
+        if latest_version_only:
+            # DISTINCT ON requires its key columns to lead the ORDER BY; within
+            # each key the highest version wins. NULL subjects (topic scope)
+            # collapse together, matching the scope-qualified unique indexes.
+            distinct_cols = (
+                col(AgentArtifact.memory_scope),
+                col(AgentArtifact.memory_scope_subject),
+                col(AgentArtifact.named_slug),
+            )
+            stmt = (
+                stmt.distinct(*distinct_cols)
+                .order_by(*distinct_cols, col(AgentArtifact.version).desc())
+                .limit(limit)
+                .offset(offset)
+            )
+        else:
+            stmt = stmt.order_by(col(AgentArtifact.created_at).desc()).limit(limit).offset(offset)
         result = await session.execute(stmt)
         return list(result.scalars().all())
 

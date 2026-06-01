@@ -52,6 +52,49 @@ class TestParseSkillFrontmatter:
         fm = parse_skill_frontmatter(body)
         assert fm.trigger_keywords == ["alpha", "beta", "gamma"]
 
+    def test_trigger_keywords_multiline_block_list(self) -> None:
+        # The most idiomatic YAML shape — previously silently produced [].
+        body = "---\nname: x\ntrigger_keywords:\n  - alpha\n  - beta\n  - gamma\n---\n"
+        fm = parse_skill_frontmatter(body)
+        assert fm.trigger_keywords == ["alpha", "beta", "gamma"]
+        # The raw block list is preserved for round-tripping.
+        assert fm.raw["trigger_keywords"] == ["alpha", "beta", "gamma"]
+
+    def test_trigger_keywords_multiline_block_list_quoted(self) -> None:
+        body = "---\ntrigger_keywords:\n  - \"alpha\"\n  - 'beta'\n---\n"
+        fm = parse_skill_frontmatter(body)
+        assert fm.trigger_keywords == ["alpha", "beta"]
+
+    def test_multiline_list_does_not_swallow_next_key(self) -> None:
+        body = "---\ntrigger_keywords:\n  - alpha\nname: after-list\n---\n"
+        fm = parse_skill_frontmatter(body)
+        assert fm.trigger_keywords == ["alpha"]
+        assert fm.name == "after-list"
+
+    def test_empty_value_without_list_stays_empty(self) -> None:
+        body = "---\nname: x\ndescription:\n---\n"
+        fm = parse_skill_frontmatter(body)
+        assert fm.description is None
+        assert fm.raw["description"] == ""
+
+    def test_matched_pair_quotes_only(self) -> None:
+        # Old .strip("\"'") stripped both quotes → "x"; matched-pair keeps inner.
+        body = "---\ndescription: '\"x\"'\n---\n"
+        fm = parse_skill_frontmatter(body)
+        assert fm.description == '"x"'
+
+    def test_apostrophe_inside_double_quotes_preserved(self) -> None:
+        body = '---\ndescription: "It\'s a thing"\n---\n'
+        fm = parse_skill_frontmatter(body)
+        assert fm.description == "It's a thing"
+
+    def test_closing_delimiter_must_be_own_line(self) -> None:
+        # A "---" embedded in a value line is NOT a closing delimiter.
+        body = "---\ndescription: a---b\nname: x\n---\n# Body\n"
+        fm = parse_skill_frontmatter(body)
+        assert fm.name == "x"
+        assert fm.description == "a---b"
+
     def test_trigger_keywords_dedupes_blanks(self) -> None:
         body = "---\ntrigger_keywords: alpha, , beta\n---\n"
         fm = parse_skill_frontmatter(body)
@@ -75,6 +118,11 @@ class TestStripFrontmatter:
     def test_unterminated_frontmatter_returned_verbatim(self) -> None:
         body = "---\nname: oops\n# Missing closing delim\n"
         assert strip_frontmatter(body) == body
+
+    def test_embedded_dashes_not_treated_as_closing(self) -> None:
+        # "---" inside a value line must not end the block prematurely.
+        body = "---\ndescription: a---b\n---\n# Real content\n"
+        assert strip_frontmatter(body) == "# Real content\n"
 
 
 class TestBuildSkillMetadata:

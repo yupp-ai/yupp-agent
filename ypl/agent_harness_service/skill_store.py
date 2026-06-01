@@ -37,6 +37,49 @@ class SkillFrontmatter:
     raw: dict[str, Any]
 
 
+def _split_frontmatter(content: str) -> tuple[str | None, str]:
+    """Split a leading ``---``-delimited YAML block from the body.
+
+    The opening and closing delimiters must each be a line whose only
+    content is ``---`` (trailing whitespace ignored). Returns
+    ``(block, body)`` where ``block`` is the text between the delimiters;
+    when there is no well-formed frontmatter, returns ``(None, content)``.
+
+    Requiring the closing ``---`` to be on a line by itself (rather than the
+    old ``content.find("---", 3)`` substring scan) avoids matching a ``---``
+    embedded mid-line or inside the body. One genuinely ambiguous shape
+    remains — a body that opens with a markdown horizontal rule directly
+    after a single pseudo-frontmatter line — which no line-based parser can
+    disambiguate without a real YAML reader; that is an accepted edge.
+    """
+    lines = content.splitlines(keepends=True)
+    if not lines or lines[0].rstrip() != "---":
+        return None, content
+    for i in range(1, len(lines)):
+        if lines[i].rstrip() == "---":
+            return "".join(lines[1:i]), "".join(lines[i + 1 :])
+    return None, content
+
+
+def _strip_matched_quotes(value: str) -> str:
+    """Strip exactly one matched pair of surrounding quotes, if present.
+
+    Unlike ``str.strip("\\"'")`` (which strips *every* leading/trailing quote
+    and so mangles values like ``'"x"'`` into ``x``), this removes only a
+    single matched ``"..."`` or ``'...'`` pair.
+    """
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+        return value[1:-1]
+    return value
+
+
+def _as_optional_str(value: Any) -> str | None:
+    """Return a non-empty string value, else ``None`` (ignoring list values)."""
+    if isinstance(value, str) and value:
+        return value
+    return None
+
+
 def parse_skill_frontmatter(content: str) -> SkillFrontmatter:
     """Extract YAML frontmatter from a skill markdown body.
 
@@ -45,30 +88,50 @@ def parse_skill_frontmatter(content: str) -> SkillFrontmatter:
     malformed frontmatter is treated as "no frontmatter" — callers should
     still be able to save the skill, the catalog row just won't carry
     structured metadata.
+
+    Intentionally not pulling in PyYAML for this small shape; the parser
+    handles the by-hand shapes operators actually write: ``key: value``
+    (with matched-quote stripping) and multi-line ``key:`` followed by
+    indented ``- item`` lists.
     """
-    if not content.startswith("---"):
+    block, _ = _split_frontmatter(content)
+    if block is None:
         return SkillFrontmatter(name=None, description=None, trigger_keywords=[], raw={})
 
-    end = content.find("---", 3)
-    if end == -1:
-        return SkillFrontmatter(name=None, description=None, trigger_keywords=[], raw={})
-
-    block = content[3:end]
     raw: dict[str, Any] = {}
-    # Intentionally not pulling in PyYAML for a 3-key shape. The disk
-    # catalog builder uses the same line-by-line parser; staying compatible
-    # avoids divergent behaviour between disk and DB skills.
-    for line in block.splitlines():
-        line = line.rstrip()
+    lines = block.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i].rstrip()
+        i += 1
         if not line or line.lstrip().startswith("#"):
             continue
         if ":" not in line:
             continue
         key, _, value = line.partition(":")
-        raw[key.strip()] = value.strip().strip("\"'")
+        key = key.strip()
+        value = value.strip()
+        if value == "":
+            # Empty inline value → possibly a multi-line YAML list. Collect any
+            # following indented ``- item`` lines. Without this the idiomatic
+            # block-list shape silently parsed to an empty value and dropped
+            # every item (a silent-data-loss bug for ad-hoc DB skills).
+            items: list[str] = []
+            while i < len(lines):
+                stripped = lines[i].strip()
+                if stripped == "-":
+                    items.append("")
+                elif stripped.startswith("- "):
+                    items.append(_strip_matched_quotes(stripped[2:].strip()))
+                else:
+                    break
+                i += 1
+            raw[key] = items if items else ""
+        else:
+            raw[key] = _strip_matched_quotes(value)
 
-    name = raw.get("name") or None
-    description = raw.get("description") or None
+    name = _as_optional_str(raw.get("name"))
+    description = _as_optional_str(raw.get("description"))
     trigger_keywords = _parse_trigger_keywords(raw.get("trigger_keywords"))
     return SkillFrontmatter(
         name=name,
@@ -81,35 +144,36 @@ def parse_skill_frontmatter(content: str) -> SkillFrontmatter:
 def _parse_trigger_keywords(value: Any) -> list[str]:
     """Normalise the ``trigger_keywords`` field into a flat list of strings.
 
-    Accepts the two shapes operators tend to write by hand:
+    Accepts the shapes operators write by hand:
 
     * ``trigger_keywords: foo, bar, baz`` (single line, comma-separated)
     * ``trigger_keywords: [foo, bar, baz]`` (single line, JSON-ish array)
+    * a multi-line block list (``- foo`` / ``- bar`` on indented lines),
+      which :func:`parse_skill_frontmatter` pre-collects into a ``list``.
 
-    Multi-line YAML arrays would require a real parser; we skip them rather
-    than misinterpret. Anything beyond :data:`_MAX_TRIGGER_KEYWORDS` is
-    truncated.
+    Anything beyond :data:`_MAX_TRIGGER_KEYWORDS` is truncated.
     """
     if value is None or value == "":
         return []
+    if isinstance(value, list):
+        keywords = [k for k in (_strip_matched_quotes(str(v).strip()) for v in value) if k]
+        return keywords[:_MAX_TRIGGER_KEYWORDS]
     if not isinstance(value, str):
         return []
     raw = value.strip()
     if raw.startswith("[") and raw.endswith("]"):
         raw = raw[1:-1]
-    parts = [p.strip().strip("\"'") for p in raw.split(",")]
+    parts = [_strip_matched_quotes(p.strip()) for p in raw.split(",")]
     keywords = [p for p in parts if p]
     return keywords[:_MAX_TRIGGER_KEYWORDS]
 
 
 def strip_frontmatter(content: str) -> str:
     """Return ``content`` with a leading ``---`` block removed, if present."""
-    if not content.startswith("---"):
+    block, body = _split_frontmatter(content)
+    if block is None:
         return content
-    end = content.find("---", 3)
-    if end == -1:
-        return content
-    return content[end + 3 :].lstrip("\n")
+    return body.lstrip("\n")
 
 
 def build_skill_metadata(frontmatter: SkillFrontmatter, *, override_name: str) -> dict[str, Any]:

@@ -301,27 +301,43 @@ async def _collect_db_skill_entries(
         # expensive to initialise during static analysis / tests).
         from ypl.agent_harness_service.artifact_store import list_artifacts
         from ypl.agent_harness_service.memory_store import MemoryCallerContext
-        from ypl.db.agent_harness import AgentArtifactType
+        from ypl.db.agent_harness import AgentArtifact, AgentArtifactType
 
         caller = MemoryCallerContext(user_id=user_id, agent_name=agent_name)
+        # ``latest_version_only`` collapses each (scope, subject, slug) to its
+        # newest version in SQL, so a heavily-versioned slug can't saturate the
+        # limit window and starve other slugs out of the catalog.
         artifacts = await list_artifacts(
             artifact_type=AgentArtifactType.SKILL,
             memory_caller=caller,
             limit=200,
+            latest_version_only=True,
         )
     except Exception:
         logger.exception("Failed to merge DB skills into catalog — proceeding with disk-only catalog")
         return []
 
-    # Latest version per (scope, subject, slug) wins. The DB query returns all
-    # versions, so dedupe by slug here (results are reverse-chronological).
-    seen: set[str] = set()
-    entries: list[tuple[str, str]] = []
+    # A slug can resolve in more than one scope visible to this caller (e.g. a
+    # user-scope and a topic-scope skill share a slug). ``load_skill_artifact``
+    # resolves implicit scope as agent > user > topic, so the catalog MUST pick
+    # the same row — otherwise the listed description would describe a different
+    # skill than the one ``load_skill`` returns. Bucket by slug and keep the
+    # highest-priority scope.
+    scope_priority = {"agent": 0, "user": 1, "topic": 2}
+    best: dict[str, AgentArtifact] = {}
     for a in artifacts:
         slug = a.named_slug
-        if not slug or slug in seen or slug in exclude_names:
+        if not slug or slug in exclude_names:
             continue
-        seen.add(slug)
+        incumbent = best.get(slug)
+        if incumbent is None or scope_priority.get(a.memory_scope or "", 99) < scope_priority.get(
+            incumbent.memory_scope or "", 99
+        ):
+            best[slug] = a
+
+    entries: list[tuple[str, str]] = []
+    for slug in sorted(best):
+        a = best[slug]
         meta = (a.artifact_metadata or {}).get("skill", {})
         description = meta.get("description") or a.description or ""
         entries.append((slug, description))

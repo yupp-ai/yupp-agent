@@ -70,20 +70,48 @@ async def load_skill(skill_name: str) -> str:
         return strip_frontmatter(content)
 
     # 2. DB fallback — SKILL artifacts authored via save_skill.
+    #
+    # Resolve the slug directly against artifact_store rather than routing the
+    # read through the mcp_server ``load_skill_artifact`` FunctionTool. The work
+    # is just "scope-resolved slug lookup + read body", both already AHS APIs,
+    # so inlining keeps ``tools/`` free of an AHS→mcp_server import edge (the
+    # caller context comes from the Layer-0 ``mcp_common.auth_context``). The
+    # implicit scope order — agent > user > topic — mirrors save_skill /
+    # load_skill_artifact so per-agent skills shadow shared ones.
     try:
-        from ypl.mcp_server.tools.skill_artifacts import load_skill_artifact
+        from ypl.agent_harness_service.artifact_store import get_artifact_by_slug, read_artifact_content
+        from ypl.db.agent_harness import AgentArtifactType
+        from ypl.mcp_common.auth_context import current_request_context
 
-        # ``shared_tool`` keeps the underlying coroutine reachable via
-        # ``__wrapped__`` (set by functools.wraps). Call it directly so we
-        # don't recurse through FastMCP's middleware chain from inside a tool.
-        load_fn = getattr(load_skill_artifact, "__wrapped__", load_skill_artifact)
-        result = await load_fn(name=skill_name)
+        ctx = current_request_context()
+        user_id = (ctx.requesting_user_id if ctx else None) or None
+        agent_name = (ctx.ahs_agent_name if ctx else None) or None
+
+        # Caller visibility, highest priority first.
+        scopes_to_try: list[tuple[str, str | None]] = []
+        if agent_name is not None:
+            scopes_to_try.append(("agent", agent_name))
+        if user_id is not None:
+            scopes_to_try.append(("user", user_id))
+        scopes_to_try.append(("topic", None))
+
+        artifact = None
+        for candidate_scope, candidate_subject in scopes_to_try:
+            artifact = await get_artifact_by_slug(
+                skill_name,
+                artifact_type=AgentArtifactType.SKILL,
+                memory_scope=candidate_scope,
+                memory_scope_subject=candidate_subject,
+            )
+            if artifact is not None:
+                break
+
+        if artifact is not None:
+            data, _content_type = await read_artifact_content(artifact)
+            return strip_frontmatter(data.decode("utf-8"))
     except Exception as e:
         logger.exception("DB fallback for load_skill failed", skill_name=skill_name)
         return f"[ERROR] Failed to read skill '{skill_name}' from DB fallback: {e}"
-
-    if isinstance(result, dict) and result.get("success") and result.get("content"):
-        return strip_frontmatter(str(result["content"]))
 
     # 3. Not found anywhere — list disk skills to help the agent.
     available: list[str] = []

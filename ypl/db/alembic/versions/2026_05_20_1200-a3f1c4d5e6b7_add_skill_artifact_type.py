@@ -20,7 +20,7 @@ same column MEMORY uses), with parsed YAML frontmatter persisted into
 deserialising the body.
 
 Revision ID: a3f1c4d5e6b7
-Revises: b227eabd88f2
+Revises: a1c0fe19f0c5
 Create Date: 2026-05-20 12:00:00.000000+00:00
 
 """
@@ -32,7 +32,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "a3f1c4d5e6b7"
-down_revision: str | None = "b227eabd88f2"
+down_revision: str | None = "a1c0fe19f0c5"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -105,29 +105,27 @@ def downgrade() -> None:
             "Delete or migrate them before downgrading."
         )
 
+    # The enum rebuild below changes ``artifact_type``'s type. Postgres rebuilds
+    # every dependent index/constraint when a column's type changes and re-binds
+    # the literals in their predicates — but a literal like ``'MEMORY'`` was bound
+    # to the *old* enum type (which we rename to ``agentartifacttype_old`` mid-
+    # rebuild), so any surviving ``artifact_type = '<value>'`` predicate would fail
+    # the ALTER with ``operator does not exist: agentartifacttype = agentartifacttype_old``.
+    # Drop EVERY object whose predicate references ``artifact_type`` first — both
+    # the ones this migration added and the MEMORY-scoped ones inherited from
+    # b227eabd88f2 — then recreate them after the rebuild so their literals bind
+    # to the new type. (This mirrors b227eabd88f2's own downgrade, which drops all
+    # such objects before its rebuild.)
     op.drop_index("ix_skill_scope_subject", table_name="agent_artifacts")
     op.drop_index("uix_skill_scope_slug_version", table_name="agent_artifacts")
-
-    # Restore the original (MEMORY-only) narrowing on the slug/version index.
     op.drop_index("uix_agent_artifacts_slug_version", table_name="agent_artifacts")
-    op.create_index(
-        "uix_agent_artifacts_slug_version",
-        "agent_artifacts",
-        ["named_slug", "version"],
-        unique=True,
-        postgresql_where=sa.text("named_slug IS NOT NULL AND version IS NOT NULL AND artifact_type <> 'MEMORY'"),
-    )
-
-    # Restore the original MEMORY-only check constraint.
+    op.drop_index("ix_memory_scope_subject", table_name="agent_artifacts")
+    op.drop_index("uix_memory_scope_slug_version", table_name="agent_artifacts")
     op.drop_constraint("ck_agent_artifacts_memory_scope_matches_type", "agent_artifacts", type_="check")
-    op.create_check_constraint(
-        "ck_agent_artifacts_memory_scope_matches_type",
-        "agent_artifacts",
-        "(artifact_type = 'MEMORY' AND memory_scope IN ('user', 'agent', 'topic')) "
-        "OR (artifact_type <> 'MEMORY' AND memory_scope IS NULL AND memory_scope_subject IS NULL)",
-    )
 
     # Postgres can't drop an enum value directly; rebuild the type without SKILL.
+    # No ``artifact_type``-referencing index/constraint exists at this point, so
+    # the column type swap succeeds.
     op.execute(sa.text("COMMIT"))
     op.execute(sa.text("ALTER TYPE agentartifacttype RENAME TO agentartifacttype_old"))
     op.execute(sa.text("CREATE TYPE agentartifacttype AS ENUM ('TEXT', 'CODE_REVIEW', 'OTHER', 'MEMORY')"))
@@ -139,3 +137,35 @@ def downgrade() -> None:
     )
     op.execute(sa.text("DROP TYPE agentartifacttype_old"))
     op.execute(sa.text("BEGIN"))
+
+    # Recreate the dependent objects now that the column carries the new type —
+    # their ``artifact_type`` literals bind cleanly. This restores the exact
+    # pre-migration (b227eabd88f2) state.
+    op.create_check_constraint(
+        "ck_agent_artifacts_memory_scope_matches_type",
+        "agent_artifacts",
+        "(artifact_type = 'MEMORY' AND memory_scope IN ('user', 'agent', 'topic')) "
+        "OR (artifact_type <> 'MEMORY' AND memory_scope IS NULL AND memory_scope_subject IS NULL)",
+    )
+    op.create_index(
+        "uix_agent_artifacts_slug_version",
+        "agent_artifacts",
+        ["named_slug", "version"],
+        unique=True,
+        postgresql_where=sa.text("named_slug IS NOT NULL AND version IS NOT NULL AND artifact_type <> 'MEMORY'"),
+    )
+    op.create_index(
+        "uix_memory_scope_slug_version",
+        "agent_artifacts",
+        ["memory_scope", "memory_scope_subject", "named_slug", "version"],
+        unique=True,
+        postgresql_where=sa.text("artifact_type = 'MEMORY' AND named_slug IS NOT NULL AND version IS NOT NULL"),
+        postgresql_nulls_not_distinct=True,
+    )
+    op.create_index(
+        "ix_memory_scope_subject",
+        "agent_artifacts",
+        ["memory_scope", "memory_scope_subject"],
+        unique=False,
+        postgresql_where=sa.text("artifact_type = 'MEMORY'"),
+    )
