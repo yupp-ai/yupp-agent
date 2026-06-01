@@ -125,11 +125,15 @@ async def drain_queue_for_session(session_id: str) -> int:
         if not message:
             break
 
+        app_config = await get_agent_config_by_app_id(session.app_id)
+        bot_token = app_config.bot_token if app_config else None
+
         # Try to send to Agent Service
         result = await send_message_to_agent(
             agent_name=session.agent_name,
             session_id=session_id,
             message=message,
+            bot_token=bot_token,
         )
 
         if result:
@@ -189,6 +193,12 @@ async def forward_or_queue_message(
         await queue_message_for_later(session_id, message)
         return False
 
+    session = await get_session(session_id)
+    bot_token: str | None = None
+    if session:
+        app_config = await get_agent_config_by_app_id(session.app_id)
+        bot_token = app_config.bot_token if app_config else None
+
     # Try to forward
     if is_new_session:
         result = await create_agent_session(
@@ -199,9 +209,10 @@ async def forward_or_queue_message(
             thread_ts=thread_ts,
             channel_name=channel_name,
             slack_name=slack_name,
+            bot_token=bot_token,
         )
     else:
-        result = await send_message_to_agent(agent_name, session_id, message)
+        result = await send_message_to_agent(agent_name, session_id, message, bot_token=bot_token)
 
     if result:
         # Also check if there are queued messages to drain
