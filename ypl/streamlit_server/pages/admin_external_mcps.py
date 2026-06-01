@@ -386,10 +386,14 @@ with tab_catalog:
                             key=f"csec_{entry.slug}",
                         )
                         _role_name_by_id = {r.role_id: r.name.value for r in catalog_roles}
+
+                        def _fmt_role(rid: uuid.UUID, _n: dict[uuid.UUID, str] = _role_name_by_id) -> str:
+                            return _n.get(rid, str(rid))
+
                         sel = st.multiselect(
                             "Allowed roles",
                             options=[r.role_id for r in catalog_roles],
-                            format_func=lambda rid: _role_name_by_id.get(rid, str(rid)),
+                            format_func=_fmt_role,
                             key=f"roles_{entry.slug}",
                             help="Users with any of these roles will see + be able to connect this MCP.",
                         )
