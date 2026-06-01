@@ -47,7 +47,24 @@ def upgrade() -> None:
 
     # Broaden the scope/type check to cover MEMORY + SKILL. Other types must
     # still leave the scope columns NULL.
-    op.drop_constraint("ck_agent_artifacts_memory_scope_matches_type", "agent_artifacts", type_="check")
+    #
+    # The existing constraint's real name differs across databases: ones created
+    # before the metadata naming convention was added carry the single-prefixed
+    # ``ck_agent_artifacts_memory_scope_matches_type``, while fresh / CI databases
+    # carry the convention-rendered ``ck_agent_artifacts_ck_agent_artifacts_...``
+    # (the convention prefixes an already-prefixed name). ``op.drop_constraint``
+    # always renders the doubled form, so it breaks on older single-prefixed DBs.
+    # Drop whichever exists via raw IF EXISTS so this runs everywhere; the
+    # recreate below restores a single convention-rendered name on all.
+    op.execute(
+        sa.text("ALTER TABLE agent_artifacts DROP CONSTRAINT IF EXISTS ck_agent_artifacts_memory_scope_matches_type")
+    )
+    op.execute(
+        sa.text(
+            "ALTER TABLE agent_artifacts "
+            "DROP CONSTRAINT IF EXISTS ck_agent_artifacts_ck_agent_artifacts_memory_scope_matches_type"
+        )
+    )
     op.create_check_constraint(
         "ck_agent_artifacts_memory_scope_matches_type",
         "agent_artifacts",
@@ -121,7 +138,16 @@ def downgrade() -> None:
     op.drop_index("uix_agent_artifacts_slug_version", table_name="agent_artifacts")
     op.drop_index("ix_memory_scope_subject", table_name="agent_artifacts")
     op.drop_index("uix_memory_scope_slug_version", table_name="agent_artifacts")
-    op.drop_constraint("ck_agent_artifacts_memory_scope_matches_type", "agent_artifacts", type_="check")
+    # Drop whichever name the constraint actually has (see upgrade()).
+    op.execute(
+        sa.text("ALTER TABLE agent_artifacts DROP CONSTRAINT IF EXISTS ck_agent_artifacts_memory_scope_matches_type")
+    )
+    op.execute(
+        sa.text(
+            "ALTER TABLE agent_artifacts "
+            "DROP CONSTRAINT IF EXISTS ck_agent_artifacts_ck_agent_artifacts_memory_scope_matches_type"
+        )
+    )
 
     # Postgres can't drop an enum value directly; rebuild the type without SKILL.
     # No ``artifact_type``-referencing index/constraint exists at this point, so
