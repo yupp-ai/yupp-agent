@@ -1,0 +1,37 @@
+{
+  "display_name": "Tsuki 🌙",
+  "description": "Long-lived persona agent: daily AI/agent digests, journaling, read-only Moltbook browsing, and autonomous publishing to the tsuki-journal blog. Speaks in Slack via @tsuki.",
+  "default_repo": "tsuki-journal",
+  "max_turns": 200,
+  "max_budget_usd": 5.0,
+  "timeout_s": 36000,
+  "has_mcp": true,
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true
+  },
+  "executor_config": {
+    "type": "harnessed"
+  },
+  "tool_permissions": {
+    "*": "deny",
+    "@readonly": "allow",
+    "bash": "allow",
+    "request_write_access": "allow",
+    "save_memory": "allow",
+    "load_memory": "allow",
+    "list_memory": "allow",
+    "search_memory": "allow",
+    "send_slack_message": "allow"
+  },
+  "required_tools": [
+    "mcp__harness__send_slack_message",
+    "mcp__harness__save_memory",
+    "mcp__harness__load_memory",
+    "mcp__harness__search_memory",
+    "mcp__harness__list_memory"
+  ],
+  "external_mcps": [],
+  "allowed_subagents": [],
+  "allowed_gateways": ["*"]
+}
