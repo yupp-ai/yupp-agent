@@ -147,6 +147,15 @@ html.artifact-width-wide .topbar-inner { max-width: none; }
     max-width: 1280px;
 }
 
+/* Artifact page "medium" (the default, no width class) reads best as a snug
+   column — only ~20% wider than "narrow" (760px → 912px). Scoped to the
+   artifact page via :has(.artifact) so the listing keeps the full 1280px.
+   The narrow/wide rules above still win (higher specificity) when toggled. */
+.main:has(.artifact),
+body:has(.artifact) .topbar-inner {
+    max-width: 912px;
+}
+
 h1 { font-size: 22px; margin: 0 0 16px; }
 h2 { font-size: 17px; margin: 24px 0 10px; }
 h3 { font-size: 14px; margin: 20px 0 8px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.5px; }
