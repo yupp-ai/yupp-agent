@@ -4,14 +4,14 @@ Mount layout::
 
     GET /                                → home (search + recent)
     GET /search?q=...                    → search results (supports label: / slug: tokens)
-    GET /artifacts/a/{uuid}              → rendered artifact (a = by id)
-    GET /artifacts/a/{uuid}/raw          → full-page sandboxed HTML (text/html only)
-    GET /artifacts/a/{uuid}/download     → download raw body as a file
-    GET /artifacts/a/{uuid}/edit         → full-screen edit form (creates a new version on POST)
-    POST /artifacts/a/{uuid}/edit        → submit new content; redirects to the new version
-    GET /artifacts/a/{uuid}/attachments/{filename} → stream attachment
-    GET /artifacts/s/{slug}              → latest version by slug (s = by slug)
-    GET /artifacts/s/{slug}/{N}          → pinned version
+    GET /a/{uuid}              → rendered artifact (a = by id)
+    GET /a/{uuid}/raw          → full-page sandboxed HTML (text/html only)
+    GET /a/{uuid}/download     → download raw body as a file
+    GET /a/{uuid}/edit         → full-screen edit form (creates a new version on POST)
+    POST /a/{uuid}/edit        → submit new content; redirects to the new version
+    GET /a/{uuid}/attachments/{filename} → stream attachment
+    GET /s/{slug}              → latest version by slug (s = by slug)
+    GET /s/{slug}/{N}          → pinned version
 
     A slug's full history is a ``slug:{slug}`` search — there is no dedicated
     versions page. Legacy /artifacts/{uuid} and /artifacts/by-slug/... paths
@@ -431,7 +431,7 @@ async def raw_html(request: Request) -> Response:
         # rendered page rather than showing the viewer's error template —
         # the user's original tab still has the artifact open and a 404
         # in the new tab would be confusing UX with no extra signal.
-        return RedirectResponse(f"/artifacts/a/{artifact_id}", status_code=303)
+        return RedirectResponse(f"/a/{artifact_id}", status_code=303)
     # Same sandboxed posture as the ``?v=full`` alias — see ``_full_page_headers``.
     return Response(content=data, media_type="text/html; charset=utf-8", headers=_full_page_headers())
 
@@ -611,15 +611,15 @@ async def edit_artifact_post(request: Request) -> Response:
     # like the edit failed. The by-id route doesn't share that pitfall.
     new_id = created.get("artifact_id") or artifact_id
     if is_memory:
-        return RedirectResponse(f"/artifacts/a/{new_id}", status_code=303)
+        return RedirectResponse(f"/a/{new_id}", status_code=303)
     new_slug = created.get("named_slug") or meta.get("named_slug")
     new_version = created.get("version")
     if new_slug and new_version is not None:
-        return RedirectResponse(f"/artifacts/s/{new_slug}/{new_version}", status_code=303)
+        return RedirectResponse(f"/s/{new_slug}/{new_version}", status_code=303)
     # Fallback: by-id. Should be unreachable for slugged artifacts (which
     # is the only kind we allow to edit) but keeps the response well-formed
     # if AHS ever omits the version field.
-    return RedirectResponse(f"/artifacts/a/{new_id}", status_code=303)
+    return RedirectResponse(f"/a/{new_id}", status_code=303)
 
 
 async def _resolve_next_version(meta: dict[str, Any], user: dict[str, str]) -> int | None:
@@ -822,17 +822,17 @@ def build_app() -> Starlette:
     routes = [
         Route("/", home, name="home"),
         Route("/search", search_page, name="search"),
-        # --- Canonical URL scheme: a/{uuid} for a specific row, s/{slug}
-        #     for a slug (latest) and s/{slug}/{version} for a pinned version. ---
-        Route("/artifacts/a/{artifact_id}", artifact_by_id, name="artifact"),
-        Route("/artifacts/a/{artifact_id}/raw", raw_html, name="artifact_raw"),
-        Route("/artifacts/a/{artifact_id}/download", download, name="artifact_download"),
-        Route("/artifacts/a/{artifact_id}/labels", update_labels, methods=["POST"], name="artifact_labels"),
-        Route("/artifacts/a/{artifact_id}/edit", edit_artifact_get, methods=["GET"], name="artifact_edit"),
-        Route("/artifacts/a/{artifact_id}/edit", edit_artifact_post, methods=["POST"], name="artifact_edit_submit"),
-        Route("/artifacts/a/{artifact_id}/attachments/{filename:path}", attachment, name="attachment"),
-        Route("/artifacts/s/{slug}", artifact_by_slug, name="by_slug"),
-        Route("/artifacts/s/{slug}/{version:int}", artifact_by_slug_version, name="by_slug_version"),
+        # --- Canonical short URLs: /a/{uuid} for a specific row, /s/{slug}
+        #     for a slug (latest) and /s/{slug}/{version} for a pinned version. ---
+        Route("/a/{artifact_id}", artifact_by_id, name="artifact"),
+        Route("/a/{artifact_id}/raw", raw_html, name="artifact_raw"),
+        Route("/a/{artifact_id}/download", download, name="artifact_download"),
+        Route("/a/{artifact_id}/labels", update_labels, methods=["POST"], name="artifact_labels"),
+        Route("/a/{artifact_id}/edit", edit_artifact_get, methods=["GET"], name="artifact_edit"),
+        Route("/a/{artifact_id}/edit", edit_artifact_post, methods=["POST"], name="artifact_edit_submit"),
+        Route("/a/{artifact_id}/attachments/{filename:path}", attachment, name="attachment"),
+        Route("/s/{slug}", artifact_by_slug, name="by_slug"),
+        Route("/s/{slug}/{version:int}", artifact_by_slug_version, name="by_slug_version"),
         # --- Legacy paths (pre-2026-06 scheme). Kept so stored ``url`` fields,
         #     rendered attachment links, and external bookmarks keep resolving.
         #     The old /versions page is gone — it now redirects to a slug: search. ---

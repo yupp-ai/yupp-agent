@@ -116,15 +116,15 @@
                     has a slug; the UUID stays reachable via the ID row on the
                     artifact page itself. -#}
                 {% if a.named_slug and a.version is not none %}
-                    <a href="/artifacts/s/{{ a.named_slug }}/{{ a.version }}">
+                    <a href="/s/{{ a.named_slug }}/{{ a.version }}">
                         {{ display_title }}
                     </a>
                 {% elif a.named_slug %}
-                    <a href="/artifacts/s/{{ a.named_slug }}">
+                    <a href="/s/{{ a.named_slug }}">
                         {{ display_title }}
                     </a>
                 {% else %}
-                    <a href="/artifacts/a/{{ a.artifact_id }}">
+                    <a href="/a/{{ a.artifact_id }}">
                         {{ display_title }}
                     </a>
                 {% endif %}
@@ -168,7 +168,7 @@
                         that specific version's doc. -#}
                     <a href="/search?q=slug:{{ a.named_slug|urlencode }}" title="Show all versions of this slug">{{ a.named_slug }}</a>
                     {% if a.version is not none %}
-                        <a class="mono" href="/artifacts/s/{{ a.named_slug }}/{{ a.version }}" title="Open this version">v{{ a.version }}</a>
+                        <a class="mono" href="/s/{{ a.named_slug }}/{{ a.version }}" title="Open this version">v{{ a.version }}</a>
                     {% endif %}
                 {% else %}
                     <span class="muted">—</span>

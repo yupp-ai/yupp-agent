@@ -24,13 +24,13 @@
             {% if meta.description %}<p class="description">{{ meta.description }}</p>{% endif %}
         </div>
         <dl class="artifact-meta">
-            <dt>ID</dt><dd class="mono"><a href="/artifacts/a/{{ meta.artifact_id }}">{{ meta.artifact_id }}</a></dd>
+            <dt>ID</dt><dd class="mono"><a href="/a/{{ meta.artifact_id }}">{{ meta.artifact_id }}</a></dd>
             {% if meta.named_slug %}
                 <dt>Slug</dt>
                 <dd>
                     <a href="/search?q=slug:{{ meta.named_slug|urlencode }}" title="Show all versions of this slug">{{ meta.named_slug }}</a>
                     {% if meta.version is not none %}
-                        <a class="mono" href="/artifacts/s/{{ meta.named_slug }}/{{ meta.version }}" title="Open this version">v{{ meta.version }}</a>
+                        <a class="mono" href="/s/{{ meta.named_slug }}/{{ meta.version }}" title="Open this version">v{{ meta.version }}</a>
                     {% endif %}
                 </dd>
             {% endif %}
@@ -60,34 +60,35 @@
                 {% endif %}
             </dd>
         </dl>
-    </header>
 
-    {#- Page-width control. JS toggles a class on <html> and persists the
-        choice in localStorage; the head_extra script above re-applies it
-        on subsequent page loads to avoid a width flash. The default
-        "medium" matches the existing 1100px max-width. -#}
-    <div class="width-toggle" role="group" aria-label="Page width">
-        <a class="width-toggle-btn full-page-btn"
-           href="/artifacts/a/{{ meta.artifact_id }}?v=full"
-           title="Open only the artifact content in a full page">
-            Full Page View
-        </a>
-        <span class="width-toggle-label muted small">Width</span>
-        <button type="button" class="width-toggle-btn" data-width="narrow" aria-pressed="false">Narrow</button>
-        <button type="button" class="width-toggle-btn is-active" data-width="medium" aria-pressed="true">Medium</button>
-        <button type="button" class="width-toggle-btn" data-width="wide" aria-pressed="false">Wide</button>
-        <form class="label-editor" method="post" action="/artifacts/a/{{ meta.artifact_id }}/labels">
-            <input type="hidden" name="labels" value="{{ labels|join(',') }}">
-            <span class="label-editor-label muted small">Labels</span>
-            <span class="label-chip-row" data-label-list>
-                {% for label in labels %}
-                    <button class="label-chip label-chip-edit" type="button" data-label="{{ label }}" title="Remove label">{{ label }} ×</button>
-                {% endfor %}
-            </span>
-            <button class="label-add-btn" type="button" title="Add label">+</button>
-            <span class="label-save-status muted small" aria-live="polite"></span>
-        </form>
-    </div>
+        {#- Controls live inside the shaded header so the whole upper block is
+            one surface. The header is a stable-width column (see .artifact-header
+            CSS) — only the body below responds to the width toggle. JS toggles a
+            class on <html> and persists the choice; head_extra re-applies it on
+            load to avoid a flash. -#}
+        <div class="artifact-controls width-toggle" role="group" aria-label="View controls">
+            <a class="width-toggle-btn full-page-btn"
+               href="/a/{{ meta.artifact_id }}?v=full"
+               title="Open only the artifact content in a full page">
+                Full Page View
+            </a>
+            <span class="width-toggle-label muted small">Width</span>
+            <button type="button" class="width-toggle-btn" data-width="narrow" aria-pressed="false">Narrow</button>
+            <button type="button" class="width-toggle-btn is-active" data-width="medium" aria-pressed="true">Medium</button>
+            <button type="button" class="width-toggle-btn" data-width="wide" aria-pressed="false">Wide</button>
+            <form class="label-editor" method="post" action="/a/{{ meta.artifact_id }}/labels">
+                <input type="hidden" name="labels" value="{{ labels|join(',') }}">
+                <span class="label-editor-label muted small">Labels</span>
+                <span class="label-chip-row" data-label-list>
+                    {% for label in labels %}
+                        <button class="label-chip label-chip-edit" type="button" data-label="{{ label }}" title="Remove label">{{ label }} ×</button>
+                    {% endfor %}
+                </span>
+                <button class="label-add-btn" type="button" title="Add label">+</button>
+                <span class="label-save-status muted small" aria-live="polite"></span>
+            </form>
+        </div>
+    </header>
 
     <section class="artifact-body artifact-body-{{ display_mode }}">
         {{ body_html|safe }}
@@ -99,10 +100,10 @@
 
     <footer class="artifact-footer muted small">
         {% if can_edit %}
-            <a class="artifact-edit-link" href="/artifacts/a/{{ meta.artifact_id }}/edit">Edit (creates a new version)</a>
+            <a class="artifact-edit-link" href="/a/{{ meta.artifact_id }}/edit">Edit (creates a new version)</a>
             <span aria-hidden="true">·</span>
         {% endif %}
-        <a href="/artifacts/a/{{ meta.artifact_id }}/download" rel="nofollow">Download</a>
+        <a href="/a/{{ meta.artifact_id }}/download" rel="nofollow">Download</a>
     </footer>
 </article>
 <script>

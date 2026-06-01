@@ -12,9 +12,13 @@
 <header class="topbar">
     <div class="topbar-inner">
         <a href="/" class="brand">Artifact Viewer</a>
+        {#- Home replaces this with its merged search+filter bar (one row,
+            auto-applying) so there's a single control surface. -#}
+        {% block topbar_search %}
         <form class="search" action="/" method="get">
             <input type="search" name="q" placeholder="Search title, slug, label:triage…" value="{{ query or '' }}" autocomplete="off">
         </form>
+        {% endblock %}
         <div class="user">
             {% if user and user.email %}
                 {% if user.picture %}<img class="avatar" src="{{ user.picture }}" alt="">{% endif %}

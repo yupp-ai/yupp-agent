@@ -127,34 +127,27 @@ pre.plain { white-space: pre-wrap; }
 
 .main.narrow { max-width: 560px; }
 
-/* Artifact viewer width modes. Toggled by JS on the <html> element so the
-   choice (read from localStorage) applies before the body renders and
-   doesn't flash. "medium" is the default — no class needed, .main keeps
-   its 1100px cap. "narrow" trims to a comfortable reading column;
-   "wide" releases the cap entirely so the article uses the full
-   viewport (with .main's existing horizontal padding).
-
-   The topbar's inner row mirrors .main's max-width so the search bar
-   and avatar visually align with the article column at every width —
-   otherwise the topbar stays at 1100px and the resize feels
-   half-applied. */
-html.artifact-width-narrow .main,
-html.artifact-width-narrow .topbar-inner { max-width: 760px; }
-html.artifact-width-wide .main,
-html.artifact-width-wide .topbar-inner { max-width: none; }
 .topbar-inner,
 .main {
     max-width: 1280px;
 }
 
-/* Artifact page "medium" (the default, no width class) reads best as a snug
-   column — only ~20% wider than "narrow" (760px → 912px). Scoped to the
-   artifact page via :has(.artifact) so the listing keeps the full 1280px.
-   The narrow/wide rules above still win (higher specificity) when toggled. */
-.main:has(.artifact),
+/* --- Artifact page width modes --- */
+/* The shaded header (metadata + view controls) and the topbar form a STABLE
+   912px column — they do NOT move when the width toggle changes. Only the
+   artifact body responds: "narrow" (760px) / "medium" (default, 912px — ~20%
+   wider than narrow) / "wide" (full viewport). The toggle is a class JS sets
+   on <html>; head_extra re-applies it before paint to avoid a flash. */
+.main:has(.artifact) { max-width: none; }
+.artifact-header,
 body:has(.artifact) .topbar-inner {
     max-width: 912px;
+    margin-left: auto;
+    margin-right: auto;
 }
+.artifact-body { max-width: 912px; margin-left: auto; margin-right: auto; }
+html.artifact-width-narrow .artifact-body { max-width: 760px; }
+html.artifact-width-wide .artifact-body { max-width: none; }
 
 h1 { font-size: 22px; margin: 0 0 16px; }
 h2 { font-size: 17px; margin: 24px 0 10px; }
@@ -257,6 +250,56 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
     background: var(--accent);
     color: #fff;
 }
+
+/* Controls strip inside the artifact header: a full-width row under the
+   title + metadata, split off by a hairline. Overrides .width-toggle's
+   standalone-row spacing / right alignment. */
+.artifact-controls {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+    margin: 2px 0 0;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+}
+
+/* Home merged search + filter bar (one auto-applying row). The search input
+   grows to fill; the filters stay compact on the right. */
+.controls-bar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 0 18px;
+}
+.controls-search {
+    flex: 1 1 320px;
+    min-width: 220px;
+    padding: 7px 11px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--fg);
+    font: inherit;
+}
+.controls-field,
+.controls-date {
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--fg);
+    font: inherit;
+    font-size: 13px;
+}
+.controls-checkbox {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 13px;
+    color: var(--fg-muted);
+    white-space: nowrap;
+}
+.controls-clear { font-size: 13px; margin-left: 2px; }
 
 .label-chip-row {
     display: inline-flex;
