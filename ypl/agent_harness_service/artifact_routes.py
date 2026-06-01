@@ -35,10 +35,12 @@ from ypl.agent_harness_service.artifact_store import (
     list_artifact_versions,
     list_artifacts,
     list_distinct_creators,
+    normalize_artifact_labels,
     read_artifact_attachment,
     read_artifact_content,
     resolve_attribution,
     search_artifacts,
+    set_artifact_labels,
     validate_memory_scope_shape,
     validate_named_slug,
 )
@@ -154,6 +156,7 @@ class CreateArtifactRequest(BaseModel):
     agent_task_id: uuid.UUID | None = Field(None, description="Task to attribute to")
     attachments: list[AttachmentPayload] | None = Field(None, description="Sibling files")
     metadata: dict[str, Any] | None = Field(None, description="Extra metadata stored alongside")
+    labels: list[str] | None = Field(None, description="Searchable labels stored in metadata.labels")
 
     @field_validator("named_slug")
     @classmethod
@@ -192,6 +195,7 @@ class ArtifactResponse(BaseModel):
     agent_task_id: uuid.UUID | None
     created_at: datetime
     metadata: dict[str, Any] | None
+    labels: list[str]
 
 
 class CreateArtifactResponse(ArtifactResponse):
@@ -225,6 +229,10 @@ class ArtifactVersionsResponse(BaseModel):
     versions: list[ArtifactResponse]
 
 
+class ArtifactLabelsRequest(BaseModel):
+    labels: list[str] = Field(default_factory=list, description="Complete replacement label list")
+
+
 class ArchiveBySlugResponse(BaseModel):
     named_slug: str
     archived_count: int
@@ -241,6 +249,7 @@ def _artifact_to_response(
     user_names: dict[str, str] | None = None,
     agent_names: dict[uuid.UUID, str] | None = None,
 ) -> ArtifactResponse:
+    metadata = artifact.artifact_metadata or {}
     user_name = None
     if artifact.creator_user_id and user_names:
         user_name = user_names.get(artifact.creator_user_id)
@@ -266,6 +275,7 @@ def _artifact_to_response(
         agent_task_id=artifact.agent_task_id,
         created_at=artifact.created_at,
         metadata=artifact.artifact_metadata,
+        labels=normalize_artifact_labels(metadata.get("labels")),
     )
 
 
@@ -290,6 +300,27 @@ def _decode_attachments(payload: list[AttachmentPayload] | None) -> list[Attachm
 
 def _error_for(exc: ArtifactError) -> HTTPException:
     return HTTPException(status_code=400, detail=str(exc))
+
+
+_LABEL_TOKEN_RE = re.compile(r"(?:^|\s)label:([^\s]+)", re.IGNORECASE)
+_SLUG_TOKEN_RE = re.compile(r"(?:^|\s)slug:([^\s]+)", re.IGNORECASE)
+
+
+def _extract_search_terms(query: str, explicit_labels: list[str] | None = None) -> tuple[str, list[str], str | None]:
+    """Pull ``label:`` and ``slug:`` tokens out of a free-text query.
+
+    Returns ``(text_query, labels, slug)``: the residual free text after the
+    tokens are stripped, the normalized AND-matched labels, and a single exact
+    ``named_slug`` (last ``slug:`` token wins) or ``None``. A ``slug:`` token
+    makes the caller show *all* versions of that slug (see the search route).
+    """
+    labels = list(explicit_labels or [])
+    labels.extend(match.group(1) for match in _LABEL_TOKEN_RE.finditer(query))
+    slug_matches = _SLUG_TOKEN_RE.findall(query)
+    slug = slug_matches[-1].strip().lower() if slug_matches else None
+    text_query = _SLUG_TOKEN_RE.sub(" ", _LABEL_TOKEN_RE.sub(" ", query))
+    text_query = re.sub(r"\s+", " ", text_query).strip()
+    return text_query, normalize_artifact_labels(labels), slug
 
 
 # ---------------------------------------------------------------------------
@@ -364,7 +395,9 @@ async def create_artifact_route(
             named_slug=request.named_slug,
             create_new_slug=request.create_new_slug,
             attachments=_decode_attachments(request.attachments),
-            extra_metadata=request.metadata,
+            extra_metadata={**(request.metadata or {}), "labels": request.labels}
+            if request.labels is not None
+            else request.metadata,
             artifact_type=request.type,
             memory_scope=request.memory_scope,
             memory_scope_subject=request.memory_scope_subject,
@@ -390,6 +423,8 @@ _INCLUDE_TOTAL_QUERY = Query(
     False,
     description="When true, also return the total count of matching rows (used by paginated UIs).",
 )
+_LABELS_QUERY = Query(default_factory=list, description="Labels to AND-match against metadata.labels.")
+_LATEST_PER_SLUG_QUERY = Query(False, description="When true, return only the latest active version per slug.")
 
 
 @artifact_router.get("", response_model=ArtifactListResponse)
@@ -402,6 +437,8 @@ async def list_artifacts_route(
     created_after: datetime | None = _CREATED_AFTER_QUERY,
     created_before: datetime | None = _CREATED_BEFORE_QUERY,
     include_archived: bool = False,
+    labels: list[str] = _LABELS_QUERY,
+    latest_per_slug: bool = _LATEST_PER_SLUG_QUERY,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     include_total: bool = _INCLUDE_TOTAL_QUERY,
@@ -436,6 +473,8 @@ async def list_artifacts_route(
         created_after=created_after,
         created_before=created_before,
         include_archived=include_archived,
+        labels=labels,
+        latest_per_slug=latest_per_slug,
         limit=limit,
         offset=offset,
         memory_caller=memory_caller,
@@ -453,6 +492,8 @@ async def list_artifacts_route(
             created_after=created_after,
             created_before=created_before,
             include_archived=include_archived,
+            labels=labels,
+            latest_per_slug=latest_per_slug,
             memory_caller=memory_caller,
             memory_scope=scope,
             memory_scope_subject=effective_subject,
@@ -485,6 +526,8 @@ async def search_artifacts_route(
     q: str = Query(..., min_length=1, description="Substring to match (case-insensitive)"),
     artifact_type: AgentArtifactType | None = _OPTIONAL_TYPE_QUERY,
     include_archived: bool = False,
+    labels: list[str] = _LABELS_QUERY,
+    latest_per_slug: bool = _LATEST_PER_SLUG_QUERY,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     scope: str | None = MEMORY_SCOPE_QUERY,
@@ -501,17 +544,61 @@ async def search_artifacts_route(
     effective_subject = subject
     if scope in ("user", "agent") and subject is None:
         effective_subject = caller.user_id if scope == "user" else caller.agent_name
-    rows = await search_artifacts(
-        q,
-        artifact_type=artifact_type,
-        include_archived=include_archived,
-        limit=limit,
-        offset=offset,
-        memory_caller=memory_caller,
-        memory_scope=scope,
-        memory_scope_subject=effective_subject,
-    )
+    text_query, label_terms, slug_term = _extract_search_terms(q, labels)
+    # A ``slug:`` query is a "show me this slug's history" request, so it
+    # overrides latest-per-slug collapsing and returns every version.
+    effective_latest = latest_per_slug and slug_term is None
+    if text_query:
+        rows = await search_artifacts(
+            text_query,
+            artifact_type=artifact_type,
+            include_archived=include_archived,
+            labels=label_terms,
+            named_slug=slug_term,
+            latest_per_slug=effective_latest,
+            limit=limit,
+            offset=offset,
+            memory_caller=memory_caller,
+            memory_scope=scope,
+            memory_scope_subject=effective_subject,
+        )
+    else:
+        rows = await list_artifacts(
+            artifact_type=artifact_type,
+            include_archived=include_archived,
+            labels=label_terms,
+            named_slug=slug_term,
+            latest_per_slug=effective_latest,
+            limit=limit,
+            offset=offset,
+            memory_caller=memory_caller,
+            memory_scope=scope,
+            memory_scope_subject=effective_subject,
+        )
     return ArtifactListResponse(artifacts=await _artifacts_to_response_list(rows))
+
+
+@artifact_router.patch("/{artifact_id}/labels", response_model=ArtifactResponse)
+async def update_artifact_labels_route(
+    artifact_id: uuid.UUID,
+    request: ArtifactLabelsRequest,
+    caller: MemoryCallerContext = CALLER_CTX_DEP,
+) -> ArtifactResponse:
+    artifact = await get_artifact_by_id(artifact_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail=f"Artifact {artifact_id} not found")
+    if artifact.artifact_type == AgentArtifactType.MEMORY and not caller_can_write_memory(
+        caller, artifact.memory_scope or "", artifact.memory_scope_subject
+    ):
+        raise HTTPException(status_code=403, detail="Caller not permitted to update labels for this MEMORY artifact")
+    try:
+        updated = await set_artifact_labels(artifact_id, request.labels)
+    except ArtifactError as exc:
+        raise _error_for(exc) from exc
+    if updated is None:
+        raise HTTPException(status_code=404, detail=f"Artifact {artifact_id} not found")
+    user_names, agent_names = await resolve_attribution([updated])
+    return _artifact_to_response(updated, user_names=user_names, agent_names=agent_names)
 
 
 @artifact_router.get("/{artifact_id}", responses={200: {"content": {"*/*": {}}}})

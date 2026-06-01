@@ -5,16 +5,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light dark">
     <title>{% block title %}Artifact Viewer{% endblock %}</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v={{ static_version }}">
     {% block head_extra %}{% endblock %}
 </head>
 <body>
+{#- The artifact page replaces this whole bar so the nav merges into its
+    single compact top box. -#}
+{% block topbar %}
 <header class="topbar">
     <div class="topbar-inner">
         <a href="/" class="brand">Artifact Viewer</a>
-        <form class="search" action="/search" method="get">
-            <input type="search" name="q" placeholder="Search title, slug, or attachment…" value="{{ query or '' }}" autocomplete="off">
+        {#- Home replaces this with its merged search+filter bar (one row,
+            auto-applying) so there's a single control surface. -#}
+        {% block topbar_search %}
+        <form class="search" action="/" method="get">
+            <input type="search" name="q" placeholder="Search title, slug, label:triage…" value="{{ query or '' }}" autocomplete="off">
         </form>
+        {% endblock %}
         <div class="user">
             {% if user and user.email %}
                 {% if user.picture %}<img class="avatar" src="{{ user.picture }}" alt="">{% endif %}
@@ -24,6 +31,7 @@
         </div>
     </div>
 </header>
+{% endblock %}
 <main class="main">
 {% block content %}{% endblock %}
 </main>

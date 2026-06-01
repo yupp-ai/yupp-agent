@@ -5,12 +5,13 @@ Talks to ``AHS_BASE_URL`` (default ``https://ahs.agcouch.com``) with the
 
 Subcommands::
 
-    ahs-artifact add [FILE] [--slug NAME] [--title T] [--type TYPE] [--new-slug]
+    ahs-artifact add [FILE] [--slug NAME] [--title T] [--type TYPE] [--label LABEL] [--new-slug]
     ahs-artifact get (UUID | SLUG) [-v N] [-q | -m]
     ahs-artifact rm  (UUID | SLUG)
     ahs-artifact ls  [--slug NAME] [--limit N] [--offset N]
     ahs-artifact versions SLUG
     ahs-artifact url (UUID | SLUG)
+    ahs-artifact labels (UUID | SLUG) [--set LABEL ...]
     ahs-artifact search QUERY [--limit N] [--offset N]
 
 Content type is sniffed from the file extension (``.md`` → markdown,
@@ -128,18 +129,19 @@ def _format_artifact_row(a: dict[str, Any]) -> str:
     version = a.get("version")
     ver = f"v{version}" if version is not None else "-"
     title = a.get("title") or ""
+    labels = ",".join(a.get("labels") or [])
     created = (a.get("created_at") or "").replace("T", " ")[:19]
     archived = (a.get("metadata") or {}).get("is_archived")
     flag = " [archived]" if archived else ""
-    return f"{created}  {a['artifact_id'][:8]}  {slug:<24}  {ver:<4}  {title}{flag}"
+    return f"{created}  {a['artifact_id'][:8]}  {slug:<24}  {ver:<4}  {labels:<18}  {title}{flag}"
 
 
 def _print_table(rows: list[dict[str, Any]]) -> None:
     if not rows:
         print("(no results)", file=sys.stderr)
         return
-    print(f"{'created (UTC)':<19}  {'id':<8}  {'slug':<24}  {'ver':<4}  title", file=sys.stderr)
-    print(f"{'-' * 19}  {'-' * 8}  {'-' * 24}  {'-' * 4}  -----", file=sys.stderr)
+    print(f"{'created (UTC)':<19}  {'id':<8}  {'slug':<24}  {'ver':<4}  {'labels':<18}  title", file=sys.stderr)
+    print(f"{'-' * 19}  {'-' * 8}  {'-' * 24}  {'-' * 4}  {'-' * 18}  -----", file=sys.stderr)
     for r in rows:
         print(_format_artifact_row(r))
 
@@ -177,6 +179,8 @@ def cmd_add(args: argparse.Namespace) -> int:
         "content_type": content_type,
         "title": title,
     }
+    if args.label:
+        body["labels"] = args.label
     if args.slug:
         body["named_slug"] = args.slug
         if args.new_slug:
@@ -229,6 +233,8 @@ def cmd_get(args: argparse.Namespace) -> int:
             print(f"slug/ver:    {slug} ({ver})", file=sys.stderr)
             print(f"created:     {meta.get('created_at')}", file=sys.stderr)
             print(f"type:        {meta.get('content_type')}", file=sys.stderr)
+            if meta.get("labels"):
+                print(f"labels:      {', '.join(meta['labels'])}", file=sys.stderr)
             if meta.get("description"):
                 print(f"description: {meta['description']}", file=sys.stderr)
             attachments = (meta.get("metadata") or {}).get("attachments") or []
@@ -307,6 +313,10 @@ def cmd_ls(args: argparse.Namespace) -> int:
     params: dict[str, Any] = {"limit": args.limit, "offset": args.offset}
     if args.include_archived:
         params["include_archived"] = "true"
+    if args.latest:
+        params["latest_per_slug"] = "true"
+    if args.label:
+        params["labels"] = args.label
     with _client() as http:
         data = _handle(http.get("/ahs/artifacts", params=params))
     _print_table(data.get("artifacts", []))
@@ -333,10 +343,23 @@ def cmd_url(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_labels(args: argparse.Namespace) -> int:
+    with _client() as http:
+        meta = _get_by_id_or_slug(http, args.ident, None)
+        if args.set is None:
+            print("\n".join(meta.get("labels") or []))
+            return 0
+        updated = _handle(http.patch(f"/ahs/artifacts/{meta['artifact_id']}/labels", json={"labels": args.set}))
+    print(f"labels: {', '.join(updated.get('labels') or [])}", file=sys.stderr)
+    return 0
+
+
 def cmd_search(args: argparse.Namespace) -> int:
     params: dict[str, Any] = {"q": args.query, "limit": args.limit, "offset": args.offset}
     if args.include_archived:
         params["include_archived"] = "true"
+    if args.latest:
+        params["latest_per_slug"] = "true"
     with _client() as http:
         data = _handle(http.get("/ahs/artifacts/search", params=params))
     _print_table(data.get("artifacts", []))
@@ -365,6 +388,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Fail if --slug is already in use (force a fresh slug).",
     )
     p_add.add_argument("--title", help="Artifact title (prompts interactively if omitted).")
+    p_add.add_argument("--label", action="append", help="Searchable label. May be repeated.")
     p_add.add_argument(
         "--type",
         dest="type",
@@ -400,6 +424,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_ls.add_argument("--limit", type=int, default=50)
     p_ls.add_argument("--offset", type=int, default=0)
     p_ls.add_argument("--include-archived", action="store_true")
+    p_ls.add_argument("--latest", action="store_true", help="Only show latest active version per slug.")
+    p_ls.add_argument("--label", action="append", help="Filter by label. May be repeated; all must match.")
     p_ls.set_defaults(func=cmd_ls)
 
     # versions
@@ -412,6 +438,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_url.add_argument("ident", help="UUID or slug (latest version).")
     p_url.set_defaults(func=cmd_url)
 
+    # labels
+    p_labels = subs.add_parser("labels", help="Read or replace labels for an artifact.")
+    p_labels.add_argument("ident", help="UUID or slug (latest version).")
+    p_labels.add_argument("--set", nargs="*", help="Replace all labels with these values.")
+    p_labels.set_defaults(func=cmd_labels)
+
     # search
     p_search = subs.add_parser(
         "search",
@@ -421,6 +453,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_search.add_argument("--limit", type=int, default=50)
     p_search.add_argument("--offset", type=int, default=0)
     p_search.add_argument("--include-archived", action="store_true")
+    p_search.add_argument("--latest", action="store_true", help="Only show latest active version per slug.")
     p_search.set_defaults(func=cmd_search)
 
     return parser

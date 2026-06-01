@@ -127,21 +127,25 @@ pre.plain { white-space: pre-wrap; }
 
 .main.narrow { max-width: 560px; }
 
-/* Artifact viewer width modes. Toggled by JS on the <html> element so the
-   choice (read from localStorage) applies before the body renders and
-   doesn't flash. "medium" is the default — no class needed, .main keeps
-   its 1100px cap. "narrow" trims to a comfortable reading column;
-   "wide" releases the cap entirely so the article uses the full
-   viewport (with .main's existing horizontal padding).
+.topbar-inner,
+.main {
+    max-width: 1280px;
+}
 
-   The topbar's inner row mirrors .main's max-width so the search bar
-   and avatar visually align with the article column at every width —
-   otherwise the topbar stays at 1100px and the resize feels
-   half-applied. */
-html.artifact-width-narrow .main,
-html.artifact-width-narrow .topbar-inner { max-width: 760px; }
-html.artifact-width-wide .main,
-html.artifact-width-wide .topbar-inner { max-width: none; }
+/* --- Artifact page width modes --- */
+/* The shaded header (metadata + view controls) and the topbar form a STABLE
+   912px column — they do NOT move when the width toggle changes. Only the
+   artifact body responds: "narrow" (760px) / "medium" (default, 912px — ~20%
+   wider than narrow) / "wide" (full viewport). The toggle is a class JS sets
+   on <html>; head_extra re-applies it before paint to avoid a flash. */
+.main:has(.artifact) { max-width: none; }
+.artifact-topbox {
+    max-width: 912px;
+    margin: 0 auto 24px;
+}
+.artifact-body { max-width: 912px; margin-left: auto; margin-right: auto; }
+html.artifact-width-narrow .artifact-body { max-width: 760px; }
+html.artifact-width-wide .artifact-body { max-width: none; }
 
 h1 { font-size: 22px; margin: 0 0 16px; }
 h2 { font-size: 17px; margin: 24px 0 10px; }
@@ -211,6 +215,7 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
     gap: 6px;
     margin: -8px 0 16px;
     font-size: 12px;
+    flex-wrap: wrap;
 }
 .width-toggle-label {
     margin-right: 4px;
@@ -232,8 +237,7 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
 }
 /* Full-page link sits in the same strip as the width-toggle pills but is
    an action (not a toggle) — slightly stronger affordance, separator gap
-   on the right so it visually splits from the Narrow / Medium / Wide
-   group. Only rendered for ``text/html`` artifacts. */
+   on the right so it visually splits from the Narrow / Medium / Wide group. */
 .width-toggle-btn.full-page-btn {
     text-decoration: none;
     margin-right: 8px;
@@ -243,6 +247,142 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
 .width-toggle-btn.full-page-btn:hover {
     background: var(--accent);
     color: #fff;
+}
+
+/* Controls strip inside the artifact header: a full-width row under the
+   title + metadata, split off by a hairline. Overrides .width-toggle's
+   standalone-row spacing / right alignment. */
+.artifact-controls {
+    grid-column: 1 / -1;
+    justify-content: space-between;
+    flex-wrap: nowrap;
+    margin: 2px 0 0;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+}
+.controls-left {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+/* Home merged search + filter bar (one auto-applying row). The search input
+   grows to fill; the filters stay compact on the right. */
+.controls-bar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 0 18px;
+}
+.controls-search {
+    flex: 1 1 320px;
+    min-width: 220px;
+    padding: 7px 11px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--fg);
+    font: inherit;
+}
+.controls-field,
+.controls-date {
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--fg);
+    font: inherit;
+    font-size: 13px;
+}
+.controls-checkbox {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 13px;
+    color: var(--fg-muted);
+    white-space: nowrap;
+}
+.controls-clear { font-size: 13px; margin-left: 2px; }
+
+.label-chip-row {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    vertical-align: middle;
+}
+
+.label-chip {
+    display: inline-flex;
+    align-items: center;
+    max-width: 120px;
+    min-height: 20px;
+    padding: 1px 7px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-alt);
+    color: var(--fg-muted);
+    font-size: 11px;
+    line-height: 1.4;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+a.label-chip:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+    text-decoration: none;
+}
+
+.label-editor {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-left: 10px;
+    min-width: 0;
+}
+
+.label-editor-label {
+    margin-left: 4px;
+}
+
+.label-chip-edit,
+.label-add-btn {
+    cursor: pointer;
+    font: inherit;
+}
+
+.label-chip-edit {
+    color: var(--fg);
+}
+
+.label-add-btn {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: var(--bg);
+    color: var(--fg);
+}
+
+.label-add-btn:hover,
+.label-chip-edit:hover {
+    border-color: var(--accent);
+}
+
+.label-save-status {
+    min-width: 44px;
+}
+
+.full-artifact-body {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 28px 20px 56px;
+    background: var(--bg);
+    color: var(--fg);
 }
 
 .tag {
@@ -266,16 +406,38 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
 
 /* --- Artifact page --- */
 
+/* The single compact top box: nav row + metadata + controls, one surface. */
+.artifact-topbox {
+    background: var(--bg-alt);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 16px;
+}
+.abox-nav {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding-bottom: 10px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+}
+.abox-nav .brand { font-weight: 600; font-size: 15px; white-space: nowrap; }
+.abox-nav .search { flex: 1; }
+.abox-nav .search input {
+    width: 100%;
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--fg);
+    font: inherit;
+}
+
 .artifact-header {
     display: grid;
     grid-template-columns: 6fr 4fr;
     gap: 20px;
     align-items: start;
-    margin-bottom: 24px;
-    padding: 12px 16px;
-    background: var(--bg-alt);
-    border: 1px solid var(--border);
-    border-radius: 6px;
 }
 
 .artifact-header-main {
@@ -714,7 +876,7 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
     }
     table.artifacts.artifacts-listing td.col-title a { font-weight: 500; }
 
-    /* Metadata cells (creator / agent / slug / status / created): inline-flow
+    /* Metadata cells (creator / agent / labels / slug / status / created): inline-flow
        on a second line, separated by a thin middle-dot via ``::after``.
        ``inline`` (not inline-block) lets the line wrap naturally between
        items on very narrow screens; ``overflow-wrap: anywhere`` covers
@@ -725,6 +887,7 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
        and they keep the layout predictable. */
     table.artifacts.artifacts-listing td.col-creator,
     table.artifacts.artifacts-listing td.col-agent,
+    table.artifacts.artifacts-listing td.col-labels,
     table.artifacts.artifacts-listing td.col-slug,
     table.artifacts.artifacts-listing td.col-status,
     table.artifacts.artifacts-listing td.col-created {
@@ -750,6 +913,7 @@ time.timestamp { font-family: var(--mono); font-size: 0.9em; white-space: nowrap
        on the last cell so the row doesn't end with " · ". */
     table.artifacts.artifacts-listing td.col-creator::after,
     table.artifacts.artifacts-listing td.col-agent::after,
+    table.artifacts.artifacts-listing td.col-labels::after,
     table.artifacts.artifacts-listing td.col-slug::after,
     table.artifacts.artifacts-listing td.col-status::after {
         content: " · ";

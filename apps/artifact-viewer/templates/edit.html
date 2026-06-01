@@ -9,12 +9,12 @@
     save lands at v5. ``next_version`` may be ``None`` when the version
     list couldn't be fetched — we fall back to a generic message rather
     than show a misleading number. -#}
-<form class="editor" method="post" action="/artifacts/{{ meta.artifact_id }}/edit">
+<form class="editor" method="post" action="/a/{{ meta.artifact_id }}/edit">
     <div class="editor-banner">
         <div class="editor-banner-text">
             <strong>Editing v{{ meta.version }}</strong> of
             {% if meta.named_slug %}
-                <a href="/artifacts/by-slug/{{ meta.named_slug }}">{{ meta.named_slug }}</a>
+                <a href="/search?q=slug:{{ meta.named_slug|urlencode }}">{{ meta.named_slug }}</a>
             {% else %}
                 <span class="mono">{{ meta.artifact_id }}</span>
             {% endif %}
@@ -46,7 +46,7 @@
     >{{ raw_text }}</textarea>
 
     <div class="editor-actions">
-        <a class="editor-cancel" href="/artifacts/{{ meta.artifact_id }}">Cancel</a>
+        <a class="editor-cancel" href="/a/{{ meta.artifact_id }}">Cancel</a>
         <button type="submit" class="editor-save">
             {% if next_version is not none %}
                 Save as v{{ next_version }}
