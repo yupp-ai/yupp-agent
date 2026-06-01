@@ -223,6 +223,8 @@ def build_codex_mcp_args(
     session_id: str = "",
     session_context: dict[str, Any] | None = None,
     is_slack: bool = False,
+    agent_name: str = "",
+    external_mcps: list[str] | None = None,
 ) -> list[str]:
     """Build -c flags for Codex CLI to inject MCP servers at launch time.
 
@@ -234,7 +236,13 @@ def build_codex_mcp_args(
     The harness MCP server uses a Bearer token in format "<secret>:<session_id>"
     via the CODEX_HARNESS_BEARER_ENV env var (set by build_codex_mcp_env).
     """
-    servers = resolve_mcp_servers(session_id, session_context, is_slack)
+    servers = resolve_mcp_servers(
+        session_id,
+        session_context,
+        is_slack,
+        agent_name=agent_name,
+        external_mcps=external_mcps,
+    )
     args: list[str] = []
 
     for name, server in servers.items():

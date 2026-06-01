@@ -249,64 +249,6 @@ def _load_raw_executor_prompt() -> str | None:
         return None
 
 
-def _build_skill_catalog_section(exclude: frozenset[str] | None = None) -> str | None:
-    """Build a system prompt section listing available skills.
-
-    Scans ``AHS_SKILLS_DIR`` for SKILL.md files, extracts name and description
-    from YAML frontmatter, and returns a compact catalog. The agent uses the
-    ``load_skill()`` MCP tool to load a skill's full content on demand.
-
-    Args:
-        exclude: Skill directory names to omit from the catalog (e.g. skills
-            whose content has already been inlined into the system prompt).
-    """
-    from ypl.agent_harness_service.common.constants import AHS_SKILLS_DIR
-
-    if not os.path.isdir(AHS_SKILLS_DIR):
-        return None
-
-    entries: list[tuple[str, str]] = []
-    for entry in sorted(os.listdir(AHS_SKILLS_DIR)):
-        if exclude and entry in exclude:
-            continue
-        skill_md = os.path.join(AHS_SKILLS_DIR, entry, "SKILL.md")
-        if not os.path.isfile(skill_md):
-            continue
-        # Extract description from YAML frontmatter
-        description = ""
-        try:
-            with open(skill_md) as f:
-                lines = f.readlines()
-            if lines and lines[0].strip() == "---":
-                for line in lines[1:]:
-                    if line.strip() == "---":
-                        break
-                    if line.startswith("description:"):
-                        description = line.split(":", 1)[1].strip().strip("\"'")
-        except OSError:
-            continue
-        entries.append((entry, description))
-
-    if not entries:
-        return None
-
-    lines = [
-        "## Available Skills",
-        "Skills provide domain-specific guidance for common tasks. They are NOT loaded "
-        "into your context by default — load them on demand when the task requires it.",
-        "",
-        "To load a skill, use the `load_skill` tool:",
-        '  `load_skill(skill_name="<skill-name>")`',
-        "",
-    ]
-    for name, desc in entries:
-        line = f"- **{name}**"
-        if desc:
-            line += f" — {desc}"
-        lines.append(line)
-    return "\n".join(lines)
-
-
 def _build_resource_catalog_section(resource_catalog: list[dict[str, str]]) -> str:
     """Build a system prompt section listing available MCP resources."""
     lines = ["## Available Resources", 'Use `read_resource(uri="...")` to load any of these on demand.', ""]
@@ -388,9 +330,9 @@ def _build_system_prompt(
     # without paying the full token cost of every skill upfront.
     # Exclude skill-backed files already inlined into the system prompt above
     # (has_native_skills=False path) to avoid listing them as load_skill() candidates.
-    from ypl.agent_harness_service.executors.system_prompt import SKILL_BACKED_NAMES
+    from ypl.agent_harness_service.executors.system_prompt import SKILL_BACKED_NAMES, build_skill_catalog_section
 
-    skill_catalog = _build_skill_catalog_section(exclude=SKILL_BACKED_NAMES)
+    skill_catalog = build_skill_catalog_section(exclude=SKILL_BACKED_NAMES)
     if skill_catalog:
         parts.append(skill_catalog)
 
