@@ -2,7 +2,7 @@
 
 Focuses on:
 - _load_raw_executor_prompt
-- _build_skill_catalog_section
+- build_skill_catalog_section
 - _build_resource_catalog_section
 - _build_system_prompt (integration with above helpers)
 - convert_tools_to_anthropic / convert_tools_to_openai
@@ -27,7 +27,6 @@ import pytest
 from ypl.agent_harness_service.common.models import AgentSpec, ExecutorConfig
 from ypl.agent_harness_service.executors.raw_executor import (
     _build_resource_catalog_section,
-    _build_skill_catalog_section,
     _create_client,
     _load_raw_executor_prompt,
     _run_anthropic,
@@ -37,6 +36,7 @@ from ypl.agent_harness_service.executors.raw_executor import (
     filter_tools_by_permissions,
     run_raw_executor,
 )
+from ypl.agent_harness_service.executors.system_prompt import build_skill_catalog_section
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -112,7 +112,7 @@ class TestLoadRawExecutorPrompt:
 
 
 # ---------------------------------------------------------------------------
-# _build_skill_catalog_section
+# build_skill_catalog_section
 # ---------------------------------------------------------------------------
 
 
@@ -120,8 +120,8 @@ class TestBuildSkillCatalogSection:
     def test_returns_none_when_skills_dir_missing(self, tmp_path: Path) -> None:
         """Returns None when AHS_SKILLS_DIR does not exist."""
         nonexistent = str(tmp_path / "skills_dir_nonexistent")
-        with patch("ypl.agent_harness_service.common.constants.AHS_SKILLS_DIR", nonexistent):
-            result = _build_skill_catalog_section()
+        with patch("ypl.agent_harness_service.executors.system_prompt.AHS_SKILLS_DIR", nonexistent):
+            result = build_skill_catalog_section()
         assert result is None
 
     def test_returns_none_when_no_skill_md_files(self, tmp_path: Path) -> None:
@@ -129,8 +129,8 @@ class TestBuildSkillCatalogSection:
         skills_dir = tmp_path / "skills"
         skills_dir.mkdir()
         (skills_dir / "empty-skill").mkdir()  # No SKILL.md
-        with patch("ypl.agent_harness_service.common.constants.AHS_SKILLS_DIR", str(skills_dir)):
-            result = _build_skill_catalog_section()
+        with patch("ypl.agent_harness_service.executors.system_prompt.AHS_SKILLS_DIR", str(skills_dir)):
+            result = build_skill_catalog_section()
         assert result is None
 
     def test_returns_catalog_with_description(self, tmp_path: Path) -> None:
@@ -140,8 +140,8 @@ class TestBuildSkillCatalogSection:
         skill_md = skills_dir / "my-skill" / "SKILL.md"
         skill_md.write_text('---\ndescription: "Does cool stuff"\n---\n# My Skill\n')
 
-        with patch("ypl.agent_harness_service.common.constants.AHS_SKILLS_DIR", str(skills_dir)):
-            result = _build_skill_catalog_section()
+        with patch("ypl.agent_harness_service.executors.system_prompt.AHS_SKILLS_DIR", str(skills_dir)):
+            result = build_skill_catalog_section()
 
         assert result is not None
         assert "my-skill" in result
@@ -154,8 +154,8 @@ class TestBuildSkillCatalogSection:
             (skills_dir / skill_name).mkdir(parents=True)
             (skills_dir / skill_name / "SKILL.md").write_text('---\ndescription: "Test"\n---\n')
 
-        with patch("ypl.agent_harness_service.common.constants.AHS_SKILLS_DIR", str(skills_dir)):
-            result = _build_skill_catalog_section(exclude=frozenset({"skill-a"}))
+        with patch("ypl.agent_harness_service.executors.system_prompt.AHS_SKILLS_DIR", str(skills_dir)):
+            result = build_skill_catalog_section(exclude=frozenset({"skill-a"}))
 
         assert result is not None
         assert "skill-a" not in result
@@ -167,8 +167,8 @@ class TestBuildSkillCatalogSection:
         (skills_dir / "no-meta").mkdir(parents=True)
         (skills_dir / "no-meta" / "SKILL.md").write_text("# Just the title\nSome content.\n")
 
-        with patch("ypl.agent_harness_service.common.constants.AHS_SKILLS_DIR", str(skills_dir)):
-            result = _build_skill_catalog_section()
+        with patch("ypl.agent_harness_service.executors.system_prompt.AHS_SKILLS_DIR", str(skills_dir)):
+            result = build_skill_catalog_section()
 
         assert result is not None
         assert "no-meta" in result
@@ -180,10 +180,10 @@ class TestBuildSkillCatalogSection:
         (skills_dir / "bad-skill" / "SKILL.md").write_text("")  # exists but we'll patch open
 
         with (
-            patch("ypl.agent_harness_service.common.constants.AHS_SKILLS_DIR", str(skills_dir)),
+            patch("ypl.agent_harness_service.executors.system_prompt.AHS_SKILLS_DIR", str(skills_dir)),
             patch("builtins.open", side_effect=OSError("Read error")),
         ):
-            result = _build_skill_catalog_section()
+            result = build_skill_catalog_section()
         # Should return None since no entries were successfully parsed
         assert result is None
 

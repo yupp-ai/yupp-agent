@@ -105,6 +105,58 @@ def _read_skill_content(skill_name: str) -> str | None:
     return content
 
 
+def build_skill_catalog_section(exclude: frozenset[str] | None = None) -> str | None:
+    """Build a compact catalog of loadable AHS skills.
+
+    Executors without native slash-skill support use this with the
+    ``load_skill`` MCP tool so the model can discover the repo's skills
+    without trying to read host-global skill directories from the workspace.
+    """
+    if not os.path.isdir(AHS_SKILLS_DIR):
+        return None
+
+    entries: list[tuple[str, str]] = []
+    for entry in sorted(os.listdir(AHS_SKILLS_DIR)):
+        if exclude and entry in exclude:
+            continue
+        skill_md = os.path.join(AHS_SKILLS_DIR, entry, "SKILL.md")
+        if not os.path.isfile(skill_md):
+            continue
+
+        description = ""
+        try:
+            with open(skill_md) as f:
+                lines = f.readlines()
+            if lines and lines[0].strip() == "---":
+                for line in lines[1:]:
+                    if line.strip() == "---":
+                        break
+                    if line.startswith("description:"):
+                        description = line.split(":", 1)[1].strip().strip("\"'")
+        except OSError:
+            continue
+        entries.append((entry, description))
+
+    if not entries:
+        return None
+
+    lines = [
+        "## Available Skills",
+        "Skills provide domain-specific guidance for common tasks. They are NOT loaded "
+        "into your context by default; load them on demand when the task requires it.",
+        "",
+        "To load a skill, use the `load_skill` MCP tool:",
+        '  `load_skill(skill_name="<skill-name>")`',
+        "",
+    ]
+    for name, desc in entries:
+        line = f"- **{name}**"
+        if desc:
+            line += f" - {desc}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 SESSION_CONTEXT_TEMPLATE = "Your harness session ID is {session_id} and your agent name is {name}.\n"
 
 # Template for Phase 0 tool pre-loading instruction.

@@ -50,10 +50,21 @@ from ypl.agent_harness_service.executors.runner import (
     build_subprocess_env,
     extract_excerpt,
 )
-from ypl.agent_harness_service.executors.system_prompt import build_system_prompt
+from ypl.agent_harness_service.executors.system_prompt import (
+    SKILL_BACKED_NAMES,
+    build_skill_catalog_section,
+    build_system_prompt,
+)
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
+
+_CODEX_ENVIRONMENT_PROMPT = """## Codex Runtime Notes
+
+You are running under Codex in AHS. Do not use Claude Code slash skills or ToolSearch; those are not
+available in this executor.
+Use MCP tools directly by their exposed names. For skill guidance, use `load_skill(skill_name="<skill-name>")`.
+"""
 
 # How long an idle server is kept alive before eviction.
 IDLE_TTL_S: float = 600.0  # 10 minutes
@@ -406,6 +417,8 @@ class CodexAppServerRunner(AgentRunner):
             session_id=context.session_id,
             session_context=context.session_context,
             is_slack=context.is_slack,
+            agent_name=self.config.name,
+            external_mcps=self.config.external_mcps or None,
         )
         return args
 
@@ -421,7 +434,14 @@ class CodexAppServerRunner(AgentRunner):
             params["cwd"] = context.workspace
         if self.config.model:
             params["model"] = self.config.model
-        system_prompt = build_system_prompt(
+        system_prompt = self._build_system_prompt(context)
+        if system_prompt:
+            params["developerInstructions"] = system_prompt
+        return params
+
+    def _build_system_prompt(self, context: RunContext) -> str:
+        """Build Codex-specific instructions for app-server threads."""
+        base = build_system_prompt(
             self.config.name,
             session_id=context.session_id,
             slack_session_id=context.slack_session_id,
@@ -429,13 +449,15 @@ class CodexAppServerRunner(AgentRunner):
             is_task=context.is_task,
             session_context=context.session_context,
             additional_system_prompt=self.config.additional_system_prompt,
-            has_native_skills=True,
-            required_tools=self.config.required_tools or None,
+            has_native_skills=False,
+            required_tools=None,
             workspace=context.workspace,
         )
-        if system_prompt:
-            params["developerInstructions"] = system_prompt
-        return params
+        parts = [base, _CODEX_ENVIRONMENT_PROMPT]
+        skill_catalog = build_skill_catalog_section(exclude=SKILL_BACKED_NAMES)
+        if skill_catalog:
+            parts.append(skill_catalog)
+        return "\n\n".join(part for part in parts if part)
 
     # ── server lifecycle ──────────────────────────────────────────────────
 
