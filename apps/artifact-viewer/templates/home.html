@@ -1,85 +1,57 @@
 {% extends "base.html" %}
 {% from "_artifact_table.html" import artifact_table %}
-{% block title %}Recent artifacts · Artifact Viewer{% endblock %}
+{% block topbar_search %}{% endblock %}
+{% block title %}Artifacts · Artifact Viewer{% endblock %}
 {% block content %}
-<h1>Recent artifacts</h1>
+{#- Single merged search + filter bar. One GET form to ``/`` so URLs stay
+    shareable. No Apply button — the selects / checkbox / date inputs
+    auto-submit on change (script below); the search box submits on Enter.
+    ``offset`` is intentionally omitted so any change resets to page 1. -#}
+<form class="controls-bar" action="/" method="get" role="search" aria-label="Search and filter artifacts">
+    <input class="controls-search" type="search" name="q"
+           placeholder="Search title, slug, label:triage…" value="{{ query or '' }}" autocomplete="off">
 
-{#- Filter row. Submits via GET so URLs stay shareable / bookmarkable. We
-    deliberately omit the ``offset`` field so changing any filter resets to
-    page 1 (a stale offset against a freshly filtered list would confuse). -#}
-<form class="filter-bar" action="/" method="get" role="search" aria-label="Filter artifacts">
-    <div class="filter-field">
-        <label for="filter-type">Type</label>
-        <select id="filter-type" name="type">
-            <option value="">All</option>
-            {% for value, label in type_options %}
-                <option value="{{ value }}" {% if filters.type == value %}selected{% endif %}>{{ label }}</option>
-            {% endfor %}
-        </select>
-    </div>
+    <select class="controls-field" name="type" data-autosubmit aria-label="Type">
+        <option value="">All types</option>
+        {% for value, label in type_options %}
+            <option value="{{ value }}" {% if filters.type == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+    </select>
 
-    {#- "From me" checkbox. Hidden ``from_me=0`` field + the checkbox share
-        the same name so an unchecked box still sends ``from_me=0`` (HTML
-        otherwise omits the field entirely, and we couldn't distinguish
-        "explicitly off" from "default"). The handler treats absence of any
-        ``from_me`` param as default-ON when a user is signed in. -#}
-    <label class="filter-checkbox" for="filter-from-me" title="Show only artifacts you created">
+    {#- Hidden ``from_me=0`` + the checkbox share a name so an unchecked box
+        still sends ``from_me=0``; the handler treats absence as default-OFF. -#}
+    <label class="controls-checkbox" title="Show only artifacts you created">
         <input type="hidden" name="from_me" value="0">
-        <input id="filter-from-me" type="checkbox" name="from_me" value="1"
-               {% if filters.from_me %}checked{% endif %}
-               {% if not user.user_id %}disabled{% endif %}>
+        <input type="checkbox" name="from_me" value="1" data-autosubmit
+               {% if filters.from_me %}checked{% endif %}{% if not user.user_id %} disabled{% endif %}>
         From me
     </label>
 
-    <div class="filter-field">
-        <label for="filter-agent">Agent</label>
-        <select id="filter-agent" name="creator_agent_id">
-            <option value="">All agents</option>
-            {% for a in creators.agents %}
-                <option value="{{ a.id }}" {% if filters.creator_agent_id == a.id %}selected{% endif %}>
-                    {{ a.name or a.id }}
-                </option>
-            {% endfor %}
-        </select>
-    </div>
+    <select class="controls-field" name="creator_agent_id" data-autosubmit aria-label="Agent">
+        <option value="">All agents</option>
+        {% for a in creators.agents %}
+            <option value="{{ a.id }}" {% if filters.creator_agent_id == a.id %}selected{% endif %}>{{ a.name or a.id }}</option>
+        {% endfor %}
+    </select>
 
-    <div class="filter-field">
-        <label for="filter-after">From</label>
-        <input id="filter-after" type="date" name="created_after" value="{{ filters.created_after }}">
-    </div>
-
-    <div class="filter-field">
-        <label for="filter-before">To</label>
-        <input id="filter-before" type="date" name="created_before" value="{{ filters.created_before }}">
-    </div>
-
-    {#- Preserve page-size selection across submits but always reset to page 1. -#}
+    <input class="controls-date" type="date" name="created_after" value="{{ filters.created_after }}" data-autosubmit aria-label="Created after">
+    <input class="controls-date" type="date" name="created_before" value="{{ filters.created_before }}" data-autosubmit aria-label="Created before">
     <input type="hidden" name="limit" value="{{ limit }}">
 
-    <div class="filter-actions">
-        <button type="submit" class="filter-apply">Apply</button>
-        {% if filters.type or filters.from_me or filters.creator_agent_id or filters.created_after or filters.created_before %}
-            {#- "Clear" resets every filter, including the default-ON "From me"
-                box, so we explicitly send ``from_me=0`` instead of just
-                linking to ``/`` (which would re-default it to ON). -#}
-            <a class="filter-clear" href="/?from_me=0">Clear</a>
-        {% endif %}
-    </div>
-</form>
-
-<p class="muted">
-    {% if total is not none %}
-        {% set window_end = offset + (artifacts|length) %}
-        {% if total == 0 %}
-            No artifacts match the current filters.
-        {% else %}
-            Showing {{ offset + 1 }}–{{ window_end }} of {{ total }} non-archived artifact{{ '' if total == 1 else 's' }}.
-        {% endif %}
-    {% else %}
-        Showing the most recent non-archived artifacts.
+    {% if query or filters.type or filters.from_me or filters.creator_agent_id or filters.created_after or filters.created_before %}
+        <a class="controls-clear" href="/?from_me=0" title="Clear search and filters">Clear</a>
     {% endif %}
-    Use search above to find by title, slug, or attachment filename.
-</p>
+</form>
+<script>
+(function () {
+    var form = document.querySelector('.controls-bar');
+    if (!form) return;
+    var fields = form.querySelectorAll('[data-autosubmit]');
+    for (var i = 0; i < fields.length; i++) {
+        fields[i].addEventListener('change', function () { form.submit(); });
+    }
+})();
+</script>
 
 {{ artifact_table(artifacts) }}
 
@@ -87,7 +59,9 @@
     filter so Prev/Next don't silently widen the result set. -#}
 {% set base_qs = {
     'type': filters.type,
+    'q': query,
     'from_me': '1' if filters.from_me else '0',
+    'creator_user_id': filters.creator_user_id,
     'creator_agent_id': filters.creator_agent_id,
     'created_after': filters.created_after,
     'created_before': filters.created_before,

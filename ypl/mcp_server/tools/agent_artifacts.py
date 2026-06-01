@@ -36,6 +36,7 @@ from ypl.agent_harness_service.artifact_store import (
     create_artifact,
     get_artifact_by_id,
     get_artifact_by_slug,
+    normalize_artifact_labels,
     read_artifact_content,
 )
 from ypl.agent_harness_service.artifact_store import (
@@ -344,6 +345,7 @@ async def add_artifact(
     attachments: str | None = None,
     agent_task_id: str | None = None,
     artifact_metadata: dict[str, Any] | None = None,
+    labels: list[str] | None = None,
 ) -> dict[str, Any]:
     """Register a new artifact in the artifact registry.
 
@@ -382,6 +384,8 @@ async def add_artifact(
         agent_task_id: Optional UUID of the project task this artifact belongs to.
         artifact_metadata: Optional key-value bag for type-specific data, e.g.
             ``{"pr_number": 123, "repo": "yupp-agent"}`` for CODE_REVIEW.
+        labels: Optional searchable labels. Labels are normalized to lowercase
+            and stored in artifact_metadata.labels.
 
     Returns:
         On success (TEXT):       { success, artifact_id, url, title, slug, version, content_type, message }
@@ -413,6 +417,12 @@ async def add_artifact(
             return {"success": False, "error": f"Invalid agent_task_id '{agent_task_id}': not a valid UUID"}
 
     session_id, user_id, agent_id = await _resolve_caller_context()
+    try:
+        normalized_labels = normalize_artifact_labels(labels)
+    except ArtifactError as exc:
+        return {"success": False, "error": str(exc)}
+    if normalized_labels:
+        artifact_metadata = {**(artifact_metadata or {}), "labels": normalized_labels}
 
     if parsed_type == AgentArtifactType.TEXT:
         if content is None:
@@ -468,6 +478,7 @@ async def add_artifact(
             "slug": artifact.named_slug,
             "version": artifact.version,
             "content_type": artifact.content_type,
+            "labels": (artifact.artifact_metadata or {}).get("labels", []),
             "message": f"Artifact '{title}' (TEXT) created at {artifact.url}.",
         }
 
@@ -522,6 +533,7 @@ async def add_artifact(
         "artifact_id": str(artifact.agent_artifact_id),
         "url": artifact.url,
         "title": artifact.title,
+        "labels": (artifact.artifact_metadata or {}).get("labels", []),
         "message": message,
     }
 
@@ -533,6 +545,7 @@ async def update_artifact(
     description: str | None = None,
     url: str | None = None,
     artifact_metadata: dict[str, Any] | None = None,
+    labels: list[str] | None = None,
     merge_metadata: bool = True,
 ) -> dict[str, Any]:
     """Update the metadata of an existing artifact.
@@ -552,6 +565,7 @@ async def update_artifact(
         description: New description (omit to leave unchanged).
         url: New canonical URL (omit to leave unchanged).
         artifact_metadata: New/additional metadata dict (omit to leave unchanged).
+        labels: Optional complete replacement label list.
         merge_metadata: If True (default), merges artifact_metadata into the
             existing metadata. If False, replaces it entirely.
 
@@ -563,6 +577,12 @@ async def update_artifact(
         parsed_id = uuid.UUID(artifact_id)
     except ValueError:
         return {"success": False, "error": f"Invalid artifact_id '{artifact_id}': not a valid UUID"}
+
+    if labels is not None:
+        try:
+            artifact_metadata = {**(artifact_metadata or {}), "labels": normalize_artifact_labels(labels)}
+        except ArtifactError as exc:
+            return {"success": False, "error": str(exc)}
 
     if all(v is None for v in [title, description, url, artifact_metadata]):
         return {
@@ -615,6 +635,7 @@ async def update_artifact_content(
     description: str | None = None,
     content_type: str = "text/markdown",
     attachments: str | None = None,
+    labels: list[str] | None = None,
 ) -> dict[str, Any]:
     """Save a new version of a TEXT artifact under an existing slug.
 
@@ -630,6 +651,7 @@ async def update_artifact_content(
         description: Optional one-line summary for the new version.
         content_type: text/markdown (default), text/plain, or text/html.
         attachments: Optional JSON array, same shape as ``add_artifact``.
+        labels: Optional searchable labels for the new version.
 
     Returns:
         { success, artifact_id, url, slug, version, content_type, message } on success.
@@ -642,6 +664,10 @@ async def update_artifact_content(
 
     session_id, user_id, agent_id = await _resolve_caller_context()
     resolved_title = title if title is not None else slug
+    try:
+        normalized_labels = normalize_artifact_labels(labels)
+    except ArtifactError as exc:
+        return {"success": False, "error": str(exc)}
 
     try:
         artifact = await create_artifact(
@@ -655,6 +681,7 @@ async def update_artifact_content(
             named_slug=slug,
             create_new_slug=False,
             attachments=decoded_attachments,
+            extra_metadata={"labels": normalized_labels} if normalized_labels else None,
         )
     except ArtifactError as exc:
         return {"success": False, "error": str(exc)}
@@ -684,6 +711,7 @@ async def update_artifact_content(
         "slug": artifact.named_slug,
         "version": artifact.version,
         "content_type": artifact.content_type,
+        "labels": (artifact.artifact_metadata or {}).get("labels", []),
         "message": f"Artifact '{slug}' updated to version {artifact.version} at {artifact.url}.",
     }
 
@@ -754,6 +782,7 @@ async def list_artifacts(
             "version": a.version,
             "created_at": a.created_at.isoformat() if a.created_at else None,
             "artifact_metadata": a.artifact_metadata,
+            "labels": (a.artifact_metadata or {}).get("labels", []),
         }
         for a in artifacts
     ]
@@ -788,6 +817,7 @@ async def list_artifact_versions(slug: str) -> dict[str, Any]:
             "url": a.url,
             "content_type": a.content_type,
             "created_at": a.created_at.isoformat() if a.created_at else None,
+            "labels": (a.artifact_metadata or {}).get("labels", []),
         }
         for a in artifacts
     ]
@@ -851,6 +881,7 @@ async def search_artifacts(
             "slug": a.named_slug,
             "version": a.version,
             "created_at": a.created_at.isoformat() if a.created_at else None,
+            "labels": (a.artifact_metadata or {}).get("labels", []),
         }
         for a in artifacts
     ]
@@ -899,6 +930,7 @@ async def mcp_read_artifact(
         "slug": artifact.named_slug,
         "version": artifact.version,
         "attachments": (artifact.artifact_metadata or {}).get("attachments", []),
+        "labels": (artifact.artifact_metadata or {}).get("labels", []),
     }
 
 
