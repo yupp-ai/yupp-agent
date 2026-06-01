@@ -389,3 +389,251 @@ class TestForkSnapshotMarkerPlacement:
         assert marker.content is not None
         assert str(src_uuid) in marker.content
         assert "turn 3" in marker.content
+
+    async def test_empty_snapshot_clamps_marker_turn_to_one(self) -> None:
+        """``max_turn`` of an empty source-message list is 0; the marker must be
+        clamped to ``turn_number=1`` (a 0-turn row would be a phantom row
+        below the natural USER turn numbering) and the rendered marker text
+        must reference the clamped turn, not the raw ``max_turn=0``.
+
+        This is the edge case the ``max(max_turn, 1)`` guard exists to handle.
+        Without it a debugger would see a phantom row at ``turn_number=0``;
+        without using ``marker_turn`` in the text it would read
+        "Forked … at turn 0" while the row sits at turn 1.
+        """
+        src_uuid = uuid.uuid4()
+        new_uuid = uuid.uuid4()
+        source = _make_source_session(session_uuid=src_uuid)
+        agent = Agent(agent_id=source.agent_id, name="eng-raccoon")
+
+        # No completed source messages — the snapshot-filter SELECT returns
+        # nothing, so max_turn=0 and the clamp kicks in.
+        source_messages: list[AgentSessionMessage] = []
+
+        new_session_row = AgentSession(
+            agent_session_id=new_uuid,
+            agent_id=source.agent_id,
+            status=AgentSessionStatus.ACTIVE,
+            trigger=AgentSessionTrigger.API,
+            creator_user_id=source.creator_user_id,
+            context={"user_id": source.creator_user_id},
+            workspace="/tmp/ws-new",
+        )
+
+        load_recorder = _SnapshotRecorder(
+            source_session=source,
+            source_agent=agent,
+            source_messages=[],
+            new_session_uuid=new_uuid,
+            new_session=new_session_row,
+        )
+        snapshot_recorder = _SnapshotRecorder(
+            source_session=source,
+            source_agent=agent,
+            source_messages=source_messages,
+            new_session_uuid=new_uuid,
+            new_session=new_session_row,
+        )
+
+        create_resp = MagicMock()
+        create_resp.session_id = str(new_uuid)
+        fake_lifecycle_module = types.ModuleType("session_lifecycle_stub")
+        fake_lifecycle_module.create_session = AsyncMock(return_value=create_resp)  # type: ignore[attr-defined]
+        fake_lifecycle_module.send_message = AsyncMock(  # type: ignore[attr-defined]
+            return_value=MagicMock(status="processing", turn_number=2)
+        )
+        sys.modules["ypl.agent_harness_service.service.session_lifecycle"] = fake_lifecycle_module
+
+        with (
+            patch.object(
+                fork_mod,
+                "get_async_session",
+                _async_session_factory(load_recorder, snapshot_recorder),
+            ),
+            patch.object(fork_mod, "mcp_session_id_var", MagicMock(get=MagicMock(return_value=str(src_uuid)))),
+        ):
+            result = await fork_session(
+                additional_instructions="start fresh on this branch",
+                source_session_id=str(src_uuid),
+                target="headless",
+            )
+
+        assert result["status"] == "ok", result
+
+        marker_rows = [
+            m
+            for m in snapshot_recorder.added
+            if isinstance(m, AgentSessionMessage) and m.role == AgentSessionMessageRole.SYSTEM
+        ]
+        assert len(marker_rows) == 1
+        marker = marker_rows[0]
+        # Clamped to 1 — NOT 0, NOT max_turn + 1 (which would be 1 by coincidence
+        # but only because max_turn happens to be 0; the clamp is the intent).
+        assert marker.turn_number == 1
+        assert marker.content is not None
+        # The rendered text must use the clamped turn, not max_turn=0.
+        # A row at turn_number=1 saying "at turn 0" would mislead anyone
+        # debugging fork lineage by reading the message stream.
+        assert "turn 1" in marker.content
+        assert "turn 0" not in marker.content
+
+    async def test_marker_added_to_db_before_send_message_is_awaited(self) -> None:
+        """The marker MUST be visible to ``_has_inflight_turn`` by the time
+        ``send_message`` is awaited — otherwise the inflight-gate sees the
+        latest USER row with no completed response and queues the new turn,
+        exactly the bug this PR fixes.
+
+        A future refactor that moves ``db.add(marker)`` to *after* the
+        ``send_message`` call (or reorders to commit later) would silently
+        re-break the fork without changing the marker_turn value the other
+        tests assert on. This test pins down the ordering by capturing
+        ``snapshot_recorder.added`` at the moment ``send_message`` is awaited
+        and asserting the SYSTEM marker is already present.
+        """
+        src_uuid = uuid.uuid4()
+        new_uuid = uuid.uuid4()
+        source = _make_source_session(session_uuid=src_uuid)
+        agent = Agent(agent_id=source.agent_id, name="eng-raccoon")
+
+        source_messages = [
+            _make_msg(src_uuid, role=AgentSessionMessageRole.USER, turn=1, content="hi"),
+            _make_msg(src_uuid, role=AgentSessionMessageRole.AGENT, turn=1, content="hello"),
+            _make_msg(src_uuid, role=AgentSessionMessageRole.USER, turn=2, content="/fork"),
+        ]
+
+        new_session_row = AgentSession(
+            agent_session_id=new_uuid,
+            agent_id=source.agent_id,
+            status=AgentSessionStatus.ACTIVE,
+            trigger=AgentSessionTrigger.API,
+            creator_user_id=source.creator_user_id,
+            context={"user_id": source.creator_user_id},
+            workspace="/tmp/ws-new",
+        )
+
+        load_recorder = _SnapshotRecorder(
+            source_session=source,
+            source_agent=agent,
+            source_messages=[],
+            new_session_uuid=new_uuid,
+            new_session=new_session_row,
+        )
+        snapshot_recorder = _SnapshotRecorder(
+            source_session=source,
+            source_agent=agent,
+            source_messages=source_messages,
+            new_session_uuid=new_uuid,
+            new_session=new_session_row,
+        )
+
+        # Snapshot the `added` list at the moment send_message is awaited.
+        seen_at_send: list[Any] = []
+
+        async def _capture_then_succeed(_req: Any) -> Any:
+            seen_at_send.extend(snapshot_recorder.added)
+            return MagicMock(status="processing", turn_number=3)
+
+        create_resp = MagicMock()
+        create_resp.session_id = str(new_uuid)
+        fake_lifecycle_module = types.ModuleType("session_lifecycle_stub")
+        fake_lifecycle_module.create_session = AsyncMock(return_value=create_resp)  # type: ignore[attr-defined]
+        fake_lifecycle_module.send_message = AsyncMock(side_effect=_capture_then_succeed)  # type: ignore[attr-defined]
+        sys.modules["ypl.agent_harness_service.service.session_lifecycle"] = fake_lifecycle_module
+
+        with (
+            patch.object(
+                fork_mod,
+                "get_async_session",
+                _async_session_factory(load_recorder, snapshot_recorder),
+            ),
+            patch.object(fork_mod, "mcp_session_id_var", MagicMock(get=MagicMock(return_value=str(src_uuid)))),
+        ):
+            result = await fork_session(
+                additional_instructions="keep going",
+                source_session_id=str(src_uuid),
+                target="headless",
+            )
+
+        assert result["status"] == "ok", result
+
+        # The SYSTEM marker for the snapshotted USER turn must already be in
+        # snapshot_recorder.added by the time send_message is awaited.
+        marker_rows_at_send = [
+            m for m in seen_at_send if isinstance(m, AgentSessionMessage) and m.role == AgentSessionMessageRole.SYSTEM
+        ]
+        assert len(marker_rows_at_send) == 1, (
+            "SYSTEM marker was not yet added when send_message was awaited — "
+            "marker placement+timing invariant violated; the inflight-gate will "
+            "queue this turn and the fork will die silently."
+        )
+        assert marker_rows_at_send[0].turn_number == 2
+
+    async def test_send_message_returning_queued_yields_partial_status(self) -> None:
+        """If a future refactor reverts marker placement, ``send_message``
+        returns ``SessionMessageResponse(status="queued")`` without raising.
+        That path used to silently return ``status="ok"`` and the fork would
+        die in process memory. After this PR, the defensive check converts
+        ``queued`` into ``status="partial"`` so the regression is loud.
+        """
+        src_uuid = uuid.uuid4()
+        new_uuid = uuid.uuid4()
+        source = _make_source_session(session_uuid=src_uuid)
+        agent = Agent(agent_id=source.agent_id, name="eng-raccoon")
+
+        source_messages = [
+            _make_msg(src_uuid, role=AgentSessionMessageRole.USER, turn=1, content="/fork"),
+        ]
+
+        new_session_row = AgentSession(
+            agent_session_id=new_uuid,
+            agent_id=source.agent_id,
+            status=AgentSessionStatus.ACTIVE,
+            trigger=AgentSessionTrigger.API,
+            creator_user_id=source.creator_user_id,
+            context={"user_id": source.creator_user_id},
+            workspace="/tmp/ws-new",
+        )
+
+        load_recorder = _SnapshotRecorder(
+            source_session=source,
+            source_agent=agent,
+            source_messages=[],
+            new_session_uuid=new_uuid,
+            new_session=new_session_row,
+        )
+        snapshot_recorder = _SnapshotRecorder(
+            source_session=source,
+            source_agent=agent,
+            source_messages=source_messages,
+            new_session_uuid=new_uuid,
+            new_session=new_session_row,
+        )
+
+        create_resp = MagicMock()
+        create_resp.session_id = str(new_uuid)
+        fake_lifecycle_module = types.ModuleType("session_lifecycle_stub")
+        fake_lifecycle_module.create_session = AsyncMock(return_value=create_resp)  # type: ignore[attr-defined]
+        # Simulate the regression path: send_message returns queued (no exception).
+        fake_lifecycle_module.send_message = AsyncMock(  # type: ignore[attr-defined]
+            return_value=MagicMock(status="queued", turn_number=-1)
+        )
+        sys.modules["ypl.agent_harness_service.service.session_lifecycle"] = fake_lifecycle_module
+
+        with (
+            patch.object(
+                fork_mod,
+                "get_async_session",
+                _async_session_factory(load_recorder, snapshot_recorder),
+            ),
+            patch.object(fork_mod, "mcp_session_id_var", MagicMock(get=MagicMock(return_value=str(src_uuid)))),
+        ):
+            result = await fork_session(
+                additional_instructions="next branch",
+                source_session_id=str(src_uuid),
+                target="headless",
+            )
+
+        assert result["status"] == "partial", result
+        assert result["new_session_id"] == str(new_uuid)
+        assert result["forked_from"] == str(src_uuid)
+        assert "queued" in result["error"]

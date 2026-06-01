@@ -451,7 +451,7 @@ async def fork_session(
             # satisfies the inflight check so step 7 dispatches normally.
             marker_turn = max(max_turn, 1)
             marker_text = (
-                f"[Forked from session {src_id} at turn {max_turn}. "
+                f"[Forked from session {src_id} at turn {marker_turn}. "
                 "The conversation above is replayed from the original session; "
                 "the next user turn carries the new fork instructions.]"
             )
@@ -510,7 +510,7 @@ async def fork_session(
         source="orchestration",
     )
     try:
-        await send_message(msg_req)
+        send_resp = await send_message(msg_req)
     except Exception as exc:
         logger.error(
             "fork_session: send_message failed (session created but no first turn dispatched)",
@@ -518,6 +518,20 @@ async def fork_session(
             error=str(exc),
             exc_info=True,
         )
+        # Symmetric with the snapshot-commit failure path above: if the new
+        # Slack thread was already opened, surface the dispatch failure in
+        # the original thread so the user knows the new thread is orphaned.
+        if effective_target == "slack_new_thread" and channel:
+            orig_thread_ts = src_ctx.get("slack_thread_ts")
+            try:
+                await _post_slack(
+                    text=f"\U0001f374 *Fork dispatch failed:* `{exc}`. The new thread is orphaned.",
+                    channel=channel,
+                    session_id=effective_session_id,
+                    thread_ts=orig_thread_ts,
+                )
+            except Exception:
+                logger.warning("fork_session: failed to post dispatch-failure notice", exc_info=True)
         # The session row + snapshot are committed; we surface the partial state
         # so the caller can decide whether to retry sending the message.
         return {
@@ -525,6 +539,43 @@ async def fork_session(
             "new_session_id": str(new_session_uuid),
             "forked_from": src_id,
             "error": f"send_message failed: {exc}",
+            "snapshot_turn_count": snapshot_turn_count,
+        }
+
+    # Defensive check: the marker-placement invariant above is what keeps
+    # send_message off the "queued" path (see comment near ``marker_turn``).
+    # If a future refactor reverts marker placement, send_message returns
+    # ``SessionMessageResponse(status="queued")`` *without* raising, and the
+    # queued message sits in the in-memory ``_pending_messages`` queue with
+    # no active task on this fresh session to ever drain it — the fork dies
+    # silently exactly as it did before this PR. Turn that documentary
+    # invariant into an executable one: if we see ``queued`` here, the fork
+    # has NOT dispatched and we must return ``partial`` rather than ``ok``.
+    if send_resp.status == "queued":
+        logger.error(
+            "fork_session: send_message returned queued — marker-placement invariant violated, "
+            "fork did not dispatch and the new session has no active task to drain _pending_messages",
+            new_session_id=str(new_session_uuid),
+        )
+        if effective_target == "slack_new_thread" and channel:
+            orig_thread_ts = src_ctx.get("slack_thread_ts")
+            try:
+                await _post_slack(
+                    text=(
+                        "\U0001f374 *Fork dispatch queued but no active task to drain it.* "
+                        "The new thread is orphaned (marker-placement regression — see fork.py)."
+                    ),
+                    channel=channel,
+                    session_id=effective_session_id,
+                    thread_ts=orig_thread_ts,
+                )
+            except Exception:
+                logger.warning("fork_session: failed to post queued-dispatch notice", exc_info=True)
+        return {
+            "status": "partial",
+            "new_session_id": str(new_session_uuid),
+            "forked_from": src_id,
+            "error": "send_message queued with no active task to drain — fork did not dispatch",
             "snapshot_turn_count": snapshot_turn_count,
         }
 
