@@ -298,9 +298,10 @@ class TestHome:
         assert kwargs["limit"] == 50
         assert kwargs["offset"] == 0
         assert kwargs["include_total"] is True
-        # Default landing view: type=TEXT, but "From me" is OFF by default so
-        # the landing page shows ALL docs (no creator_user_id filter).
-        assert kwargs["artifact_type"] == "TEXT"
+        # Default landing view: type defaults to None (all types — the viewer
+        # is admin-gated), and "From me" is OFF by default so the landing page
+        # shows ALL docs (no creator_user_id filter).
+        assert kwargs["artifact_type"] is None
         assert kwargs["creator_user_id"] is None
 
     def test_type_filter_can_be_explicitly_cleared(self, client: TestClient) -> None:

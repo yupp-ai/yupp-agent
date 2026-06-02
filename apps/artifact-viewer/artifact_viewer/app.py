@@ -70,16 +70,17 @@ HOME_PAGE_SIZE = 50
 _ARTIFACT_TYPE_OPTIONS: tuple[tuple[str, str], ...] = (
     ("TEXT", "📝 text"),
     ("CODE_REVIEW", "🔍 code review"),
+    ("MEMORY", "🧠 memory"),
+    ("SKILL", "🛠️ skill"),
     ("OTHER", "📦 other"),
 )
 _VALID_ARTIFACT_TYPES = frozenset(value for value, _ in _ARTIFACT_TYPE_OPTIONS)
 
-# Default ``type`` filter when the URL doesn't specify one. TEXT is by far
-# the most common thing to browse; CODE_REVIEW entries are pointers to PRs
-# and OTHER is rare, so leading with TEXT keeps the default view scoped to
-# "documents the user actually wants to read". Pass ``type=`` (empty) to
-# opt out and see every type.
-_DEFAULT_ARTIFACT_TYPE = "TEXT"
+# Default ``type`` filter when the URL doesn't specify one. ``None`` = show
+# every type. The viewer is admin-gated, so the landing page leads with the
+# full set (TEXT, MEMORY, SKILL, …) rather than hiding memories/skills behind
+# an explicit "All types" selection.
+_DEFAULT_ARTIFACT_TYPE: str | None = None
 
 # YYYY-MM-DD — what the date inputs in the filter row produce.
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -214,8 +215,9 @@ async def home(request: Request) -> Response:
     Two filters have non-trivial defaults so the landing view is useful
     without the user touching the bar:
 
-    * ``type`` defaults to ``TEXT`` (the most common, most readable type).
-      Pass ``?type=`` (empty) to see every type.
+    * ``type`` defaults to **all types** (the viewer is admin-gated, so the
+      landing view leads with everything incl. MEMORY/SKILL). Pass an explicit
+      ``?type=MEMORY`` etc. to narrow.
     * ``from_me`` defaults to ``ON`` for signed-in users — the form posts a
       hidden ``from_me=0`` together with the checkbox so an unchecked box
       still sends a value, otherwise we couldn't tell "default" apart from

@@ -90,7 +90,10 @@
                 <input type="hidden" name="labels" value="{{ labels|join(',') }}">
                 <span class="label-chip-row" data-label-list>
                     {% for label in labels %}
-                        <button class="label-chip label-chip-edit" type="button" data-label="{{ label }}" title="Remove label">{{ label }} ×</button>
+                        <span class="label-chip label-chip-edit" data-label="{{ label }}">
+                            <a class="label-chip-text" href="/?q=label:{{ label|urlencode }}" title="Search for this label">{{ label }}</a>
+                            <button class="label-chip-remove" type="button" data-label="{{ label }}" title="Remove label" aria-label="Remove label {{ label }}">×</button>
+                        </span>
                     {% endfor %}
                 </span>
                 <button class="label-add-btn" type="button" title="Add label">+</button>
@@ -172,13 +175,24 @@
         var list = form.querySelector('[data-label-list]');
         list.innerHTML = '';
         labels.forEach(function (label) {
-            var btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'label-chip label-chip-edit';
-            btn.setAttribute('data-label', label);
-            btn.title = 'Remove label';
-            btn.textContent = label + ' ×';
-            list.appendChild(btn);
+            var chip = document.createElement('span');
+            chip.className = 'label-chip label-chip-edit';
+            chip.setAttribute('data-label', label);
+            var link = document.createElement('a');
+            link.className = 'label-chip-text';
+            link.href = '/?q=label:' + encodeURIComponent(label);
+            link.title = 'Search for this label';
+            link.textContent = label;
+            var x = document.createElement('button');
+            x.type = 'button';
+            x.className = 'label-chip-remove';
+            x.setAttribute('data-label', label);
+            x.title = 'Remove label';
+            x.setAttribute('aria-label', 'Remove label ' + label);
+            x.textContent = '×';
+            chip.appendChild(link);
+            chip.appendChild(x);
+            list.appendChild(chip);
         });
     }
     function save(form, labels) {
@@ -210,7 +224,9 @@
                 if (next && current.indexOf(next) === -1) current.push(next);
                 render(form, current);
                 save(form, current);
-            } else if (target.matches('.label-chip-edit')) {
+            } else if (target.matches('.label-chip-remove')) {
+                // Only the × removes; clicking the label text follows its
+                // search link (default navigation, not handled here).
                 var remove = target.getAttribute('data-label');
                 current = current.filter(function (label) { return label !== remove; });
                 render(form, current);
