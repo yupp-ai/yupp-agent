@@ -75,12 +75,25 @@
     {%- set _ = parts.append('offset=' ~ target_offset) -%}
     <a href="/?{{ parts|join('&') }}" rel="{{ rel }}">{{ label }}</a>
 {%- endmacro %}
+{% set shown = artifacts|length %}
 <nav class="pager" aria-label="Pagination">
-    {% if has_prev %}
-        {{ pager_link(prev_offset, '← Previous', 'prev') }}
-    {% endif %}
-    {% if has_next %}
-        {{ pager_link(next_offset, 'Next →', 'next') }}
-    {% endif %}
+    <span class="pager-prev">
+        {% if has_prev %}{{ pager_link(prev_offset, '← Previous', 'prev') }}{% else %}<span class="pager-disabled">← Previous</span>{% endif %}
+    </span>
+    <span class="pager-info muted small">
+        {% if shown %}
+            {% if total is not none %}
+                Showing <strong>{{ offset + 1 }}–{{ offset + shown }}</strong> of <strong>{{ total }}</strong>
+                · Page {{ (offset // limit) + 1 }} of {{ ((total - 1) // limit) + 1 }}
+            {% else %}
+                Showing <strong>{{ offset + 1 }}–{{ offset + shown }}</strong>{% if query %} for “{{ text_query or query }}”{% endif %}
+            {% endif %}
+        {% else %}
+            No results
+        {% endif %}
+    </span>
+    <span class="pager-next">
+        {% if has_next %}{{ pager_link(next_offset, 'Next →', 'next') }}{% else %}<span class="pager-disabled">Next →</span>{% endif %}
+    </span>
 </nav>
 {% endblock %}

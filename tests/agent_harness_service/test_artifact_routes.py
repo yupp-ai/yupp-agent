@@ -1056,3 +1056,48 @@ class TestArchiveMemoryRoute:
             )
         assert resp.status_code == 200
         assert resp.json()["archived_count"] == 1
+
+
+class TestResolveMemorySlugScopeSkill:
+    """SKILL is a scope+subject-addressable inline type, so by-slug lookups
+    must resolve scope the same way MEMORY does — regression for the viewer's
+    SKILL slug links (previously short-circuited to (None, None) → HTTP 400)."""
+
+    def test_skill_topic_scope_resolves(self) -> None:
+        from ypl.agent_harness_service.memory_routes import resolve_memory_slug_scope
+        from ypl.agent_harness_service.memory_store import MemoryCallerContext
+
+        result = resolve_memory_slug_scope(
+            artifact_type=AgentArtifactType.SKILL,
+            scope="topic",
+            subject=None,
+            caller=MemoryCallerContext(),
+        )
+        assert result == ("topic", None)
+
+    def test_skill_without_scope_400s(self) -> None:
+        from fastapi import HTTPException
+        from ypl.agent_harness_service.memory_routes import resolve_memory_slug_scope
+        from ypl.agent_harness_service.memory_store import MemoryCallerContext
+
+        with pytest.raises(HTTPException) as exc:
+            resolve_memory_slug_scope(
+                artifact_type=AgentArtifactType.SKILL,
+                scope=None,
+                subject=None,
+                caller=MemoryCallerContext(),
+            )
+        assert exc.value.status_code == 400
+
+    def test_unscoped_type_skips_scope_resolution(self) -> None:
+        from ypl.agent_harness_service.memory_routes import resolve_memory_slug_scope
+        from ypl.agent_harness_service.memory_store import MemoryCallerContext
+
+        # TEXT is not a scoped-inline type → scope params are ignored.
+        result = resolve_memory_slug_scope(
+            artifact_type=AgentArtifactType.TEXT,
+            scope="topic",
+            subject=None,
+            caller=MemoryCallerContext(),
+        )
+        assert result == (None, None)

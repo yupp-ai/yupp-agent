@@ -70,10 +70,31 @@ async def get_artifact_meta(artifact_id: str) -> dict[str, Any]:
     return cast(dict[str, Any], await _get_json(f"/ahs/artifacts/{artifact_id}/meta"))
 
 
-async def get_artifact_by_slug(slug: str, version: int | None = None) -> dict[str, Any]:
+async def get_artifact_by_slug(
+    slug: str,
+    version: int | None = None,
+    *,
+    artifact_type: str | None = None,
+    scope: str | None = None,
+    subject: str | None = None,
+) -> dict[str, Any]:
+    """Resolve a slug to artifact metadata.
+
+    MEMORY/SKILL slugs are not globally unique (the same slug can exist under
+    different scopes/subjects), so the upstream by-slug route requires
+    ``type`` + ``scope`` (+ ``subject`` for user/agent scopes). The listing
+    threads those through the slug link so this resolves without defaulting to
+    TEXT (which 404s on scoped artifacts).
+    """
     params: dict[str, Any] = {}
     if version is not None:
         params["version"] = version
+    if artifact_type:
+        params["type"] = artifact_type
+    if scope:
+        params["scope"] = scope
+    if subject:
+        params["subject"] = subject
     return cast(dict[str, Any], await _get_json(f"/ahs/artifacts/by-slug/{slug}", params=params or None))
 
 
