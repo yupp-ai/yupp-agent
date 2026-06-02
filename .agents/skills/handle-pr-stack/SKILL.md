@@ -1,8 +1,6 @@
 ---
 name: handle-pr-stack
-description: >-
-  Loop through a Graphite PR stack from bottom to top, running /fix-lint-and-tests
-  then /handle-pr-comments on each PR. Usage: /handle-pr-stack [PR_NUMBER]
+description: "Loop through a Graphite PR stack from bottom to top, running /fix-lint-and-tests then /handle-pr-comments on each PR. Usage: /handle-pr-stack [PR_NUMBER]"
 ---
 
 # Handle PR Stack

@@ -1,8 +1,6 @@
 ---
 name: handle-all-open-prs
-description: >-
-  Loop through all open PRs for a caller (configurable), rebase merge conflicts,
-  run /fix-lint-and-tests, and /handle-pr-comments on each. Usage: /handle-all-open-prs [username]
+description: "Loop through all open PRs for a caller (configurable), rebase merge conflicts, run /fix-lint-and-tests, and /handle-pr-comments on each. Usage: /handle-all-open-prs [username]"
 ---
 
 # Handle All Open PRs

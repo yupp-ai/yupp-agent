@@ -1,6 +1,6 @@
 ---
 name: bot-resistant-fetch
-description: Policy for fetching content from sites that block bots (Cloudflare, Akamai, DataDome, etc). Use whenever you would otherwise call WebFetch on a press-release / newsroom / corporate / blog / publisher URL. Defines a 3-layer fallback chain (RSS → r.jina.ai → paid escalation), a verified RSS source map for the publishers we actually scrape, and a HARD rule against guessing URLs from date patterns. Trigger before scraping any of: openai.com, x.ai, anthropic.com, salesforce IR, ServiceNow, Glean blog, arxiv listings, scworld.com, nextplatform.com, CISA bulletins, or any other enterprise publisher.
+description: "Policy for fetching content from sites that block bots (Cloudflare, Akamai, DataDome, etc). Use whenever you would otherwise call WebFetch on a press-release / newsroom / corporate / blog / publisher URL. Defines a 3-layer fallback chain (RSS → r.jina.ai → paid escalation), a verified RSS source map for the publishers we actually scrape, and a HARD rule against guessing URLs from date patterns. Trigger before scraping any of: openai.com, x.ai, anthropic.com, salesforce IR, ServiceNow, Glean blog, arxiv listings, scworld.com, nextplatform.com, CISA bulletins, or any other enterprise publisher."
 allowed-tools:
 ---
 
