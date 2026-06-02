@@ -20,7 +20,7 @@ from ypl.agent_harness_service.memory_store import (
     MemoryCallerContext,
     caller_can_write_memory,
 )
-from ypl.db.agent_harness import AgentArtifact, AgentArtifactType
+from ypl.db.agent_harness import SCOPED_INLINE_ARTIFACT_TYPES, AgentArtifact, AgentArtifactType
 
 # ---------------------------------------------------------------------------
 # Caller context dependency
@@ -184,12 +184,16 @@ def resolve_memory_slug_scope(
 
     Raises 400 / 403 as appropriate.
     """
-    if artifact_type != AgentArtifactType.MEMORY:
+    # MEMORY and SKILL are both scope+subject-addressable inline artifacts;
+    # only unscoped types (TEXT, …) skip scope resolution. Gating on
+    # SCOPED_INLINE_ARTIFACT_TYPES keeps SKILL slug lookups working instead of
+    # falling through to ``(None, None)`` → a 400 in ``_scope_slug_filter``.
+    if artifact_type not in SCOPED_INLINE_ARTIFACT_TYPES:
         return None, None
     if scope is None:
         raise HTTPException(
             status_code=400,
-            detail="MEMORY slug routes require a 'scope' query parameter (user|agent|topic).",
+            detail=f"{artifact_type.value} slug routes require a 'scope' query parameter (user|agent|topic).",
         )
     if scope not in VALID_MEMORY_SCOPES:
         raise HTTPException(
