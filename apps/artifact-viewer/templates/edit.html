@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Edit {{ meta.title or meta.named_slug or meta.artifact_id }} · Artifact Viewer{% endblock %}
+{% block title %}Edit {{ meta.title or meta.named_slug or meta.artifact_id }} · {{ deployment_name }} Artifacts{% endblock %}
 {% block content %}
 {#- Full-screen editor: a textarea sized to (most of) the viewport so
     pasting in long markdown isn't cramped, plus a banner that makes the

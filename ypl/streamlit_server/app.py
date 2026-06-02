@@ -8,9 +8,9 @@ from ypl.backend.config import settings
 from ypl.db.all_models import *  # noqa
 from ypl.streamlit_server.auth import auth_required, is_allowed_email, is_auth_configured
 
-# Per-deployment branding.  Default to "Agentic Couch Hub"; self-hosted
-# boxes override via ``STREAMLIT_HUB_TITLE`` in .env (e.g. "VoltCouch Hub").
-_HUB_TITLE = settings.STREAMLIT_HUB_TITLE or "Agentic Couch Hub"
+# Per-deployment branding.  Derive "<DEPLOYMENT_NAME> Hub" (e.g. "VoltCouch
+# Hub"); an explicit ``STREAMLIT_HUB_TITLE`` in .env overrides that title.
+_HUB_TITLE = settings.STREAMLIT_HUB_TITLE.strip() or f"{settings.DEPLOYMENT_NAME} Hub"
 
 st.set_page_config(
     page_title=_HUB_TITLE,

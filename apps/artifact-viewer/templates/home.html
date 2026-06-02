@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from "_artifact_table.html" import artifact_table %}
 {% block topbar_search %}{% endblock %}
-{% block title %}Artifacts · Artifact Viewer{% endblock %}
+{% block title %}{{ deployment_name }} Artifacts{% endblock %}
 {% block content %}
 {#- Single merged search + filter bar. One GET form to ``/`` so URLs stay
     shareable. No Apply button — the selects / checkbox / date inputs

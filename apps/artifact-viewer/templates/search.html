@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_artifact_table.html" import artifact_table %}
-{% block title %}Search{% if query %} — “{{ query }}”{% endif %} · Artifact Viewer{% endblock %}
+{% block title %}Search{% if query %} — “{{ query }}”{% endif %} · {{ deployment_name }} Artifacts{% endblock %}
 {% block content %}
 <h1>Search</h1>
 {% if query %}

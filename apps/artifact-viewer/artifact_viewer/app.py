@@ -56,6 +56,8 @@ try:
 except OSError:
     _STATIC_VERSION = "0"
 templates.env.globals["static_version"] = _STATIC_VERSION
+# Per-deployment display name, rendered as "<name> Artifacts" in the header.
+templates.env.globals["deployment_name"] = settings.DEPLOYMENT_NAME
 
 # Default page size for the listing page. The upstream AHS endpoint caps
 # results at 200, so 50 keeps a comfortable margin while showing enough
