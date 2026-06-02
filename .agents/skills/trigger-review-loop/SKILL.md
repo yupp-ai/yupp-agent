@@ -1,9 +1,6 @@
 ---
 name: trigger-review-loop
-description: >-
-  Automated review-fix loop for a PR. Triggers AI review (yupp-reviews), handles
-  comments via /handle-pr-comments, pushes fixes, and repeats for up to 5 rounds
-  until no open comments remain. Usage: /trigger-review-loop <PR_URL_OR_NUMBER>
+description: "Automated review-fix loop for a PR. Triggers AI review (yupp-reviews), handles comments via /handle-pr-comments, pushes fixes, and repeats for up to 5 rounds until no open comments remain. Usage: /trigger-review-loop <PR_URL_OR_NUMBER>"
 ---
 
 # Trigger Review Loop

@@ -1,6 +1,6 @@
 ---
 name: fork
-description: Fork the current session into a new peer session that keeps the conversation history but evolves independently. For Slack-triggered sessions, opens in a new top-level thread in the same channel. Usage: /fork <additional_instructions>
+description: "Fork the current session into a new peer session that keeps the conversation history but evolves independently. For Slack-triggered sessions, opens in a new top-level thread in the same channel. Usage: /fork <additional_instructions>"
 ---
 
 # Fork Session
