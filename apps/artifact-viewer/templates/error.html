@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light dark">
     {%- if reason == "not_editable" -%}
-    <title>Cannot edit · Artifact Viewer</title>
+    <title>Cannot edit · {{ deployment_name }} Artifacts</title>
     {%- else -%}
-    <title>Access denied · Artifact Viewer</title>
+    <title>Access denied · {{ deployment_name }} Artifacts</title>
     {%- endif -%}
     <link rel="stylesheet" href="/static/style.css">
 </head>

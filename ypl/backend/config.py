@@ -9,6 +9,7 @@ import pydantic
 import sqlalchemy
 from pydantic import (
     computed_field,
+    field_validator,
     model_validator,
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -254,11 +255,23 @@ class Settings(BaseSettings):
     # SLACK_AGENT_GW_ENCRYPTION_KEY (deploy/mac/install.sh does this).
     MCP_USER_GRANT_ENCRYPTION_KEY: str = ""
 
-    # Streamlit hub branding — title shown on the browser tab and the
-    # login/landing/access-denied screens.  Per-deployment override so
-    # self-hosted boxes (e.g. voltcouch.com → "VoltCouch Hub") don't
-    # have to fork app.py.
-    STREAMLIT_HUB_TITLE: str = "Agentic Couch Hub"
+    # Per-deployment display name shown across self-hosted UIs.  Drives the
+    # Streamlit hub title ("<name> Hub") and the artifact viewer header
+    # ("<name> Artifacts").  Override per box in .env, e.g. "VoltCouch" on a
+    # laptop or "AgenticCouch" on the GCP VM.
+    DEPLOYMENT_NAME: str = "AgenticCouch"
+
+    # Streamlit hub title shown on the browser tab and the login/landing/
+    # access-denied screens.  Leave empty to derive "<DEPLOYMENT_NAME> Hub";
+    # set explicitly only when you need a title that isn't "<name> Hub".
+    STREAMLIT_HUB_TITLE: str = ""
+
+    @field_validator("DEPLOYMENT_NAME")
+    @classmethod
+    def _normalize_deployment_name(cls, v: str) -> str:
+        # A whitespace-only override would otherwise render as " Hub" /
+        # " Artifacts"; fall back to the default instead.
+        return v.strip() or "AgenticCouch"
 
     # Sentry
     SENTRY_AUTH_TOKEN: str = ""
