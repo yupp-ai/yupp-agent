@@ -9,6 +9,7 @@ import pydantic
 import sqlalchemy
 from pydantic import (
     computed_field,
+    field_validator,
     model_validator,
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -264,6 +265,13 @@ class Settings(BaseSettings):
     # access-denied screens.  Leave empty to derive "<DEPLOYMENT_NAME> Hub";
     # set explicitly only when you need a title that isn't "<name> Hub".
     STREAMLIT_HUB_TITLE: str = ""
+
+    @field_validator("DEPLOYMENT_NAME")
+    @classmethod
+    def _normalize_deployment_name(cls, v: str) -> str:
+        # A whitespace-only override would otherwise render as " Hub" /
+        # " Artifacts"; fall back to the default instead.
+        return v.strip() or "AgenticCouch"
 
     # Sentry
     SENTRY_AUTH_TOKEN: str = ""

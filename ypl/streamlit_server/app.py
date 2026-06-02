@@ -10,7 +10,7 @@ from ypl.streamlit_server.auth import auth_required, is_allowed_email, is_auth_c
 
 # Per-deployment branding.  Derive "<DEPLOYMENT_NAME> Hub" (e.g. "VoltCouch
 # Hub"); an explicit ``STREAMLIT_HUB_TITLE`` in .env overrides that title.
-_HUB_TITLE = settings.STREAMLIT_HUB_TITLE or f"{settings.DEPLOYMENT_NAME} Hub"
+_HUB_TITLE = settings.STREAMLIT_HUB_TITLE.strip() or f"{settings.DEPLOYMENT_NAME} Hub"
 
 st.set_page_config(
     page_title=_HUB_TITLE,

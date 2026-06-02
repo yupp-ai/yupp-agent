@@ -18,6 +18,7 @@ the current working directory and pydantic-settings will pick it up.
 
 from __future__ import annotations
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,6 +32,13 @@ class Settings(BaseSettings):
     # prefix). Rendered in the top-left header as "<name> Artifacts" (e.g.
     # "VoltCouch Artifacts"). Defaults to match the Streamlit hub branding.
     DEPLOYMENT_NAME: str = "AgenticCouch"
+
+    @field_validator("DEPLOYMENT_NAME")
+    @classmethod
+    def _normalize_deployment_name(cls, v: str) -> str:
+        # A whitespace-only override would otherwise render as " Artifacts";
+        # fall back to the default instead.
+        return v.strip() or "AgenticCouch"
 
     # --- Upstream AHS ---
     # URL to reach AHS from the viewer. The monolith deployment has AHS on the

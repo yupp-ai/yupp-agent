@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ meta.title or 'Artifact' }} · Artifact Viewer{% endblock %}
+{% block title %}{{ meta.title or 'Artifact' }} · {{ deployment_name }} Artifacts{% endblock %}
 {#- Apply the saved width preference before the body renders so the page
     doesn't briefly flash at the default "medium" width before snapping
     to the chosen size. Only ``narrow`` / ``wide`` write a class —
