@@ -2,30 +2,32 @@
   Artifact table macro.
 
   Column order (left → right):
-    1. Type        — emoji only (📝 / 🔍 / 📦). The full label is exposed via
-                     ``title`` for hover and aria-label for screen readers.
-    2. Title       — viewer link. For CODE_REVIEW the title is auto-prefixed
-                     with "PR {pr_number} - " when the PR number is extractable
-                     from the artifact URL. The external URL (PR / OTHER link)
-                     is reachable from the artifact viewer page itself, so the
-                     list view no longer carries a dedicated Link column.
-    3. Creator     — creator_user_name when available, falls back to creator_user_id.
-    4. Agent       — creator_agent_name when available, falls back to a short agent id.
-    5. Labels
-    6. Slug / Ver
-    7. Status
-    8. Created     — ISO timestamp in a <time> tag; the toggle below the table
-                     flips the rendered value between local time (default) and UTC.
-                     Lives at the end because the timestamp is the lowest-priority
-                     piece of metadata for scanning the list.
+    1. Type        — emoji only (📝 / 🔍 / 📦 / 🧠 / 🛠️). Full label via ``title``.
+    2. Title       — viewer link. Always links by slug when one exists (uuid
+                     link lives in the metadata box on the artifact page).
+                     MEMORY/SKILL slugs need type+scope+subject to resolve, so
+                     those are threaded onto the slug URL as query params.
+                     CODE_REVIEW titles get a "PR {n} - " prefix when the PR
+                     number is extractable from the artifact URL.
+    3. Scope       — MEMORY/SKILL scope (user/agent/topic) + short subject.
+    4. Creator     — creator_user_name, falls back to creator_user_id.
+    5. Agent       — creator_agent_name, falls back to a short agent id.
+    6. Labels
+    7. Slug / Ver
+    8. Created     — ISO timestamp in a <time> tag; toggle flips local/UTC.
+
+  Every column except Title can be shown/hidden via the "Columns" chooser; the
+  hidden set is remembered in the ``artifactColsHidden`` cookie.
 
   Emojis / labels live in `_type_meta` so they stay consistent across pages.
 -#}
 
 {% set _type_meta = {
-    'TEXT':        {'emoji': '📝', 'label': 'text'},
-    'CODE_REVIEW': {'emoji': '🔍', 'label': 'code review'},
-    'OTHER':       {'emoji': '📦', 'label': 'other'},
+    'TEXT':        {'emoji': '📝',  'label': 'text'},
+    'CODE_REVIEW': {'emoji': '🔍',  'label': 'code review'},
+    'OTHER':       {'emoji': '📦',  'label': 'other'},
+    'MEMORY':      {'emoji': '🧠',  'label': 'memory'},
+    'SKILL':       {'emoji': '🛠️', 'label': 'skill'},
 } %}
 
 {%- macro _type_key(artifact) -%}
@@ -52,33 +54,37 @@
 
 {% macro artifact_table(artifacts) %}
 {% if artifacts %}
+{#- Column chooser. Each checkbox toggles a ``hide-<col>`` class on every
+    listing table; the hidden set is persisted in the ``artifactColsHidden``
+    cookie (see the script at the bottom). Title is not toggleable. -#}
+<div class="col-chooser-wrap">
+    <details class="col-chooser">
+        <summary>Columns ▾</summary>
+        <div class="col-chooser-menu" role="group" aria-label="Choose visible columns">
+            <label><input type="checkbox" data-col="type" checked> Type</label>
+            <label><input type="checkbox" data-col="scope" checked> Scope</label>
+            <label><input type="checkbox" data-col="creator" checked> Creator</label>
+            <label><input type="checkbox" data-col="agent" checked> Agent</label>
+            <label><input type="checkbox" data-col="labels" checked> Labels</label>
+            <label><input type="checkbox" data-col="slug" checked> Slug / Version</label>
+            <label><input type="checkbox" data-col="created" checked> Created</label>
+        </div>
+    </details>
+</div>
 {#- ``artifacts-listing`` is the marker the mobile stylesheet keys off to
-    apply the card-layout transform. The shared ``artifacts`` class still
-    drives the desktop table styling for both this macro and the versions
-    table; scoping the mobile transform to a second class means the
-    versions table (which has a different column schema) keeps its tabular
-    layout and just scrolls horizontally on a phone instead of being
-    half-rewritten.
-
-    Explicit ARIA ``role`` attributes are set on the table, thead/tbody,
-    rows, and cells. They are redundant on desktop (a real ``<table>``
-    already has these implicit roles), but the mobile breakpoint flips
-    every element to ``display: block`` / ``display: inline``, which
-    browsers treat as stripping the implicit table roles from the
-    accessibility tree. The explicit roles survive that flip so screen
-    readers keep announcing the listing as a table with rows and cells
-    even on phones. -#}
+    apply the card-layout transform. Explicit ARIA roles survive the mobile
+    ``display: block`` flip so screen readers keep announcing a table. -#}
 <table class="artifacts artifacts-listing" role="table">
     <thead role="rowgroup">
         <tr role="row">
-            <th role="columnheader" aria-label="Type"></th>
-            <th role="columnheader">Title</th>
-            <th role="columnheader">Creator</th>
-            <th role="columnheader">Agent</th>
-            <th role="columnheader">Labels</th>
-            <th role="columnheader">Slug / Version</th>
-            <th role="columnheader">Status</th>
-            <th role="columnheader">
+            <th class="col-type" role="columnheader" aria-label="Type"></th>
+            <th class="col-title" role="columnheader">Title</th>
+            <th class="col-scope" role="columnheader">Scope</th>
+            <th class="col-creator" role="columnheader">Creator</th>
+            <th class="col-agent" role="columnheader">Agent</th>
+            <th class="col-labels" role="columnheader">Labels</th>
+            <th class="col-slug" role="columnheader">Slug / Version</th>
+            <th class="col-created" role="columnheader">
                 Created <span class="time-mode-label muted">(local)</span>
             </th>
         </tr>
@@ -92,41 +98,40 @@
         {% if tkey == 'CODE_REVIEW' and pr_num %}
             {% set display_title = 'PR ' ~ pr_num ~ ' - ' ~ display_title %}
         {% endif %}
-        {#- Each ``<td>`` carries a ``col-*`` class so the mobile stylesheet
-            can target individual columns by purpose (the legacy ``type-cell``
-            class stays on the type column for back-compat with existing
-            rules). On narrow viewports the row collapses into a card: the
-            title column spans the full width with large type, and the other
-            columns reflow inline as a small-text "metadata" block underneath.
-
-            Each metadata cell carries a ``<span class="cell-label">…</span>``
-            with its column name. ``.cell-label`` is ``display: none`` on
-            desktop (the ``<thead>`` row already provides the column header
-            context) and ``display: inline`` on mobile, where the header is
-            hidden. Living in the DOM means every screen reader picks it up
-            regardless of inconsistent support for CSS ``attr()`` content,
-            and the status pill gets a "Status: active/archived" label
-            instead of speaking just "active". -#}
+        {#- Query string that lets a scoped (MEMORY/SKILL) slug resolve. Empty
+            for ordinary TEXT slugs, so the existing slug URLs are unchanged. -#}
+        {% set scope_qs = '' %}
+        {% if a.memory_scope %}
+            {% set scope_qs = '?type=' ~ tkey ~ '&scope=' ~ a.memory_scope %}
+            {% if a.memory_scope_subject %}
+                {% set scope_qs = scope_qs ~ '&subject=' ~ (a.memory_scope_subject|string|urlencode) %}
+            {% endif %}
+        {% endif %}
         <tr role="row">
             <td class="col-type type-cell" role="cell" title="{{ tmeta.label }}">
                 <span class="type-emoji" role="img" aria-label="{{ tmeta.label }}">{{ tmeta.emoji }}</span>
             </td>
             <td class="col-title" role="cell">
-                {#- Prefer the human-readable slug+version URL when the artifact
-                    has a slug; the UUID stays reachable via the ID row on the
-                    artifact page itself. -#}
+                {#- Always prefer the slug URL when a slug exists (uuid link is
+                    on the artifact page's metadata box). ``scope_qs`` is empty
+                    for TEXT and carries type/scope/subject for MEMORY/SKILL. -#}
                 {% if a.named_slug and a.version is not none %}
-                    <a href="/s/{{ a.named_slug }}/{{ a.version }}">
-                        {{ display_title }}
-                    </a>
+                    <a href="/s/{{ a.named_slug }}/{{ a.version }}{{ scope_qs }}">{{ display_title }}</a>
                 {% elif a.named_slug %}
-                    <a href="/s/{{ a.named_slug }}">
-                        {{ display_title }}
-                    </a>
+                    <a href="/s/{{ a.named_slug }}{{ scope_qs }}">{{ display_title }}</a>
                 {% else %}
-                    <a href="/a/{{ a.artifact_id }}">
-                        {{ display_title }}
-                    </a>
+                    <a href="/a/{{ a.artifact_id }}">{{ display_title }}</a>
+                {% endif %}
+            </td>
+            <td class="col-scope" role="cell">
+                <span class="cell-label">Scope: </span>
+                {% if a.memory_scope %}
+                    <span class="tag scope scope-{{ a.memory_scope }}">{{ a.memory_scope }}</span>
+                    {% if a.memory_scope_subject %}
+                        <span class="mono muted small">{{ a.memory_scope_subject|string|truncate(14, true, '…') }}</span>
+                    {% endif %}
+                {% else %}
+                    <span class="muted">—</span>
                 {% endif %}
             </td>
             <td class="col-creator" role="cell">
@@ -164,22 +169,21 @@
             <td class="col-slug" role="cell">
                 <span class="cell-label">Slug: </span>
                 {% if a.named_slug %}
-                    {#- Slug → all versions (a slug: search). Version pill →
-                        that specific version's doc. -#}
-                    <a href="/search?q=slug:{{ a.named_slug|urlencode }}" title="Show all versions of this slug">{{ a.named_slug }}</a>
-                    {% if a.version is not none %}
-                        <a class="mono" href="/s/{{ a.named_slug }}/{{ a.version }}" title="Open this version">v{{ a.version }}</a>
+                    {% if a.memory_scope %}
+                        {#- slug:search doesn't index scoped artifacts; link the
+                            slug to its latest scoped doc, pill to the version. -#}
+                        <a href="/s/{{ a.named_slug }}{{ scope_qs }}" title="Open latest">{{ a.named_slug }}</a>
+                        {% if a.version is not none %}
+                            <a class="mono" href="/s/{{ a.named_slug }}/{{ a.version }}{{ scope_qs }}" title="Open this version">v{{ a.version }}</a>
+                        {% endif %}
+                    {% else %}
+                        <a href="/search?q=slug:{{ a.named_slug|urlencode }}" title="Show all versions of this slug">{{ a.named_slug }}</a>
+                        {% if a.version is not none %}
+                            <a class="mono" href="/s/{{ a.named_slug }}/{{ a.version }}" title="Open this version">v{{ a.version }}</a>
+                        {% endif %}
                     {% endif %}
                 {% else %}
                     <span class="muted">—</span>
-                {% endif %}
-            </td>
-            <td class="col-status" role="cell">
-                <span class="cell-label">Status: </span>
-                {% if a.metadata and a.metadata.is_archived %}
-                    <span class="tag archived">archived</span>
-                {% else %}
-                    <span class="tag active">active</span>
                 {% endif %}
             </td>
             <td class="col-created" role="cell">
@@ -205,8 +209,6 @@
     var STORAGE_KEY = 'artifactTimeMode';
     function pad(n) { return n < 10 ? '0' + n : '' + n; }
     function formatLocal(d) {
-        // Within the last day: relative ("3 min ago" / "5 hours ago").
-        // Older (or any future timestamp): absolute "MM/DD hh:mm:ss" local.
         var diffMs = Date.now() - d.getTime();
         if (diffMs >= 0) {
             var diffMin = Math.floor(diffMs / 60000);
@@ -254,6 +256,59 @@
                 var next = ev.currentTarget.getAttribute('data-mode');
                 apply(next);
                 try { window.localStorage.setItem(STORAGE_KEY, next); } catch (_) { /* ignore */ }
+            });
+        }
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
+</script>
+<script>
+(function () {
+    // Column chooser, persisted in the `artifactColsHidden` cookie
+    // (comma-separated hidden column keys). Title is always shown.
+    var COOKIE = 'artifactColsHidden';
+    var COLS = ['type', 'scope', 'creator', 'agent', 'labels', 'slug', 'created'];
+    function getCookie(name) {
+        var m = document.cookie.match('(?:^|; )' + name + '=([^;]*)');
+        return m ? decodeURIComponent(m[1]) : '';
+    }
+    function setCookie(name, value) {
+        document.cookie = name + '=' + encodeURIComponent(value) + ';path=/;max-age=31536000;samesite=lax';
+    }
+    var hidden = getCookie(COOKIE).split(',').filter(Boolean);
+    function applyAll() {
+        var tables = document.querySelectorAll('table.artifacts-listing');
+        for (var t = 0; t < tables.length; t++) {
+            for (var c = 0; c < COLS.length; c++) {
+                tables[t].classList.toggle('hide-' + COLS[c], hidden.indexOf(COLS[c]) >= 0);
+            }
+        }
+    }
+    function syncBoxes() {
+        var boxes = document.querySelectorAll('.col-chooser input[data-col]');
+        for (var i = 0; i < boxes.length; i++) {
+            boxes[i].checked = hidden.indexOf(boxes[i].getAttribute('data-col')) < 0;
+        }
+    }
+    function init() {
+        applyAll();
+        syncBoxes();
+        var boxes = document.querySelectorAll('.col-chooser input[data-col]');
+        for (var i = 0; i < boxes.length; i++) {
+            boxes[i].addEventListener('change', function (ev) {
+                var col = ev.currentTarget.getAttribute('data-col');
+                var idx = hidden.indexOf(col);
+                if (ev.currentTarget.checked) {
+                    if (idx >= 0) hidden.splice(idx, 1);
+                } else if (idx < 0) {
+                    hidden.push(col);
+                }
+                setCookie(COOKIE, hidden.join(','));
+                applyAll();
             });
         }
     }

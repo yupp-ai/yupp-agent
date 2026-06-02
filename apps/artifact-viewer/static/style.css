@@ -404,6 +404,74 @@ a.label-chip:hover {
     color: var(--tag-active-fg);
 }
 
+/* Scope chips in the listing's Scope column. Neutral, low-chroma so they
+   read as metadata rather than status. */
+.tag.scope {
+    margin-left: 0;
+    background: var(--tag-archived-bg);
+    color: var(--tag-archived-fg);
+    text-transform: lowercase;
+}
+.tag.scope.scope-agent { background: #e7f0ff; color: #1f4fa3; }
+.tag.scope.scope-user  { background: #eaf6ec; color: #2f7d3a; }
+.tag.scope.scope-topic { background: #f3eafc; color: #6b3fa0; }
+
+/* --- Column chooser (listing) --- */
+.col-chooser-wrap {
+    display: flex;
+    justify-content: flex-end;
+    margin: 0.25rem 0 0.4rem;
+}
+.col-chooser {
+    position: relative;
+    font-size: 0.85em;
+}
+.col-chooser > summary {
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+    padding: 2px 8px;
+    border: 1px solid var(--border, #d0d0d0);
+    border-radius: 6px;
+    color: var(--muted, #666);
+}
+.col-chooser > summary::-webkit-details-marker { display: none; }
+.col-chooser[open] > summary { color: inherit; }
+.col-chooser-menu {
+    position: absolute;
+    right: 0;
+    z-index: 20;
+    margin-top: 4px;
+    padding: 8px 10px;
+    min-width: 150px;
+    background: var(--surface, #fff);
+    border: 1px solid var(--border, #d0d0d0);
+    border-radius: 8px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.col-chooser-menu label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+/* Per-column visibility — driven by hide-<col> classes the chooser script
+   toggles on each listing table (header + cells share the col-<col> class). */
+.artifacts-listing.hide-type    .col-type,
+.artifacts-listing.hide-scope   .col-scope,
+.artifacts-listing.hide-creator .col-creator,
+.artifacts-listing.hide-agent   .col-agent,
+.artifacts-listing.hide-labels  .col-labels,
+.artifacts-listing.hide-slug    .col-slug,
+.artifacts-listing.hide-created .col-created {
+    display: none;
+}
+
 /* --- Artifact page --- */
 
 /* The single compact top box: nav row + metadata + controls, one surface. */

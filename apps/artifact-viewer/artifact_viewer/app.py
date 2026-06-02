@@ -364,10 +364,28 @@ async def artifact_by_id(request: Request) -> Response:
     return await _render_artifact(request, artifact_id)
 
 
+def _slug_scope_params(request: Request) -> dict[str, str]:
+    """Optional type/scope/subject from the query string.
+
+    The listing threads these onto MEMORY/SKILL slug links so the by-slug
+    lookup can disambiguate a scoped artifact (TEXT is the upstream default
+    and 404s on scoped rows). Absent for ordinary TEXT slugs.
+    """
+    params: dict[str, str] = {}
+    for key in ("type", "scope", "subject"):
+        val = (request.query_params.get(key) or "").strip()
+        if val:
+            params[key] = val
+    return params
+
+
 async def artifact_by_slug(request: Request) -> Response:
     slug = request.path_params["slug"]
+    sp = _slug_scope_params(request)
     try:
-        meta = await ahs_client.get_artifact_by_slug(slug)
+        meta = await ahs_client.get_artifact_by_slug(
+            slug, artifact_type=sp.get("type"), scope=sp.get("scope"), subject=sp.get("subject")
+        )
     except AHSError as exc:
         return _error_page(request, exc)
     return await _render_artifact(request, meta["artifact_id"], meta=meta)
@@ -376,8 +394,11 @@ async def artifact_by_slug(request: Request) -> Response:
 async def artifact_by_slug_version(request: Request) -> Response:
     slug = request.path_params["slug"]
     version = int(request.path_params["version"])
+    sp = _slug_scope_params(request)
     try:
-        meta = await ahs_client.get_artifact_by_slug(slug, version=version)
+        meta = await ahs_client.get_artifact_by_slug(
+            slug, version=version, artifact_type=sp.get("type"), scope=sp.get("scope"), subject=sp.get("subject")
+        )
     except AHSError as exc:
         return _error_page(request, exc)
     return await _render_artifact(request, meta["artifact_id"], meta=meta)
