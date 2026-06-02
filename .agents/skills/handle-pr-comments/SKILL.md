@@ -1,10 +1,6 @@
 ---
 name: handle-pr-comments
-description: >-
-  Review a GitHub PR, address all review comments (AI and human) and all CI
-  failures (ruff, mypy, biome, tests), rebase onto main, reply to each comment
-  with a verdict, resolve threads, and produce a summary. Runs fully
-  automatically with no human confirmation steps. Usage: /handle-pr-comments <PR_URL_OR_NUMBER>
+description: "Review a GitHub PR, address all review comments (AI and human) and all CI failures (ruff, mypy, biome, tests), rebase onto main, reply to each comment with a verdict, resolve threads, and produce a summary. Runs fully automatically with no human confirmation steps. Usage: /handle-pr-comments <PR_URL_OR_NUMBER>"
 ---
 
 # Address PR Comments
