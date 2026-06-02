@@ -443,9 +443,24 @@ a.label-chip:hover {
     color: var(--tag-archived-fg);
     text-transform: lowercase;
 }
-.tag.scope.scope-agent { background: #e7f0ff; color: #1f4fa3; }
-.tag.scope.scope-user  { background: #eaf6ec; color: #2f7d3a; }
-.tag.scope.scope-topic { background: #f3eafc; color: #6b3fa0; }
+/* Per-scope chip colors via variables so dark mode overrides them — literal
+   hex would render light-on-dark with poor contrast (mirrors the existing
+   --tag-archived-* / --tag-active-* pattern). */
+:root {
+    --scope-agent-bg: #e7f0ff; --scope-agent-fg: #1f4fa3;
+    --scope-user-bg:  #eaf6ec; --scope-user-fg:  #2f7d3a;
+    --scope-topic-bg: #f3eafc; --scope-topic-fg: #6b3fa0;
+}
+@media (prefers-color-scheme: dark) {
+    :root {
+        --scope-agent-bg: #1c2c4a; --scope-agent-fg: #9ec3ff;
+        --scope-user-bg:  #1a2e1f; --scope-user-fg:  #8ee0a2;
+        --scope-topic-bg: #2a1e3a; --scope-topic-fg: #d3b3ff;
+    }
+}
+.tag.scope.scope-agent { background: var(--scope-agent-bg); color: var(--scope-agent-fg); }
+.tag.scope.scope-user  { background: var(--scope-user-bg);  color: var(--scope-user-fg); }
+.tag.scope.scope-topic { background: var(--scope-topic-bg); color: var(--scope-topic-fg); }
 
 /* --- Column chooser (listing) --- */
 .col-chooser-wrap {
@@ -492,14 +507,17 @@ a.label-chip:hover {
 }
 
 /* Per-column visibility — driven by hide-<col> classes the chooser script
-   toggles on each listing table (header + cells share the col-<col> class). */
-.artifacts-listing.hide-type    .col-type,
-.artifacts-listing.hide-scope   .col-scope,
-.artifacts-listing.hide-creator .col-creator,
-.artifacts-listing.hide-agent   .col-agent,
-.artifacts-listing.hide-labels  .col-labels,
-.artifacts-listing.hide-slug    .col-slug,
-.artifacts-listing.hide-created .col-created {
+   toggles on each listing table (header + cells share the col-<col> class).
+   The full ``table.artifacts.artifacts-listing.hide-X .col-X`` selector is
+   (0,4,1) so it beats the mobile card-layout rules (0,3,2) that otherwise
+   force the cell visible on ≤600px viewports. */
+table.artifacts.artifacts-listing.hide-type    .col-type,
+table.artifacts.artifacts-listing.hide-scope   .col-scope,
+table.artifacts.artifacts-listing.hide-creator .col-creator,
+table.artifacts.artifacts-listing.hide-agent   .col-agent,
+table.artifacts.artifacts-listing.hide-labels  .col-labels,
+table.artifacts.artifacts-listing.hide-slug    .col-slug,
+table.artifacts.artifacts-listing.hide-created .col-created {
     display: none;
 }
 
@@ -993,11 +1011,11 @@ a.label-chip:hover {
        Cells whose only content is the muted "—" placeholder still render
        (e.g. "Creator: —") — visually quiet because of the muted color,
        and they keep the layout predictable. */
+    table.artifacts.artifacts-listing td.col-scope,
     table.artifacts.artifacts-listing td.col-creator,
     table.artifacts.artifacts-listing td.col-agent,
     table.artifacts.artifacts-listing td.col-labels,
     table.artifacts.artifacts-listing td.col-slug,
-    table.artifacts.artifacts-listing td.col-status,
     table.artifacts.artifacts-listing td.col-created {
         display: inline;
         font-size: 11px;
@@ -1019,18 +1037,18 @@ a.label-chip:hover {
     }
     /* Visual separator between metadata items. Trailing dot is suppressed
        on the last cell so the row doesn't end with " · ". */
+    table.artifacts.artifacts-listing td.col-scope::after,
     table.artifacts.artifacts-listing td.col-creator::after,
     table.artifacts.artifacts-listing td.col-agent::after,
     table.artifacts.artifacts-listing td.col-labels::after,
-    table.artifacts.artifacts-listing td.col-slug::after,
-    table.artifacts.artifacts-listing td.col-status::after {
+    table.artifacts.artifacts-listing td.col-slug::after {
         content: " · ";
         color: var(--border);
         margin: 0 2px;
     }
-    /* The status pill carries its own bg color — shrink it so it sits
+    /* The scope chip carries its own bg color — shrink it so it sits
        naturally in the metadata stream rather than dominating it. */
-    table.artifacts.artifacts-listing td.col-status .tag {
+    table.artifacts.artifacts-listing td.col-scope .tag {
         margin-left: 0;
         font-size: 10px;
         padding: 1px 5px;
