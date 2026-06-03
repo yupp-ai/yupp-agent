@@ -389,6 +389,24 @@ class TestListFiles:
         assert "normal.txt" in result
         assert "secret.txt" not in result
 
+    def test_repo_symlink_paths_are_rendered_relative_to_session(self, tmp_path: Path) -> None:
+        """Session repo symlinks should validate by real path but render by session path."""
+        session_dir = tmp_path / VALID_SESSION
+        session_dir.mkdir(parents=True)
+        repos_dir = tmp_path / "repos"
+        repo = repos_dir / "yupp-agent"
+        repo.mkdir(parents=True)
+        (repo / "README.md").write_text("")
+        (session_dir / "repos").symlink_to(repos_dir)
+
+        with (
+            patch("ypl.agent_harness_service.tools.workspace_tools.AHS_SESSIONS_DIR", str(tmp_path)),
+            patch("ypl.agent_harness_service.tools.workspace_tools.AHS_REPOS_DIR", str(repos_dir)),
+        ):
+            result = list_files(VALID_SESSION, "*.md", "repos/yupp-agent")
+
+        assert result == "repos/yupp-agent/README.md"
+
 
 # ---------------------------------------------------------------------------
 # search_files

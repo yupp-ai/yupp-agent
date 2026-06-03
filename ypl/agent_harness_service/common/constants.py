@@ -40,7 +40,7 @@ AHS_REPOS_DIR = os.environ.get("AHS_REPOS_DIR", os.path.join(AHS_DATA_DIR, "repo
 # Skills directory: contains SKILL.md files loaded on-demand by Claude Code.
 # For non-Claude-Code executors, build_system_prompt() inlines skill content
 # into the system prompt since those executors cannot invoke skills.
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 AHS_SKILLS_DIR = os.environ.get(
     "AHS_SKILLS_DIR",
     os.path.join(_REPO_ROOT, ".agents", "skills"),
