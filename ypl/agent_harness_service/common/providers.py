@@ -8,12 +8,14 @@ from pydantic import BaseModel
 from ypl.agent_harness_service.common.constants import (
     DEFAULT_MODEL_ANTHROPIC,
     DEFAULT_MODEL_CEREBRAS,
+    DEFAULT_MODEL_DEEPSEEK,
     DEFAULT_MODEL_MINIMAX,
     DEFAULT_MODEL_MOONSHOT,
     DEFAULT_MODEL_OPENAI,
     DEFAULT_MODEL_ZAI,
     PROVIDER_ANTHROPIC,
     PROVIDER_CEREBRAS,
+    PROVIDER_DEEPSEEK,
     PROVIDER_MINIMAX,
     PROVIDER_MOONSHOT,
     PROVIDER_OPENAI,
@@ -67,6 +69,12 @@ PROVIDERS: dict[str, ProviderConfig] = {
         sdk="openai",
         default_model=DEFAULT_MODEL_CEREBRAS,
     ),
+    PROVIDER_DEEPSEEK: ProviderConfig(
+        api_base="https://api.deepseek.com/v1",
+        env_key="DEEPSEEK_API_KEY",
+        sdk="openai",
+        default_model=DEFAULT_MODEL_DEEPSEEK,
+    ),
 }
 
 # All known models with provider prefix for route_model diversity guarantees
@@ -84,6 +92,12 @@ KNOWN_MODELS: list[str] = [
     "cerebras/gpt-oss-120b",
     "cerebras/qwen-3-235b-a22b-instruct-2507",
     "cerebras/zai-glm-4.7",
+    "deepseek/deepseek-chat",
+    # NOTE: deepseek-reasoner (R1) is intentionally NOT exposed here. The raw executor
+    # is a tool-calling loop that always sends tool schemas and echoes reasoning_content
+    # back on subsequent turns; R1 rejects both (no function calling; HTTP 400 on
+    # reasoning_content echo-back). Pricing/context metadata is kept in raw_executor.py
+    # so it can be enabled once per-model capability flags exist.
 ]
 
 

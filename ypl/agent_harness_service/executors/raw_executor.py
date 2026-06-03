@@ -54,6 +54,11 @@ _COST_PER_M_TOKENS: dict[str, dict[str, float]] = {
     # Moonshot — cache_read (cache hit) = $0.10/M, input (cache miss) = $0.60/M, output = $3.00/M
     "kimi-k2.5": {"input": 0.60, "output": 3.0, "cache_read": 0.10},
     # Cerebras — pricing not published per-token on public docs; falls back to default rates.
+    # DeepSeek — cache_read = cache-hit input price; reasoner output price includes reasoning tokens.
+    # deepseek-reasoner (R1) is not in KNOWN_MODELS yet (no tool calling, rejects reasoning_content
+    # echo-back); metadata kept here for when capability flags enable it. See providers.py.
+    "deepseek-chat": {"input": 0.27, "output": 1.10, "cache_read": 0.07},
+    "deepseek-reasoner": {"input": 0.55, "output": 2.19, "cache_read": 0.14, "reasoning": 2.19},
 }
 
 # Context window limits (for overflow detection)
@@ -72,6 +77,9 @@ _CONTEXT_LIMITS: dict[str, int] = {
     "gpt-oss-120b": 131_072,
     "qwen-3-235b-a22b-instruct-2507": 131_072,
     "zai-glm-4.7": 131_072,
+    # DeepSeek
+    "deepseek-chat": 64_000,
+    "deepseek-reasoner": 64_000,
 }
 
 _RESERVED_BUFFER = 4_000  # Tokens reserved for response

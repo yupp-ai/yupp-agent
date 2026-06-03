@@ -36,6 +36,11 @@ class TestParseModelString:
         assert provider == "moonshot"
         assert model_id == "kimi-k2.5"
 
+    def test_valid_deepseek_model(self) -> None:
+        provider, model_id = parse_model_string("deepseek/deepseek-chat")
+        assert provider == "deepseek"
+        assert model_id == "deepseek-chat"
+
     def test_model_with_multiple_slashes(self) -> None:
         """Only the first slash is used as delimiter — model_id can contain slashes."""
         provider, model_id = parse_model_string("anthropic/some/nested/model")
@@ -132,8 +137,14 @@ class TestGetProviderConfig:
         assert cfg.env_key == "OPENAI_API_KEY"
         assert cfg.sdk == "openai"
 
+    def test_deepseek_config(self) -> None:
+        cfg = get_provider_config("deepseek")
+        assert cfg.env_key == "DEEPSEEK_API_KEY"
+        assert cfg.sdk == "openai"
+        assert cfg.api_base == "https://api.deepseek.com/v1"
+
     def test_all_known_providers_exist(self) -> None:
-        for provider in ("anthropic", "openai", "zai", "minimax", "moonshot", "cerebras"):
+        for provider in ("anthropic", "openai", "zai", "minimax", "moonshot", "cerebras", "deepseek"):
             cfg = get_provider_config(provider)
             assert cfg.env_key
             assert cfg.sdk in ("anthropic", "openai")
@@ -166,6 +177,9 @@ class TestIsOpenAICompatible:
 
     def test_cerebras_is_compatible(self) -> None:
         assert is_openai_compatible("cerebras") is True
+
+    def test_deepseek_is_compatible(self) -> None:
+        assert is_openai_compatible("deepseek") is True
 
     def test_all_non_anthropic_are_openai_compatible(self) -> None:
         """All providers except anthropic use the openai-compatible SDK."""

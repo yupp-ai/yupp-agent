@@ -358,6 +358,7 @@ PROVIDER_MOONSHOT = "moonshot"
 PROVIDER_OPENAI = "openai"
 PROVIDER_ZAI = "zai"
 PROVIDER_MINIMAX = "minimax"
+PROVIDER_DEEPSEEK = "deepseek"
 
 # Default models per provider
 DEFAULT_MODEL_ANTHROPIC = "anthropic/claude-sonnet-4-6"
@@ -366,6 +367,7 @@ DEFAULT_MODEL_MOONSHOT = "moonshot/kimi-k2.5"
 DEFAULT_MODEL_OPENAI = "openai/gpt-4o"
 DEFAULT_MODEL_ZAI = "zai/glm-5"
 DEFAULT_MODEL_MINIMAX = "minimax/MiniMax-M2.5"
+DEFAULT_MODEL_DEEPSEEK = "deepseek/deepseek-chat"
 
 # Session status values
 SESSION_STATUS_ACTIVE = "ACTIVE"
