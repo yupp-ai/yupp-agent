@@ -438,10 +438,11 @@ def list_files(session_id: str, pattern: str, path: str | None = None) -> str:
         raise ValueError("Pattern must not contain '..' segments")
 
     workspace = resolve_workspace(session_id, require_write=False)
-    search_root = safe_path(workspace, path) if path else workspace
+    validated_search_root = safe_path(workspace, path) if path else workspace
+    search_root = os.path.join(workspace, path) if path else workspace
     real_workspace = os.path.realpath(workspace)
 
-    if not os.path.isdir(search_root):
+    if not os.path.isdir(validated_search_root):
         raise ValueError(f"Directory not found: {path}")
 
     root_path = Path(search_root)
