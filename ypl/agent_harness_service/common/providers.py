@@ -70,7 +70,7 @@ PROVIDERS: dict[str, ProviderConfig] = {
         default_model=DEFAULT_MODEL_CEREBRAS,
     ),
     PROVIDER_DEEPSEEK: ProviderConfig(
-        api_base="https://api.deepseek.com",
+        api_base="https://api.deepseek.com/v1",
         env_key="DEEPSEEK_API_KEY",
         sdk="openai",
         default_model=DEFAULT_MODEL_DEEPSEEK,
@@ -93,7 +93,11 @@ KNOWN_MODELS: list[str] = [
     "cerebras/qwen-3-235b-a22b-instruct-2507",
     "cerebras/zai-glm-4.7",
     "deepseek/deepseek-chat",
-    "deepseek/deepseek-reasoner",
+    # NOTE: deepseek-reasoner (R1) is intentionally NOT exposed here. The raw executor
+    # is a tool-calling loop that always sends tool schemas and echoes reasoning_content
+    # back on subsequent turns; R1 rejects both (no function calling; HTTP 400 on
+    # reasoning_content echo-back). Pricing/context metadata is kept in raw_executor.py
+    # so it can be enabled once per-model capability flags exist.
 ]
 
 

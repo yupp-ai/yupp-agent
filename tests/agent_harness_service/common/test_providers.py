@@ -141,7 +141,7 @@ class TestGetProviderConfig:
         cfg = get_provider_config("deepseek")
         assert cfg.env_key == "DEEPSEEK_API_KEY"
         assert cfg.sdk == "openai"
-        assert "deepseek.com" in cfg.api_base
+        assert cfg.api_base == "https://api.deepseek.com/v1"
 
     def test_all_known_providers_exist(self) -> None:
         for provider in ("anthropic", "openai", "zai", "minimax", "moonshot", "cerebras", "deepseek"):

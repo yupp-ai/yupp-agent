@@ -55,6 +55,8 @@ _COST_PER_M_TOKENS: dict[str, dict[str, float]] = {
     "kimi-k2.5": {"input": 0.60, "output": 3.0, "cache_read": 0.10},
     # Cerebras — pricing not published per-token on public docs; falls back to default rates.
     # DeepSeek — cache_read = cache-hit input price; reasoner output price includes reasoning tokens.
+    # deepseek-reasoner (R1) is not in KNOWN_MODELS yet (no tool calling, rejects reasoning_content
+    # echo-back); metadata kept here for when capability flags enable it. See providers.py.
     "deepseek-chat": {"input": 0.27, "output": 1.10, "cache_read": 0.07},
     "deepseek-reasoner": {"input": 0.55, "output": 2.19, "cache_read": 0.14, "reasoning": 2.19},
 }
