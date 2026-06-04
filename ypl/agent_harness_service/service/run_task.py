@@ -15,15 +15,23 @@ from sqlalchemy import func, update
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from ypl.agent_harness_service.common.config import AgentConfig
 from ypl.agent_harness_service.common.constants import (
     CONTEXT_OVERFLOW_NOTICE,
     EXECUTOR_TYPE_HARNESSED,
     EXECUTOR_TYPE_RAW,
+    FALLBACK_NOTICE_TEMPLATE,
     HARNESS_CLAUDE_SDK,
     HARNESS_CODEX_APP_SERVER,
     HARNESS_CODEX_CLI,
     HARNESSED_MODELS,
     TURN_LIMIT_NOTICE,
+)
+from ypl.agent_harness_service.common.model_options import (
+    canonical_to_display_label,
+    chain_entry_to_executor,
+    get_fallback_chain,
+    is_rate_limit_failure,
 )
 from ypl.agent_harness_service.core.session_persistence import sync_session_to_gcs
 from ypl.agent_harness_service.core.session_title import maybe_generate_session_title
@@ -279,6 +287,54 @@ def _determine_result_status(output: Any, is_error: bool) -> tuple[str, str | No
     return "done", None
 
 
+def _apply_chain_entry(base: "AgentConfig", entry: str) -> "AgentConfig":
+    """Rebuild an AgentConfig to run a given fallback chain entry.
+
+    * raw → executor_config{type:raw, model:provider/model}, llm_model cleared.
+    * harnessed (explicit model) → executor_config{type:harnessed, model:harness,
+      harness:harness}, llm_model=provider/model (passed as --model to the CLI).
+    * harnessed (default) → same but llm_model=None (CLI uses its own default).
+    """
+    exec_type, harness, llm_model = chain_entry_to_executor(entry)
+    if exec_type == EXECUTOR_TYPE_RAW:
+        new_exec = base.executor_config.model_copy(
+            update={"type": EXECUTOR_TYPE_RAW, "model": llm_model, "harness": None}
+        )
+        return base.model_copy(update={"executor_config": new_exec, "llm_model": None})
+    new_exec = base.executor_config.model_copy(
+        update={"type": EXECUTOR_TYPE_HARNESSED, "model": harness, "harness": harness}
+    )
+    return base.model_copy(update={"executor_config": new_exec, "llm_model": llm_model})
+
+
+def _config_to_canonical(cfg: "AgentConfig") -> str | None:
+    """Best-effort canonical chain-entry string for an AgentConfig's executor.
+
+    Used to drop the primary model from the fallback chain so it isn't retried
+    with identical settings. Returns None when not expressible as an entry.
+    """
+    ec = cfg.executor_config
+    if ec.type == EXECUTOR_TYPE_RAW:
+        return f"raw:{ec.model}" if ec.model else None
+    # harnessed: ec.model is the harness name; cfg.llm_model is the explicit model.
+    if not ec.model:
+        return None
+    if cfg.llm_model:
+        return f"harnessed:{ec.model}:{cfg.llm_model}"
+    return f"harnessed:{ec.model}"
+
+
+def _collect_failure_text(events: list[dict], error_text: str, final_text: str) -> str:
+    """Concatenate text from a failed attempt for rate-limit classification."""
+    parts: list[str] = [error_text or "", final_text or ""]
+    for ev in events:
+        for key in ("error", "stderr"):
+            value = ev.get(key)
+            if isinstance(value, str):
+                parts.append(value)
+    return "\n".join(p for p in parts if p)
+
+
 async def _run_agent_task(
     agent_session_id: uuid.UUID,
     turn_number: int,
@@ -401,46 +457,8 @@ async def _run_agent_task(
         # Only present on the first turn of a new session; None for all later turns.
         pre_proc_task = _pre_spawn_tasks.pop(agent_session_id, None)
 
-        runner: AgentRunner
-        if exec_cfg.type == EXECUTOR_TYPE_RAW:
-            if exec_cfg.model == "mock":
-                runner = MockRunner(agent_config)
-            else:
-                runner = RawExecutorRunner(agent_config)
-            # Raw/mock executor doesn't use the Claude CLI subprocess.
-            if pre_proc_task is not None:
-                pre_proc_task.cancel()
-                pre_proc_task = None
-        elif exec_cfg.model in (HARNESS_CODEX_CLI, HARNESS_CODEX_APP_SERVER):
-            runner = CodexAppServerRunner(agent_config)
-            # Codex app-server runner uses WebSocket — cancel the Claude CLI pre-spawn.
-            if pre_proc_task is not None:
-                pre_proc_task.cancel()
-                pre_proc_task = None
-        elif exec_cfg.model == HARNESS_CLAUDE_SDK:
-            from ypl.agent_harness_service.executors.claude_agent_sdk_runner import ClaudeAgentSdkRunner
-
-            runner = ClaudeAgentSdkRunner(agent_config)
-            # SDK runner makes a direct HTTPS call — no subprocess to pre-warm.
-            if pre_proc_task is not None:
-                pre_proc_task.cancel()
-                pre_proc_task = None
-        else:
-            runner = ClaudeCodeRunner(agent_config, pre_proc_task=pre_proc_task)
-
-        run_context = RunContext(
-            session_id=str(agent_session_id),
-            workspace=workspace,
-            llm_session_id=llm_session_id,
-            extra_dirs=extra_dirs,
-            slack_session_id=slack_session_id,
-            is_slack=is_slack,
-            is_task=is_task,
-            session_context=session_context,
-            session_created_at=session_created_at,
-        )
-
-        # Resolve the outgoing gateway from the trigger type.
+        # Resolve the outgoing gateway from the trigger type (turn-scoped — does
+        # not change across fallback attempts).
         gateway_name = TRIGGER_TO_GATEWAY.get(trigger or "")
         gateway_session_id = slack_session_id  # will generalize when more gateways exist
         # If the session was re-attached to Slack after creation (e.g. a CRON session that
@@ -465,26 +483,9 @@ async def _run_agent_task(
         # Extract display name override from session context (set by personal agent resolution).
         gateway_username: str | None = (session_context or {}).get("display_name")
 
-        events: list[dict] = []
-        final_text = ""
-        seen_outlet_tool_ids: set[str] = set()  # dedup outlet tool extraction across event types
-        last_gateway_reply_time = 0.0  # monotonic; 0 ensures first block always creates a new message
-        had_error = False
-        error_text = ""
-        result_llm_session_id: str | None = None
-        result_cost_usd: float | None = None
-        result_duration_ms: int | None = None
-        result_num_turns: int | None = None
-        result_subtype: str | None = None
-        # TTFCT/TTLCT: wall-clock timestamps (nanoseconds, monotonic) for the
-        # first and last assistant text events seen in this turn.  NULL until
-        # the first/last text-bearing assistant event is observed.
-        first_text_time_ns: int | None = None
-        last_text_time_ns: int | None = None
-        eager = EagerPersistState()
-        model_name = exec_cfg.model or "__unknown__"
-
-        # WebSocket streaming: set up translation state and publish channel
+        # WebSocket streaming: set up translation state and publish channel.
+        # Turn-scoped: one turn_id spans all fallback attempts so the WS sees a
+        # single continuous turn.
         translation_state = TranslationState(str(agent_session_id), turn_number)
         stream_channel = f"ahs:stream:{agent_session_id}"
 
@@ -508,371 +509,517 @@ async def _run_agent_task(
             ]
         )
 
-        # Anchor for TTFCT/TTLCT: recorded immediately before the first event
-        # arrives from the runner.  Captures queue-drain + first-token latency
-        # as seen by this process, excluding Python startup and MCP handshake.
-        turn_loop_start_ns = time.monotonic_ns()
+        # --- Rate-limit fallback chain ----------------------------------
+        # Harnessed agents run on subscriptions and can hit usage/rate limits.
+        # On such a failure we restart the turn with the next candidate in the
+        # global fallback chain (which may be a different harness or a raw API
+        # model). The primary config is attempt 0; chain entries follow.
+        base_agent_config = agent_config
+        _fallback_chain = await get_fallback_chain()
+        _primary_canonical = _config_to_canonical(base_agent_config)
+        _fallback_entries = [e for e in _fallback_chain if e != _primary_canonical]
+        candidates: list[str | None] = [None, *_fallback_entries]
 
-        try:
-            async for event in runner.run(message, run_context):
-                events.append(_trim_value(event.raw))
+        for attempt_idx, _candidate in enumerate(candidates):
+            # Build the config for this attempt (None = primary as-is).
+            if _candidate is None:
+                agent_config = base_agent_config
+            else:
+                agent_config = _apply_chain_entry(base_agent_config, _candidate)
+            exec_cfg = agent_config.executor_config
+            # Tracks whether this attempt streamed user-visible content; if so we
+            # must NOT fall back (it would double-post). Reset every attempt.
+            streamed_visible_content = False
+            # Only attempt 0 may consume the pre-spawned process / --resume the
+            # existing harness session; fallback attempts start clean.
+            if attempt_idx > 0:
+                pre_proc_task = None
+                llm_session_id = None
+            runner: AgentRunner
+            if exec_cfg.type == EXECUTOR_TYPE_RAW:
+                if exec_cfg.model == "mock":
+                    runner = MockRunner(agent_config)
+                else:
+                    runner = RawExecutorRunner(agent_config)
+                # Raw/mock executor doesn't use the Claude CLI subprocess.
+                if pre_proc_task is not None:
+                    pre_proc_task.cancel()
+                    pre_proc_task = None
+            elif exec_cfg.model in (HARNESS_CODEX_CLI, HARNESS_CODEX_APP_SERVER):
+                runner = CodexAppServerRunner(agent_config)
+                # Codex app-server runner uses WebSocket — cancel the Claude CLI pre-spawn.
+                if pre_proc_task is not None:
+                    pre_proc_task.cancel()
+                    pre_proc_task = None
+            elif exec_cfg.model == HARNESS_CLAUDE_SDK:
+                from ypl.agent_harness_service.executors.claude_agent_sdk_runner import ClaudeAgentSdkRunner
 
-                # Log every event regardless of type
-                excerpt = extract_excerpt(event)
-                sid = str(agent_session_id)[-6:]
-                logger.info(
-                    f"session {sid} [AGENT] [{event.type}]: {excerpt}",
-                    agent_name=agent_config_name,
-                    session_id=str(agent_session_id),
-                    role="AGENT",
-                    event_type=event.type,
-                    turn_number=turn_number,
-                )
+                runner = ClaudeAgentSdkRunner(agent_config)
+                # SDK runner makes a direct HTTPS call — no subprocess to pre-warm.
+                if pre_proc_task is not None:
+                    pre_proc_task.cancel()
+                    pre_proc_task = None
+            else:
+                runner = ClaudeCodeRunner(agent_config, pre_proc_task=pre_proc_task)
 
-                # --- Eager persist + gateway tool-start events ---
-                # RawExecutor emits separate "tool_use" events; CLI runner embeds
-                # tool_use blocks inside "assistant" events.
-                tool_start_blocks_in_event: list[dict[str, Any]] = []
-                if event.type == "tool_use":
-                    tool_start_blocks_in_event = [event.raw]
-                elif event.type == "assistant":
-                    content_blocks = event.raw.get("message", {}).get("content", [])
-                    tool_start_blocks_in_event = [
-                        b for b in content_blocks if isinstance(b, dict) and b.get("type") == "tool_use"
-                    ]
+            run_context = RunContext(
+                session_id=str(agent_session_id),
+                workspace=workspace,
+                llm_session_id=llm_session_id,
+                extra_dirs=extra_dirs,
+                slack_session_id=slack_session_id,
+                is_slack=is_slack,
+                is_task=is_task,
+                session_context=session_context,
+                session_created_at=session_created_at,
+            )
 
-                tool_names_in_event = [b.get("name", "unknown") for b in tool_start_blocks_in_event]
+            events: list[dict] = []
+            final_text = ""
+            seen_outlet_tool_ids: set[str] = set()  # dedup outlet tool extraction across event types
+            last_gateway_reply_time = 0.0  # monotonic; 0 ensures first block always creates a new message
+            had_error = False
+            error_text = ""
+            result_llm_session_id: str | None = None
+            result_cost_usd: float | None = None
+            result_duration_ms: int | None = None
+            result_num_turns: int | None = None
+            result_subtype: str | None = None
+            # TTFCT/TTLCT: wall-clock timestamps (nanoseconds, monotonic) for the
+            # first and last assistant text events seen in this turn.  NULL until
+            # the first/last text-bearing assistant event is observed.
+            first_text_time_ns: int | None = None
+            last_text_time_ns: int | None = None
+            eager = EagerPersistState()
+            model_name = exec_cfg.model or "__unknown__"
 
-                if tool_names_in_event:
-                    eager.tool_call_count += len(tool_names_in_event)
-                    eager.pending_tool_names.extend(tool_names_in_event)
-                    should_persist = (
-                        eager.msg_id is None  # first tool call → INSERT "[started]"
-                        or (eager.tool_call_count - eager.last_persisted_tool_count) >= _EAGER_PERSIST_TOOL_INTERVAL
+            # Anchor for TTFCT/TTLCT: recorded immediately before the first event
+            # arrives from the runner.  Captures queue-drain + first-token latency
+            # as seen by this process, excluding Python startup and MCP handshake.
+            turn_loop_start_ns = time.monotonic_ns()
+
+            try:
+                async for event in runner.run(message, run_context):
+                    events.append(_trim_value(event.raw))
+
+                    # Log every event regardless of type
+                    excerpt = extract_excerpt(event)
+                    sid = str(agent_session_id)[-6:]
+                    logger.info(
+                        f"session {sid} [AGENT] [{event.type}]: {excerpt}",
+                        agent_name=agent_config_name,
+                        session_id=str(agent_session_id),
+                        role="AGENT",
+                        event_type=event.type,
+                        turn_number=turn_number,
                     )
-                    if should_persist:
-                        await _eager_persist_agent_msg(eager, events, agent_session_id, turn_number, model_name)
 
-                    # Fire a structured tool-start event to the gateway for each
-                    # tool invocation so SAG can render the live cluster display.
+                    # --- Eager persist + gateway tool-start events ---
+                    # RawExecutor emits separate "tool_use" events; CLI runner embeds
+                    # tool_use blocks inside "assistant" events.
+                    tool_start_blocks_in_event: list[dict[str, Any]] = []
+                    if event.type == "tool_use":
+                        tool_start_blocks_in_event = [event.raw]
+                    elif event.type == "assistant":
+                        content_blocks = event.raw.get("message", {}).get("content", [])
+                        tool_start_blocks_in_event = [
+                            b for b in content_blocks if isinstance(b, dict) and b.get("type") == "tool_use"
+                        ]
+
+                    tool_names_in_event = [b.get("name", "unknown") for b in tool_start_blocks_in_event]
+
+                    if tool_names_in_event:
+                        # Tool activity counts as visible progress — don't fall back
+                        # after the agent has started doing work this attempt.
+                        streamed_visible_content = True
+                        eager.tool_call_count += len(tool_names_in_event)
+                        eager.pending_tool_names.extend(tool_names_in_event)
+                        should_persist = (
+                            eager.msg_id is None  # first tool call → INSERT "[started]"
+                            or (eager.tool_call_count - eager.last_persisted_tool_count) >= _EAGER_PERSIST_TOOL_INTERVAL
+                        )
+                        if should_persist:
+                            await _eager_persist_agent_msg(eager, events, agent_session_id, turn_number, model_name)
+
+                        # Fire a structured tool-start event to the gateway for each
+                        # tool invocation so SAG can render the live cluster display.
+                        if gateway and gateway_session_id:
+                            # tool_call_count is already incremented by len(tool_start_blocks_in_event)
+                            # above, so compute per-block anon IDs by working backwards from the end.
+                            _anon_base = eager.tool_call_count - len(tool_start_blocks_in_event)
+                            for _i, block in enumerate(tool_start_blocks_in_event):
+                                _name = block.get("name", "unknown")
+                                _tool_use_id = block.get("id") or f"anon_{_anon_base + _i + 1}"
+                                _command = _format_tool_command(_name, block.get("input") or {})
+                                try:
+                                    _t = asyncio.create_task(
+                                        gateway.send_tool_event(
+                                            gateway_session_id,
+                                            kind="start",
+                                            tool_use_id=_tool_use_id,
+                                            name=_name,
+                                            command=_command,
+                                        )
+                                    )
+                                    _t.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+                                except Exception:
+                                    logger.debug(
+                                        "Failed to fire tool start event to gateway",
+                                        session_id=str(agent_session_id),
+                                        exc_info=True,
+                                    )
+
+                    # --- Gateway tool-result events ---
+                    # RawExecutor: standalone "tool_result" event.
+                    # CLI runner: tool_result blocks embedded inside "user" events.
                     if gateway and gateway_session_id:
-                        # tool_call_count is already incremented by len(tool_start_blocks_in_event)
-                        # above, so compute per-block anon IDs by working backwards from the end.
-                        _anon_base = eager.tool_call_count - len(tool_start_blocks_in_event)
-                        for _i, block in enumerate(tool_start_blocks_in_event):
-                            _name = block.get("name", "unknown")
-                            _tool_use_id = block.get("id") or f"anon_{_anon_base + _i + 1}"
-                            _command = _format_tool_command(_name, block.get("input") or {})
+                        tool_result_blocks_in_event: list[dict[str, Any]] = []
+                        if event.type == "tool_result":
+                            tool_result_blocks_in_event = [event.raw]
+                        elif event.type == "user":
+                            _user_content = event.raw.get("message", {}).get("content", [])
+                            tool_result_blocks_in_event = [
+                                b for b in _user_content if isinstance(b, dict) and b.get("type") == "tool_result"
+                            ]
+                        for block in tool_result_blocks_in_event:
+                            _tool_use_id = block.get("tool_use_id") or ""
+                            if not _tool_use_id:
+                                continue
+                            _is_error = block.get("is_error", False)
+                            _output = block.get("output") or block.get("content", "")
+                            _result_status, _error_msg = _determine_result_status(_output, _is_error)
+                            # Extract the first non-empty line of output for the live display.
+                            _result_content: str | None = None
+                            if _result_status == "done" and _output:
+                                _raw_text: str = ""
+                                if isinstance(_output, str):
+                                    _raw_text = _output
+                                elif isinstance(_output, list):
+                                    for _b in _output:
+                                        if isinstance(_b, dict) and _b.get("text"):
+                                            _raw_text = str(_b["text"])
+                                            break
+                                _first_line = _raw_text.strip().splitlines()[0].strip() if _raw_text.strip() else ""
+                                if _first_line:
+                                    _result_content = _first_line[:150]
                             try:
                                 _t = asyncio.create_task(
                                     gateway.send_tool_event(
                                         gateway_session_id,
-                                        kind="start",
+                                        kind="result",
                                         tool_use_id=_tool_use_id,
-                                        name=_name,
-                                        command=_command,
+                                        result_status=_result_status,
+                                        error_msg=_error_msg,
+                                        result_content=_result_content,
                                     )
                                 )
                                 _t.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
                             except Exception:
                                 logger.debug(
-                                    "Failed to fire tool start event to gateway",
+                                    "Failed to fire tool result event to gateway",
                                     session_id=str(agent_session_id),
                                     exc_info=True,
                                 )
 
-                # --- Gateway tool-result events ---
-                # RawExecutor: standalone "tool_result" event.
-                # CLI runner: tool_result blocks embedded inside "user" events.
-                if gateway and gateway_session_id:
-                    tool_result_blocks_in_event: list[dict[str, Any]] = []
-                    if event.type == "tool_result":
-                        tool_result_blocks_in_event = [event.raw]
-                    elif event.type == "user":
-                        _user_content = event.raw.get("message", {}).get("content", [])
-                        tool_result_blocks_in_event = [
-                            b for b in _user_content if isinstance(b, dict) and b.get("type") == "tool_result"
-                        ]
-                    for block in tool_result_blocks_in_event:
-                        _tool_use_id = block.get("tool_use_id") or ""
-                        if not _tool_use_id:
-                            continue
-                        _is_error = block.get("is_error", False)
-                        _output = block.get("output") or block.get("content", "")
-                        _result_status, _error_msg = _determine_result_status(_output, _is_error)
-                        # Extract the first non-empty line of output for the live display.
-                        _result_content: str | None = None
-                        if _result_status == "done" and _output:
-                            _raw_text: str = ""
-                            if isinstance(_output, str):
-                                _raw_text = _output
-                            elif isinstance(_output, list):
-                                for _b in _output:
-                                    if isinstance(_b, dict) and _b.get("text"):
-                                        _raw_text = str(_b["text"])
-                                        break
-                            _first_line = _raw_text.strip().splitlines()[0].strip() if _raw_text.strip() else ""
-                            if _first_line:
-                                _result_content = _first_line[:150]
-                        try:
-                            _t = asyncio.create_task(
-                                gateway.send_tool_event(
-                                    gateway_session_id,
-                                    kind="result",
-                                    tool_use_id=_tool_use_id,
-                                    result_status=_result_status,
-                                    error_msg=_error_msg,
-                                    result_content=_result_content,
-                                )
+                    # --- Single decision point: extract all user-visible content ---
+                    visible_contents = _extract_visible_content(event, seen_outlet_tool_ids)
+
+                    # If an assistant event had text but it was all thinking tags,
+                    # skip remaining processing (including WS streaming).
+                    if event.type == "assistant" and event.text and not visible_contents:
+                        continue
+
+                    # Translate and publish to WebSocket streaming.
+                    # Sanitize content blocks so WS clients don't receive raw <thinking> tags.
+                    ws_event = event
+                    if event.type == "intermediate_text":
+                        raw_text = event.raw.get("text", "")
+                        cleaned = strip_thinking_tags(raw_text)
+                        if not cleaned:
+                            continue  # Skip if the entire block was thinking content
+                        if cleaned != raw_text:
+                            ws_event = StreamEvent(type=event.type, raw={**event.raw, "text": cleaned})
+                    elif event.type == "assistant":
+                        sanitized_raw = dict(event.raw)
+                        msg = sanitized_raw.get("message", {})
+                        if "content" in msg:
+                            sanitized_raw["message"] = {
+                                **msg,
+                                "content": [
+                                    {**b, "text": strip_thinking_tags(b.get("text", ""))}
+                                    if b.get("type") == "text"
+                                    else b
+                                    for b in msg["content"]
+                                ],
+                            }
+                        ws_event = StreamEvent(type=event.type, raw=sanitized_raw)
+                    codex_events = translate_stream_event(ws_event, translation_state)
+                    if codex_events:
+                        await _publish_codex_events(codex_events)
+
+                    if event.type == "intermediate_text":
+                        # Send intermediate text to gateway so users see progress in Slack.
+                        # Tagged as "thinking" so the gateway renders it as muted/context text.
+                        intermediate_text = event.raw.get("text", "")
+                        cleaned_intermediate = strip_thinking_tags(intermediate_text)
+                        if cleaned_intermediate and gateway and gateway_session_id:
+                            now = time.monotonic()
+                            use_append = (
+                                last_gateway_reply_time > 0
+                                and (now - last_gateway_reply_time) < _GATEWAY_APPEND_THRESHOLD_SECONDS
                             )
-                            _t.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
-                        except Exception:
-                            logger.debug(
-                                "Failed to fire tool result event to gateway",
+                            try:
+                                if use_append:
+                                    ok = await gateway.append_reply(
+                                        gateway_session_id,
+                                        "\n\n" + cleaned_intermediate,
+                                        reply_type="thinking",
+                                        username=gateway_username,
+                                    )
+                                else:
+                                    ok = await gateway.send_reply(
+                                        gateway_session_id,
+                                        cleaned_intermediate,
+                                        reply_type="thinking",
+                                        username=gateway_username,
+                                    )
+                                if ok:
+                                    last_gateway_reply_time = now
+                                    streamed_visible_content = True
+                            except Exception:
+                                logger.error(
+                                    "Failed to send intermediate text to gateway",
+                                    session_id=str(agent_session_id),
+                                )
+
+                    elif visible_contents:
+                        # The agent produced user-visible output this attempt, so a
+                        # later rate-limit must NOT silently fall back (would double-post).
+                        streamed_visible_content = True
+                        # --- Record TTFCT/TTLCT for assistant text events ---
+                        # Only assistant events with actual visible text carry direct
+                        # LLM-generated content; outlet tool content (send_slack_message
+                        # etc.) may appear in visible_contents even for assistant events
+                        # that have tool_use blocks but no text.  Gate on cleaned text
+                        # (strip_thinking_tags) to exclude events whose only content is
+                        # thinking tags, ensuring these metrics reflect pure inference
+                        # latency and the NULL-for-tool-only semantics are preserved.
+                        if event.type == "assistant" and strip_thinking_tags(event.text or ""):
+                            _text_ts_ns = time.monotonic_ns()
+                            if first_text_time_ns is None:
+                                first_text_time_ns = _text_ts_ns
+                            last_text_time_ns = _text_ts_ns
+
+                        # --- Persist all visible content to DB ---
+                        for vc in visible_contents:
+                            if final_text:
+                                final_text += "\n\n"
+                            final_text += vc.text
+                            eager.flush_pending_tools()
+                            eager.content_parts.append(vc.text)
+                        await _eager_persist_agent_msg(eager, events, agent_session_id, turn_number, model_name)
+
+                        # --- Relay to gateway for content not already delivered ---
+                        # Content marked already_delivered was posted to the outlet
+                        # directly by the MCP tool (e.g., send_slack_message); relaying
+                        # it again via the gateway would cause duplicates.
+                        undelivered = [vc for vc in visible_contents if not vc.already_delivered]
+                        if undelivered and gateway and gateway_session_id:
+                            relay_text = "\n\n".join(vc.text for vc in undelivered)
+                            now = time.monotonic()
+                            use_append = (
+                                last_gateway_reply_time > 0
+                                and (now - last_gateway_reply_time) < _GATEWAY_APPEND_THRESHOLD_SECONDS
+                            )
+                            try:
+                                if use_append:
+                                    ok = await gateway.append_reply(
+                                        gateway_session_id, "\n\n" + relay_text, username=gateway_username
+                                    )
+                                else:
+                                    ok = await gateway.send_reply(
+                                        gateway_session_id, relay_text, username=gateway_username
+                                    )
+                                if ok:
+                                    last_gateway_reply_time = now
+                            except Exception:
+                                logger.error("Failed to send reply to gateway", session_id=str(agent_session_id))
+                        elif undelivered:
+                            logger.info(
+                                "Agent content block received (no gateway)",
                                 session_id=str(agent_session_id),
-                                exc_info=True,
+                                text_preview=undelivered[0].text[:200],
                             )
 
-                # --- Single decision point: extract all user-visible content ---
-                visible_contents = _extract_visible_content(event, seen_outlet_tool_ids)
+                    elif event.type == "result":
+                        result_llm_session_id = event.session_id
+                        result_cost_usd = event.cost_usd
+                        result_duration_ms = event.duration_ms
+                        result_num_turns = event.num_turns
+                        result_subtype = event.subtype
 
-                # If an assistant event had text but it was all thinking tags,
-                # skip remaining processing (including WS streaming).
-                if event.type == "assistant" and event.text and not visible_contents:
-                    continue
-
-                # Translate and publish to WebSocket streaming.
-                # Sanitize content blocks so WS clients don't receive raw <thinking> tags.
-                ws_event = event
-                if event.type == "intermediate_text":
-                    raw_text = event.raw.get("text", "")
-                    cleaned = strip_thinking_tags(raw_text)
-                    if not cleaned:
-                        continue  # Skip if the entire block was thinking content
-                    if cleaned != raw_text:
-                        ws_event = StreamEvent(type=event.type, raw={**event.raw, "text": cleaned})
-                elif event.type == "assistant":
-                    sanitized_raw = dict(event.raw)
-                    msg = sanitized_raw.get("message", {})
-                    if "content" in msg:
-                        sanitized_raw["message"] = {
-                            **msg,
-                            "content": [
-                                {**b, "text": strip_thinking_tags(b.get("text", ""))} if b.get("type") == "text" else b
-                                for b in msg["content"]
-                            ],
-                        }
-                    ws_event = StreamEvent(type=event.type, raw=sanitized_raw)
-                codex_events = translate_stream_event(ws_event, translation_state)
-                if codex_events:
-                    await _publish_codex_events(codex_events)
-
-                if event.type == "intermediate_text":
-                    # Send intermediate text to gateway so users see progress in Slack.
-                    # Tagged as "thinking" so the gateway renders it as muted/context text.
-                    intermediate_text = event.raw.get("text", "")
-                    cleaned_intermediate = strip_thinking_tags(intermediate_text)
-                    if cleaned_intermediate and gateway and gateway_session_id:
-                        now = time.monotonic()
-                        use_append = (
-                            last_gateway_reply_time > 0
-                            and (now - last_gateway_reply_time) < _GATEWAY_APPEND_THRESHOLD_SECONDS
-                        )
-                        try:
-                            if use_append:
-                                ok = await gateway.append_reply(
-                                    gateway_session_id,
-                                    "\n\n" + cleaned_intermediate,
-                                    reply_type="thinking",
-                                    username=gateway_username,
-                                )
-                            else:
-                                ok = await gateway.send_reply(
-                                    gateway_session_id,
-                                    cleaned_intermediate,
-                                    reply_type="thinking",
-                                    username=gateway_username,
-                                )
-                            if ok:
-                                last_gateway_reply_time = now
-                        except Exception:
-                            logger.error(
-                                "Failed to send intermediate text to gateway",
-                                session_id=str(agent_session_id),
-                            )
-
-                elif visible_contents:
-                    # --- Record TTFCT/TTLCT for assistant text events ---
-                    # Only assistant events with actual visible text carry direct
-                    # LLM-generated content; outlet tool content (send_slack_message
-                    # etc.) may appear in visible_contents even for assistant events
-                    # that have tool_use blocks but no text.  Gate on cleaned text
-                    # (strip_thinking_tags) to exclude events whose only content is
-                    # thinking tags, ensuring these metrics reflect pure inference
-                    # latency and the NULL-for-tool-only semantics are preserved.
-                    if event.type == "assistant" and strip_thinking_tags(event.text or ""):
-                        _text_ts_ns = time.monotonic_ns()
-                        if first_text_time_ns is None:
-                            first_text_time_ns = _text_ts_ns
-                        last_text_time_ns = _text_ts_ns
-
-                    # --- Persist all visible content to DB ---
-                    for vc in visible_contents:
-                        if final_text:
-                            final_text += "\n\n"
-                        final_text += vc.text
-                        eager.flush_pending_tools()
-                        eager.content_parts.append(vc.text)
-                    await _eager_persist_agent_msg(eager, events, agent_session_id, turn_number, model_name)
-
-                    # --- Relay to gateway for content not already delivered ---
-                    # Content marked already_delivered was posted to the outlet
-                    # directly by the MCP tool (e.g., send_slack_message); relaying
-                    # it again via the gateway would cause duplicates.
-                    undelivered = [vc for vc in visible_contents if not vc.already_delivered]
-                    if undelivered and gateway and gateway_session_id:
-                        relay_text = "\n\n".join(vc.text for vc in undelivered)
-                        now = time.monotonic()
-                        use_append = (
-                            last_gateway_reply_time > 0
-                            and (now - last_gateway_reply_time) < _GATEWAY_APPEND_THRESHOLD_SECONDS
-                        )
-                        try:
-                            if use_append:
-                                ok = await gateway.append_reply(
-                                    gateway_session_id, "\n\n" + relay_text, username=gateway_username
-                                )
-                            else:
-                                ok = await gateway.send_reply(gateway_session_id, relay_text, username=gateway_username)
-                            if ok:
-                                last_gateway_reply_time = now
-                        except Exception:
-                            logger.error("Failed to send reply to gateway", session_id=str(agent_session_id))
-                    elif undelivered:
-                        logger.info(
-                            "Agent content block received (no gateway)",
+                    elif event.type == "error":
+                        had_error = True
+                        error_msg = event.raw.get("error", "Unknown agent error")
+                        error_text = f"[ERROR] {error_msg}"
+                        logger.error(
+                            "Agent returned error",
                             session_id=str(agent_session_id),
-                            text_preview=undelivered[0].text[:200],
+                            error=error_msg,
                         )
 
-                elif event.type == "result":
-                    result_llm_session_id = event.session_id
-                    result_cost_usd = event.cost_usd
-                    result_duration_ms = event.duration_ms
-                    result_num_turns = event.num_turns
-                    result_subtype = event.subtype
-
-                elif event.type == "error":
-                    had_error = True
-                    error_msg = event.raw.get("error", "Unknown agent error")
-                    error_text = f"[ERROR] {error_msg}"
-                    logger.error(
-                        "Agent returned error",
-                        session_id=str(agent_session_id),
-                        error=error_msg,
-                    )
-
-        except asyncio.CancelledError:
-            was_cancelled = True
-            logger.info(
-                "Agent task cancelled (user stop)",
-                session_id=str(agent_session_id),
-                turn_number=turn_number,
-            )
-            # Close any open message item before emitting turn/completed (failed)
-            close_events = _close_message_item(translation_state)
-            if close_events:
-                await _publish_codex_events(close_events)
-            # Notify WebSocket clients that the turn was cancelled
-            await _publish_codex_events(
-                [
-                    {
-                        "type": "turn/completed",
-                        "turn_id": translation_state.turn_id,
-                        "status": "failed",
-                        "error": {"message": "Turn cancelled by user"},
-                    }
-                ]
-            )
-            # No SYSTEM message here — stop_session() handles that.
-            # No Slack notification here — SAG handles the interruption message.
-            # Delete the eagerly-persisted draft row if it exists.
-            if eager.msg_id is not None:
-                try:
-                    async with get_async_session() as session:
-                        await session.exec(
-                            sa_delete(AgentSessionMessage).where(
-                                col(AgentSessionMessage.agent_session_message_id) == eager.msg_id
+            except asyncio.CancelledError:
+                was_cancelled = True
+                logger.info(
+                    "Agent task cancelled (user stop)",
+                    session_id=str(agent_session_id),
+                    turn_number=turn_number,
+                )
+                # Close any open message item before emitting turn/completed (failed)
+                close_events = _close_message_item(translation_state)
+                if close_events:
+                    await _publish_codex_events(close_events)
+                # Notify WebSocket clients that the turn was cancelled
+                await _publish_codex_events(
+                    [
+                        {
+                            "type": "turn/completed",
+                            "turn_id": translation_state.turn_id,
+                            "status": "failed",
+                            "error": {"message": "Turn cancelled by user"},
+                        }
+                    ]
+                )
+                # No SYSTEM message here — stop_session() handles that.
+                # No Slack notification here — SAG handles the interruption message.
+                # Delete the eagerly-persisted draft row if it exists.
+                if eager.msg_id is not None:
+                    try:
+                        async with get_async_session() as session:
+                            await session.exec(
+                                sa_delete(AgentSessionMessage).where(
+                                    col(AgentSessionMessage.agent_session_message_id) == eager.msg_id
+                                )
                             )
+                            await session.commit()
+                    except Exception:
+                        logger.error(
+                            "Failed to delete eager row on cancel",
+                            session_id=str(agent_session_id),
+                            exc_info=True,
                         )
-                        await session.commit()
-                except Exception:
-                    logger.error(
-                        "Failed to delete eager row on cancel",
-                        session_id=str(agent_session_id),
-                        exc_info=True,
-                    )
-            return
+                return
 
-        except Exception as exc:
-            logger.error(
-                "Error running agent",
-                session_id=str(agent_session_id),
-                exc_info=True,
-            )
-            # Close any open message item before emitting turn/completed (failed)
-            close_events = _close_message_item(translation_state)
-            if close_events:
-                await _publish_codex_events(close_events)
-            # Notify WebSocket clients of the crash
-            await _publish_codex_events(
-                [
-                    {
-                        "type": "turn/completed",
-                        "turn_id": translation_state.turn_id,
-                        "status": "failed",
-                        "error": {"message": f"Runner crashed: {exc}"},
-                    }
-                ]
-            )
-            # Persist a SYSTEM failure message so the turn isn't stuck in "processing"
-            crash_content = f"[ERROR] Runner crashed: {exc}"
-            logger.info(
-                f"Agent [{agent_config_name}] session {agent_session_id} [SYSTEM] message: [error] {str(exc)[:200]}",
-                agent_name=agent_config_name,
-                session_id=str(agent_session_id),
-                role="SYSTEM",
-                event_type="error",
-                turn_number=turn_number,
-                excerpt=str(exc)[:200],
-            )
-            try:
-                async with get_async_session() as session:
-                    await _persist_system_msg(
-                        eager, crash_content, events, agent_session_id, turn_number, model_name, session
-                    )
-                    await _mark_session_completed(session, agent_session_id)
-                    await session.commit()
-            except Exception:
+            except Exception as exc:
                 logger.error(
-                    "Failed to persist crash record",
+                    "Error running agent",
                     session_id=str(agent_session_id),
                     exc_info=True,
                 )
-            # Notify gateway so the user sees a terminal reply
-            if gateway and gateway_session_id:
+                # Close any open message item before emitting turn/completed (failed)
+                close_events = _close_message_item(translation_state)
+                if close_events:
+                    await _publish_codex_events(close_events)
+                # Notify WebSocket clients of the crash
+                await _publish_codex_events(
+                    [
+                        {
+                            "type": "turn/completed",
+                            "turn_id": translation_state.turn_id,
+                            "status": "failed",
+                            "error": {"message": f"Runner crashed: {exc}"},
+                        }
+                    ]
+                )
+                # Persist a SYSTEM failure message so the turn isn't stuck in "processing"
+                crash_content = f"[ERROR] Runner crashed: {exc}"
+                _crash_excerpt = str(exc)[:200]
+                _crash_sid = str(agent_session_id)[-6:]
+                _crash_log = f"Agent [{agent_config_name}] session {_crash_sid} [SYSTEM] [error] {_crash_excerpt}"
+                logger.info(
+                    _crash_log,
+                    agent_name=agent_config_name,
+                    session_id=str(agent_session_id),
+                    role="SYSTEM",
+                    event_type="error",
+                    turn_number=turn_number,
+                    excerpt=str(exc)[:200],
+                )
                 try:
-                    await gateway.send_reply(gateway_session_id, crash_content, username=gateway_username)
+                    async with get_async_session() as session:
+                        await _persist_system_msg(
+                            eager, crash_content, events, agent_session_id, turn_number, model_name, session
+                        )
+                        await _mark_session_completed(session, agent_session_id)
+                        await session.commit()
                 except Exception:
-                    logger.error("Failed to send crash reply to gateway", session_id=str(agent_session_id))
+                    logger.error(
+                        "Failed to persist crash record",
+                        session_id=str(agent_session_id),
+                        exc_info=True,
+                    )
+                # Notify gateway so the user sees a terminal reply
+                if gateway and gateway_session_id:
+                    try:
+                        await gateway.send_reply(gateway_session_id, crash_content, username=gateway_username)
+                    except Exception:
+                        logger.error("Failed to send crash reply to gateway", session_id=str(agent_session_id))
 
-            from ypl.agent_harness_service.service.session_lifecycle import _maybe_update_task_completion
+                from ypl.agent_harness_service.service.session_lifecycle import _maybe_update_task_completion
 
-            await _maybe_update_task_completion(
-                trigger, session_context, agent_session_id, success=False, result=None, error=crash_content
-            )
-            return
+                await _maybe_update_task_completion(
+                    trigger, session_context, agent_session_id, success=False, result=None, error=crash_content
+                )
+                return
 
+            # --- Rate-limit detection / fallback decision ---
+            _attempt_failure_text = _collect_failure_text(events, error_text, final_text)
+            if (
+                attempt_idx < len(candidates) - 1
+                and not streamed_visible_content
+                and is_rate_limit_failure(_attempt_failure_text)
+            ):
+                _next_entry = candidates[attempt_idx + 1]
+                assert _next_entry is not None  # chain entries are never None
+                # Drop the failed attempt's eager draft row before retrying.
+                if eager.msg_id is not None:
+                    try:
+                        async with get_async_session() as _fb_session:
+                            await _fb_session.exec(
+                                sa_delete(AgentSessionMessage).where(
+                                    col(AgentSessionMessage.agent_session_message_id) == eager.msg_id
+                                )
+                            )
+                            await _fb_session.commit()
+                    except Exception:
+                        logger.error(
+                            "Failed to delete eager row on rate-limit fallback",
+                            session_id=str(agent_session_id),
+                            exc_info=True,
+                        )
+                _from_label = canonical_to_display_label(_candidate) if _candidate else (model_name or "primary model")
+                _to_label = canonical_to_display_label(_next_entry)
+                logger.warning(
+                    "model fallback triggered",
+                    session_id=str(agent_session_id),
+                    turn_number=turn_number,
+                    from_model=_from_label,
+                    to_model=_to_label,
+                    attempt=attempt_idx,
+                )
+                if gateway and gateway_session_id:
+                    _fb_notice = FALLBACK_NOTICE_TEMPLATE.format(primary=_from_label, fallback=_to_label)
+                    try:
+                        _delivered = await gateway.send_status_update(gateway_session_id, _fb_notice)
+                        if not _delivered:
+                            await gateway.send_reply(gateway_session_id, _fb_notice, username=gateway_username)
+                    except Exception:
+                        logger.error(
+                            "Failed to send fallback notice to gateway",
+                            session_id=str(agent_session_id),
+                        )
+                continue
+            break
         # Persist error as a SYSTEM message so we have a record of the failure
         if had_error:
             try:

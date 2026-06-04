@@ -13,6 +13,12 @@ import streamlit as st
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import col, select
+from ypl.agent_harness_service.common.model_options import (
+    canonical_to_display_label,
+    display_label_to_canonical,
+    enumerate_model_options,
+    parse_chain_entry,
+)
 from ypl.backend.db import get_async_session, get_async_session_read_replica, retry_db
 from ypl.backend.utils.streamlit_utils import run_coroutine_in_lit_worker
 from ypl.db.agent_harness import (
@@ -30,6 +36,82 @@ st.set_page_config(page_title="Agents", page_icon="🔮", layout="wide")
 require_auth()
 
 st.title("🔮 Agents")
+
+# ── Model dropdown helpers ────────────────────────────────────────────────────
+
+# All selectable model options as "[HARNESSED]/[RAW] provider/model" labels.
+_MODEL_OPTION_LABELS: list[str] = [o.display_label for o in enumerate_model_options()]
+
+_KEEP_CURRENT_SENTINEL = "↩ keep current (unrecognized)"
+
+
+def _current_model_label(
+    executor_type: AgentExecutorType | None,
+    executor_model: str | None,
+    config: dict[str, Any] | None,
+) -> str | None:
+    """Compute the dropdown label matching an agent's current model, or None.
+
+    Prefers ``config.executor_config`` (the runtime-authoritative source); falls
+    back to the ``executor_type``/``executor_model`` columns for legacy rows.
+    """
+    cfg = config or {}
+    _ec = cfg.get("executor_config")
+    exec_cfg: dict[str, Any] = _ec if isinstance(_ec, dict) else {}
+    exec_type = (exec_cfg.get("type") or (executor_type.value if executor_type else "")).lower()
+    if exec_type == "raw":
+        model = exec_cfg.get("model") or executor_model
+        canonical = f"raw:{model}" if model else None
+    elif exec_type == "harnessed":
+        harness = exec_cfg.get("model") or exec_cfg.get("harness") or executor_model
+        llm = cfg.get("llm_model") or exec_cfg.get("llm_model")
+        if harness and llm:
+            canonical = f"harnessed:{harness}:{llm}"
+        elif harness:
+            canonical = f"harnessed:{harness}"
+        else:
+            canonical = None
+    else:
+        canonical = None
+    if not canonical:
+        return None
+    try:
+        label = canonical_to_display_label(canonical)
+    except ValueError:
+        return None
+    return label if label in _MODEL_OPTION_LABELS else None
+
+
+def _model_selection_to_fields(
+    label: str, base_config: dict[str, Any] | None
+) -> tuple[AgentExecutorType, str, dict[str, Any]]:
+    """Map a chosen dropdown label to (executor_type, executor_model, config).
+
+    The returned config has its ``executor_config`` (type/model/harness) and
+    top-level ``llm_model`` replaced to match the selection, while preserving any
+    other ``executor_config`` keys (compaction/history/retry) and config keys.
+    """
+    opt = parse_chain_entry(display_label_to_canonical(label))
+    config: dict[str, Any] = dict(base_config or {})
+    existing_exec = config.get("executor_config")
+    preserved = (
+        {k: v for k, v in existing_exec.items() if k not in ("type", "model", "harness", "llm_model")}
+        if isinstance(existing_exec, dict)
+        else {}
+    )
+    if opt.executor_type == "raw":
+        config["executor_config"] = {**preserved, "type": "raw", "model": opt.llm_model}
+        executor_model = opt.llm_model or ""
+        config.pop("llm_model", None)
+    else:
+        config["executor_config"] = {**preserved, "type": "harnessed", "model": opt.harness, "harness": opt.harness}
+        executor_model = opt.harness or ""
+        if opt.llm_model:
+            config["llm_model"] = opt.llm_model
+        else:
+            config.pop("llm_model", None)
+    return AgentExecutorType(opt.executor_type.upper()), executor_model, config
+
 
 # ── Timezone helper ──────────────────────────────────────────────────────────
 
@@ -401,10 +483,26 @@ def _render_edit(agent_id: uuid.UUID) -> None:
         display_name = st.text_input("Display name", value=agent.display_name)
         description = st.text_area("Description", value=agent.description or "", height=80)
 
-        exec_type_values = [t.value for t in AgentExecutorType]
-        current_exec_idx = exec_type_values.index(agent.executor_type.value) if agent.executor_type else 0
-        executor_type_value = st.selectbox("Executor type", options=exec_type_values, index=current_exec_idx)
-        executor_model = st.text_input("Executor model", value=agent.executor_model or "")
+        # Model dropdown: a single "[HARNESSED]/[RAW] provider/model" picker that
+        # sets executor_type + executor_model + config.executor_config together.
+        _current_label = _current_model_label(agent.executor_type, agent.executor_model, agent.config)
+        if _current_label is None:
+            _model_options = [_KEEP_CURRENT_SENTINEL, *_MODEL_OPTION_LABELS]
+            _model_index = 0
+            st.caption(
+                f"Current model `{agent.executor_type.value if agent.executor_type else '—'}` / "
+                f"`{agent.executor_model or '—'}` isn't in the known list — pick one to change it, "
+                "or keep current."
+            )
+        else:
+            _model_options = _MODEL_OPTION_LABELS
+            _model_index = _MODEL_OPTION_LABELS.index(_current_label)
+        selected_model_label = st.selectbox(
+            "Model",
+            options=_model_options,
+            index=_model_index,
+            help="Executor type + provider/model. Harnessed (default) uses the CLI's own default model.",
+        )
 
         st.markdown("**Additional system prompt** — appended to the system prompt at runtime.")
         additional_system_prompt = st.text_area(
@@ -455,15 +553,24 @@ def _render_edit(agent_id: uuid.UUID) -> None:
         st.error("Display name is required.")
         return
 
+    # Apply the model dropdown selection over the (possibly edited) config JSON.
+    # The "keep current" sentinel leaves the existing executor fields untouched.
+    if selected_model_label == _KEEP_CURRENT_SENTINEL:
+        executor_type = agent.executor_type
+        executor_model = agent.executor_model
+        final_config = parsed_config
+    else:
+        executor_type, executor_model, final_config = _model_selection_to_fields(selected_model_label, parsed_config)
+
     success, message = run_coroutine_in_lit_worker(
         update_agent_fields(
             agent_id=agent.agent_id,
             display_name=display_name.strip(),
             description=description.strip() or None,
-            executor_type=AgentExecutorType(executor_type_value),
-            executor_model=executor_model.strip() or None,
+            executor_type=executor_type,
+            executor_model=executor_model,
             additional_system_prompt=additional_system_prompt.strip() or None,
-            config=parsed_config,
+            config=final_config,
             creator_user_id=creator_user_id.strip() or None,
             agent_user_id=agent_user_id.strip() or None,
         ),
@@ -489,13 +596,13 @@ def _render_add() -> None:
         display_name = st.text_input("Display name").strip()
         description = st.text_area("Description", height=80).strip()
 
-        exec_type_values = [t.value for t in AgentExecutorType]
-        executor_type_value = st.selectbox(
-            "Executor type",
-            options=exec_type_values,
-            index=exec_type_values.index(AgentExecutorType.HARNESSED.value),
+        _default_model_label = canonical_to_display_label("harnessed:claude-code-cli")
+        selected_model_label = st.selectbox(
+            "Model",
+            options=_MODEL_OPTION_LABELS,
+            index=_MODEL_OPTION_LABELS.index(_default_model_label),
+            help="Executor type + provider/model. Harnessed (default) uses the CLI's own default model.",
         )
-        executor_model = st.text_input("Executor model (optional)").strip()
 
         additional_system_prompt = st.text_area(
             "Additional system prompt (optional)",
@@ -541,15 +648,18 @@ def _render_add() -> None:
             st.error("Config JSON must be an object (dict) at the top level.")
             return
 
+    # Apply the model dropdown selection over the (optional) config JSON.
+    executor_type, executor_model, final_config = _model_selection_to_fields(selected_model_label, parsed_config)
+
     success, message, new_id = run_coroutine_in_lit_worker(
         insert_agent(
             name=name,
             display_name=display_name,
             description=description or None,
-            executor_type=AgentExecutorType(executor_type_value),
+            executor_type=executor_type,
             executor_model=executor_model or None,
             additional_system_prompt=additional_system_prompt or None,
-            config=parsed_config,
+            config=final_config,
             creator_user_id=creator_user_id or None,
             agent_user_id=agent_user_id or None,
         ),
