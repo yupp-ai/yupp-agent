@@ -152,7 +152,7 @@ class ExecutorConfig(BaseModel):
     type: Literal["raw", "harnessed"] = "harnessed"
     model: str | None = None
     # For harnessed: which CLI harness to use. None for raw executors.
-    harness: Literal["claude-code-cli", "codex-cli", "codex-app-server"] | None = None
+    harness: Literal["claude-code-cli", "claude-agent-sdk", "codex-cli", "codex-app-server"] | None = None
     # Context management (Phase 1): truncate large tool results
     max_tool_result_chars: int = 30_000
     max_tool_result_lines: int = 1_000

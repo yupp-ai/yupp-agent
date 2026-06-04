@@ -59,6 +59,9 @@ _COST_PER_M_TOKENS: dict[str, dict[str, float]] = {
     # echo-back); metadata kept here for when capability flags enable it. See providers.py.
     "deepseek-chat": {"input": 0.27, "output": 1.10, "cache_read": 0.07},
     "deepseek-reasoner": {"input": 0.55, "output": 2.19, "cache_read": 0.14, "reasoning": 2.19},
+    # deepseek-v4 — approximate rates (flash cheaper than pro); verify against published pricing.
+    "deepseek-v4-flash": {"input": 0.27, "output": 1.10, "cache_read": 0.07},
+    "deepseek-v4-pro": {"input": 0.55, "output": 2.19, "cache_read": 0.14},
 }
 
 # Context window limits (for overflow detection)
@@ -80,6 +83,8 @@ _CONTEXT_LIMITS: dict[str, int] = {
     # DeepSeek
     "deepseek-chat": 64_000,
     "deepseek-reasoner": 64_000,
+    "deepseek-v4-flash": 128_000,
+    "deepseek-v4-pro": 128_000,
 }
 
 _RESERVED_BUFFER = 4_000  # Tokens reserved for response

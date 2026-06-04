@@ -155,6 +155,15 @@ pages = {
     ],
     "Admin": [
         {
+            "name": "Model Fallback",
+            "link": "admin_model_fallback",
+            "emoji": "⚠️",
+            "description": (
+                "View and edit the global model fallback chain used when a harnessed "
+                "agent turn hits a rate / usage limit. Admin-only."
+            ),
+        },
+        {
             "name": "Slack Agents",
             "link": "admin_slack_agents",
             "emoji": "💬",
