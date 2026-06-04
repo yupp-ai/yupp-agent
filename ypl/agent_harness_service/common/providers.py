@@ -92,7 +92,8 @@ KNOWN_MODELS: list[str] = [
     "cerebras/gpt-oss-120b",
     "cerebras/qwen-3-235b-a22b-instruct-2507",
     "cerebras/zai-glm-4.7",
-    "deepseek/deepseek-chat",
+    "deepseek/deepseek-v4-flash",
+    "deepseek/deepseek-v4-pro",
     # NOTE: deepseek-reasoner (R1) is intentionally NOT exposed here. The raw executor
     # is a tool-calling loop that always sends tool schemas and echoes reasoning_content
     # back on subsequent turns; R1 rejects both (no function calling; HTTP 400 on

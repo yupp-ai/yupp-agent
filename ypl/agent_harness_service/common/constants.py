@@ -337,6 +337,10 @@ CONTEXT_OVERFLOW_NOTICE = (
     "_[AHS] 💥 I ran out of context window space. Send me another message to continue in a fresh context!_"
 )
 
+# User-facing notice sent when a turn hits a rate/usage limit and falls back to
+# the next model in the global fallback chain. {primary} and {fallback} are labels.
+FALLBACK_NOTICE_TEMPLATE = "_[AHS] ⚠️ {primary} hit a rate limit — retrying with {fallback}._"
+
 # Per-turn and per-session tool call limits (no global limit)
 MAX_WEBSEARCH_CALLS_PER_TURN = 20
 MAX_WEBSEARCH_CALLS_PER_SESSION = 100
@@ -367,7 +371,7 @@ DEFAULT_MODEL_MOONSHOT = "moonshot/kimi-k2.5"
 DEFAULT_MODEL_OPENAI = "openai/gpt-4o"
 DEFAULT_MODEL_ZAI = "zai/glm-5"
 DEFAULT_MODEL_MINIMAX = "minimax/MiniMax-M2.5"
-DEFAULT_MODEL_DEEPSEEK = "deepseek/deepseek-chat"
+DEFAULT_MODEL_DEEPSEEK = "deepseek/deepseek-v4-pro"
 
 # Session status values
 SESSION_STATUS_ACTIVE = "ACTIVE"
