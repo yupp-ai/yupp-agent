@@ -1,6 +1,7 @@
 """Admin Users — browse/edit the ``users`` table and add new user records."""
 
 from __future__ import annotations
+import re
 import uuid
 from typing import Any
 
@@ -36,6 +37,18 @@ _USER_TYPE_EMOJI: dict[UserType, str] = {
 
 # Sentinel value for "no user_type filter" in the dropdown.
 _USER_TYPE_FILTER_ALL = "All"
+
+# Slack member IDs look like ``U0B8385SG3U`` (users) or ``W...`` (enterprise-grid
+# users) — an uppercase U/W prefix followed by uppercase alphanumerics. Validated
+# leniently so we reject obvious mistakes (emails, display names) without being
+# brittle about exact length.
+_SLACK_USER_ID_RE = re.compile(r"^[UW][A-Z0-9]{6,}$")
+
+
+def _normalize_slack_user_id(raw: str | None) -> str | None:
+    """Trim a Slack member ID; treat blank as ``None`` (i.e. unlinked)."""
+    value = (raw or "").strip()
+    return value or None
 
 
 # ── DB queries ────────────────────────────────────────────────────────────────
@@ -159,6 +172,7 @@ async def fetch_user_detail(user_id: str) -> dict[str, Any] | None:
         "name": user.name,
         "status": user.status,
         "user_type": user.user_type,
+        "slack_user_id": user.slack_user_id,
         "roles": sorted(current_role_names, key=lambda r: r.value),
         "permissions": sorted(perms, key=lambda p: p.value),
     }
@@ -227,12 +241,38 @@ async def set_user_roles(user_id: str, desired_role_ids: set[uuid.UUID]) -> bool
 
 
 @retry_db
+async def set_user_slack_id(user_id: str, slack_user_id: str | None) -> tuple[bool, str]:
+    """Set (or clear, when ``None``) a user's ``slack_user_id``. Returns (success, message).
+
+    Enforces the partial-unique ``idx_users_slack_user_id_unique`` constraint by
+    mapping its IntegrityError to a friendly "already linked" message.
+    """
+    async with get_async_session() as session:
+        user = (await session.exec(select(User).where(col(User.user_id) == user_id))).one_or_none()
+        if user is None:
+            return False, "User not found."
+        user.slack_user_id = slack_user_id
+        session.add(user)
+        try:
+            await session.commit()
+        except IntegrityError as exc:
+            await session.rollback()
+            detail = str(getattr(exc, "orig", exc))
+            if "slack_user_id" in detail:
+                return False, f"Slack member ID '{slack_user_id}' is already linked to another user."
+            logger.exception("admin_users.set_user_slack_id_unexpected_integrity_error")
+            return False, f"Could not update Slack member ID: {detail}"
+    return True, ("Slack member ID cleared." if slack_user_id is None else "Slack member ID updated.")
+
+
+@retry_db
 async def insert_user(
     email: str,
     name: str | None,
     user_type: UserType,
     status: UserStatus,
     role_ids: set[uuid.UUID],
+    slack_user_id: str | None = None,
 ) -> tuple[bool, str, str | None]:
     """Insert a new User row and assign roles. Returns (success, message, user_id)."""
     normalized_email = email.strip().lower()
@@ -250,6 +290,7 @@ async def insert_user(
             name=name or None,
             status=status,
             user_type=user_type,
+            slack_user_id=slack_user_id,
         )
         session.add(row)
         try:
@@ -284,6 +325,8 @@ def _format_insert_user_integrity_error(exc: IntegrityError, normalized_email: s
         or "idx_users_lower_email" in detail
     ):
         return f"A user with email '{normalized_email}' was just created by another session. Please refresh and retry."
+    if "idx_users_slack_user_id_unique" in constraint or "slack_user_id" in detail:
+        return "That Slack member ID is already linked to another user. Clear it or use a different one."
     if constraint.startswith("fk_user_roles_role_id") or "fk_user_roles_role_id" in detail:
         return "One of the selected roles no longer exists. Please refresh and retry."
     if constraint.startswith("fk_user_roles_user_id") or "fk_user_roles_user_id" in detail:
@@ -443,6 +486,43 @@ def _render_browse() -> None:
         _render_user_detail(selected_user_id)
 
 
+def _render_slack_link_editor(user_id: str, current_slack_user_id: str | None) -> None:
+    """Edit the ``users.slack_user_id`` mapping that lets SAG attribute Slack messages.
+
+    Without this link a Slack author resolves to ``None`` and the agent treats
+    their messages as the SYSTEM user — i.e. it won't act as them.
+    """
+    st.markdown("#### Slack link")
+    slack_input = st.text_input(
+        "Slack member ID",
+        value=current_slack_user_id or "",
+        key=f"user_slack_id_{user_id}",
+        help=(
+            "Slack member ID like `U0B8385SG3U` (Slack profile → ⋮ → Copy member ID). "
+            "Required for this user to message agents in Slack. Leave blank to unlink."
+        ),
+    )
+    st.caption("Takes effect after the Slack Gateway's resolution cache expires (up to ~12h) or a service restart.")
+    if st.button("Save Slack ID", key=f"save_user_slack_{user_id}"):
+        normalized = _normalize_slack_user_id(slack_input)
+        if normalized is not None and not _SLACK_USER_ID_RE.match(normalized):
+            st.error("That doesn't look like a Slack member ID (expected like `U0B8385SG3U`).")
+            return
+        if normalized == (current_slack_user_id or None):
+            st.toast("No change to Slack member ID.", icon="ℹ️")
+            return
+        try:
+            ok, msg = run_coroutine_in_lit_worker(set_user_slack_id(user_id, normalized), timeout=15)
+            if ok:
+                st.toast(msg, icon="✅")
+                _refresh_and_rerun()
+            else:
+                st.error(msg)
+        except Exception as exc:
+            logger.exception("set_user_slack_id_failed")
+            st.error(f"Failed to update Slack member ID: {exc}")
+
+
 def _render_user_detail(user_id: str) -> None:
     st.divider()
     st.subheader("User detail")
@@ -458,6 +538,8 @@ def _render_user_detail(user_id: str) -> None:
     st.markdown(f"**Email:** `{detail['email']}`")
     st.markdown(f"**User ID:** `{detail['user_id']}`")
     st.markdown(f"**Status:** {detail['status'].value} · **Type:** {detail['user_type'].value}")
+
+    _render_slack_link_editor(user_id, detail.get("slack_user_id"))
 
     roles_summary = _cached_roles_summary()
     role_name_to_id = {r["name"]: r["role_id"] for r in roles_summary}
@@ -532,6 +614,13 @@ def _render_add_user() -> None:
     with st.form("add_user_form", clear_on_submit=True):
         email = st.text_input("Email", help="Used as the unique identifier. Stored lowercased.").strip()
         name = st.text_input("Display name (optional)").strip()
+        slack_user_id_raw = st.text_input(
+            "Slack member ID (optional)",
+            help=(
+                "Slack member ID like `U0B8385SG3U` (Slack profile → ⋮ → Copy member ID). "
+                "Required for this user to message agents in Slack. Can be set later from *Browse*."
+            ),
+        ).strip()
         user_type_value = st.selectbox(
             "User type", options=user_type_values, index=user_type_values.index(UserType.HUMAN.value)
         )
@@ -558,6 +647,11 @@ def _render_add_user() -> None:
         st.error("At least one role must be assigned.")
         return
 
+    slack_user_id = _normalize_slack_user_id(slack_user_id_raw)
+    if slack_user_id is not None and not _SLACK_USER_ID_RE.match(slack_user_id):
+        st.error("Slack member ID doesn't look valid (expected like `U0B8385SG3U`). Leave blank to skip.")
+        return
+
     role_ids = {role_name_to_id[rn] for rn in selected_role_names if rn in role_name_to_id}
 
     success, message, new_user_id = run_coroutine_in_lit_worker(
@@ -567,6 +661,7 @@ def _render_add_user() -> None:
             user_type=UserType(user_type_value),
             status=UserStatus(status_value),
             role_ids=role_ids,
+            slack_user_id=slack_user_id,
         ),
         timeout=10,
     )
