@@ -220,6 +220,19 @@ alembic -c alembic.ini revision --autogenerate -m "description"
 alembic -c alembic.ini upgrade head
 ```
 
+## Documentation
+
+Deeper docs live alongside the code:
+
+- [`DEPLOYMENT.md`](./DEPLOYMENT.md) — deployment options (Docker Compose, bare-metal VM, MacBook)
+- [`docs/secrets.md`](./docs/secrets.md) — populating `.env` from GCP Secret Manager / AWS SSM / Vault / k8s
+- [`ypl/agent_harness_service/README.md`](./ypl/agent_harness_service/README.md) — Agent Harness Service (AHS)
+- [`ypl/slack_agent_gateway/README.md`](./ypl/slack_agent_gateway/README.md) — Slack Agent Gateway (SAG)
+- [`ypl/mcp_server/README.md`](./ypl/mcp_server/README.md) — MCP Server
+- [`ypl/tools/README.md`](./ypl/tools/README.md) — Operator CLIs (`ahs-artifact`, …)
+- [`apps/couch/README.md`](./apps/couch/README.md) — Couch web UI
+- [`apps/artifact-viewer/README.md`](./apps/artifact-viewer/README.md) — Artifact viewer
+
 ## License
 
 Licensed under the [Apache License, Version 2.0](./LICENSE). See the `LICENSE` file for the full text.
