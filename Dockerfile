@@ -15,6 +15,14 @@ COPY pyproject.toml poetry.lock README.md alembic.ini /app/
 RUN set -e && \
     apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates cmake curl g++ git make nodejs npm && \
+    # GitHub CLI — the AHS PR tooling (tools/repo_manager.py) shells out to `gh`
+    # for `gh pr create`. Without it, coding sessions can commit but never open a
+    # PR. Installed from the official apt repo so it tracks the build arch.
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg && \
+    chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends gh && \
     poetry install --no-root --without dev --no-interaction --no-ansi --compile && \
     npm install -g @anthropic-ai/claude-code @openai/codex && \
     # Poetry itself has no runtime role; drop it (and its now-orphaned deps,
@@ -25,6 +33,14 @@ RUN set -e && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* ~/.cache /root/.cache /tmp/* /var/tmp/* && \
     find /usr/local/lib/python3.12/site-packages -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true
+
+# Authenticate HTTPS `git push` using GH_TOKEN, which the AHS PR tooling sets
+# per-user at push time (tools/repo_manager.py). Plain git ignores GH_TOKEN and
+# would otherwise fail TTY-less pushes with "could not read Username for
+# 'https://github.com'". The `-n "$GH_TOKEN"` guard keeps the helper inert when
+# GH_TOKEN is unset (e.g. VMs that run `gh auth setup-git` to manage creds).
+RUN git config --system credential.https://github.com.helper \
+    '!f() { test "$1" = get && test -n "$GH_TOKEN" && printf "username=x-access-token\npassword=%s\n" "$GH_TOKEN"; }; f'
 
 # Application code + data. ``.env`` is injected at runtime (docker-compose
 # ``env_file:`` / systemd ``EnvironmentFile=``) — never bake it into the image.
