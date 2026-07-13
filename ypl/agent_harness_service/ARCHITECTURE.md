@@ -18,7 +18,7 @@ abstraction, MCP harness, project/task orchestration, scheduled execution.
 ypl/agent_harness_service/
 |
 |  -- Root: wiring layer --
-|-- service.py              Session lifecycle hub (121K)
+|-- service/                Session lifecycle package (session_lifecycle, run_task, agent CRUD/messaging)
 |-- server.py               FastAPI entrypoint + DI wiring (10K)
 |-- routes.py               REST API routes (24K)
 |-- orchestration.py        Subagent spawn, recursive cancel (28K)
@@ -56,7 +56,7 @@ ypl/agent_harness_service/
 |   +-- sandbox.py          Permissions, bwrap, env filtering
 |
 |-- tools/                Layer 1 -- depends on common/ only
-|   |-- local_mcp_server.py In-process MCP server + all tool defs (uses DI for orchestration)
+|   |-- local_mcp_server.py Re-export shim (tool defs split across the modules below; uses DI for orchestration)
 |   |-- workspace_tools.py  Workspace/file tools
 |   |-- repo_manager.py     Git worktree management
 |   |-- mcp_client.py       MCP client
@@ -110,7 +110,7 @@ modular -- any Layer 1 package can be understood, tested, and modified without
 knowledge of the others.
 
 **Wiring layer (root files):** The root-level `.py` files are the only place
-where Layer 1 packages are composed together. `service.py` is the orchestration
+where Layer 1 packages are composed together. `service/` is the orchestration
 hub. `server.py` handles FastAPI setup and dependency injection wiring.
 `orchestration.py`, `task_executor.py`, and `scheduler.py` contain cross-cutting
 logic that coordinates multiple Layer 1 packages.
@@ -123,7 +123,7 @@ The most important DI boundary is between `tools/` and the wiring layer.
 
 `tools/local_mcp_server.py` needs to spawn subagents (an orchestration concern),
 but it lives in Layer 1 and MUST NOT import from `orchestration.py` or
-`service.py`. This is solved with callback registration:
+`service/`. This is solved with callback registration:
 
 - `local_mcp_server.py` exposes `register_orchestration_callbacks()`.
 - `server.py` calls this at startup, injecting the actual orchestration
@@ -153,7 +153,7 @@ wiring-layer functionality.
    (not a direct import). Executors never call Slack or any delivery layer.
 
 6. **Executors are side-effect-limited.** They may write to the workspace and
-   call MCP tools. They must NOT write to the database or import `service.py`.
+   call MCP tools. They must NOT write to the database or import `service/`.
 
 7. **Permission intersection, never widening.**
    `effective_permissions = agent_config ^ session.requested ^ executor_capabilities`
@@ -184,7 +184,7 @@ Executors are the pluggable "brains" of a session. Three implementations exist:
 - Write history files (via `session_persistence`)
 
 **Forbidden:**
-- Import `service.py`
+- Import `service/`
 - Write to the database
 - Call Slack or any external delivery system
 
@@ -216,7 +216,7 @@ SELECT ... FOR UPDATE SKIP LOCKED
 
 This prevents multiple AHS instances from claiming the same task. The claimed
 task is handed to `task_executor.py`, which resolves dependencies, spawns a
-session via `service.py`, and monitors completion.
+session via `service/`, and monitors completion.
 
 `scheduler.py` does not know about project structure. `task_executor.py` does
 not know about specific agent names. This separation keeps orchestration generic.
@@ -244,7 +244,7 @@ constraint. They are enforced by convention, not tooling.
 
 | Module | Must NOT import |
 |--------|----------------|
-| `tools/local_mcp_server.py` | `service.py`, `orchestration.py` -- use DI callbacks instead |
+| `tools/local_mcp_server.py` | `service/`, `orchestration.py` -- use DI callbacks instead |
 | `executors/runner.py` | LLM API clients directly |
 | `executors/raw_executor.py` | Database session / ORM |
 | `task_executor.py` | Specific agent names (must be config-driven) |
@@ -255,12 +255,12 @@ constraint. They are enforced by convention, not tooling.
 `ypl/mcp_common/` is otherwise pure (Layer-0-equivalent for MCP code), but
 two modules sit at the same architectural level as `ypl/mono_server/server.py`
 and `ypl/agent_harness_service/tools/local_mcp_server.py` — the wiring layer
-where AHS and the agcouch MCP are composed. They are documented here as
+where AHS and the platform MCP are composed. They are documented here as
 explicit carve-outs:
 
 | Module | What it imports | Why |
 |--------|-----------------|-----|
-| `mcp_common/shared_tool.py` | `agent_harness_service.tools.mcp_instance.mcp` (harness FastMCP) and `mcp_server.core.mcp_server` (agcouch FastMCP) | Implements the dual-registration decorator. Path-based mount is still the auth boundary; this file is just the one place that knows about both registries so individual tool modules don't have to. Adding a future external MCP server = appending to its `_INSTANCES` list. |
+| `mcp_common/shared_tool.py` | `agent_harness_service.tools.mcp_instance.mcp` (harness FastMCP) and `mcp_server.core.mcp_server` (platform FastMCP) | Implements the dual-registration decorator. Path-based mount is still the auth boundary; this file is just the one place that knows about both registries so individual tool modules don't have to. Adding a future external MCP server = appending to its `_INSTANCES` list. |
 
 The architecture tests in `tests/agent_harness_service/test_architecture.py`
 scope to `ypl/agent_harness_service/`, so they do not constrain
@@ -273,19 +273,13 @@ remain Layer 1.
 
 ## Known Architectural Debt
 
-1. **`service.py` is oversized (~121K).** It is the session lifecycle monolith.
-   Further decomposition into session creation, turn handling, and state
-   management would improve maintainability.
+1. **`service/session_lifecycle.py` is large (~120K).** The former `service/`
+   monolith was split into the `service/` package (agent CRUD, messaging,
+   recovery, `run_task`, queries), but `session_lifecycle.py` remains the biggest
+   module and could be decomposed further (session creation vs. turn handling
+   vs. state management).
 
-2. **`tools/local_mcp_server.py` is the largest file (~92K).** It contains both
-   the MCP server framework and all tool definitions. Splitting tool definitions
-   into separate modules per category would help.
-
-3. **`tools/local_mcp_server.py` has lazy imports** of `service.create_agent`
-   and `GatewayRegistry` at runtime. These are acceptable (not import-time
-   violations), but they are a sign that the DI boundary could be cleaner.
-
-4. **Two external consumers** depend directly on AHS internals
+2. **Two external consumers** depend directly on AHS internals
    (`mcp_server/tools/project_tasks.py` and `slack_agent_gateway/bot_father.py`).
    These are tight couplings. A formal API boundary (or at minimum a stable
    public interface module) would reduce breakage risk.
@@ -297,8 +291,9 @@ remain Layer 1.
 **Start here:**
 1. `common/types.py` and `common/config.py` -- understand the data shapes.
 2. `common/models.py` -- understand AgentSpec, ExecutorConfig, ExecutorResult.
-3. `service.py` -- the main orchestrator. Most session-level questions are
-   answered there.
+3. `service/session_lifecycle.py` -- the session lifecycle hub. Most
+   session-level questions are answered there (the `service/` package is the
+   composition layer).
 
 **Before modifying code:**
 - Read the layering constraint above. It is the primary architectural rule.

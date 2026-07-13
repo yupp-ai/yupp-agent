@@ -299,11 +299,6 @@ exclude_lines = [
     "\\.\\.\\.",
 ]
 
-[tool.uv.workspace]
-members = [
-    "example",
-]
-
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
