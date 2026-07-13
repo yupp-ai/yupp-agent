@@ -55,7 +55,7 @@ streamlit process is restarted.
 Both entrypoint scripts pass `--server.fileWatcherType=none`:
 
 - `streamlit_server_entrypoint.sh` (Cloud Run shape, legacy)
-- `selfhosted_entrypoint.sh` (the bare-metal monolith, lit.agcouch.com)
+- `selfhosted_entrypoint.sh` (the bare-metal monolith, lit.example.com)
 
 Production never needs hot-reload — deploys restart the service. Local dev
 keeps the default (`auto`) because `scripts/run_local.sh` and direct
@@ -76,7 +76,7 @@ Two regression tests guard this:
 
 ### Investigating "this happened again"
 
-If you see `Table 'X' is already defined` on the lit.agcouch.com pages,
+If you see `Table 'X' is already defined` on the lit.example.com pages,
 walk the checklist:
 
 1. **Did someone reintroduce the watcher?** `grep

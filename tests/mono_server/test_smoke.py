@@ -137,7 +137,7 @@ class TestAHSAuthBoundary:
 
 
 class TestMCPHarnessAuthBoundary:
-    """Harness and agcouch MCP endpoints each enforce their own auth."""
+    """Harness and platform MCP endpoints each enforce their own auth."""
 
     def test_harness_post_without_token_returns_401(self) -> None:
         assert _client().post("/mcp/harness/").status_code == 401
@@ -145,16 +145,16 @@ class TestMCPHarnessAuthBoundary:
     def test_harness_get_without_token_returns_401(self) -> None:
         assert _client().get("/mcp/harness/").status_code == 401
 
-    def test_agcouch_post_without_token_returns_401(self) -> None:
-        assert _client().post("/mcp/agcouch/").status_code == 401
+    def test_platform_post_without_token_returns_401(self) -> None:
+        assert _client().post("/mcp/platform/").status_code == 401
 
-    def test_agcouch_get_without_token_returns_401(self) -> None:
-        assert _client().get("/mcp/agcouch/").status_code == 401
+    def test_platform_get_without_token_returns_401(self) -> None:
+        assert _client().get("/mcp/platform/").status_code == 401
 
     def test_mcp_never_returns_500(self) -> None:
         """Auth rejection must not be a 500 error on either mount."""
         assert _client().post("/mcp/harness/").status_code != 500
-        assert _client().post("/mcp/agcouch/").status_code != 500
+        assert _client().post("/mcp/platform/").status_code != 500
 
     def test_no_catch_all_mcp_mount(self) -> None:
         """There is no /mcp catch-all; /mcp/... requests miss all mounts."""
@@ -163,13 +163,13 @@ class TestMCPHarnessAuthBoundary:
         assert _client().post("/mcp/unknown/").status_code == 404
 
     def test_mcp_mounts_present(self) -> None:
-        """Both /mcp/harness and /mcp/agcouch mounts exist; no catch-all /mcp."""
+        """Both /mcp/harness and /mcp/platform mounts exist; no catch-all /mcp."""
         from starlette.routing import Mount
         from ypl.mono_server.server import app
 
         mounts = {r.path for r in app.routes if isinstance(r, Mount)}
         assert "/mcp/harness" in mounts, f"Missing /mcp/harness. Found: {sorted(mounts)}"
-        assert "/mcp/agcouch" in mounts, f"Missing /mcp/agcouch. Found: {sorted(mounts)}"
+        assert "/mcp/platform" in mounts, f"Missing /mcp/platform. Found: {sorted(mounts)}"
         assert "/mcp" not in mounts, f"Unexpected catch-all /mcp mount: {sorted(mounts)}"
 
 
@@ -283,8 +283,8 @@ def _noop_asynccontextmanager() -> Any:
     return _noop()
 
 
-def _stub_agcouch_lifespan() -> Any:
-    """Replace the agcouch MCP http_app in server.py with a stub whose
+def _stub_platform_lifespan() -> Any:
+    """Replace the platform MCP http_app in server.py with a stub whose
     ``lifespan()`` is a noop.
 
     The real FastMCP session manager can only run once per instance, which
@@ -293,15 +293,15 @@ def _stub_agcouch_lifespan() -> Any:
     """
     stub_app = MagicMock()
     stub_app.lifespan = lambda _app: _noop_asynccontextmanager()
-    return patch("ypl.mono_server.server.agcouch_mcp_http_app", new=stub_app)
+    return patch("ypl.mono_server.server.platform_mcp_http_app", new=stub_app)
 
 
 class TestLifespanOrdering:
     """combined_lifespan starts and stops services in the documented order.
 
-    Startup order:  ahs_startup -> harness MCP lifespan -> agcouch MCP lifespan
+    Startup order:  ahs_startup -> harness MCP lifespan -> platform MCP lifespan
                     -> mcp_startup -> plugin.startup() (SAG)
-    Shutdown order: plugin.shutdown() (SAG) -> mcp_shutdown -> agcouch MCP exit
+    Shutdown order: plugin.shutdown() (SAG) -> mcp_shutdown -> platform MCP exit
                     -> harness MCP exit -> ahs_shutdown
 
     SAG startup/shutdown are now delegated through SlackGatewayPlugin
@@ -349,7 +349,7 @@ class TestLifespanOrdering:
             patch("ypl.mono_server.server.mcp_startup", side_effect=_mcp_startup),
             patch("ypl.mono_server.server.mcp_shutdown", side_effect=_mcp_shutdown),
             patch("ypl.mono_server.server.ahs_shutdown", side_effect=_ahs_shutdown),
-            _stub_agcouch_lifespan(),
+            _stub_platform_lifespan(),
             patch("ypl.mono_server.plugins.slack.sag_startup", side_effect=_sag_startup),
             patch("ypl.mono_server.plugins.slack.sag_shutdown", side_effect=_sag_shutdown),
         ):
@@ -402,7 +402,7 @@ class TestLifespanOrdering:
             patch("ypl.mono_server.server.mcp_startup", side_effect=_mcp_startup),
             patch("ypl.mono_server.server.mcp_shutdown", side_effect=_mcp_shutdown),
             patch("ypl.mono_server.server.ahs_shutdown", side_effect=_ahs_shutdown),
-            _stub_agcouch_lifespan(),
+            _stub_platform_lifespan(),
             patch("ypl.mono_server.plugins.slack.sag_startup", side_effect=_sag_startup),
             patch("ypl.mono_server.plugins.slack.sag_shutdown", side_effect=_sag_shutdown),
         ):
@@ -447,7 +447,7 @@ class TestLifespanOrdering:
             patch("ypl.mono_server.server.mcp_startup", side_effect=_mcp_startup),
             patch("ypl.mono_server.server.mcp_shutdown", side_effect=_mcp_shutdown),
             patch("ypl.mono_server.server.ahs_shutdown", side_effect=_ahs_shutdown),
-            _stub_agcouch_lifespan(),
+            _stub_platform_lifespan(),
         ):
             test_app = create_app()
             with pytest.raises(RuntimeError, match="simulated mcp init failure"):
@@ -478,7 +478,7 @@ class TestLifespanOrdering:
             patch("ypl.mono_server.server.mcp_startup", new=AsyncMock()),
             patch("ypl.mono_server.server.mcp_shutdown", new=AsyncMock()),
             patch("ypl.mono_server.server.ahs_shutdown", new=AsyncMock()),
-            _stub_agcouch_lifespan(),
+            _stub_platform_lifespan(),
             patch("ypl.mono_server.plugins.slack.sag_startup", side_effect=_sag_startup),
             patch("ypl.mono_server.plugins.slack.sag_shutdown", new=AsyncMock()),
             patch.dict(os.environ, {"GATEWAY_SLACK_ENABLED": "false"}),
@@ -526,7 +526,7 @@ class TestErrorResponseFormat:
 
     def test_401_on_mcp_is_json(self) -> None:
         """401s from both MCP mounts return structured JSON, not plain text."""
-        for path in ("/mcp/harness/", "/mcp/agcouch/"):
+        for path in ("/mcp/harness/", "/mcp/platform/"):
             r = _client().post(path)
             assert r.status_code == 401, path
             data = r.json()
@@ -579,10 +579,10 @@ class TestIntegrationLiveStack:
         assert r.status_code in {401, 503}
 
     def test_mcp_harness_live_401(self) -> None:
-        """POST /mcp/harness/ and /mcp/agcouch/ without token both return 401."""
+        """POST /mcp/harness/ and /mcp/platform/ without token both return 401."""
         with self._http_client() as client:
             assert client.post("/mcp/harness/").status_code == 401
-            assert client.post("/mcp/agcouch/").status_code == 401
+            assert client.post("/mcp/platform/").status_code == 401
 
     def test_sag_route_live(self) -> None:
         """The SAG Slack-events endpoint exists (400/401/200 are all fine)."""

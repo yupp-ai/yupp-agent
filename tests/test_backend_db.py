@@ -441,10 +441,10 @@ class TestEngineForLocalReplica:
             mock_create.return_value = MagicMock()
             from ypl.backend.db import get_engine_for
 
-            get_engine_for("yuppdb", replica=True)
+            get_engine_for("appdb", replica=True)
 
             # Should have been called with replica=False (local env override)
-            mock_settings.db_url_for.assert_called_once_with("yuppdb", replica=False, async_mode=False)
+            mock_settings.db_url_for.assert_called_once_with("appdb", replica=False, async_mode=False)
 
     def test_get_async_engine_for_local_env_ignores_replica_flag(self) -> None:
         """In local env, replica=True for async engine should be treated as False."""
@@ -466,7 +466,7 @@ class TestEngineForLocalReplica:
             mock_create.return_value = MagicMock()
             from ypl.backend.db import get_async_engine_for
 
-            get_async_engine_for("yuppdb", replica=True)
+            get_async_engine_for("appdb", replica=True)
 
             # replica=True in local env → falls back to replica=False
-            mock_settings.get_pg_connection.assert_called_once_with("yuppdb", replica=False)
+            mock_settings.get_pg_connection.assert_called_once_with("appdb", replica=False)

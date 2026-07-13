@@ -2,7 +2,7 @@
 
 Mounted on AHS at ``/ahs/artifacts`` — callers are agents (via the MCP
 tool layer) and trusted internal services (via ``X-API-Key``). A future
-``artifacts.agcouch.com`` viewer app will call these same routes with
+``artifacts.example.com`` viewer app will call these same routes with
 its own OAuth layer in front.
 
 Machine-readable only: content is returned as raw bytes with the

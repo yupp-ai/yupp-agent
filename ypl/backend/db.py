@@ -74,7 +74,7 @@ _PGBOUNCER_CONNECT_ARGS: dict[str, Any] = {
 _engines: dict[tuple[DbName, bool], Engine] = {}
 _async_engines: dict[tuple[DbName, bool], AsyncEngine] = {}
 
-# Legacy module-level aliases (yuppdb primary/replica) — set lazily
+# Legacy module-level aliases (appdb primary/replica) — set lazily
 engine: Engine | None = None
 engine_read_replica: Engine | None = None
 async_engine: AsyncEngine | None = None
@@ -178,7 +178,7 @@ def on_engine_error(ctx: ExceptionContext) -> None:
         )
 
 
-def get_engine_for(db: DbName = "yuppdb", *, replica: bool = False) -> Engine:
+def get_engine_for(db: DbName = "appdb", *, replica: bool = False) -> Engine:
     """Get or create a sync engine for the given database."""
     if replica and is_gcp_free_environment(settings.ENVIRONMENT):
         replica = False
@@ -198,14 +198,14 @@ def get_engine_for(db: DbName = "yuppdb", *, replica: bool = False) -> Engine:
 def get_engine() -> Engine:
     global engine
     if engine is None:
-        engine = get_engine_for("yuppdb")
+        engine = get_engine_for("appdb")
     return engine
 
 
 def get_engine_read_replica() -> Engine:
     global engine_read_replica
     if engine_read_replica is None:
-        engine_read_replica = get_engine_for("yuppdb", replica=True)
+        engine_read_replica = get_engine_for("appdb", replica=True)
     return engine_read_replica
 
 
@@ -221,7 +221,7 @@ def get_raw_sql(query: ClauseElement) -> Compiled:
 SessionDep = Annotated[Session, Depends(get_db)]
 
 
-def get_async_engine_for(db: DbName = "yuppdb", *, replica: bool = False) -> AsyncEngine:
+def get_async_engine_for(db: DbName = "appdb", *, replica: bool = False) -> AsyncEngine:
     """Get or create an async engine for the given database."""
     if replica and is_gcp_free_environment(settings.ENVIRONMENT):
         replica = False
@@ -258,14 +258,14 @@ def get_async_engine_for(db: DbName = "yuppdb", *, replica: bool = False) -> Asy
 def get_async_engine() -> AsyncEngine:
     global async_engine
     if async_engine is None:
-        async_engine = get_async_engine_for("yuppdb")
+        async_engine = get_async_engine_for("appdb")
     return async_engine
 
 
 def get_async_engine_read_replica() -> AsyncEngine:
     global async_engine_read_replica
     if async_engine_read_replica is None:
-        async_engine_read_replica = get_async_engine_for("yuppdb", replica=True)
+        async_engine_read_replica = get_async_engine_for("appdb", replica=True)
     return async_engine_read_replica
 
 
@@ -355,7 +355,7 @@ def _invalidate_connection(conn: Any) -> None:
 
 
 @asynccontextmanager
-async def get_async_session_for(db: DbName = "yuppdb", *, replica: bool = False) -> AsyncGenerator[AsyncSession, None]:
+async def get_async_session_for(db: DbName = "appdb", *, replica: bool = False) -> AsyncGenerator[AsyncSession, None]:
     """Generic session factory — explicitly choose a database."""
     eng = get_async_engine_for(db, replica=replica)
     maker = async_sessionmaker(eng, class_=AsyncSession, expire_on_commit=False, close_resets_only=False)
@@ -371,7 +371,7 @@ async def get_async_session_for(db: DbName = "yuppdb", *, replica: bool = False)
 @async_instrumenting_context_manager(metric_prefix="db/session/primary")
 @asynccontextmanager
 async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
-    """Async session using settings.DEFAULT_DB (agentdb for AHS/SAG, yuppdb otherwise)."""
+    """Async session using settings.DEFAULT_DB (agentdb for AHS/SAG, appdb otherwise)."""
     async with get_async_session_for(settings.DEFAULT_DB) as session:
         yield session
 

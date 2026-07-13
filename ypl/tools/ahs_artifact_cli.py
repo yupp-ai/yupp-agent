@@ -1,6 +1,6 @@
 """``ahs-artifact`` — command-line client for the AHS artifact REST API.
 
-Talks to ``AHS_BASE_URL`` (default ``https://ahs.agcouch.com``) with the
+Talks to ``AHS_BASE_URL`` (default ``https://ahs.example.com``) with the
 ``AGENT_HARNESS_SERVICE_API_KEY`` shared secret.
 
 Subcommands::
@@ -32,7 +32,7 @@ from typing import Any, cast
 
 import httpx
 
-DEFAULT_BASE_URL = "https://ahs.agcouch.com"
+DEFAULT_BASE_URL = "https://ahs.example.com"
 _EXT_CONTENT_TYPE: dict[str, str] = {
     ".md": "text/markdown",
     ".markdown": "text/markdown",

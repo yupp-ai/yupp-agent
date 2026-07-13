@@ -1,7 +1,7 @@
 """GitHub App webhook receiver for Agent Harness Service.
 
-Handles ``pull_request`` events from the yupp-agent-harness GitHub App and
-triggers the master-reviewer agent on qualifying PRs.
+Handles ``pull_request`` events from the configured GitHub App and
+triggers the code-reviewer agent on qualifying PRs.
 
 Qualifying events
 -----------------
@@ -41,7 +41,7 @@ logger = get_logger()
 
 webhook_router = APIRouter(prefix="/webhook", tags=["github-webhook"])
 
-_REVIEWER_AGENT = "master-reviewer"
+_REVIEWER_AGENT = "code-reviewer"
 _WEBHOOK_TRIGGER = "webhook"
 _WEBHOOK_SOURCE = "github_webhook"
 _WEBHOOK_USER_EMAIL = settings.SYSTEM_GITHUB_WEBHOOK_USER_EMAIL

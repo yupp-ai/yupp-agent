@@ -52,8 +52,8 @@ if not API_KEY:
             if API_KEY:
                 break
 
-# MCP auth — use a dedicated e2e dev token (separate from production AGCOUCH_MCP_TOKEN)
-MCP_TOKEN = os.environ.get("AGCOUCH_MCP_TOKEN_E2E", "")
+# MCP auth — use a dedicated e2e dev token (separate from production PLATFORM_MCP_TOKEN)
+MCP_TOKEN = os.environ.get("PLATFORM_MCP_TOKEN_E2E", "")
 
 # User email for resolving user_id (no default — must be set explicitly)
 E2E_USER_EMAIL = os.environ.get("E2E_USER_EMAIL", "")
@@ -147,7 +147,7 @@ def tag() -> str:
 def mcp_headers() -> dict[str, str]:
     """Auth headers for calling MCP tools via /mcp/ endpoint using dev token."""
     if not MCP_TOKEN:
-        pytest.skip("AGCOUCH_MCP_TOKEN_E2E not set — cannot run MCP-dependent tests")
+        pytest.skip("PLATFORM_MCP_TOKEN_E2E not set — cannot run MCP-dependent tests")
     return {"Authorization": f"Bearer {MCP_TOKEN}", "Content-Type": "application/json", "Accept": "application/json"}
 
 

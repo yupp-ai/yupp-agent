@@ -129,7 +129,7 @@ For every unresolved comment thread, classify:
 |--------|----------|----------|----------|
 | PR owner / assignee | **Owner** | Highest | Must address. Never dismiss without asking. |
 | Human reviewer (non-owner) | **Human** | High | Treat with care. If you disagree, ask the user before dismissing. |
-| `yupp-reviews[bot]` | **AI (Yupp)** | Medium | Address if valid. Can decline with reason. |
+| `your-ai-reviewer[bot]` | **AI (Yupp)** | Medium | Address if valid. Can decline with reason. |
 | `gemini-code-assist[bot]` / `github-actions[bot]` / `copilot[bot]` | **AI (Other)** | Medium | Address if valid. Can decline with reason. |
 
 ### 2.4 Count prior fix rounds
@@ -435,7 +435,7 @@ gh pr comment <PR_NUMBER> --body "$(cat <<'EOF'
 | # | File | Source | Verdict | Summary |
 |---|------|--------|---------|---------|
 | 1 | `path/to/file.py:42` | @reviewer | FIXED | Added null check |
-| 2 | `path/to/other.py:10` | yupp-reviews | NOT APPLICABLE | Import is used |
+| 2 | `path/to/other.py:10` | your-ai-reviewer | NOT APPLICABLE | Import is used |
 | ... | ... | ... | ... | ... |
 
 ### CI Failures Fixed
@@ -472,7 +472,7 @@ EOF
 
 ## Phase 8: Post-Push Verification (10-minute check)
 
-AI reviewers (yupp-reviews, gemini-code-assist, etc.) may re-review after the push and leave new comments.
+AI reviewers (your-ai-reviewer, gemini-code-assist, etc.) may re-review after the push and leave new comments.
 
 ### 8.1 Wait for CI and AI reviewers
 

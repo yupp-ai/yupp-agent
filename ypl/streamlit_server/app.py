@@ -58,7 +58,7 @@ def auth_misconfigured_screen() -> None:
         "Set the following in `/data/ahs/.env` and restart `ahs-streamlit`:\n\n"
         "- `GOOGLE_AUTH_CLIENT_ID`\n"
         "- `GOOGLE_AUTH_CLIENT_SECRET`\n"
-        "- `GOOGLE_AUTH_REDIRECT_URI` (e.g. `https://lit.agcouch.com/oauth2callback`)\n"
+        "- `GOOGLE_AUTH_REDIRECT_URI` (e.g. `https://lit.example.com/oauth2callback`)\n"
         "- `GOOGLE_AUTH_COOKIE_SECRET`\n\n"
         "Only emails that already exist in the `users` table can log in — "
         "create a user record for yourself before signing in."

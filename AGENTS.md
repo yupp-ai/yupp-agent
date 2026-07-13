@@ -20,7 +20,7 @@ poetry run ruff check . --fix                      # auto-fix lint issues
 ```bash
 poetry run mypy --config-file=pyproject.toml .
 # For specific files:
-poetry run mypy --config-file=pyproject.toml ypl/agent_harness_service/service.py
+poetry run mypy --config-file=pyproject.toml ypl/agent_harness_service/service/session_lifecycle.py
 ```
 
 ### Tests
@@ -69,7 +69,7 @@ ypl/
 └── db/                      # SQLModel models + Alembic migrations
 
 apps/
-└── couch/                   # Next.js 15 web UI for AHS (Node + npm, port 3010, standalone — see apps/couch/CLAUDE.md). Prod: couch.agcouch.com
+└── couch/                   # Next.js 15 web UI for AHS (Node + npm, port 3010, standalone — see apps/couch/CLAUDE.md). Prod: couch.example.com
 ```
 
 ### AHS Layering (Critical Constraint)
@@ -78,7 +78,7 @@ AHS follows a strict three-layer architecture enforced by tests (`test_architect
 
 - **Layer 0 (`common/`):** Types, config, constants. Zero AHS deps. Imported by everything.
 - **Layer 1 (`core/`, `gateway/`, `executors/`, `tools/`, `projects/`):** Five independent packages. Each depends only on `common/`. They **must not** import from each other or from root wiring files.
-- **Wiring layer (root files: `service.py`, `server.py`, `routes.py`, `orchestration.py`, `task_executor.py`, `scheduler.py`):** Composes Layer 1 packages together. Only place where cross-package imports are allowed.
+- **Wiring layer (`service/` package + root files: `server.py`, `routes.py`, `orchestration.py`, `task_executor.py`, `scheduler.py`):** Composes Layer 1 packages together. Only place where cross-package imports are allowed.
 
 When a Layer 1 package needs wiring-layer functionality, use the callback/DI pattern (see `tools/local_mcp_server.py` + `register_orchestration_callbacks()`).
 
@@ -86,7 +86,7 @@ When a Layer 1 package needs wiring-layer functionality, use the callback/DI pat
 1. One active turn per session — messages queued in order
 2. Workspace created before executor starts
 3. Metadata persisted to DB before runner subprocess spawns
-4. Executors must not write to DB or import `service.py`
+4. Executors must not write to DB or import from `service/`
 5. Gateway delivery via registered callbacks, never direct imports
 
 ## Code Conventions
@@ -116,11 +116,11 @@ The `lint_and_test.yml` workflow runs on PRs and pushes to main. All four jobs m
 
 | File | Purpose |
 |------|---------|
-| `ypl/agent_harness_service/service.py` | Session lifecycle hub (largest file, 121K) |
-| `ypl/agent_harness_service/tools/local_mcp_server.py` | All local MCP tool definitions (92K) |
+| `ypl/agent_harness_service/service/` | Session lifecycle package (session_lifecycle.py, run_task.py, agent CRUD/messaging) |
+| `ypl/agent_harness_service/tools/` | Local MCP tool definitions (workspace, fork, github_auth, linear_sync, …) |
 | `ypl/agent_harness_service/ARCHITECTURE.md` | Detailed AHS layering documentation |
-| `ypl/db/models/agent_harness.py` | Core DB models (Agent, AgentSession, AgentTask, etc.) |
+| `ypl/db/agent_harness.py` | Core DB models (Agent, AgentSession, AgentTask, etc.) |
 | `data/feature_flags.yml` | Runtime feature toggles |
 | `docs/secrets.md` | How to populate `.env` from GCP Secret Manager / AWS SSM / Vault / k8s |
-| `.agents/skills/` | 33 agent skill definitions (MCP tools) |
+| `.agents/skills/` | Agent skill definitions (slash commands / MCP tools) |
 | `ypl/agent_harness_service/deploy/agent_configs/` | Per-agent config.json + ROLE.md files |

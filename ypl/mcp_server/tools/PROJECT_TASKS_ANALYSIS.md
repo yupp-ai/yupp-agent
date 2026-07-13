@@ -552,7 +552,7 @@ MCP tools only accept flat/primitive parameters (str, int, bool). Complex object
 | `save_memory` / `search_memory` | Per-agent learnings (use `shared_state` for project-scoped data) |
 | `add_artifact` | Store large investigation results as TEXT artifacts, link URL in task `result` |
 | `search_slack` / `read_slack_thread` | Reference Slack context in task descriptions |
-| `query_bigquery` / `query_yuppdb` | Data tasks, store query results in task `result` |
+| `query_bigquery` / `query_appdb` | Data tasks, store query results in task `result` |
 | `search_gcp_logs` / `get_sentry_issue_details` | Investigation tasks, store findings in task `result` |
 
 ---

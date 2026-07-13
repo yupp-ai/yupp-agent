@@ -303,21 +303,21 @@ async def _query_postgres_impl(
 
 
 @shared_tool(
-    name="query_yuppdb",
+    name="query_appdb",
     description=(
-        "Execute read-only SQL query on Yupp production database (yuppdb). Use SELECT queries to "
+        "Execute read-only SQL query on Yupp production database (appdb). Use SELECT queries to "
         "investigate data issues, check user states, or analyze patterns. "
         "IMPORTANT: Only SELECT queries are allowed - no writes/updates."
     ),
-    requires_settings=("POSTGRES_CONNECTION_YUPPDB",),
+    requires_settings=("POSTGRES_CONNECTION_APPDB",),
 )
 @retry_db
-async def query_yuppdb(
+async def query_appdb(
     sql: str,
     max_rows: int = 1000,
 ) -> dict[str, Any]:
-    """Execute read-only SQL query on Yupp database (yuppdb)."""
-    return await _query_postgres_impl(sql, max_rows, "yuppdb")
+    """Execute read-only SQL query on Yupp database (appdb)."""
+    return await _query_postgres_impl(sql, max_rows, "appdb")
 
 
 @shared_tool(

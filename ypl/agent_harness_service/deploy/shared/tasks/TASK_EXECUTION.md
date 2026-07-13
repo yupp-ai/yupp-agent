@@ -91,7 +91,7 @@ Result format:
   "summary": "One-sentence description of what was accomplished",
   "pr_url": "https://github.com/example-org/example-repo/pull/123",
   "branch_name": "tw/fix-routing-latency",
-  "artifact_url": "https://artifacts.agcouch.com/artifacts/<uuid>",
+  "artifact_url": "https://artifacts.example.com/artifacts/<uuid>",
   "<task-specific keys>": "..."
 }
 ```

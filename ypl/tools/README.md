@@ -29,7 +29,7 @@ Two environment variables:
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
 | `AGENT_HARNESS_SERVICE_API_KEY` | yes | — | Shared secret; sent as `X-API-Key` header |
-| `AHS_BASE_URL` | no | `https://ahs.agcouch.com` | Override for staging / localhost |
+| `AHS_BASE_URL` | no | `https://ahs.example.com` | Override for staging / localhost |
 
 ```bash
 export AGENT_HARNESS_SERVICE_API_KEY=...

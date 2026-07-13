@@ -7,10 +7,10 @@ the result in the format each CLI expects:
 
 Currently only the harness MCP is injected. Shared (AHS-system) and
 external-data tools that previously required the agent to also connect to
-``/mcp/agcouch`` with ``AGCOUCH_MCP_TOKEN`` now register on the harness
+``/mcp/platform`` with ``PLATFORM_MCP_TOKEN`` now register on the harness
 mount via ``@shared_tool`` (see :mod:`ypl.mcp_common.shared_tool`), so
 agents reach every tool through ``AHS_MCP_SECRET`` and the AHS executor
-does not handle ``AGCOUCH_MCP_TOKEN`` at all.
+does not handle ``PLATFORM_MCP_TOKEN`` at all.
 
 When the DB-backed external-MCP registry lands (phase-9), additional
 servers will plug into :func:`_build_base_servers` here and inherit the

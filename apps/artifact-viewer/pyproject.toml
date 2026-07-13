@@ -1,7 +1,7 @@
 [project]
 name = "artifact-viewer"
 version = "0.1.0"
-description = "Read-only web viewer for AHS textual artifacts (artifacts.agcouch.com)"
+description = "Read-only web viewer for AHS textual artifacts (artifacts.example.com)"
 requires-python = ">=3.12"
 dependencies = [
     "starlette>=0.47",

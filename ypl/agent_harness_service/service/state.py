@@ -58,10 +58,9 @@ MAX_CONCURRENT_EXECUTIONS = _parse_env_int("AHS_MAX_CONCURRENT_EXECUTIONS", 20)
 # ---------------------------------------------------------------------------
 # Per-CLI concurrency caps — limit concurrent subprocess executions by CLI type.
 #
-# Without these caps, multiple simultaneous master-reviewer sessions each spawn
-# 3-5 sub-reviewers (reviewer-claude, reviewer-codex, reviewer-glm), quickly
-# creating 15-20+ concurrent CLI subprocesses on the same instance.  Resource
-# contention under that load balloons reviewer-claude from ~31s to 150-300s.
+# Without these caps, a reviewer agent that fans out into several sub-agents can
+# quickly create 15-20+ concurrent CLI subprocesses on the same instance.  Resource
+# contention under that load can balloon a single Claude CLI run from ~31s to 150-300s.
 #
 # Two separate semaphores allow independent tuning per CLI type:
 #   - Claude Code / SDK (claude-code-cli, claude-agent-sdk): heavy, ~31s solo
@@ -71,7 +70,7 @@ MAX_CONCURRENT_EXECUTIONS = _parse_env_int("AHS_MAX_CONCURRENT_EXECUTIONS", 20)
 # no per-process resource cost and are bounded by provider rate limits.
 #
 # Both pools are intentionally separate from MAX_CONCURRENT_EXECUTIONS (which
-# gates the scheduler/task-executor) so master-reviewer sprints don't starve
+# gates the scheduler/task-executor) so reviewer sprints don't starve
 # CRON/SLACK/TASK sessions.
 # ---------------------------------------------------------------------------
 MAX_CONCURRENT_CLAUDE_CODE = _parse_env_int("AHS_MAX_CONCURRENT_CLAUDE_CODE", 10)

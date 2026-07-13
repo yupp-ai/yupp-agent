@@ -10,7 +10,7 @@ Configurable via env vars:
     AHS_TUI_OAUTH_CLIENT_SECRET Client secret (not confidential for Desktop apps).
     AHS_TUI_OAUTH_PROJECT_ID    GCP project that owns the OAuth client.
 
-The defaults point at the legacy yupp-llms Desktop OAuth client. When
+The defaults point at the legacy your-gcp-project Desktop OAuth client. When
 that project gets deleted, create a fresh Desktop OAuth client in
 whatever GCP project you use and set the three AHS_TUI_OAUTH_* env vars.
 """
@@ -41,21 +41,15 @@ _TOKEN_PATH = _CONFIG_DIR / "token.json"
 _EMAIL_CACHE_PATH = _CONFIG_DIR / "email.txt"
 
 # OAuth client config (Desktop/Installed app — secret is not confidential per Google docs).
-# Overridable via env vars so users outside yupp-llms can register their own OAuth client.
+# Overridable via env vars so users outside your-gcp-project can register their own OAuth client.
 _CLIENT_CONFIG: dict[str, Any] = {
     "installed": {
-        "client_id": os.environ.get(
-            "AHS_TUI_OAUTH_CLIENT_ID",
-            "451082535721-rt8inmimemumdhfm528ert2b37v09s8t.apps.googleusercontent.com",
-        ),
-        "project_id": os.environ.get("AHS_TUI_OAUTH_PROJECT_ID", "yupp-llms"),
+        "client_id": os.environ.get("AHS_TUI_OAUTH_CLIENT_ID", ""),
+        "project_id": os.environ.get("AHS_TUI_OAUTH_PROJECT_ID", ""),
         "auth_uri": "https://accounts.google.com/o/oauth2/auth",
         "token_uri": "https://oauth2.googleapis.com/token",
         "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-        "client_secret": os.environ.get(
-            "AHS_TUI_OAUTH_CLIENT_SECRET",
-            "***REMOVED***",
-        ),
+        "client_secret": os.environ.get("AHS_TUI_OAUTH_CLIENT_SECRET", ""),
         "redirect_uris": ["http://localhost"],
     }
 }

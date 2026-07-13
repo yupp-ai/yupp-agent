@@ -2,7 +2,7 @@
 
 When the mono-server is exposed on multiple subdomains (e.g. via Cloudflare
 Tunnel), we want some subdomains to only reach specific path prefixes --
-for example, ``mcp.agcouch.com`` should only reach ``/mcp/*`` and ``/health``,
+for example, ``mcp.example.com`` should only reach ``/mcp/*`` and ``/health``,
 not ``/ahs/*`` or ``/gw/slack/*``.
 
 This middleware inspects the incoming ``Host`` header and, if the host (with

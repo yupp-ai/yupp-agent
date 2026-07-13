@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     # --- Upstream AHS ---
     # URL to reach AHS from the viewer. The monolith deployment has AHS on the
     # same box, so the default is the public hostname; override for dev/staging.
-    VIEWER_AHS_BASE_URL: str = "https://ahs.agcouch.com"
+    VIEWER_AHS_BASE_URL: str = "https://ahs.example.com"
     # Shared with the monolith (same shared secret). No VIEWER_ prefix.
     AGENT_HARNESS_SERVICE_API_KEY: str = ""
 
@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     VIEWER_GOOGLE_CLIENT_ID: str = ""
     VIEWER_GOOGLE_CLIENT_SECRET: str = ""
     # The absolute URL Google should redirect to after login.
-    VIEWER_OAUTH_REDIRECT_URL: str = "https://artifacts.agcouch.com/auth/callback"
+    VIEWER_OAUTH_REDIRECT_URL: str = "https://artifacts.example.com/auth/callback"
 
     # --- Server ---
     VIEWER_HOST: str = "127.0.0.1"

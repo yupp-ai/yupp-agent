@@ -189,7 +189,7 @@ _ALLOWED_EXACT: frozenset[str] = frozenset(
         # Without forwarding this through the subprocess env, claude-code-cli
         # crashes on startup with "cannot be used with root/sudo privileges".
         "IS_SANDBOX",
-        # Note: AHS no longer forwards ``AGCOUCH_MCP_TOKEN`` — agents reach
+        # Note: AHS no longer forwards ``PLATFORM_MCP_TOKEN`` — agents reach
         # every shared / external-data tool via the harness MCP using
         # ``AHS_MCP_SECRET`` (handled inside ``mcp_config.resolve_mcp_servers``,
         # never exposed to the subprocess env). See
@@ -297,7 +297,7 @@ def build_subprocess_env() -> dict[str, str]:
 #    (request_write_access, create_pr, list_agents, schedule_agent_call …)
 #    that require USE_MCP regardless of where they're mounted.
 # 2. ``SHARED_HARNESS_TOOLS_BLOCKED_FOR_RESTRICTED`` — every shared /
-#    external-data tool that previously lived on the agcouch mount and
+#    external-data tool that previously lived on the platform mount and
 #    was blocked for restricted sessions via the
 #    ``mcp__harness__*`` wildcard. Post phase-2 (PR #300) those
 #    tools live under ``mcp__harness__*`` so the wildcard no longer
@@ -356,11 +356,11 @@ _TOP_HARNESS_TOOLS_PREDECLARED: list[str] = [
     "mcp__harness__create_pr",
     "mcp__harness__list_available_repos",
 ]
-# Tools migrated from the agcouch mount to the harness mount via
+# Tools migrated from the platform mount to the harness mount via
 # ``@shared_tool`` (PR #300 / phase-2). Pre-declared here so Claude Code
 # loads them eagerly instead of deferring discovery behind ``ToolSearch``.
 _TOP_SHARED_TOOLS_PREDECLARED: list[str] = [
-    "mcp__harness__query_yuppdb",
+    "mcp__harness__query_appdb",
     "mcp__harness__search_gcp_logs",
     "mcp__harness__add_artifact",
     "mcp__harness__read_artifact",

@@ -173,7 +173,7 @@ async def create_agent_session(
     - force_model: Optional model override (harness name or provider/model_id)
 
     Args:
-        agent_name: AHS agent name (e.g., 'sre', 'data-scientist')
+        agent_name: AHS agent name (e.g., 'sre', 'code-reviewer')
         session_id: Slack composite session identifier
         message: Initial message that created the session
         channel_id: Slack channel ID

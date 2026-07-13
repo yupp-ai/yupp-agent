@@ -25,20 +25,20 @@ depends_on: str | Sequence[str] | None = None
 
 _AGENT_REQUIRED_TOOLS: dict[str, list[str]] = {
     "bizbot": [
-        "mcp__yuppster-mcp-server__get_agent_memory",
-        "mcp__yuppster-mcp-server__store_agent_memory",
-        "mcp__yuppster-mcp-server__create_yuppaste",
-        "mcp__yuppster-mcp-server__search_agent_memory",
-        "mcp__yuppster-mcp-server__add_artifact",
+        "mcp__platform-mcp-server__get_agent_memory",
+        "mcp__platform-mcp-server__store_agent_memory",
+        "mcp__platform-mcp-server__create_paste",
+        "mcp__platform-mcp-server__search_agent_memory",
+        "mcp__platform-mcp-server__add_artifact",
         "mcp__harness__send_slack_message",
     ],
     "hercule-poirot": [
-        "mcp__yuppster-mcp-server__get_sentry_issue_details",
-        "mcp__yuppster-mcp-server__search_slack",
-        "mcp__yuppster-mcp-server__read_slack_thread",
-        "mcp__yuppster-mcp-server__create_yuppaste",
+        "mcp__platform-mcp-server__get_sentry_issue_details",
+        "mcp__platform-mcp-server__search_slack",
+        "mcp__platform-mcp-server__read_slack_thread",
+        "mcp__platform-mcp-server__create_paste",
         "mcp__harness__send_slack_message",
-        "mcp__yuppster-mcp-server__search_agent_memory",
+        "mcp__platform-mcp-server__search_agent_memory",
     ],
 }
 

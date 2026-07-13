@@ -92,7 +92,7 @@ def load_vendor_prompt_summary(
                 ri.turn_id,
                 ri.resolved_categories,
                 ROW_NUMBER() OVER (PARTITION BY ri.turn_id ORDER BY ri.created_at DESC) AS rn
-            FROM `yupp-llms.prodyuppdb_public.routing_info` ri
+            FROM `your-gcp-project.prodappdb_public.routing_info` ri
         )
         WHERE rn = 1
     ),
@@ -107,16 +107,16 @@ def load_vendor_prompt_summary(
             c.name AS category_name,
             JSON_VALUE_ARRAY(ri.resolved_categories) AS routing_categories
         FROM input_emails ie
-        LEFT JOIN `yupp-llms.prodyuppdb_public.users` u
+        LEFT JOIN `your-gcp-project.prodappdb_public.users` u
             ON LOWER(u.email) = ie.email
-        LEFT JOIN `yupp-llms.prodyuppdb_public.turns` t
+        LEFT JOIN `your-gcp-project.prodappdb_public.turns` t
             ON t.creator_user_id = u.user_id
             AND t.deleted_at IS NULL
             AND t.created_at >= TIMESTAMP(@start_date)
-        LEFT JOIN `yupp-llms.prodyuppdb_public.chat_messages` um
+        LEFT JOIN `your-gcp-project.prodappdb_public.chat_messages` um
             ON um.turn_id = t.turn_id
             AND um.message_type = 'USER_MESSAGE'
-        LEFT JOIN `yupp-llms.prodyuppdb_public.categories` c
+        LEFT JOIN `your-gcp-project.prodappdb_public.categories` c
             ON c.category_id = um.category_id
         LEFT JOIN routing_info_first ri
             ON ri.turn_id = t.turn_id
@@ -164,9 +164,9 @@ def load_vendor_prompt_summary(
             COUNT(CASE WHEN e.eval_type = 'DOWNVOTE' THEN 1 END) AS downvotes,
             COUNT(CASE WHEN e.eval_type IN ('SELECTION', 'DOWNVOTE') THEN 1 END) AS evals
         FROM input_emails ie
-        LEFT JOIN `yupp-llms.prodyuppdb_public.users` u
+        LEFT JOIN `your-gcp-project.prodappdb_public.users` u
             ON LOWER(u.email) = ie.email
-        LEFT JOIN `yupp-llms.prodyuppdb_public.evals` e
+        LEFT JOIN `your-gcp-project.prodappdb_public.evals` e
             ON e.user_id = u.user_id
             AND e.deleted_at IS NULL
             AND e.created_at >= TIMESTAMP(@start_date)
@@ -177,7 +177,7 @@ def load_vendor_prompt_summary(
             up.user_id,
             COUNT(DISTINCT up.turn_id) AS turns_with_evals
         FROM user_prompts up
-        INNER JOIN `yupp-llms.prodyuppdb_public.evals` e
+        INNER JOIN `your-gcp-project.prodappdb_public.evals` e
             ON e.turn_id = up.turn_id
             AND e.deleted_at IS NULL
             AND e.created_at >= TIMESTAMP(@start_date)
@@ -202,7 +202,7 @@ def load_vendor_prompt_summary(
         COALESCE(twe.turns_with_evals, 0) AS turns_with_evals,
         COUNT(DISTINCT up.turn_id) - COALESCE(twe.turns_with_evals, 0) AS turns_without_evals
     FROM input_emails ie
-    LEFT JOIN `yupp-llms.prodyuppdb_public.users` u
+    LEFT JOIN `your-gcp-project.prodappdb_public.users` u
         ON LOWER(u.email) = ie.email
     LEFT JOIN user_prompts up
         ON up.email = ie.email
@@ -264,7 +264,7 @@ def load_vendor_prompt_samples(
                 ri.turn_id,
                 ri.resolved_categories,
                 ROW_NUMBER() OVER (PARTITION BY ri.turn_id ORDER BY ri.created_at DESC) AS rn
-            FROM `yupp-llms.prodyuppdb_public.routing_info` ri
+            FROM `your-gcp-project.prodappdb_public.routing_info` ri
         )
         WHERE rn = 1
     ),
@@ -285,18 +285,18 @@ def load_vendor_prompt_samples(
             tq.prompt_difficulty AS prompt_difficulty,
             tq.prompt_is_safe AS prompt_is_safe
         FROM input_emails ie
-        JOIN `yupp-llms.prodyuppdb_public.users` u
+        JOIN `your-gcp-project.prodappdb_public.users` u
             ON LOWER(u.email) = ie.email
-        JOIN `yupp-llms.prodyuppdb_public.turns` t
+        JOIN `your-gcp-project.prodappdb_public.turns` t
             ON t.creator_user_id = u.user_id
             AND t.deleted_at IS NULL
             AND t.created_at >= TIMESTAMP(@start_date)
-        JOIN `yupp-llms.prodyuppdb_public.chat_messages` um
+        JOIN `your-gcp-project.prodappdb_public.chat_messages` um
             ON um.turn_id = t.turn_id
             AND um.message_type = 'USER_MESSAGE'
-        LEFT JOIN `yupp-llms.prodyuppdb_public.categories` c
+        LEFT JOIN `your-gcp-project.prodappdb_public.categories` c
             ON c.category_id = um.category_id
-        LEFT JOIN `yupp-llms.prodyuppdb_public.turn_qualities` tq
+        LEFT JOIN `your-gcp-project.prodappdb_public.turn_qualities` tq
             ON tq.turn_id = t.turn_id
         LEFT JOIN routing_info_first ri
             ON ri.turn_id = t.turn_id

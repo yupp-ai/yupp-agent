@@ -171,7 +171,7 @@ async def forward_or_queue_message(
     """Forward a message to Agent Service, or queue if unavailable.
 
     Args:
-        agent_name: AHS agent name (e.g., 'sre', 'data-scientist')
+        agent_name: AHS agent name (e.g., 'sre', 'code-reviewer')
         session_id: Session identifier
         message: Message to forward
         is_new_session: Whether this is a new session

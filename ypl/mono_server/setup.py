@@ -529,7 +529,7 @@ async def setup_interactive() -> int:
             "<lit-url>/oauth2callback exactly.[/dim]"
         )
         lit_base_url = Prompt.ask(
-            "  Public Lit base URL (e.g. https://lit.agcouch.com) — leave empty to skip Lit OAuth setup",
+            "  Public Lit base URL (e.g. https://lit.example.com) — leave empty to skip Lit OAuth setup",
             default="",
         )
         google_auth_client_id = ""

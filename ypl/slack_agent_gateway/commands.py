@@ -44,7 +44,7 @@ def _build_create_agent_modal(trigger_id: str) -> dict[str, Any]:
                     "element": {
                         "type": "plain_text_input",
                         "action_id": "agent_name_input",
-                        "placeholder": {"type": "plain_text", "text": "e.g., sre, data-scientist"},
+                        "placeholder": {"type": "plain_text", "text": "e.g., sre, code-reviewer"},
                     },
                     "label": {"type": "plain_text", "text": "Agent Name (internal slug)"},
                     "hint": {"type": "plain_text", "text": "Lowercase letters, numbers, and hyphens only."},

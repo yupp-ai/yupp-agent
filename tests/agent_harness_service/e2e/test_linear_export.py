@@ -353,7 +353,7 @@ def main() -> None:
     )
     export_parser.add_argument(
         "linear_team",
-        help="Linear team UUID, key, or name (e.g., 'YUP' or 'Yupp AI')",
+        help="Linear team UUID, key, or name (e.g., 'YUP' or 'Acme')",
     )
     export_parser.add_argument(
         "--name",

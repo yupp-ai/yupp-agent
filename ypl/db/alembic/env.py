@@ -11,7 +11,7 @@ from ypl.db.all_models import all_models  # noqa: F401 for populating metadata.
 config = context.config
 settings = Settings()
 
-# This repo manages agentdb migrations (not yuppdb). Prefer the admin
+# This repo manages agentdb migrations (not appdb). Prefer the admin
 # connection (schema_manager role) if configured — plain agentdb is typically
 # the runtime app user (be_app_user) which doesn't have DDL privileges.
 # The admin property falls back to agentdb when POSTGRES_CONNECTION_AGENTDB_ADMIN

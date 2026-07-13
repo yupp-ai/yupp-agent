@@ -93,6 +93,8 @@ Operational dashboards for monitoring and managing the agent platform. Pages foc
 
 ## Quick Start
 
+**Prefer to let an agent do it?** Open this repo in [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and run `/setup-platform` — a bundled skill that brings the platform up interactively, prompting you only for the secrets it can't generate (your LLM API key, database password). Or point any coding agent at [`SETUP.md`](./SETUP.md), the agent-friendly setup playbook. The manual steps below do the same thing by hand.
+
 ### 1. Install dependencies
 
 ```bash
@@ -125,7 +127,7 @@ See [`DEPLOYMENT.md`](./DEPLOYMENT.md) for detailed deployment options (Docker C
 
 ### Monolith (recommended for dev + self-hosted)
 
-Runs AHS + SAG + MCP + Streamlit in a single process:
+Runs the Agent Harness Service in a single process. The Slack/GitHub gateways and the platform MCP mount are opt-in via feature flags (off by default); Streamlit runs as a separate process (below):
 
 ```bash
 uvicorn ypl.mono_server.server:app --port 8090 --reload
@@ -172,7 +174,7 @@ yupp-agent/
 │   ├── backend/                 # Shared backend (DB, config, utils)
 │   └── db/                      # SQLModel database models + migrations
 ├── apps/
-│   ├── couch/                   # Next.js 15 web UI for AHS (Node + npm). Prod: couch.agcouch.com
+│   ├── couch/                   # Next.js 15 web UI for AHS (Node + npm). Prod: couch.example.com
 │   └── artifact-viewer/         # Starlette read-only viewer for artifacts (Python)
 ├── data/                        # Feature flags, config files
 ├── scripts/                     # Operational scripts

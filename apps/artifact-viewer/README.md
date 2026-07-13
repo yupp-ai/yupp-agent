@@ -3,7 +3,7 @@
 Read-only web UI for AHS textual artifacts. Runs as a tiny Starlette app
 behind Google OAuth; fetches everything from AHS at request time and
 renders markdown / HTML / plain text / attached images inline. Intended
-deployment: `artifacts.agcouch.com`.
+deployment: `artifacts.example.com`.
 
 ## What it does
 
@@ -59,7 +59,7 @@ Required keys:
 | `VIEWER_GOOGLE_CLIENT_SECRET` | ✓ | Paired secret |
 | `VIEWER_OAUTH_REDIRECT_URL` | ✓ | Must match the Cloud Console authorized URI exactly |
 | `VIEWER_SESSION_SECRET_KEY` | ✓ | 32+ random bytes; rotate to invalidate all sessions |
-| `VIEWER_AHS_BASE_URL` | optional | Default `https://ahs.agcouch.com` |
+| `VIEWER_AHS_BASE_URL` | optional | Default `https://ahs.example.com` |
 | `VIEWER_HOST`, `VIEWER_PORT` | optional | Default `127.0.0.1:8095` |
 
 There is **no allowlist config**. Access is decided by whether the
@@ -125,7 +125,7 @@ The viewer is fully wired into the repo's install/deploy scripts:
   `deploy/cloudflared/config.yml` already has an `artifacts.*` ingress
   block pointing at `127.0.0.1:8095`. On your DNS side:
   ```bash
-  sudo -u ahs -H cloudflared tunnel route dns yupp-agent artifacts.agcouch.com
+  sudo -u ahs -H cloudflared tunnel route dns yupp-agent artifacts.example.com
   sudo systemctl restart cloudflared
   ```
 

@@ -667,7 +667,7 @@ def create_slack_link(channel: str, message_ts: str, main_thread_ts: str | None 
     """Create a Slack permalink that deep-links to a specific message in a thread.
 
     The workspace subdomain is taken from the ``SLACK_WORKSPACE_DOMAIN_NAME``
-    env var (e.g. ``yuppai`` or ``agentic-couch``). When that env var is unset
+    env var (e.g. ``your-workspace`` or ``agentic-couch``). When that env var is unset
     or any required component is missing, returns ``None`` so callers can
     cleanly omit the link from their UI.
 

@@ -6,7 +6,7 @@ import streamlit as st
 from google.cloud import bigquery
 
 
-def get_bq_client(project: str = "yupp-llms") -> bigquery.Client:
+def get_bq_client(project: str = "your-gcp-project") -> bigquery.Client:
     """Get or create BigQuery client lazily.
 
     This function provides lazy initialization of BigQuery clients to improve
@@ -14,7 +14,7 @@ def get_bq_client(project: str = "yupp-llms") -> bigquery.Client:
     and reused across function calls.
 
     Args:
-        project: GCP project ID. Defaults to "yupp-llms".
+        project: GCP project ID. Defaults to "your-gcp-project".
 
     Returns:
         A BigQuery client instance.

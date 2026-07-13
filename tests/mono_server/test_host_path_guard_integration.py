@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 def mono_app_with_guard(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv(
         "HOST_PATH_GUARD",
-        json.dumps({"mcp.agcouch.com": ["/mcp", "/health"]}),
+        json.dumps({"mcp.example.com": ["/mcp", "/health"]}),
     )
     # Import lazily so the env var is read at config construction time.
     from ypl.mono_server.server import create_app
@@ -26,13 +26,13 @@ def mono_app_with_guard(monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
 
 def test_mcp_host_allows_health(mono_app_with_guard: TestClient) -> None:
-    resp = mono_app_with_guard.get("/health", headers={"Host": "mcp.agcouch.com"})
+    resp = mono_app_with_guard.get("/health", headers={"Host": "mcp.example.com"})
     assert resp.status_code == 200
 
 
 def test_mcp_host_blocks_non_mcp_path(mono_app_with_guard: TestClient) -> None:
     # Any path outside the allowlist must 404 regardless of whether the route exists.
-    resp = mono_app_with_guard.get("/ahs/sessions", headers={"Host": "mcp.agcouch.com"})
+    resp = mono_app_with_guard.get("/ahs/sessions", headers={"Host": "mcp.example.com"})
     assert resp.status_code == 404
 
 

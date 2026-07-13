@@ -58,7 +58,7 @@ class SlackAgent(BaseModel, table=True):
         nullable=False,
         sa_type=sa.Text,
         index=True,
-        description="AHS agent name (e.g., 'sre', 'data-scientist')",
+        description="AHS agent name (e.g., 'sre', 'code-reviewer')",
     )
     bot_name: str = Field(
         nullable=False,

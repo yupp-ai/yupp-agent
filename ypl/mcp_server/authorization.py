@@ -3,8 +3,8 @@
 Two concepts:
 
 - **Caller identity.** The ``user_id`` on whose behalf this request is being
-  made. Populated once by the auth middleware (harness, agcouch OAuth, or
-  agcouch DevToken) on the typed
+  made. Populated once by the auth middleware (harness, platform OAuth, or
+  platform DevToken) on the typed
   :class:`~ypl.mcp_common.auth_context.RequestContext`. Tools read it via
   :func:`ypl.mcp_common.auth_context.require_caller_user_id`; the legacy
   email-fallback layer is gone.

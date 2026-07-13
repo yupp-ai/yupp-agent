@@ -1,7 +1,7 @@
 """GCS persistence for agent session workspace directories.
 
 After each user/assistant turn, syncs the session's ``attachments/`` and
-``history/`` directories to ``gs://yupp-agents/sessions/{session_id}/`` in an
+``history/`` directories to ``gs://your-agent-bucket/sessions/{session_id}/`` in an
 rsync-like fashion: only new or modified files are uploaded.
 """
 

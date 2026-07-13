@@ -1,4 +1,4 @@
-"""OAuth authentication for the agcouch MCP server.
+"""OAuth authentication for the platform MCP server.
 
 Validates Google OAuth bearer tokens, restricts access to the
 ``ALLOWED_MCP_EMAIL_DOMAINS`` allowlist, gates on the ``USE_MCP``

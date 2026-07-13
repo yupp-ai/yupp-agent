@@ -7,12 +7,12 @@ The yupp-agent platform runs two MCP HTTP mounts in mono mode:
 * ``/mcp/harness`` — the AHS-internal mount that agent subprocesses talk to.
   Authenticated by ``AHS_MCP_SECRET`` (a shared secret between the AHS runner
   and the FastMCP app); routes through ``HarnessMcpAuthMiddleware``.
-* ``/mcp/agcouch`` — the developer/IDE-facing mount. Authenticated by Google
+* ``/mcp/platform`` — the developer/IDE-facing mount. Authenticated by Google
   OAuth (or, until phase-5 retires them, ``yupp_dev_*`` Bearer tokens);
-  routes through ``AgcouchMcpAuthMiddleware``.
+  routes through ``PlatformMcpAuthMiddleware``.
 
 Path-based mount is the *only* security boundary — a request that arrives on
-``/mcp/harness`` cannot reach a tool registered solely on the agcouch
+``/mcp/harness`` cannot reach a tool registered solely on the platform
 ``FastMCP`` instance, and vice versa. Each instance has its own private tool
 registry. The auth middleware never copies one registry into the other.
 
@@ -23,17 +23,17 @@ Tools fall into one of three buckets:
 1. **Internal-only** — bash, sandboxed_ops, workspace, skills, agent_messaging,
    subagents, github_auth, gateway_tools. Live in
    ``ypl/agent_harness_service/tools/`` and register on ``harness_mcp``
-   directly via ``@mcp.tool(...)``. Never exposed on agcouch.
+   directly via ``@mcp.tool(...)``. Never exposed on platform.
 2. **Shared (AHS system)** — project_tasks, agent_artifacts, agent_schedules,
    memory_artifacts. Tools that engineers in their IDE *and* agents in a
    subprocess both need (managing the same projects, artifacts, schedules,
    memory). Register on both mounts via :func:`shared_tool`.
 3. **External-data** — database, sentry, gcp_logs, redis, slack, twitter,
-   linear_sync, security_incidents. Reach external systems (yuppdb, Sentry,
+   linear_sync, security_incidents. Reach external systems (appdb, Sentry,
    GCP logs, etc.). Same dual-registration via :func:`shared_tool`, but the
    harness-side registration may be skipped at startup if required
    credentials aren't configured in this deployment — the corresponding
-   tool simply doesn't appear in the agent's tool list. Agcouch always
+   tool simply doesn't appear in the agent's tool list. Platform always
    tries to register; calls to a credential-less tool fail at call time.
 
 Why dual-registration is convenience, not auth
@@ -55,7 +55,7 @@ Why this file lives in ``ypl/mcp_common/``
 ``shared_tool`` imports both ``ypl.agent_harness_service.tools.mcp_instance``
 and ``ypl.mcp_server.core``. That import shape is identical to
 ``ypl/mono_server/server.py`` — a wiring file that composes AHS and the
-agcouch MCP. We treat ``ypl.mcp_common.shared_tool`` as a wiring module:
+platform MCP. We treat ``ypl.mcp_common.shared_tool`` as a wiring module:
 documented as the one and only Layer-0 module that may import from both
 ``agent_harness_service`` and ``mcp_server``. See
 ``ypl/agent_harness_service/ARCHITECTURE.md`` for the architectural carve-out.
@@ -70,7 +70,7 @@ from fastmcp import FastMCP
 
 from ypl.agent_harness_service.tools.mcp_instance import mcp as harness_mcp
 from ypl.backend.config import settings
-from ypl.mcp_server.core import mcp_server as agcouch_mcp
+from ypl.mcp_server.core import mcp_server as platform_mcp
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -83,17 +83,17 @@ logger = get_logger()
 # its own instance — but the registries are independent, so this only
 # matters within a single instance. We list ``harness_mcp`` first so its
 # audit log entries (when a future request happens to hit it before the
-# agcouch instance is loaded) come before agcouch's. There is no other
+# platform instance is loaded) come before platform's. There is no other
 # cross-instance ordering effect.
-_INSTANCES: list[FastMCP] = [harness_mcp, agcouch_mcp]
+_INSTANCES: list[FastMCP] = [harness_mcp, platform_mcp]
 
 
 # ``FastMCP`` instances whose registration is gated on credentials being
 # present in this process. When any setting in ``requires_settings`` is
 # unset/empty we skip these instances — they are the deployments where the
 # agent's tool list should not advertise something that will fail at call
-# time. The agcouch mount is always tried so engineer IDE traffic still
-# fails loudly with "yuppdb is not configured" rather than disappearing
+# time. The platform mount is always tried so engineer IDE traffic still
+# fails loudly with "appdb is not configured" rather than disappearing
 # from listings.
 _GATED_INSTANCES: frozenset[FastMCP] = frozenset({harness_mcp})
 
@@ -183,7 +183,7 @@ def shared_tool(
               missing settings, so operators can see why the tool didn't
               show up in an agent's tool list.
             - Skipped registration on every instance in
-              :data:`_GATED_INSTANCES`. The non-gated instances (agcouch)
+              :data:`_GATED_INSTANCES`. The non-gated instances (platform)
               still register, so engineer-IDE traffic to the same tool
               fails loudly at call time rather than 404-ing the listing.
 
@@ -217,7 +217,7 @@ def shared_tool(
             pattern in this module's docstring) would crash with
             ``AttributeError`` later. Crashing loudly at startup is
             strictly better than the silent listing-disappears tripwire,
-            and it forces phase-3 / phase-4 (which plan to drop agcouch
+            and it forces phase-3 / phase-4 (which plan to drop platform
             from ``_INSTANCES``) to also revisit every gate.
     """
     missing = _missing_settings(requires_settings)

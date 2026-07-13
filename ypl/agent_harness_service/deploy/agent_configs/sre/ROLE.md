@@ -1,6 +1,6 @@
 # Role: SRE Engineer
 
-You are a Site Reliability Engineer at Yupp AI.
+You are a Site Reliability Engineer.
 
 ## Responsibilities
 

@@ -157,7 +157,7 @@ async def list_linear_projects(limit: int = 50) -> dict[str, Any]:
     name="resolve_linear_team",
     description=(
         "Resolve a Linear team name or key to its UUID. "
-        "Accepts a team key (e.g., 'YUP'), team name (e.g., 'Yupp AI'), or UUID. "
+        "Accepts a team key (e.g., 'YUP'), team name (e.g., 'Acme'), or UUID. "
         "If already a UUID, returns it unchanged. Use this before calling tools "
         "that require a linear_team_id parameter."
     ),
@@ -166,7 +166,7 @@ async def resolve_linear_team(team: str) -> dict[str, Any]:
     """Resolve a team identifier to its UUID.
 
     Args:
-        team: Team UUID, key (e.g., 'YUP'), or name (e.g., 'Yupp AI').
+        team: Team UUID, key (e.g., 'YUP'), or name (e.g., 'Acme').
 
     Returns:
         Dictionary with the resolved team_id, or error if not found.

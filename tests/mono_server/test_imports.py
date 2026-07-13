@@ -69,29 +69,29 @@ def test_lifespan_importable() -> None:
 
 def test_sub_app_instances_importable() -> None:
     """Both MCP sub-apps are importable from server and unified_mcp."""
-    from ypl.mono_server.server import agcouch_mcp_http_app as server_agcouch
     from ypl.mono_server.server import harness_mcp_http_app as server_harness
-    from ypl.mono_server.unified_mcp import agcouch_mcp_http_app, harness_mcp_http_app
+    from ypl.mono_server.server import platform_mcp_http_app as server_platform
+    from ypl.mono_server.unified_mcp import harness_mcp_http_app, platform_mcp_http_app
 
     assert harness_mcp_http_app is not None
-    assert agcouch_mcp_http_app is not None
+    assert platform_mcp_http_app is not None
     # server.py re-exports the same objects (imported from unified_mcp).
     assert server_harness is harness_mcp_http_app
-    assert server_agcouch is agcouch_mcp_http_app
+    assert server_platform is platform_mcp_http_app
     # They are distinct apps — no shared tool registry.
-    assert harness_mcp_http_app is not agcouch_mcp_http_app
+    assert harness_mcp_http_app is not platform_mcp_http_app
 
 
 def test_unified_mcp_exports() -> None:
     """unified_mcp module exports the expected public symbols."""
     from ypl.mono_server.unified_mcp import (
-        AgcouchMcpAuthMiddleware,
         HarnessMcpAuthMiddleware,
-        agcouch_mcp_http_app,
+        PlatformMcpAuthMiddleware,
         harness_mcp_http_app,
+        platform_mcp_http_app,
     )
 
     assert harness_mcp_http_app is not None
-    assert agcouch_mcp_http_app is not None
+    assert platform_mcp_http_app is not None
     assert HarnessMcpAuthMiddleware is not None
-    assert AgcouchMcpAuthMiddleware is not None
+    assert PlatformMcpAuthMiddleware is not None

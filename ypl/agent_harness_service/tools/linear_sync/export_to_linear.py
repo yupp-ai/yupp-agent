@@ -3,7 +3,7 @@
 This module is the business-logic layer for the AHS → Linear push direction.
 It can be invoked from two entry points:
 
-1. **Agent-initiated (MCP)**: Called from the agcouch MCP server tool
+1. **Agent-initiated (MCP)**: Called from the platform MCP server tool
    ``export_project_to_linear`` (``ypl/mcp_server/tools/linear_sync.py``),
    allowing agents to explicitly trigger a sync when needed.
 
@@ -51,6 +51,7 @@ from typing import Any
 from sqlalchemy.orm.attributes import flag_modified
 from sqlmodel import col, select
 
+from ypl.agent_harness_service.common.constants import AHS_LIT_BASE_URL
 from ypl.agent_harness_service.tools.linear_sync.mapping import (
     map_ahs_priority_to_linear,
     map_ahs_status_to_linear,
@@ -60,7 +61,6 @@ from ypl.agent_harness_service.tools.linear_sync.types import (
     LinearProjectRef,
     SyncResult,
 )
-from ypl.backend.config import settings
 from ypl.backend.db import get_async_session, retry_db
 from ypl.backend.utils.linear import LinearClient
 from ypl.db.agent_harness import AgentProject, AgentTask
@@ -920,11 +920,12 @@ def _parse_dt(value: str | None) -> datetime | None:
 
 
 def _get_lit_console_url(session_id: str) -> str:
-    """Construct a Lit Console URL for a session."""
-    if settings.ENVIRONMENT == "production":
-        base = "https://agent-streamlit-server-production-451082535721.us-east4.run.app"
-    else:
-        base = "https://agent-streamlit-server-staging-451082535721.us-east4.run.app"
+    """Construct a Lit Console URL for a session.
+
+    Base URL comes from the ``AHS_LIT_BASE_URL`` env var; set it to your
+    Streamlit deployment's public URL.
+    """
+    base = AHS_LIT_BASE_URL or "https://streamlit.example.com"
     return f"{base}/agent_harness_console?session_id={session_id}"
 
 

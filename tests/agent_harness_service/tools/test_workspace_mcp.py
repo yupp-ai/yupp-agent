@@ -423,7 +423,7 @@ class TestResolvePrAttribution:
     async def test_non_task_session_emits_attribution_without_task_link(self) -> None:
         """Non-task sessions still emit attribution — agent name + session link, no project/task line.
 
-        Downstream tooling (e.g. master-reviewer's review-fix loop notification step) parses
+        Downstream tooling (e.g. a review agent's review-fix loop notification step) parses
         ``session_id=<UUID>`` out of the attribution to route follow-up agent messages, so
         the session link must be emitted for every AHS-driven trigger, not just TASK.
         """
@@ -508,14 +508,14 @@ class TestResolvePrAttribution:
         # Force the workspace domain so the permalink builder returns a URL.
         with (
             patch("ypl.agent_harness_service.tools.mcp_instance.get_async_session", return_value=mock_ctx),
-            patch("ypl.agent_harness_service.common.constants.SLACK_WORKSPACE_DOMAIN_NAME", "yuppai"),
+            patch("ypl.agent_harness_service.common.constants.SLACK_WORKSPACE_DOMAIN_NAME", "your-workspace"),
         ):
             result = await _resolve_pr_attribution(VALID_SESSION)
 
         assert result is not None
         assert f"session_id={VALID_SESSION}" in result
         # Slack permalink format: archives/<channel>/p<ts-no-dot>?thread_ts=...&cid=...
-        assert "[Slack](https://yuppai.slack.com/archives/C01ABCDEF/p1234567890123456" in result
+        assert "[Slack](https://your-workspace.slack.com/archives/C01ABCDEF/p1234567890123456" in result
         assert "thread_ts=1234567890.123456" in result
         assert "cid=C01ABCDEF" in result
 
@@ -545,7 +545,7 @@ class TestResolvePrAttribution:
 
         with (
             patch("ypl.agent_harness_service.tools.mcp_instance.get_async_session", return_value=mock_ctx),
-            patch("ypl.agent_harness_service.common.constants.SLACK_WORKSPACE_DOMAIN_NAME", "yuppai"),
+            patch("ypl.agent_harness_service.common.constants.SLACK_WORKSPACE_DOMAIN_NAME", "your-workspace"),
         ):
             result = await _resolve_pr_attribution(VALID_SESSION)
 

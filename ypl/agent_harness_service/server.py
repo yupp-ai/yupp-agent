@@ -24,7 +24,7 @@ from ypl.backend.config import settings
 # Create the MCP sub-app once so we can wire its lifespan into the main app.
 # json_response=True: return application/json instead of SSE-wrapped responses.
 # stateless_http=True: no server-side session tracking (session_id is a tool param).
-# Matches the agcouch-mcp-server config in ypl/mcp_server/server.py.
+# Matches the platform-mcp-server config in ypl/mcp_server/server.py.
 mcp_app = harness_mcp.http_app(
     path="/",
     transport="streamable-http",

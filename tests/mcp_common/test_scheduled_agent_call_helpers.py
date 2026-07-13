@@ -476,7 +476,7 @@ class TestResolveEmailFromUserId:
 # ---------------------------------------------------------------------------
 
 
-class TestResolveYuppsterUserId:
+class TestResolveUserId:
     async def test_no_identifiers_returns_error(self) -> None:
         from ypl.mcp_common.scheduled_agent_call_helpers import resolve_user_id
 
@@ -575,7 +575,7 @@ class TestResolveYuppsterUserId:
 # ---------------------------------------------------------------------------
 
 
-class TestResolveYuppsterFromContext:
+class TestResolveUserFromContext:
     async def test_no_context_returns_error(self) -> None:
         from ypl.mcp_common.scheduled_agent_call_helpers import resolve_user_id_from_context
 

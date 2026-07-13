@@ -1,7 +1,7 @@
 """Tests for the two master deployment flags on ``MonoConfig``:
 
   AHS_MONO_ENABLE_GATEWAY_SERVICE  master flag for /gw/<name>/ plugin mounts
-  AHS_MONO_ENABLE_MCP              master flag for /mcp/agcouch mount + lifespan
+  AHS_MONO_ENABLE_MCP              master flag for /mcp/platform mount + lifespan
 
 Both default to ``False`` in production — the monolith boots as a pure AHS
 process. These tests exercise the four flag combinations and verify that:
@@ -9,7 +9,7 @@ process. These tests exercise the four flag combinations and verify that:
   * The harness MCP at ``/mcp/harness`` is mounted in EVERY configuration.
   * AHS routes (``/ahs/*``) are present in EVERY configuration.
   * ``/health`` is reachable in EVERY configuration.
-  * ``/mcp/agcouch`` is mounted IFF ``AHS_MONO_ENABLE_MCP=true``.
+  * ``/mcp/platform`` is mounted IFF ``AHS_MONO_ENABLE_MCP=true``.
   * ``/gw/<name>/`` routers are mounted IFF
     ``AHS_MONO_ENABLE_GATEWAY_SERVICE=true`` AND the per-plugin sub-flag is on.
   * ``mcp_startup`` / ``mcp_shutdown`` only run when ``ahs_mono_enable_mcp`` is on.
@@ -140,10 +140,10 @@ class TestPureAhsDefaults:
         mounts = _mount_paths(app)
         assert "/mcp/harness" in mounts, f"/mcp/harness must always be mounted. Mounts: {mounts}"
 
-    def test_agcouch_mcp_not_mounted(self) -> None:
+    def test_platform_mcp_not_mounted(self) -> None:
         app = _build_app(gateway_service=False, mcp=False)
         mounts = _mount_paths(app)
-        assert "/mcp/agcouch" not in mounts, f"/mcp/agcouch must not be mounted. Mounts: {mounts}"
+        assert "/mcp/platform" not in mounts, f"/mcp/platform must not be mounted. Mounts: {mounts}"
 
     def test_no_gateway_routes(self) -> None:
         app = _build_app(gateway_service=False, mcp=False)
@@ -175,9 +175,9 @@ class TestBothFlagsOn:
         app = _build_app(gateway_service=True, mcp=True)
         assert "/mcp/harness" in _mount_paths(app)
 
-    def test_agcouch_mcp_mounted(self) -> None:
+    def test_platform_mcp_mounted(self) -> None:
         app = _build_app(gateway_service=True, mcp=True)
-        assert "/mcp/agcouch" in _mount_paths(app)
+        assert "/mcp/platform" in _mount_paths(app)
 
     def test_slack_gateway_routes_present(self) -> None:
         app = _build_app(gateway_service=True, mcp=True)
@@ -196,15 +196,15 @@ class TestBothFlagsOn:
 
 
 class TestGatewayOnlyMcpOff:
-    """``AHS_MONO_ENABLE_GATEWAY_SERVICE=true`` only — gateway routes but no /mcp/agcouch."""
+    """``AHS_MONO_ENABLE_GATEWAY_SERVICE=true`` only — gateway routes but no /mcp/platform."""
 
     def test_harness_mcp_mounted(self) -> None:
         app = _build_app(gateway_service=True, mcp=False)
         assert "/mcp/harness" in _mount_paths(app)
 
-    def test_agcouch_mcp_not_mounted(self) -> None:
+    def test_platform_mcp_not_mounted(self) -> None:
         app = _build_app(gateway_service=True, mcp=False)
-        assert "/mcp/agcouch" not in _mount_paths(app)
+        assert "/mcp/platform" not in _mount_paths(app)
 
     def test_slack_gateway_routes_present(self) -> None:
         app = _build_app(gateway_service=True, mcp=False)
@@ -218,15 +218,15 @@ class TestGatewayOnlyMcpOff:
 
 
 class TestMcpOnlyGatewayOff:
-    """``AHS_MONO_ENABLE_MCP=true`` only — /mcp/agcouch mounted but no /gw/* routes."""
+    """``AHS_MONO_ENABLE_MCP=true`` only — /mcp/platform mounted but no /gw/* routes."""
 
     def test_harness_mcp_mounted(self) -> None:
         app = _build_app(gateway_service=False, mcp=True)
         assert "/mcp/harness" in _mount_paths(app)
 
-    def test_agcouch_mcp_mounted(self) -> None:
+    def test_platform_mcp_mounted(self) -> None:
         app = _build_app(gateway_service=False, mcp=True)
-        assert "/mcp/agcouch" in _mount_paths(app)
+        assert "/mcp/platform" in _mount_paths(app)
 
     def test_no_gateway_routes(self) -> None:
         app = _build_app(gateway_service=False, mcp=True)
@@ -326,12 +326,12 @@ def _noop_acm() -> Any:
     return _noop()
 
 
-def _stub_agcouch() -> Any:
-    """Replace agcouch_mcp_http_app with a stub so its FastMCP session manager
+def _stub_platform() -> Any:
+    """Replace platform_mcp_http_app with a stub so its FastMCP session manager
     doesn't try to start (and crash on repeat lifespan entries)."""
     stub = MagicMock()
     stub.lifespan = lambda _app: _noop_acm()
-    return patch("ypl.mono_server.server.agcouch_mcp_http_app", new=stub)
+    return patch("ypl.mono_server.server.platform_mcp_http_app", new=stub)
 
 
 class TestLifespanFlagBehaviour:
@@ -373,7 +373,7 @@ class TestLifespanFlagBehaviour:
             patch("ypl.mono_server.server.ahs_shutdown", side_effect=_ahs_shutdown),
             patch("ypl.mono_server.server.mcp_startup", side_effect=_mcp_startup),
             patch("ypl.mono_server.server.mcp_shutdown", side_effect=_mcp_shutdown),
-            _stub_agcouch(),
+            _stub_platform(),
             patch("ypl.mono_server.plugins.slack.sag_startup", side_effect=_sag_startup),
             patch("ypl.mono_server.plugins.slack.sag_shutdown", side_effect=_sag_shutdown),
         ):
@@ -421,7 +421,7 @@ class TestLifespanFlagBehaviour:
             patch("ypl.mono_server.server.ahs_shutdown", new=AsyncMock()),
             patch("ypl.mono_server.server.mcp_startup", side_effect=_mcp_startup),
             patch("ypl.mono_server.server.mcp_shutdown", new=AsyncMock()),
-            _stub_agcouch(),
+            _stub_platform(),
             patch("ypl.mono_server.plugins.slack.sag_startup", side_effect=_sag_startup),
             patch("ypl.mono_server.plugins.slack.sag_shutdown", new=AsyncMock()),
         ):
@@ -460,7 +460,7 @@ class TestLifespanFlagBehaviour:
             patch("ypl.mono_server.server.ahs_shutdown", new=AsyncMock()),
             patch("ypl.mono_server.server.mcp_startup", side_effect=_mcp_startup),
             patch("ypl.mono_server.server.mcp_shutdown", new=AsyncMock()),
-            _stub_agcouch(),
+            _stub_platform(),
             patch("ypl.mono_server.plugins.slack.sag_startup", side_effect=_sag_startup),
             patch("ypl.mono_server.plugins.slack.sag_shutdown", new=AsyncMock()),
         ):
@@ -504,7 +504,7 @@ class TestLifespanFlagBehaviour:
             patch("ypl.mono_server.server.ahs_shutdown", new=AsyncMock()),
             patch("ypl.mono_server.server.mcp_startup", side_effect=_mcp_startup),
             patch("ypl.mono_server.server.mcp_shutdown", new=AsyncMock()),
-            _stub_agcouch(),
+            _stub_platform(),
             patch("ypl.mono_server.plugins.slack.sag_startup", side_effect=_sag_startup),
             patch("ypl.mono_server.plugins.slack.sag_shutdown", new=AsyncMock()),
         ):
@@ -519,22 +519,22 @@ class TestLifespanFlagBehaviour:
 
 
 # ---------------------------------------------------------------------------
-# 6. /mcp/agcouch is not reachable when master MCP flag is off
+# 6. /mcp/platform is not reachable when master MCP flag is off
 # ---------------------------------------------------------------------------
 
 
-class TestAgcouchUnreachableWhenOff:
-    """When ``AHS_MONO_ENABLE_MCP=false``, requests to /mcp/agcouch return 404."""
+class TestPlatformUnreachableWhenOff:
+    """When ``AHS_MONO_ENABLE_MCP=false``, requests to /mcp/platform return 404."""
 
-    def test_agcouch_returns_404_when_off(self) -> None:
+    def test_platform_returns_404_when_off(self) -> None:
         app = _build_app(gateway_service=False, mcp=False)
         client = TestClient(app, raise_server_exceptions=False)
         # No mount → no auth middleware → not even a 401, just 404.
-        assert client.post("/mcp/agcouch/").status_code == 404
-        assert client.get("/mcp/agcouch/").status_code == 404
+        assert client.post("/mcp/platform/").status_code == 404
+        assert client.get("/mcp/platform/").status_code == 404
 
-    def test_harness_still_returns_401_when_agcouch_off(self) -> None:
-        """The harness mount is unaffected by the agcouch flag."""
+    def test_harness_still_returns_401_when_platform_off(self) -> None:
+        """The harness mount is unaffected by the platform flag."""
         app = _build_app(gateway_service=False, mcp=False)
         client = TestClient(app, raise_server_exceptions=False)
         # Harness is mounted; auth middleware rejects no-token requests as 401.
