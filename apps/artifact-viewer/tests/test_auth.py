@@ -20,7 +20,7 @@ def client() -> TestClient:
     return TestClient(build_app(), follow_redirects=False)
 
 
-def _stub_oauth(email: str = "alice@agcouch.com", name: str = "Alice") -> Any:
+def _stub_oauth(email: str = "alice@example.com", name: str = "Alice") -> Any:
     """Build a minimal mock of the authlib oauth.google client.
 
     Covers the two calls the callback makes:
@@ -39,7 +39,7 @@ def _stub_oauth(email: str = "alice@agcouch.com", name: str = "Alice") -> Any:
 class TestCallbackMembershipCheck:
     def test_allows_when_ahs_resolves_email(self, client: TestClient) -> None:
         """AHS returns a user_id → set session and redirect to next_url."""
-        oauth = _stub_oauth(email="alice@agcouch.com")
+        oauth = _stub_oauth(email="alice@example.com")
         with (
             patch("artifact_viewer.auth.get_oauth", return_value=oauth),
             patch(
@@ -70,7 +70,7 @@ class TestCallbackMembershipCheck:
         """AHS raises (e.g. 500 / network) → redirect to error with ahs_unavailable."""
         from artifact_viewer.ahs_client import AHSError
 
-        oauth = _stub_oauth(email="alice@agcouch.com")
+        oauth = _stub_oauth(email="alice@example.com")
         with (
             patch("artifact_viewer.auth.get_oauth", return_value=oauth),
             patch(

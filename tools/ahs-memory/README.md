@@ -39,7 +39,7 @@ Read in order (later wins): defaults → `~/.ahs/config.toml` → env vars
 
 | Setting     | Env var       | Config key | Default                   |
 | ----------- | ------------- | ---------- | ------------------------- |
-| API URL     | `AHS_API_URL` | `api_url`  | `https://ahs.agcouch.com` |
+| API URL     | `AHS_API_URL` | `api_url`  | `https://ahs.example.com` |
 | Service key | `AHS_API_KEY` | `api_key`  | _(required for push)_     |
 | User ID     | `AHS_USER_ID` | `user_id`  | _(required for push)_     |
 
@@ -50,7 +50,7 @@ MEMORY write.
 Example `~/.ahs/config.toml`:
 
 ```toml
-api_url = "https://ahs.agcouch.com"
+api_url = "https://ahs.example.com"
 api_key = "ahs_..."
 user_id = "11111111-2222-3333-4444-555555555555"
 ```

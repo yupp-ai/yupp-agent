@@ -225,7 +225,7 @@ class TestSessionPermissionsFromContext:
 
     def test_from_context_with_denied_servers(self) -> None:
         """Old format with non-empty denied_servers: → restricted."""
-        ctx = {"permissions": {"denied_tools": [], "denied_servers": ["agcouch-mcp-server"]}}
+        ctx = {"permissions": {"denied_tools": [], "denied_servers": ["platform-mcp-server"]}}
         perms = SessionPermissions.from_context(ctx)
         assert perms.has_full_tool_access is False
 

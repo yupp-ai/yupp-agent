@@ -2,10 +2,10 @@
 
 After the phase-2 tool taxonomy refactor (PR for branch
 ``tw/mono-mcp-2-tool-taxonomy``) AHS no longer attaches an
-``agcouch-mcp-server`` entry to a session's ``.mcp.json``: shared and
+``platform-mcp-server`` entry to a session's ``.mcp.json``: shared and
 external-data tools register on the harness MCP via ``@shared_tool`` and
 agents reach them through ``AHS_MCP_SECRET``. These tests pin that
-contract so a future refactor cannot silently re-introduce the agcouch
+contract so a future refactor cannot silently re-introduce the platform
 detour.
 """
 
@@ -46,13 +46,13 @@ class TestResolveMcpServers:
 
         Pins the phase-2 invariant: AHS reaches every tool through harness
         MCP, so the agent's ``.mcp.json`` advertises only ``harness``. A
-        regression here would mean the AGCOUCH_MCP_TOKEN detour is back.
+        regression here would mean the PLATFORM_MCP_TOKEN detour is back.
         """
         perms = SessionPermissions.full_access()
         ctx: dict[str, Any] = {"permissions": perms.model_dump(mode="json")}
         servers = resolve_mcp_servers(session_id="sess-1", session_context=ctx)
         assert list(servers.keys()) == ["harness"]
-        assert "agcouch-mcp-server" not in servers
+        assert "platform-mcp-server" not in servers
 
     def test_restricted_permissions_keep_only_harness(self) -> None:
         """Restricted sessions also see only the harness mount."""
@@ -60,13 +60,13 @@ class TestResolveMcpServers:
         ctx: dict[str, Any] = {"permissions": perms.model_dump(mode="json")}
         servers = resolve_mcp_servers(session_id="sess-1", session_context=ctx)
         assert "harness" in servers
-        assert "agcouch-mcp-server" not in servers
+        assert "platform-mcp-server" not in servers
 
     def test_slack_session_without_permissions_keeps_only_harness(self) -> None:
         """Slack sessions with no permissions still get the harness mount."""
         servers = resolve_mcp_servers(session_id="sess-1", is_slack=True)
         assert "harness" in servers
-        assert "agcouch-mcp-server" not in servers
+        assert "platform-mcp-server" not in servers
 
     def test_harness_gets_user_id_header(self) -> None:
         """User ID from session context is injected into harness headers.
@@ -91,14 +91,14 @@ class TestResolveMcpServers:
         servers = resolve_mcp_servers(session_id="sess-1", agent_name="sre")
         assert servers["harness"]["headers"]["X-AHS-Agent-Name"] == "sre"
 
-    def test_no_agcouch_authorization_header(self) -> None:
-        """No agcouch entry — and therefore no AGCOUCH_MCP_TOKEN — anywhere in the dict."""
+    def test_no_platform_authorization_header(self) -> None:
+        """No platform entry — and therefore no PLATFORM_MCP_TOKEN — anywhere in the dict."""
         servers = resolve_mcp_servers(session_id="sess-1")
-        assert "agcouch-mcp-server" not in servers
+        assert "platform-mcp-server" not in servers
         # Belt-and-suspenders: serialise to JSON and ensure the env-var name
-        # never leaks through. A regression that re-introduces an agcouch
-        # entry would expand ``${AGCOUCH_MCP_TOKEN}`` here.
-        assert "AGCOUCH_MCP_TOKEN" not in json.dumps(servers)
+        # never leaks through. A regression that re-introduces an platform
+        # entry would expand ``${PLATFORM_MCP_TOKEN}`` here.
+        assert "PLATFORM_MCP_TOKEN" not in json.dumps(servers)
 
 
 class TestEnsureWorkspaceMcpConfig:
@@ -158,17 +158,17 @@ class TestBuildCodexMcpArgs:
         assert "harness" in args_str
         assert CODEX_HARNESS_BEARER_ENV in args_str
 
-    def test_no_agcouch_bearer_env_var(self) -> None:
-        """No AGCOUCH_MCP_TOKEN is configured for any Codex MCP server.
+    def test_no_platform_bearer_env_var(self) -> None:
+        """No PLATFORM_MCP_TOKEN is configured for any Codex MCP server.
 
-        Pins the phase-2 invariant: Codex never sees the agcouch bearer
-        token. A regression that re-introduces the agcouch mount would
-        also re-add ``AGCOUCH_MCP_TOKEN`` here.
+        Pins the phase-2 invariant: Codex never sees the platform bearer
+        token. A regression that re-introduces the platform mount would
+        also re-add ``PLATFORM_MCP_TOKEN`` here.
         """
         args = build_codex_mcp_args(session_id="sess-1")
         args_str = " ".join(args)
-        assert "AGCOUCH_MCP_TOKEN" not in args_str
-        assert "agcouch" not in args_str
+        assert "PLATFORM_MCP_TOKEN" not in args_str
+        assert "platform" not in args_str
 
     def test_passes_agent_and_external_mcp_context_to_resolver(self) -> None:
         with patch(

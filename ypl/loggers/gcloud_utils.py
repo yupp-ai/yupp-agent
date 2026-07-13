@@ -12,7 +12,7 @@ from pydantic import TypeAdapter
 
 from ypl.middlewares.trace_context_middleware import gcp_cloud_trace_context
 
-GCP_PROJECT_NAME = os.environ.get("GCP_PROJECT_NAME", "yupp-llms")
+GCP_PROJECT_NAME = os.environ.get("GCP_PROJECT_NAME", "your-gcp-project")
 
 # Differentiates between multiple instances of the same container on GCP.
 # Expected to be different for every run of the container.

@@ -2,7 +2,7 @@
 
 Exercises the full stack against a *deployed* AHS through SSH tunnels — DB
 schema (asyncpg :5433), REST surface (httpx :8090 ``/ahs/artifacts``), MCP
-tools (httpx :8090 ``/mcp/agcouch``), and a static repo grep that guards
+tools (httpx :8090 ``/mcp/platform``), and a static repo grep that guards
 against the legacy GCS-backed memory subsystem creeping back. Returns
 non-zero if any assertion fails so the script doubles as a CI smoke test.
 
@@ -57,7 +57,7 @@ A. **DB sanity** (asyncpg). Enum value, columns, partial-WHERE indexes,
 B. **REST surface** (httpx). MEMORY create/read/list/search/delete across
    all three scopes, version-bump, cross-scope read+write rejection, body
    validation.
-C. **MCP tools** (httpx JSON-RPC over ``/mcp/agcouch``). save / load /
+C. **MCP tools** (httpx JSON-RPC over ``/mcp/platform``). save / load /
    search / list happy paths, default-subject behaviour, cross-scope
    rejection, and a regression guard that the legacy
    ``get_agent_memory`` / ``store_agent_memory`` / ``search_agent_memory``
@@ -869,9 +869,9 @@ async def phase_c_mcp(
     api_key: str,
     created: list[CreatedSlug],
 ) -> None:
-    results.section("PHASE C — MCP tools (httpx :8090 /mcp/agcouch)")
+    results.section("PHASE C — MCP tools (httpx :8090 /mcp/platform)")
 
-    mcp_url = f"http://{ahs_host}/mcp/agcouch/"
+    mcp_url = f"http://{ahs_host}/mcp/platform/"
     base_headers = {
         "Authorization": f"Bearer {dev_token}",
         "X-User-ID": TEST_USER_ID,

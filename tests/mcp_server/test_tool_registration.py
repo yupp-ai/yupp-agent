@@ -1,11 +1,11 @@
-"""Regression tests: every agcouch tool module must be imported so its
+"""Regression tests: every platform tool module must be imported so its
 ``@mcp_server.tool()`` decorators actually fire at process start.
 
 The side-effect imports in ``ypl/mcp_server/mcp_tools.py`` are pure runtime
 imports — ruff can't see that they have side effects, so without these
-tests an auto-fix (or a refactor) can silently delete them and the agcouch
+tests an auto-fix (or a refactor) can silently delete them and the platform
 MCP server ends up serving zero tools. That's how phase 8 shipped (PR
-#215): agent sessions got a working ``.mcp.json`` pointing at agcouch but
+#215): agent sessions got a working ``.mcp.json`` pointing at platform but
 ``tools/list`` came back empty, and the agent said "I don't have a
 creation tool loaded."
 
@@ -17,8 +17,8 @@ from __future__ import annotations
 import pytest
 
 
-def test_agcouch_tools_register_on_import() -> None:
-    """Importing mcp_tools must populate the agcouch FastMCP instance.
+def test_platform_tools_register_on_import() -> None:
+    """Importing mcp_tools must populate the platform FastMCP instance.
 
     If this fails (count == 0), check that ``ypl/mcp_server/mcp_tools.py``
     still has the ``import ypl.mcp_server.tools.*`` side-effect imports.
@@ -36,17 +36,17 @@ def test_agcouch_tools_register_on_import() -> None:
     tools = getattr(manager, "_tools", None)
     assert tools is not None, "mcp_server._tool_manager has no _tools dict"
     assert len(tools) > 0, (
-        "agcouch FastMCP has zero tools — the side-effect imports in "
+        "platform FastMCP has zero tools — the side-effect imports in "
         "ypl/mcp_server/mcp_tools.py were likely removed. "
         "Restore `import ypl.mcp_server.tools.*` for each module."
     )
 
 
-def test_critical_agcouch_tools_are_registered() -> None:
+def test_critical_platform_tools_are_registered() -> None:
     """Name-level check on the tools we rely on most day-to-day.
 
     If any of these go missing, agents can't do their core work — e.g.
-    add_artifact, query_yuppdb, save_memory.
+    add_artifact, query_appdb, save_memory.
     """
     import ypl.mcp_server.mcp_tools  # noqa: F401
     from ypl.mcp_server.core import mcp_server
@@ -70,7 +70,7 @@ def test_critical_agcouch_tools_are_registered() -> None:
         "archive_artifact_slug",
         "artifact_url",
         # Databases (database.py)
-        "query_yuppdb",
+        "query_appdb",
         "query_agentdb",
         # Agent memory (memory_artifacts.py) — DB-backed MEMORY artifacts
         "save_memory",
@@ -80,7 +80,7 @@ def test_critical_agcouch_tools_are_registered() -> None:
     }
     missing = required - tool_names
     assert not missing, (
-        f"Missing agcouch tools: {sorted(missing)}.\n"
+        f"Missing platform tools: {sorted(missing)}.\n"
         f"Registered: {sorted(tool_names)[:15]}…\n"
         f"This almost always means the corresponding ``import ypl.mcp_server.tools.*`` "
         f"side-effect import is missing from ``ypl/mcp_server/mcp_tools.py``."

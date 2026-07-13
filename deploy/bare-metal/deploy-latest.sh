@@ -5,8 +5,8 @@
 #   sudo bash /opt/yupp-agent/deploy/bare-metal/deploy-latest.sh
 #
 # First time? scp this file over:
-#   gcloud compute scp deploy/bare-metal/deploy-latest.sh ahs-mono-prod:/tmp/deploy-latest.sh --zone=us-east5-a --project=yupp-agent
-#   gcloud compute ssh ahs-mono-prod --zone=us-east5-a --project=yupp-agent --command='sudo bash /tmp/deploy-latest.sh'
+#   gcloud compute scp deploy/bare-metal/deploy-latest.sh your-vm-host:/tmp/deploy-latest.sh --zone=YOUR_ZONE --project=YOUR_GCP_PROJECT
+#   gcloud compute ssh your-vm-host --zone=YOUR_ZONE --project=YOUR_GCP_PROJECT --command='sudo bash /tmp/deploy-latest.sh'
 #
 # What it does:
 #   1. git pull (fast-forward only, as the ahs user)

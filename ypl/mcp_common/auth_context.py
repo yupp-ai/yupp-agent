@@ -1,7 +1,7 @@
 """Unified per-request authentication context for MCP servers.
 
 A single :class:`RequestContext` is populated by the auth middleware of each
-MCP mount (harness, agcouch, future external mounts) and read by tools via
+MCP mount (harness, platform, future external mounts) and read by tools via
 :func:`current_request_context` / :func:`require_caller_user_id`.
 
 The previous ``dict[str, Any]`` shape and the per-field accessor functions
@@ -13,7 +13,7 @@ Email is **never** used for identity at the tool layer. The OAuth middleware
 resolves the verified email to a user_id once at ``verify_token`` time and
 stores it in ``audit_email`` purely for ``MCPAuditLog`` rendering.
 
-This module lives in ``ypl/mcp_common/`` so both the agcouch MCP server
+This module lives in ``ypl/mcp_common/`` so both the platform MCP server
 (``ypl/mcp_server``) and the harness MCP server
 (``ypl/agent_harness_service``) can import it without violating the
 architecture-test layering. ``ypl/mcp_common/`` must not import from either
@@ -43,10 +43,10 @@ logger = get_logger()
 #:   ``AHS_MCP_SECRET``. The runner injects ``X-User-ID`` /
 #:   ``X-AHS-Agent-Name`` / ``X-AHS-Session-ID`` into the sandboxed
 #:   ``.mcp.json`` and the agent cannot tamper with them.
-#: - ``oauth_user``: agcouch MCP — the request carried a Google OAuth bearer
+#: - ``oauth_user``: platform MCP — the request carried a Google OAuth bearer
 #:   token whose email is in ``ALLOWED_MCP_EMAIL_DOMAINS``. The OAuth
 #:   provider resolves the email to a ``user_id`` once at verify time.
-#: - ``dev_token``: agcouch MCP — the request carried a legacy
+#: - ``dev_token``: platform MCP — the request carried a legacy
 #:   ``yupp_dev_*`` Bearer token. Emitted only during the phase-5
 #:   deprecation window. Tools that must distinguish a verified Google
 #:   identity from a token-holder impersonation should branch on this.
@@ -123,7 +123,7 @@ class RequestContext:
 # ---------------------------------------------------------------------------
 
 #: The active :class:`RequestContext` for the current asyncio task / HTTP
-#: request. Set by the MCP auth middleware (harness, agcouch, future
+#: request. Set by the MCP auth middleware (harness, platform, future
 #: external mounts) on the way in and reset on the way out.
 #:
 #: Outside of an active MCP request — module load, background tasks not

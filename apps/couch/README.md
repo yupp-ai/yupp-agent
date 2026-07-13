@@ -1,7 +1,7 @@
 # couch
 
 Next.js 15 (App Router) front-end for AHS. Runs standalone on port 3010.
-Production: `https://couch.agcouch.com`.
+Production: `https://couch.example.com`.
 
 Replaces the previous Bun + Next 16 + heavy tRPC stack — a single
 ported app with all user and admin pages included.
@@ -25,13 +25,13 @@ npm run dev          # http://localhost:3010
 ```
 
 For local development against a remote AHS, run `~/scripts/ahs-tunnel.sh`
-first to forward `localhost:8090` to `ahs-mono-prod`.
+first to forward `localhost:8090` to `your-vm-host`.
 
 To skip the Google login flow locally (e.g., for Playwright):
 
 ```bash
 # .env.local
-COUCH_DEV_BYPASS_AUTH_EMAIL=tian.wang@angellist.com
+COUCH_DEV_BYPASS_AUTH_EMAIL=admin@example.com
 COUCH_DEV_BYPASS_AUTH_USER_ID=<your-ahs-user-id>
 ```
 
@@ -77,8 +77,8 @@ The systemd unit at `deploy/couch.service` expects:
   `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `AUTH_SECRET`,
   `OAUTH_REDIRECT_HOST`.
 
-When ready to enable on `ahs-mono-prod`, add `couch` to `SERVICES` and
+When ready to enable on `your-vm-host`, add `couch` to `SERVICES` and
 `apps/couch` to `NPM_APPS` in `deploy/bare-metal/deploy-latest.sh`, and
 ensure Node + npm are installed system-wide on the VM.
 
-Domain: `couch.agcouch.com` (Cloudflare → monolith VM → :3010).
+Domain: `couch.example.com` (Cloudflare → monolith VM → :3010).

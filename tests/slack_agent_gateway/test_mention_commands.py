@@ -192,8 +192,8 @@ class TestExtractAgentDirective:
         assert text == "what's firing?"
 
     def test_space_form(self) -> None:
-        name, text = extract_agent_directive("<@U123> /agent data-scientist run a query")
-        assert name == "data-scientist"
+        name, text = extract_agent_directive("<@U123> /agent code-reviewer run a query")
+        assert name == "code-reviewer"
         assert text == "run a query"
 
     def test_case_insensitive(self) -> None:
@@ -226,8 +226,8 @@ class TestExtractAgentDirective:
         assert text == "what's firing?"
 
     def test_bang_alias_with_hyphenated_name(self) -> None:
-        name, text = extract_agent_directive("<@U123> !data-scientist run a query")
-        assert name == "data-scientist"
+        name, text = extract_agent_directive("<@U123> !code-reviewer run a query")
+        assert name == "code-reviewer"
         assert text == "run a query"
 
     def test_bang_alias_only_no_remaining_text(self) -> None:
@@ -381,7 +381,7 @@ class TestFormatAgentsList:
                 "executor_model": "claude-code-cli",
             },
             {
-                "name": "data-scientist",
+                "name": "code-reviewer",
                 "display_name": "Data Scientist",
                 "description": "Runs SQL and analyses",
                 "llm_model": "openai/gpt-4o",
@@ -391,7 +391,7 @@ class TestFormatAgentsList:
         assert "sre" in result
         assert "SRE" in result
         assert "claude-code-cli" in result
-        assert "data-scientist" in result
+        assert "code-reviewer" in result
         assert "openai/gpt-4o" in result
 
     def test_usage_hint_included(self) -> None:

@@ -1,8 +1,8 @@
-"""DevToken authentication for the agcouch MCP server.
+"""DevToken authentication for the platform MCP server.
 
 Authenticates ``yupp_dev_*`` Bearer tokens against the ``mcp_dev_token``
 table. Used when ``MCP_SERVER_MODE=DEV_TOKEN`` and (during the phase-5
-deprecation window) when the agcouch mount in mono mode receives a dev
+deprecation window) when the platform mount in mono mode receives a dev
 token.
 
 Identity emitted to tools is the typed

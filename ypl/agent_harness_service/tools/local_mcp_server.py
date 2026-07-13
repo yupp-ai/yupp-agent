@@ -7,11 +7,11 @@ The original ~2544-line monolith has been split into focused modules under
    registration on the harness FastMCP instance defined in ``mcp_instance``.
 2. Imports the shared / external-data tool submodules from
    ``ypl/mcp_server/tools/`` so their ``@shared_tool(...)`` decorators
-   register them on the harness MCP as well as agcouch MCP. Without this
+   register them on the harness MCP as well as platform MCP. Without this
    the harness mount would expose only internal tools — agents calling
-   ``query_yuppdb`` / ``search_gcp_logs`` / etc. via ``/mcp/harness``
+   ``query_appdb`` / ``search_gcp_logs`` / etc. via ``/mcp/harness``
    would get a "no such tool" error and fall back to the (now-removed)
-   AHS → agcouch detour through ``AGCOUCH_MCP_TOKEN``.
+   AHS → platform detour through ``PLATFORM_MCP_TOKEN``.
 3. Re-exports every public symbol that existing callers import from here,
    so no other file needs to change.
 
@@ -67,7 +67,7 @@ from ypl.agent_harness_service.tools.mcp_instance import (  # noqa: F401
 # 3. Import shared / external-data tool submodules from ypl.mcp_server.tools.
 #    Each module's ``@shared_tool(...)`` decorator registers on every MCP
 #    instance in ``ypl.mcp_common.shared_tool._INSTANCES`` — currently both
-#    harness and agcouch. Without these imports, agents talking to the
+#    harness and platform. Without these imports, agents talking to the
 #    harness mount only see internal AHS tools (bash, workspace, subagents,
 #    etc.), not the AHS-system or external-data tools.
 #

@@ -12,8 +12,8 @@ For comprehensive setup instructions, see `ypl/agent_harness_service/LOCAL_TEST.
 
 ## Test Cases
 
-Individual test cases are in the `tests/` directory:
-- `tests/test-bookkeeper.md` — Test the bookkeeper memory retrieval agent
+Individual test cases live as Markdown scenarios in the `tests/` directory (add
+your own, one file per scenario — e.g. `tests/test-<name>.md`).
 
 To run a specific test, read the test file and follow its steps after completing setup.
 

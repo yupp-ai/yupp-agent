@@ -56,7 +56,7 @@ class AgentAppConfig(BaseModel):
     """Configuration for a Slack agent app."""
 
     app_id: str = Field(..., description="Slack app ID (e.g., 'A123CONFUCIUS')")
-    agent_name: str = Field(..., description="AHS agent name (e.g., 'sre', 'data-scientist')")
+    agent_name: str = Field(..., description="AHS agent name (e.g., 'sre', 'code-reviewer')")
     slack_name: str = Field(..., description="Slack bot name (e.g., 'giladovski', 'tianfucius')")
     bot_token: str = Field(..., description="Slack bot token (xoxb-...)")
     signing_secret: str = Field(..., description="Slack signing secret")
@@ -261,7 +261,7 @@ class SendMessageRequest(BaseModel):
     Does not require an existing session.
     """
 
-    agent_name: str = Field(..., description="Internal agent name (e.g., 'sre', 'data-scientist')")
+    agent_name: str = Field(..., description="Internal agent name (e.g., 'sre', 'code-reviewer')")
     channel: str = Field(..., description="Slack channel name or ID (e.g., 'alert-backend', '#general', or 'C123ABC')")
     text: str = Field(..., description="Message content")
     thread_ts: str | None = Field(None, description="Optional thread timestamp to reply in a thread")

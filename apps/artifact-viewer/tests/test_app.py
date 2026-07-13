@@ -41,7 +41,7 @@ def client() -> TestClient:
 
 def _sign_in(
     client: TestClient,
-    email: str = "alice@agcouch.com",
+    email: str = "alice@example.com",
     user_id: str = "user-alice",
 ) -> None:
     """Poke the signed session cookie directly so tests don't need to
@@ -1096,7 +1096,7 @@ class TestRawHtml:
     Security parity with the in-page iframe is the non-negotiable contract
     here: a malicious agent-authored page must not be able to read the
     viewer's session cookie or call viewer endpoints with credentials,
-    even though the URL technically lives on ``artifacts.agcouch.com``.
+    even though the URL technically lives on ``artifacts.example.com``.
     The CSP ``sandbox`` directive (without ``allow-same-origin`` /
     ``allow-scripts``) is what enforces that, so the tests pin the exact
     header rather than just checking it's "set".

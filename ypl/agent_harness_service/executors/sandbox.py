@@ -155,7 +155,7 @@ def bwrap_available() -> bool:
     The symptom was that runner.py saw ``bwrap_available() == True``, built a
     bwrap wrapper, and then the CLI subprocess died at spawn time — or, worse,
     the ``use_bwrap`` logic silently skipped the wrap and ran the agent
-    completely unsandboxed. Both paths have been observed on ahs-mono-prod.
+    completely unsandboxed. Both paths have been observed on your-vm-host.
 
     This tightened check exec's ``/usr/bin/true`` inside a minimal namespace.
     If that fails, bwrap is effectively unusable and callers must treat this

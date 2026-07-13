@@ -1,6 +1,6 @@
 ---
 name: review-pr
-description: Common guidelines for reviewing GitHub pull requests across all Yupp repositories.
+description: Common guidelines for reviewing GitHub pull requests across all your repositories.
 ---
 
 # Review PR — General Guidelines
@@ -43,5 +43,5 @@ _These rules apply when you are posting review results to GitHub directly. If yo
 - **Never delete existing comments or reviews.** If you need to update feedback, edit the existing comment instead.
 - **Remove the :eyes: reaction** after posting your review:
   - List reactions: `gh api repos/{owner}/{repo}/issues/{pr_number}/reactions`
-  - Find the reaction with `content: "eyes"` where `user.login` matches `yupp-reviews[bot]`
+  - Find the reaction with `content: "eyes"` where `user.login` matches `your-ai-reviewer[bot]`
   - Delete it: `gh api -X DELETE repos/{owner}/{repo}/issues/{pr_number}/reactions/{reaction_id}`

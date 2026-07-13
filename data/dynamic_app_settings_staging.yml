@@ -1,8 +1,0 @@
-# Dynamic app settings for staging environment.
-# These are loaded at startup. Edit with care.
-
-app_settings:
-  - name: slack_agent_gateway_settings
-    type: SlackAgentGatewaySettings
-    value:
-      channel_allowlist: [".*"]  # Allow all channels

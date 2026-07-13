@@ -13,7 +13,7 @@ Managing who's in the users table is an AHS responsibility.
 
 Session shape (signed, HttpOnly cookie via Starlette SessionMiddleware)::
 
-    {"email": "alice@agcouch.com", "name": "Alice", "picture": "https://..."}
+    {"email": "alice@example.com", "name": "Alice", "picture": "https://..."}
 """
 
 from __future__ import annotations

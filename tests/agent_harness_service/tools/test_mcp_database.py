@@ -20,9 +20,9 @@ from ypl.mcp_server.tools.database import (
     _strip_sql_comments,
     _validate_bigquery_query,
     query_agentdb,
+    query_appdb,
     query_bigquery,
     query_bigquery_expensive,
-    query_yuppdb,
 )
 
 # ---------------------------------------------------------------------------
@@ -301,7 +301,7 @@ class TestQueryPostgresImpl:
         rows = [(42, "hello")]
         ctx = self._make_session_context(rows, ["id", "msg"])
         with patch("ypl.mcp_server.tools.database.get_async_session_for", return_value=ctx):
-            result = await _query_postgres_impl("SELECT id, msg FROM t", max_rows=10, database="yuppdb")
+            result = await _query_postgres_impl("SELECT id, msg FROM t", max_rows=10, database="appdb")
         assert result["success"] is True
         assert result["results"][0]["id"] == 42
         assert result["results"][0]["msg"] == "hello"
@@ -311,7 +311,7 @@ class TestQueryPostgresImpl:
         ctx.__aenter__ = AsyncMock(side_effect=RuntimeError("db error"))
         ctx.__aexit__ = AsyncMock(return_value=False)
         with patch("ypl.mcp_server.tools.database.get_async_session_for", return_value=ctx):
-            result = await _query_postgres_impl("SELECT 1", max_rows=10, database="yuppdb")
+            result = await _query_postgres_impl("SELECT 1", max_rows=10, database="appdb")
         assert result["success"] is False
         assert "db error" in result["error"]
 
@@ -386,7 +386,7 @@ class TestQueryBigqueryImpl:
 
 
 # ---------------------------------------------------------------------------
-# query_yuppdb / query_agentdb (MCP tools)
+# query_appdb / query_agentdb (MCP tools)
 # ---------------------------------------------------------------------------
 
 
@@ -402,10 +402,10 @@ class TestQueryPostgresMcpTools:
         ctx.__aexit__ = AsyncMock(return_value=False)
         return ctx
 
-    async def test_query_yuppdb_select(self) -> None:
+    async def test_query_appdb_select(self) -> None:
         ctx = self._make_session_ctx([(1,)], ["id"])
         with patch("ypl.mcp_server.tools.database.get_async_session_for", return_value=ctx):
-            result = await query_yuppdb.fn("SELECT id FROM users LIMIT 1")
+            result = await query_appdb.fn("SELECT id FROM users LIMIT 1")
         assert result["success"] is True
 
     async def test_query_agentdb_rejects_insert(self) -> None:

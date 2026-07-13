@@ -54,7 +54,7 @@ async def _get_session_and_agent(session_id: str) -> tuple[AgentSession | None, 
 async def _resolve_creator_info(
     caller_session: AgentSession | None, caller_agent: Agent | None
 ) -> tuple[str | None, str | None, str | None]:
-    """Resolve creator user_id from session context and verify they are a Yuppster.
+    """Resolve creator user_id from session context and verify they are an authorized user.
 
     Returns (user_id, created_by_agent, error_message).
     If successful, error_message is None.
@@ -62,7 +62,7 @@ async def _resolve_creator_info(
     session_context = caller_session.context or {} if caller_session else {}
     created_by_agent = caller_agent.name if caller_agent else None
 
-    # Resolve user identity to user_id and verify Yuppster status
+    # Resolve user identity to user_id and verify authorization
     user_id, error = await resolve_user_id_from_context(session_context)
     if error:
         return None, created_by_agent, error
@@ -123,7 +123,7 @@ async def schedule_agent_call(
         if ctx_error:
             return {"success": False, "error": ctx_error}
 
-        # Resolve user identity and verify Yuppster status
+        # Resolve user identity and verify authorization
         created_by_user, created_by_agent, user_error = await _resolve_creator_info(caller_session, caller_agent)
         if user_error:
             return {"success": False, "error": user_error}
@@ -197,7 +197,7 @@ async def schedule_recurring_agent_call(
         if ctx_error:
             return {"success": False, "error": ctx_error}
 
-        # Resolve user identity and verify Yuppster status
+        # Resolve user identity and verify authorization
         created_by_user, created_by_agent, user_error = await _resolve_creator_info(caller_session, caller_agent)
         if user_error:
             return {"success": False, "error": user_error}

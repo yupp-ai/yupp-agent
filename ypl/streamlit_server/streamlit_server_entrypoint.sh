@@ -20,20 +20,15 @@ mkdir -p /app/.streamlit
 # Determine redirect URI.
 #
 # Resolution order:
-#   1. STREAMLIT_GOOGLE_AUTH_REDIRECT_URI — explicit override.  This is what
-#      the Mac / self-hosted Cloudflare-tunnel deploy sets to e.g.
-#      ``https://agent-ui.tian.dev/oauth2callback`` so OAuth keeps working
-#      behind a public hostname.
-#   2. Cloud-Run hard-codes for the legacy production / staging shapes.
-#   3. Empty — combined with empty GOOGLE_AUTH_CLIENT_ID/SECRET below, this
+#   1. STREAMLIT_GOOGLE_AUTH_REDIRECT_URI — explicit override.  Set this to
+#      your public callback URL, e.g.
+#      ``https://agent-ui.example.com/oauth2callback`` so OAuth keeps working
+#      behind a public hostname (Cloudflare tunnel, reverse proxy, etc.).
+#   2. Empty — combined with empty GOOGLE_AUTH_CLIENT_ID/SECRET below, this
 #      skips secrets.toml generation and leaves Streamlit unauthenticated.
 #      Only safe for localhost-only deploys.
 if [ -n "${STREAMLIT_GOOGLE_AUTH_REDIRECT_URI:-}" ]; then
     GOOGLE_AUTH_REDIRECT_URI="${STREAMLIT_GOOGLE_AUTH_REDIRECT_URI}"
-elif [ "${ENVIRONMENT:-}" = "production" ]; then
-    GOOGLE_AUTH_REDIRECT_URI="https://agent-streamlit-server-production-451082535721.us-east4.run.app/oauth2callback"
-elif [ "${ENVIRONMENT:-}" = "staging" ]; then
-    GOOGLE_AUTH_REDIRECT_URI="https://agent-streamlit-server-staging-451082535721.us-east4.run.app/oauth2callback"
 else
     GOOGLE_AUTH_REDIRECT_URI=""
 fi

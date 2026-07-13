@@ -671,7 +671,7 @@ def maybe_extract_slack_thread_url(issue: dict[str, Any]) -> str | None:
     comments = [c["body"] for c in issue["comments"]["nodes"]]
     description = issue["description"]
     for text in comments + [description]:
-        slack_thread_url = re.search(r"(https://yuppai.slack.com/archives/.*thread_ts=.*)", text)
+        slack_thread_url = re.search(r"(https://your-workspace.slack.com/archives/.*thread_ts=.*)", text)
         if slack_thread_url:
             return slack_thread_url.group(1)
     return None

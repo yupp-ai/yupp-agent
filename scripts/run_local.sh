@@ -236,7 +236,7 @@ if ! grep -q "^DEFAULT_DB=" .env 2>/dev/null; then
 fi
 
 if ! grep -q "^POSTGRES_CONNECTION_AGENTDB=" .env 2>/dev/null; then
-    echo "POSTGRES_CONNECTION_AGENTDB={\"user\":\"postgres\",\"password\":\"postgres\",\"host\":\"$PG_HOST:$PG_PORT\",\"database\":\"yupp_agent\"}" >> .env
+    echo "POSTGRES_CONNECTION_AGENTDB={\"user\":\"postgres\",\"password\":\"postgres\",\"host\":\"$PG_HOST:$PG_PORT\",\"database\":\"yadb\"}" >> .env
     REQUIRED_VARS_ADDED=true
 fi
 

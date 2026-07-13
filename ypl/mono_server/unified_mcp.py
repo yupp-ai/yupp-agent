@@ -1,6 +1,6 @@
 """Split MCP sub-apps for monolith mode.
 
-Exposes the harness MCP and the agcouch MCP as *two independent* Starlette
+Exposes the harness MCP and the platform MCP as *two independent* Starlette
 ASGI sub-apps, each with its own authentication middleware and its own URL
 prefix:
 
@@ -11,15 +11,15 @@ prefix:
   :class:`~ypl.mcp_common.auth_context.RequestContext` so harness tools
   see one shape regardless of mount.
 
-* ``/mcp/agcouch`` — developer/product tools. Only accepts
-  ``Authorization: Bearer yupp_dev_*``. Validated against yuppdb;
+* ``/mcp/platform`` — developer/product tools. Only accepts
+  ``Authorization: Bearer yupp_dev_*``. Validated against appdb;
   publishes the same :class:`RequestContext`. Returns HTTP 503 when
-  yuppdb is unavailable (one-box deployments without the product
+  appdb is unavailable (one-box deployments without the product
   database).
 
 Any request that does not match the expected auth for its path is rejected
 with HTTP 401. Tool sets are **never merged** — a yupp_dev token on the
-externally-exposed ``/mcp/agcouch`` physically cannot reach harness tools,
+externally-exposed ``/mcp/platform`` physically cannot reach harness tools,
 and vice versa. This replaces the earlier "unified" single-endpoint design.
 
 This module is used exclusively by :mod:`ypl.mono_server.server`. The
@@ -40,7 +40,7 @@ from ypl.agent_harness_service.common.constants import AHS_MCP_SECRET
 from ypl.agent_harness_service.tools.local_mcp_server import mcp as harness_mcp
 from ypl.mcp_common.auth_context import RequestContext, mcp_session_id_var, request_context
 from ypl.mcp_server.auth_dev_token import DEPRECATION_HEADER, DEPRECATION_NOTICE
-from ypl.mcp_server.core import mcp_server as agcouch_mcp
+from ypl.mcp_server.core import mcp_server as platform_mcp
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -62,7 +62,7 @@ class HarnessMcpAuthMiddleware(BaseHTTPMiddleware):
        secret and the session ID are encoded into one token).
 
     Developer tokens (``Bearer yupp_dev_*``) are explicitly rejected — they
-    belong on the ``/mcp/agcouch`` mount. All secret comparisons use
+    belong on the ``/mcp/platform`` mount. All secret comparisons use
     :func:`hmac.compare_digest` to avoid timing side channels.
 
     On success, publishes a typed
@@ -91,10 +91,10 @@ class HarnessMcpAuthMiddleware(BaseHTTPMiddleware):
 
         if not hmac.compare_digest(token, AHS_MCP_SECRET) and auth_header.startswith("Bearer "):
             bearer = auth_header[7:]
-            # Reject dev tokens explicitly — they should go to /mcp/agcouch.
+            # Reject dev tokens explicitly — they should go to /mcp/platform.
             if bearer.startswith("yupp_dev_"):
                 return JSONResponse(
-                    content={"detail": "Developer tokens are not accepted on /mcp/harness — use /mcp/agcouch"},
+                    content={"detail": "Developer tokens are not accepted on /mcp/harness — use /mcp/platform"},
                     status_code=401,
                 )
             if ":" in bearer:
@@ -133,19 +133,19 @@ class HarnessMcpAuthMiddleware(BaseHTTPMiddleware):
 
 
 # ---------------------------------------------------------------------------
-# Agcouch auth — Bearer yupp_dev_* only (rejects agent tokens)
+# Platform auth — Bearer yupp_dev_* only (rejects agent tokens)
 # ---------------------------------------------------------------------------
 
 
-class AgcouchMcpAuthMiddleware(BaseHTTPMiddleware):
-    """Authenticate requests to ``/mcp/agcouch``.
+class PlatformMcpAuthMiddleware(BaseHTTPMiddleware):
+    """Authenticate requests to ``/mcp/platform``.
 
     Accepts only ``Authorization: Bearer yupp_dev_*`` tokens, validated
-    against yuppdb's ``MCPDevToken`` table. Agent tokens (``x-ahs-token`` or
+    against appdb's ``MCPDevToken`` table. Agent tokens (``x-ahs-token`` or
     ``Bearer <secret>:<session>``) are explicitly rejected — they belong on
     ``/mcp/harness``.
 
-    Returns HTTP 503 when yuppdb is unavailable (one-box mode without the
+    Returns HTTP 503 when appdb is unavailable (one-box mode without the
     product database) so callers can distinguish configuration from logic
     errors.
     """
@@ -163,7 +163,7 @@ class AgcouchMcpAuthMiddleware(BaseHTTPMiddleware):
         deliberately do **not** stamp the header on:
 
         * requests with no ``Authorization`` header (early 401),
-        * requests bearing an OAuth JWT misrouted to ``/mcp/agcouch``, or
+        * requests bearing an OAuth JWT misrouted to ``/mcp/platform``, or
         * requests bearing an ``x-ahs-token`` agent-secret bearer
           misrouted here from ``/mcp/harness``.
 
@@ -192,7 +192,7 @@ class AgcouchMcpAuthMiddleware(BaseHTTPMiddleware):
 
         token = auth_header[7:]  # strip "Bearer "
 
-        # Lazy import: yuppdb may not be configured in one-box mode.
+        # Lazy import: appdb may not be configured in one-box mode.
         try:
             from ypl.backend.utils.soul_utils import has_permission_cached
             from ypl.db.mcp import MCPTokenStatus
@@ -200,7 +200,7 @@ class AgcouchMcpAuthMiddleware(BaseHTTPMiddleware):
             from ypl.mcp_server.auth_dev_token import _devtoken_audit_var, build_request_context, validate_token
         except ImportError as exc:
             logger.error(
-                "yuppdb not configured — developer token auth unavailable",
+                "appdb not configured — developer token auth unavailable",
                 error=str(exc),
             )
             return JSONResponse(
@@ -212,11 +212,11 @@ class AgcouchMcpAuthMiddleware(BaseHTTPMiddleware):
             db_token, token_status = await validate_token(token)
         except Exception as exc:
             logger.error(
-                "Token validation failed — yuppdb may not be configured",
+                "Token validation failed — appdb may not be configured",
                 error=str(exc),
             )
             return JSONResponse(
-                content={"detail": "Token validation failed — yuppdb may not be configured"},
+                content={"detail": "Token validation failed — appdb may not be configured"},
                 status_code=503,
             )
 
@@ -232,7 +232,7 @@ class AgcouchMcpAuthMiddleware(BaseHTTPMiddleware):
         # Mirror the standalone ``DevTokenAuthMiddleware`` USE_MCP gate
         # (auth_dev_token.py:429-437). Without this, an active token
         # whose owner has lost ``USE_MCP`` would still be accepted on
-        # ``/mcp/agcouch`` here while being rejected on the standalone
+        # ``/mcp/platform`` here while being rejected on the standalone
         # MCP server — a security boundary mismatch.
         if not await has_permission_cached(db_token.email, Permission.USE_MCP):
             logger.warning(
@@ -256,11 +256,11 @@ class AgcouchMcpAuthMiddleware(BaseHTTPMiddleware):
             ctx = await build_request_context(db_token, request)
         except Exception:
             logger.exception(
-                "build_request_context failed — yuppdb may be unavailable",
+                "build_request_context failed — appdb may be unavailable",
                 email_local_part=db_token.email.split("@")[0],
             )
             return JSONResponse(
-                content={"detail": "Token validation failed — yuppdb may not be configured"},
+                content={"detail": "Token validation failed — appdb may not be configured"},
                 status_code=503,
             )
         ctx_token = request_context.set(ctx)
@@ -285,11 +285,11 @@ harness_mcp_http_app = harness_mcp.http_app(
 )
 harness_mcp_http_app.add_middleware(HarnessMcpAuthMiddleware)
 
-#: ASGI app for developer-facing agcouch tools. Mount at ``/mcp/agcouch``.
-agcouch_mcp_http_app = agcouch_mcp.http_app(
+#: ASGI app for developer-facing platform tools. Mount at ``/mcp/platform``.
+platform_mcp_http_app = platform_mcp.http_app(
     path="/",
     transport="streamable-http",
     json_response=True,
     stateless_http=True,
 )
-agcouch_mcp_http_app.add_middleware(AgcouchMcpAuthMiddleware)
+platform_mcp_http_app.add_middleware(PlatformMcpAuthMiddleware)

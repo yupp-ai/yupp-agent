@@ -11,7 +11,7 @@ Route layout when running as the monolith (full feature set):
   /ahs/*          — Agent Harness Service                  (always)
   /mcp/harness/*  — Harness MCP                            (always; agents auth
                     via x-ahs-token / Bearer <secret>:<session_id>)
-  /mcp/agcouch/*  — Agcouch MCP                            (gated on
+  /mcp/platform/*  — Platform MCP                            (gated on
                     ``AHS_MONO_ENABLE_MCP``; developers auth via Bearer
                     yupp_dev_*)
   /gw/slack/*     — Slack gateway                          (gated on both

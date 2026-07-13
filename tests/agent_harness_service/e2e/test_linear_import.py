@@ -13,7 +13,7 @@ Examples:
 
     # Using names/keys (case-insensitive)
     poetry run python tests/agent_harness_service/e2e/test_linear_import.py import Litweezer YUP
-    poetry run python tests/agent_harness_service/e2e/test_linear_import.py import litweezer "Yupp AI"
+    poetry run python tests/agent_harness_service/e2e/test_linear_import.py import litweezer "Acme"
 
     # List available teams and projects
     poetry run python tests/agent_harness_service/e2e/test_linear_import.py list
@@ -275,7 +275,7 @@ def main() -> None:
     )
     import_parser.add_argument(
         "linear_team",
-        help="Linear team UUID, key, or name (e.g., 'YUP' or 'Yupp AI')",
+        help="Linear team UUID, key, or name (e.g., 'YUP' or 'Acme')",
     )
     import_parser.add_argument("--include-completed", action="store_true", help="Include completed issues")
     import_parser.add_argument(

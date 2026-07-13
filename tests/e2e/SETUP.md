@@ -75,9 +75,9 @@ ENABLE_CLOUDSQL_PROXY="true"
 POSTGRES_CONNECTION_AGENTDB={"user":"postgres","password":"postgres","host":"localhost:5432","database":"yadb"}
 POSTGRES_CONNECTION_AGENTDB_REPLICA={"user":"postgres","password":"postgres","host":"localhost:5432","database":"yadb"}
 
-# Clear yuppdb — not needed locally, and staging validator rejects test credentials
-POSTGRES_CONNECTION_YUPPDB=""
-POSTGRES_CONNECTION_YUPPDB_REPLICA=""
+# Clear appdb — not needed locally, and staging validator rejects test credentials
+POSTGRES_CONNECTION_APPDB=""
+POSTGRES_CONNECTION_APPDB_REPLICA=""
 
 # Local Redis
 REDIS_URL="redis://localhost:6379/1"
@@ -90,7 +90,7 @@ USE_GOOGLE_CLOUD_LOGGING="false"
 > - `https` in BASE_URLs → SSL connection error to localhost
 > - `ENVIRONMENT=local` → SAG uses env vars for bot config instead of DB → "No Slack agent apps configured"
 > - `ENABLE_CLOUDSQL_PROXY=false` → asyncpg tries SSL → "rejected SSL upgrade"
-> - `POSTGRES_CONNECTION_YUPPDB` with test credentials → "Database configuration using test values in staging"
+> - `POSTGRES_CONNECTION_APPDB` with test credentials → "Database configuration using test values in staging"
 > - Trailing `\n` in JSON values → "Invalid JSON: trailing characters"
 > - `database: "yupp_agent"` instead of `"yadb"` → empty slack_agents table
 
@@ -230,8 +230,8 @@ poetry run pytest tests/e2e/ -v -m e2e --timeout=120
 - This is needed because `ENVIRONMENT=staging` enables SSL by default, but local Postgres doesn't support it
 
 ### "Database configuration using test values in staging"
-- `POSTGRES_CONNECTION_YUPPDB` has test credentials (user=postgres) but `ENVIRONMENT=staging` rejects them
-- Fix: set `POSTGRES_CONNECTION_YUPPDB=""` in `.env.e2e` (yuppdb not needed locally)
+- `POSTGRES_CONNECTION_APPDB` has test credentials (user=postgres) but `ENVIRONMENT=staging` rejects them
+- Fix: set `POSTGRES_CONNECTION_APPDB=""` in `.env.e2e` (appdb not needed locally)
 
 ### SSL error when SAG calls AHS ("record layer failure")
 - `AGENT_HARNESS_SERVICE_BASE_URL` and `GATEWAY_BASE_URL` must use `http://` not `https://`
@@ -277,7 +277,7 @@ poetry run pytest tests/e2e/ -v -m e2e --timeout=120
 | `GATEWAY_BASE_URL` | `http://localhost:8090` | Must be HTTP, not HTTPS |
 | `ENABLE_CLOUDSQL_PROXY` | `true` | Disables SSL for local Postgres |
 | `POSTGRES_CONNECTION_AGENTDB` | `...database":"yadb"...` | Must match dump target DB name |
-| `POSTGRES_CONNECTION_YUPPDB` | `""` (empty) | Avoids staging validator rejection |
+| `POSTGRES_CONNECTION_APPDB` | `""` (empty) | Avoids staging validator rejection |
 | `REDIS_URL` | `redis://localhost:6379/1` | Local Redis |
 | `DEFAULT_DB` | `agentdb` | Route queries to agentdb |
 | `USE_GOOGLE_CLOUD_LOGGING` | `false` | No GCP logging locally |

@@ -29,7 +29,7 @@ st.title("🔑 MCP Tokens")
 st.error(
     "⚠️ **Dev tokens (`yupp_dev_*`) are deprecated.** Please do **not** issue new "
     "dev tokens. Direct users to the OAuth-secured MCP endpoint "
-    "(`https://agcouch-mcp-oauth.example.com/mcp`) instead — see "
+    "(`https://platform-mcp-oauth.example.com/mcp`) instead — see "
     "`ypl/mcp_server/README.md` for client setup. "
     "Existing dev tokens continue to work until **2026-06-15**, after which "
     "this page, the middleware, and the `mcp_dev_token` table are deleted. "

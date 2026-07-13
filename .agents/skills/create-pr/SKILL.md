@@ -5,7 +5,7 @@ description: "Create a GitHub pull request with a standardized description forma
 
 # Create Pull Request
 
-Create a GitHub PR with a standardized description following the yupp team conventions.
+Create a GitHub PR with a standardized description following the team conventions.
 
 ## Arguments
 
@@ -65,10 +65,10 @@ One line, immediately after attribution. Links to all known context.
 Context links — include whichever are known, omit the rest:
 - Linear ticket: `[YUP-XXXXX](https://linear.app/...)`
 - Design doc / artifact: `[Design doc](http://go/p/...)`
-- Agent project: `[Project](https://agcouch.com/projects/...)`
-- Agent task: `[Task](https://agcouch.com/tasks/...)`
+- Agent project: `[Project](https://example.com/projects/...)`
+- Agent task: `[Task](https://example.com/tasks/...)`
 - Slack thread: `[Slack thread](https://agentic-couch.slack.com/...)`
-- Lit session: `[Session](https://lit.agcouch.com/agent_harness_console?session_id=...)`
+- Lit session: `[Session](https://lit.example.com/agent_harness_console?session_id=...)`
 - Related PR: `#1234`
 
 ### Problem Section
@@ -192,7 +192,7 @@ Title: [AHS] Fix session attribution to use session user
 Body:
 🤖 Created by *Claude Code (Opus 4.6)* on behalf of *wangtian24*
 
-**TL;DR** [AHS] Fix project/resource creator attribution — was using token owner instead of session user. [YUP-10649](https://linear.app/yupp/issue/YUP-10649)
+**TL;DR** [AHS] Fix project/resource creator attribution — was using token owner instead of session user. [TEAM-123](https://linear.app/your-workspace/issue/TEAM-123)
 
 ## Problem
 

@@ -6,8 +6,8 @@
 #   docker compose -f docker-compose.one-box.yml up -d
 #
 # Optional externalized layout (stable config/data outside the checkout):
-#   export AHS_ENV_FILE="$HOME/deploy/voltcouch/config/.env"
-#   export AHS_HOST_DATA_DIR="$HOME/deploy/voltcouch/data"
+#   export AHS_ENV_FILE="$HOME/deploy/ahs/config/.env"
+#   export AHS_HOST_DATA_DIR="$HOME/deploy/ahs/data"
 #   docker compose -f docker-compose.one-box.yml up -d
 #
 # For a fully-automated Mac install (Docker Desktop + Cloudflare + OAuth):

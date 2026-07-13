@@ -5,6 +5,7 @@ Proxy tools for the Sentry REST API, enabling headless environments
 """
 
 import asyncio
+import os
 import re
 from typing import Any
 
@@ -16,14 +17,15 @@ from ypl.structured_logger import get_logger
 
 logger = get_logger()
 
-_SENTRY_ORG = "bsl-ai"
+# Sentry organization slug. Set SENTRY_ORG in your environment.
+_SENTRY_ORG = os.environ.get("SENTRY_ORG", "")
 _SENTRY_BASE_URL = "https://us.sentry.io/api/0/"
 
 # Lazy-initialized singleton session (guarded by _session_lock)
 _session: aiohttp.ClientSession | None = None
 _session_lock = asyncio.Lock()
 
-# Short IDs contain a dash and at least one letter, e.g. "YUPP-HEAD-QKE"
+# Short IDs contain a dash and at least one letter, e.g. "PROJECT-123-ABC"
 _SHORT_ID_PATTERN = re.compile(r"^[A-Z][\w-]*-[A-Z0-9]+$", re.IGNORECASE)
 
 # Validation patterns for user-supplied path segments

@@ -22,7 +22,7 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-DEFAULT_API_URL = "https://ahs.agcouch.com"
+DEFAULT_API_URL = "https://ahs.example.com"
 DEFAULT_CONFIG_PATH = Path("~/.ahs/config.toml")
 
 

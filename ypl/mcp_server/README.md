@@ -12,8 +12,8 @@ The recommended path for all clients (Claude Code, Cursor, Claude Cowork, web UI
 
 ```bash
 # Add the OAuth-secured remote MCP server (no token to copy/paste)
-claude mcp add --transport http agcouch-mcp-server --scope user \
-  https://agcouch-mcp-oauth.example.com/mcp
+claude mcp add --transport http platform-mcp-server --scope user \
+  https://platform-mcp-oauth.example.com/mcp
 ```
 
 When you next launch Claude Code in the yupp-agent repo, run `/mcp`. You'll be prompted to authenticate with Google — sign in with your `@example.com` account and the connection is permanent for that workstation.
@@ -23,7 +23,7 @@ When you next launch Claude Code in the yupp-agent repo, run `/mcp`. You'll be p
 1. Go to https://claude.ai/code
 2. Click the ☁️ environment button (bottom-right of the chat box)
 3. Click the settings icon (⚙️)
-4. Add `https://agcouch-mcp-oauth.example.com/mcp` as a Custom MCP Server (OAuth)
+4. Add `https://platform-mcp-oauth.example.com/mcp` as a Custom MCP Server (OAuth)
 5. Set Network Access to **Full** so Cloud Agent can reach the MCP endpoint
 
 You will not need an environment variable. The OAuth flow runs on first connect.
@@ -32,14 +32,14 @@ You will not need an environment variable. The OAuth flow runs on first connect.
 
 1. Settings → Connectors
 2. **Add Custom Connector**
-3. Name: `Agcouch MCP`
-4. Remote MCP server URL: `https://agcouch-mcp-oauth.example.com/mcp`
+3. Name: `Platform MCP`
+4. Remote MCP server URL: `https://platform-mcp-oauth.example.com/mcp`
 5. When the **Connect** button activates, click it and complete the Google OAuth flow.
-6. (Optional staging:) repeat with `https://agcouch-mcp-oauth-staging.example.com/mcp`.
+6. (Optional staging:) repeat with `https://platform-mcp-oauth-staging.example.com/mcp`.
 
 ### Cursor / other MCP clients
 
-Any MCP client that supports OAuth-secured streamable-HTTP transports will work. Point it at `https://agcouch-mcp-oauth.example.com/mcp` and complete the Google flow on first connect.
+Any MCP client that supports OAuth-secured streamable-HTTP transports will work. Point it at `https://platform-mcp-oauth.example.com/mcp` and complete the Google flow on first connect.
 
 To set up the staging MCP server to debug staging issues, please refer to [Staging Server Setup](#staging-server-setup).
 
@@ -104,7 +104,7 @@ Search Vercel deployment logs (via GCP logging).
 **Implementation:**
 Automatically adds `resource.labels.service_name="vercel-log-drain"` to the query.
 
-### 3. `query_yuppdb`
+### 3. `query_appdb`
 Execute read-only SQL queries on Yupp production database.
 
 **Use cases:**
@@ -205,14 +205,14 @@ Audit logging works identically for both authentication modes, ensuring complete
 
 ### Project Configuration (`.mcp.json`)
 
-The repository includes a project-level `.mcp.json` that points the agcouch MCP server at the OAuth endpoint by default. After phase 5b ships, this is the only path that will keep working:
+The repository includes a project-level `.mcp.json` that points the platform MCP server at the OAuth endpoint by default. After phase 5b ships, this is the only path that will keep working:
 
 ```json
 {
   "mcpServers": {
-    "agcouch-mcp-server": {
+    "platform-mcp-server": {
       "type": "http",
-      "url": "https://agcouch-mcp-oauth.example.com/mcp"
+      "url": "https://platform-mcp-oauth.example.com/mcp"
     }
   }
 }
@@ -225,14 +225,14 @@ The MCP client manages OAuth tokens itself; no shell environment variables requi
 A staging MCP server is available for debugging staging-specific issues. Connect any OAuth-capable MCP client to:
 
 ```
-https://agcouch-mcp-oauth-staging.example.com/mcp
+https://platform-mcp-oauth-staging.example.com/mcp
 ```
 
 For Claude Code:
 
 ```bash
-claude mcp add --transport http agcouch-mcp-server-staging --scope user \
-  https://agcouch-mcp-oauth-staging.example.com/mcp
+claude mcp add --transport http platform-mcp-server-staging --scope user \
+  https://platform-mcp-oauth-staging.example.com/mcp
 ```
 
 Sign in with your `@example.com` Google account on first connect.
@@ -258,7 +258,7 @@ For simpler integrations or testing, REST convenience endpoints are also availab
 
 ```bash
 # List available tools
-curl https://agcouch-mcp-oauth.example.com/mcp/tools \
+curl https://platform-mcp-oauth.example.com/mcp/tools \
   -H "Authorization: Bearer <oauth_jwt>"
 ```
 
@@ -276,18 +276,18 @@ curl https://agcouch-mcp-oauth.example.com/mcp/tools \
 
 ```bash
 # Build and deploy in OAuth mode
-gcloud run deploy agcouch-mcp-oauth \
+gcloud run deploy platform-mcp-oauth \
   --source . \
   --region us-central1 \
   --set-env-vars="BACKEND_OPERATING_MODE=mcp,MCP_SERVER_MODE=OAUTH" \
-  --service-account yupp-mcp-server@yupp-llms.iam.gserviceaccount.com
+  --service-account yupp-mcp-server@your-gcp-project.iam.gserviceaccount.com
 ```
 
 ### Environment Variables
 
 Required:
 - `BACKEND_OPERATING_MODE=mcp` — Enables MCP server mode
-- `GCP_PROJECT_ID=yupp-llms` — Google Cloud project
+- `GCP_PROJECT_ID=your-gcp-project` — Google Cloud project
 - `POSTGRES_HOST`, `POSTGRES_PASSWORD`, etc. — Database credentials
 
 Authentication Mode:
@@ -441,10 +441,10 @@ asyncio.run(test_search())
 import asyncio
 
 # Test database query (uses read replica, manages its own session)
-from ypl.mcp_server.mcp_tools import query_yuppdb
+from ypl.mcp_server.mcp_tools import query_appdb
 
 async def test_query():
-    result = await query_yuppdb(
+    result = await query_appdb(
         sql="SELECT id, email FROM users LIMIT 5",
         max_rows=10
     )
@@ -510,7 +510,7 @@ For issues or questions:
 ### How to migrate
 
 1. Pick the OAuth setup section above that matches your client (Claude Code / Cloud Agent / Cowork / Cursor).
-2. After confirming OAuth works, remove `AGCOUCH_MCP_TOKEN` (and `AGCOUCH_MCP_TOKEN_STAGING`) from your shell profile / `.env` files.
+2. After confirming OAuth works, remove `PLATFORM_MCP_TOKEN` (and `PLATFORM_MCP_TOKEN_STAGING`) from your shell profile / `.env` files.
 3. Drop the `headers.Authorization` line from any project-local `.mcp.json` you maintain — the OAuth client manages its own token.
 
 ### Legacy setup (pre-OAuth)
@@ -524,7 +524,7 @@ Token issuance previously ran through the `/create-mcp-token` Slack command in `
 #### Configure a dev token (legacy)
 
 ```bash
-export AGCOUCH_MCP_TOKEN="yupp_dev_YOUR_TOKEN_HERE"
+export PLATFORM_MCP_TOKEN="yupp_dev_YOUR_TOKEN_HERE"
 ```
 
 Or, in `.mcp.json`:
@@ -532,11 +532,11 @@ Or, in `.mcp.json`:
 ```json
 {
   "mcpServers": {
-    "agcouch-mcp-server": {
+    "platform-mcp-server": {
       "type": "http",
-      "url": "https://agcouch-mcp.example.com/mcp",
+      "url": "https://platform-mcp.example.com/mcp",
       "headers": {
-        "Authorization": "Bearer ${AGCOUCH_MCP_TOKEN}"
+        "Authorization": "Bearer ${PLATFORM_MCP_TOKEN}"
       }
     }
   }

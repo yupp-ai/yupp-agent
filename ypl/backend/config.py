@@ -22,7 +22,7 @@ DEFAULT_UNSAFE_PASSWORD = "changethis"
 EnvironmentType = Literal["production", "staging", "test", "local", "selfhosted"]
 
 # Environments that run without GCP (no Secret Manager, no Cloud SQL proxy,
-# no yupp-llms DB topology). "local" = dev laptops + CI; "test" = pytest;
+# no your-gcp-project DB topology). "local" = dev laptops + CI; "test" = pytest;
 # "selfhosted" = the AHS monolith running on a single VM with .env secrets
 # and local Postgres. Extend when adding another GCP-free deployment mode.
 GCP_FREE_ENVIRONMENTS: frozenset[EnvironmentType] = frozenset(("local", "test", "selfhosted"))
@@ -33,7 +33,7 @@ def is_gcp_free_environment(env: str) -> bool:
     return env in GCP_FREE_ENVIRONMENTS
 
 
-DbName = Literal["yuppdb", "agentdb"]
+DbName = Literal["appdb", "agentdb"]
 
 
 class PostgresConnection(pydantic.BaseModel):
@@ -92,15 +92,15 @@ class Settings(BaseSettings):
     DOMAIN: str = "localhost"
     ENVIRONMENT: EnvironmentType = "local"
     # Which database get_async_session() uses by default. Set to "agentdb" for AHS/SAG services.
-    DEFAULT_DB: DbName = "yuppdb"
+    DEFAULT_DB: DbName = "appdb"
     PROJECT_NAME: str = ""
     PRIMARY_CLOUD_PROVIDER: str = "google_cloud_run"
 
     # Database connections are configured via JSON env vars. Each contains:
     # {"user", "password", "host", "host_non_pooling", "database", "cloud_sql_proxy_socket"(optional)}
-    # yuppdb = the shared Yupp database, agentdb = the agent-specific database.
-    POSTGRES_CONNECTION_YUPPDB: str = ""
-    POSTGRES_CONNECTION_YUPPDB_REPLICA: str = ""
+    # appdb = the shared Yupp database, agentdb = the agent-specific database.
+    POSTGRES_CONNECTION_APPDB: str = ""
+    POSTGRES_CONNECTION_APPDB_REPLICA: str = ""
     POSTGRES_CONNECTION_AGENTDB: str = ""
     POSTGRES_CONNECTION_AGENTDB_REPLICA: str = ""
     # DDL / Alembic connection. Higher-privilege role (e.g. schema_manager)
@@ -190,7 +190,7 @@ class Settings(BaseSettings):
     # ``SLACK_AGENT_GATEWAY_<NAME>_BOT_TOKEN`` / ``_SIGNING_SECRET`` in
     # GCP-free environments, GCP Secret Manager elsewhere.
 
-    # Agcouch MCP — the default/first-class remote MCP this repo ships.
+    # Platform MCP — the default/first-class remote MCP this repo ships.
     # Hosted in-process when running ``mono_server``; can also run as a
     # standalone service in the future (just point the URL elsewhere). The
     # AHS connects to it by name and reads its tools during session startup.
@@ -198,10 +198,10 @@ class Settings(BaseSettings):
     # TODO(phase-9): support additional 3rd-party MCP servers via a
     # DB-backed registry + Streamlit admin UI. For now, only this one
     # first-class server is wired up.
-    AGCOUCH_MCP_SERVER_NAME: str = "agcouch-mcp-server"
-    AGCOUCH_MCP_SERVER_URL: str = "http://localhost:8090/mcp/agcouch"
-    AGCOUCH_MCP_TOKEN: str = ""
-    AGCOUCH_MCP_ENABLED: bool = True
+    PLATFORM_MCP_SERVER_NAME: str = "platform-mcp-server"
+    PLATFORM_MCP_SERVER_URL: str = "http://localhost:8090/mcp/platform"
+    PLATFORM_MCP_TOKEN: str = ""
+    PLATFORM_MCP_ENABLED: bool = True
 
     # Agent Harness Service (AHS) base URL (SAG calls AHS here)
     AGENT_HARNESS_SERVICE_BASE_URL: str = ""
@@ -310,7 +310,7 @@ class Settings(BaseSettings):
     LEADERBOARD_INSTANCE_ROLE: str = ""
 
     # GCS bucket names:
-    # see: https://console.cloud.google.com/storage/browser?project=yupp-llms
+    # see: https://console.cloud.google.com/storage/browser?project=your-gcp-project
     ATTACHMENT_BUCKET: str = "gs://yupp-attachments/staging"
     ATTACHMENT_BUCKET_GEN_IMAGES: str = "gs://yupp-generated-images/staging"
     ATTACHMENT_BUCKET_PUBLIC: str = "gs://yupp-public-attachments/staging"
@@ -344,7 +344,7 @@ class Settings(BaseSettings):
     KAFKA_SCHEMA_REGISTRY_URL: str = "http://localhost:8081"
 
     # Secrets in GCP Secret Manager, loaded as environment variables:
-    # see: https://console.cloud.google.com/secrets/create?project=yupp-llms
+    # see: https://console.cloud.google.com/secrets/create?project=your-gcp-project
     # If the secret needs to be accessed on local development, add it to the `.env` file in 1password.
     # If it can't be added there (as it's JSON or like a file), only then use the pattern used for AXIS_UPI_CONFIG.
     # If you're adding a new secret, make sure to update the
@@ -424,7 +424,7 @@ class Settings(BaseSettings):
     # of the raw AHS REST path. No trailing slash.
     # If empty, ``agent_artifacts.url`` falls back to the raw
     # ``/ahs/artifacts/{uuid}`` path.
-    VIEWER_BASE_URL: str = "https://artifacts.agcouch.com"
+    VIEWER_BASE_URL: str = "https://artifacts.example.com"
 
     # Slack channel ID to receive a notification every time an artifact is
     # created or updated. Posted as OpsBot in production / staging; skipped
@@ -565,13 +565,13 @@ class Settings(BaseSettings):
 
     @computed_field  # type: ignore[prop-decorator]
     @cached_property
-    def yuppdb(self) -> PostgresConnection:
-        return self._parse_pg_connection(self.POSTGRES_CONNECTION_YUPPDB)
+    def appdb(self) -> PostgresConnection:
+        return self._parse_pg_connection(self.POSTGRES_CONNECTION_APPDB)
 
     @computed_field  # type: ignore[prop-decorator]
     @cached_property
-    def yuppdb_replica(self) -> PostgresConnection:
-        return self._parse_pg_connection(self.POSTGRES_CONNECTION_YUPPDB_REPLICA)
+    def appdb_replica(self) -> PostgresConnection:
+        return self._parse_pg_connection(self.POSTGRES_CONNECTION_APPDB_REPLICA)
 
     @computed_field  # type: ignore[prop-decorator]
     @cached_property
@@ -598,10 +598,10 @@ class Settings(BaseSettings):
         URL as the regular agentdb connection."""
         return self._build_db_url(self.agentdb_admin, async_mode=async_mode)
 
-    def get_pg_connection(self, db: DbName = "yuppdb", *, replica: bool = False) -> PostgresConnection:
+    def get_pg_connection(self, db: DbName = "appdb", *, replica: bool = False) -> PostgresConnection:
         """Return the PostgresConnection for the given database and replica flag."""
-        if db == "yuppdb":
-            return self.yuppdb_replica if replica else self.yuppdb
+        if db == "appdb":
+            return self.appdb_replica if replica else self.appdb
         return self.agentdb_replica if replica else self.agentdb
 
     def _use_proxy_socket(self, conn: PostgresConnection, async_mode: bool) -> bool:
@@ -636,12 +636,12 @@ class Settings(BaseSettings):
             database=conn.database,
         ).render_as_string(hide_password=False)
 
-    def db_url_for(self, db: DbName = "yuppdb", *, replica: bool = False, async_mode: bool = False) -> str:
+    def db_url_for(self, db: DbName = "appdb", *, replica: bool = False, async_mode: bool = False) -> str:
         """Build a SQLAlchemy database URL for the given database."""
         return self._build_db_url(self.get_pg_connection(db, replica=replica), async_mode=async_mode)
 
-    def cloud_sql_instance_for(self, db: DbName = "yuppdb", *, replica: bool = False) -> str:
-        """Instance connection name (e.g. 'yupp-llms:us-east4:sarai-chat-prod')."""
+    def cloud_sql_instance_for(self, db: DbName = "appdb", *, replica: bool = False) -> str:
+        """Instance connection name (e.g. 'your-gcp-project:us-east4:sarai-chat-prod')."""
         conn = self.get_pg_connection(db, replica=replica)
         return conn.cloud_sql_proxy_socket.removeprefix("/cloudsql/")
 
@@ -652,26 +652,26 @@ class Settings(BaseSettings):
             return "disable"
         return "require"
 
-    # ---- Convenience aliases (yuppdb, the default) for backward compat ----
+    # ---- Convenience aliases (appdb, the default) for backward compat ----
     @computed_field  # type: ignore[prop-decorator]
     @property
     def db_url(self) -> str:
-        return self.db_url_for("yuppdb", async_mode=False)
+        return self.db_url_for("appdb", async_mode=False)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def db_url_async(self) -> str:
-        return self.db_url_for("yuppdb", async_mode=True)
+        return self.db_url_for("appdb", async_mode=True)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def db_url_read_replica(self) -> str:
-        return self.db_url_for("yuppdb", replica=True, async_mode=False)
+        return self.db_url_for("appdb", replica=True, async_mode=False)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def db_url_async_read_replica(self) -> str:
-        return self.db_url_for("yuppdb", replica=True, async_mode=True)
+        return self.db_url_for("appdb", replica=True, async_mode=True)
 
     def _check_default_secret(self, var_name: str, value: str | None) -> None:
         if value == DEFAULT_UNSAFE_PASSWORD:
@@ -713,9 +713,9 @@ class Settings(BaseSettings):
             if os.getenv("PYTEST_CURRENT_TEST") is None and not (
                 os.getenv("IN_AHS_E2E_TEST") and self.ENABLE_CLOUDSQL_PROXY
             ):
-                # Skip validation when yuppdb is not configured (e.g. SAG only uses agentdb)
-                if self.POSTGRES_CONNECTION_YUPPDB:
-                    conn = self.yuppdb
+                # Skip validation when appdb is not configured (e.g. SAG only uses agentdb)
+                if self.POSTGRES_CONNECTION_APPDB:
+                    conn = self.appdb
                     test_values = ["test", "postgres", "localhost:5432"]
                     if (
                         conn.user in test_values

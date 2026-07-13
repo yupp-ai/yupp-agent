@@ -1,4 +1,4 @@
-"""Context vars for the agcouch MCP server.
+"""Context vars for the platform MCP server.
 
 The per-request **identity** context (``request_context``) is now defined
 in :mod:`ypl.mcp_common.auth_context` so it can be shared with the harness

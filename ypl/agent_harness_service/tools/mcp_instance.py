@@ -190,7 +190,7 @@ async def _resolve_pr_attribution(session_id: str) -> str | None:
     the Lit session link, plus a project/task link when the session is task-
     triggered and a Slack thread link when the session was initiated from
     Slack.  The session link is what downstream review-fix loop tooling
-    (e.g. master-reviewer) parses to route follow-up notifications back to the
+    (e.g. a code-review agent) parses to route follow-up notifications back to the
     author session, so it must be emitted for every AHS-driven trigger
     (TASK, SLACK, AGENT, API, CRON), not just TASK.
 

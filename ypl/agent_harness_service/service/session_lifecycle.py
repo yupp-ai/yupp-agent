@@ -1851,13 +1851,13 @@ async def create_session(request: SessionCreateRequest) -> SessionCreateResponse
                 has_mcp_access = await has_permission_by_user_id_cached(user_id, Permission.USE_MCP)
                 if not has_mcp_access:
                     logger.info(
-                        "User lacks USE_MCP permission, agcouch-mcp tools will be disabled",
+                        "User lacks USE_MCP permission, platform-mcp tools will be disabled",
                         user_id=user_id,
                     )
             except Exception as e:
                 has_mcp_access = False
                 logger.warning(
-                    "Error checking USE_MCP permission, disabling agcouch-mcp",
+                    "Error checking USE_MCP permission, disabling platform-mcp",
                     user_id=user_id,
                     error=str(e),
                 )
@@ -2394,7 +2394,7 @@ async def send_message(request: SessionMessageRequest) -> SessionMessageResponse
                 )
         else:
             logger.warning(
-                "Slack message missing user_id, disabling agcouch-mcp",
+                "Slack message missing user_id, disabling platform-mcp",
                 slack_user_id=request.slack_user_id,
                 session_id=str(agent_session.agent_session_id),
             )
@@ -2405,7 +2405,7 @@ async def send_message(request: SessionMessageRequest) -> SessionMessageResponse
     # can attribute actions to the user who asked for them.
     if msg_creator_user_id:
         set_session_current_user(str(agent_session.agent_session_id), msg_creator_user_id)
-        # Also propagate to session_context so the agcouch-mcp-server can attribute
+        # Also propagate to session_context so the platform-mcp-server can attribute
         # resources to the current turn sender (not just the session creator).
         session_context["current_turn_user_id"] = msg_creator_user_id
 

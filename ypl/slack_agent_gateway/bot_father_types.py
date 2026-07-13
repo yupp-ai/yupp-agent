@@ -25,7 +25,7 @@ class BotApprovalStatus(StrEnum):
 class BotCreationRequest(BaseModel):
     """Incoming request to create a Slack bot for an agent."""
 
-    agent_name: str = Field(..., description="AHS agent name (e.g., 'sre', 'data-scientist')")
+    agent_name: str = Field(..., description="AHS agent name (e.g., 'sre', 'code-reviewer')")
     slack_name: str = Field(
         ...,
         description="Desired Slack bot username (e.g., 'giladovski'). Must be lowercase, alphanumeric + hyphens.",

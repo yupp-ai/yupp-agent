@@ -437,7 +437,7 @@ async def raw_html(request: Request) -> Response:
     iframe's scrollbars and fixed dimensions".
 
     Security model: even though the URL lives on the viewer's origin
-    (``artifacts.agcouch.com``), the response carries a
+    (``artifacts.example.com``), the response carries a
     ``Content-Security-Policy: sandbox`` header with the same flags as the
     in-page iframe (no ``allow-scripts``, no ``allow-same-origin``). The
     browser treats the top-level document as if it were in a sandboxed
@@ -447,7 +447,7 @@ async def raw_html(request: Request) -> Response:
     exfiltrate the viewer's session, regardless of whether it renders
     in-page or full-page.
 
-    A separate ``artifacts-content.agcouch.com`` origin would be a stronger
+    A separate ``artifacts-content.example.com`` origin would be a stronger
     second layer (and is recommended as future hardening), but the CSP
     sandbox header alone is sufficient to neutralise the same-origin XSS
     surface.
@@ -475,7 +475,7 @@ async def download(request: Request) -> Response:
 
     Proxies the upstream AHS endpoint (which requires ``X-API-Key``) through
     the viewer's session auth so the browser never needs to talk to
-    ``ahs.agcouch.com`` directly. The response is served as
+    ``ahs.example.com`` directly. The response is served as
     ``application/octet-stream`` with ``Content-Disposition: attachment`` so
     the browser saves it rather than rendering it — an HTML artifact can't
     execute script in the viewer's origin this way.

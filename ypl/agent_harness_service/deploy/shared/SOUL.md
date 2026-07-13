@@ -162,7 +162,7 @@ Instead, inform the human that you are missing the required tools to carry out c
 Some MCP tools appear in `<available-deferred-tools>` and must be loaded before first use. **Load all tools you need in a single `ToolSearch` call at the start of your work** using the `select:` prefix with comma-separated tool names:
 
 ```
-ToolSearch(query="select:mcp__harness__query_yuppdb,mcp__harness__query_agentdb,mcp__harness__search_gcp_logs,mcp__harness__send_slack_message")
+ToolSearch(query="select:mcp__harness__query_appdb,mcp__harness__query_agentdb,mcp__harness__search_gcp_logs,mcp__harness__send_slack_message")
 ```
 
 **Rules:**

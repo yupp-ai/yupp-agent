@@ -22,7 +22,7 @@
 #                          stay localhost-only; SAG won't receive Slack events).
 #   SKIP_OAUTH=1           Skip the Google OAuth step (Streamlit + Viewer
 #                          remain unauthenticated; only safe localhost-only).
-#   CF_APEX_DOMAIN=…       Apex domain (e.g. tian.dev).  When set, the script
+#   CF_APEX_DOMAIN=…       Apex domain (e.g. example.com).  When set, the script
 #                          uses ahs.<apex>, lit.<apex>, a.<apex>
 #                          without prompting.
 #   POSTGRES_PASSWORD=…    Override the auto-generated Postgres password.
@@ -437,7 +437,7 @@ if [[ "$SKIP_CF" != "1" ]]; then
         fi
 
         APEX="${CF_APEX_DOMAIN:-}"
-        [[ -z "$APEX" ]] && APEX="$(prompt_value 'Cloudflare apex domain (e.g. tian.dev)' '')"
+        [[ -z "$APEX" ]] && APEX="$(prompt_value 'Cloudflare apex domain (e.g. example.com)' '')"
         [[ -z "$APEX" ]] && error "Apex domain is required for the tunnel step."
 
         AGENT_HOST="ahs.$APEX"
@@ -585,7 +585,7 @@ EOF
             env_set VIEWER_OAUTH_REDIRECT_URL          "https://$ARTIFACTS_HOST_CURR/auth/callback"
             # AHS uses VIEWER_BASE_URL to format outbound artifact links
             # (see ypl/agent_harness_service/artifact_store.py).  Default
-            # points at artifacts.agcouch.com, which would break the
+            # points at artifacts.example.com, which would break the
             # "share a link with a teammate" outcome.
             env_set VIEWER_BASE_URL                    "https://$ARTIFACTS_HOST_CURR"
             env_set VIEWER_SESSION_COOKIE_SECURE       "true"

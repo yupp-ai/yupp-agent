@@ -93,7 +93,7 @@ def resolve_team_id(team_input: str, client: LinearClient | None = None) -> str 
     then by name (case-insensitive).
 
     Args:
-        team_input: Team UUID, key (e.g., 'YUP'), or name (e.g., 'Yupp AI').
+        team_input: Team UUID, key (e.g., 'YUP'), or name (e.g., 'Acme').
         client: Optional LinearClient instance.
 
     Returns:

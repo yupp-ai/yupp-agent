@@ -11,9 +11,9 @@ optional surfaces of the monolith:
       hooks.  When ``false`` no plugin lifespan hooks fire and the
       per-plugin sub-flags (``GATEWAY_SLACK_ENABLED``,
       ``GATEWAY_GITHUB_ENABLED``) are ignored.
-  ``AHS_MONO_ENABLE_MCP`` (default ``false``) — mount the agcouch MCP at
-      ``/mcp/agcouch`` and run the agcouch FastMCP session manager + the
-      yuppster ``mcp_startup``/``mcp_shutdown`` pair.
+  ``AHS_MONO_ENABLE_MCP`` (default ``false``) — mount the platform MCP at
+      ``/mcp/platform`` and run the platform FastMCP session manager + the
+      platform ``mcp_startup``/``mcp_shutdown`` pair.
 
 The harness MCP at ``/mcp/harness`` is **always** mounted regardless of the
 flags — AHS agent sessions always have a tool surface (shared and
@@ -23,7 +23,7 @@ external-data tools dual-register on harness MCP via
 Route layout (everything turned on):
   /ahs/*            — Agent Harness Service (router already carries /ahs prefix)
   /mcp/harness      — Harness MCP (agents; x-ahs-token or Bearer <secret>:<session>)
-  /mcp/agcouch      — Agcouch MCP (developers; Bearer yupp_dev_*) — gated on
+  /mcp/platform      — Platform MCP (developers; Bearer yupp_dev_*) — gated on
                       AHS_MONO_ENABLE_MCP
   /gw/<name>/*      — Gateway plugins (e.g. /gw/slack/*, /gw/github/*) —
                       gated on AHS_MONO_ENABLE_GATEWAY_SERVICE
@@ -32,8 +32,8 @@ Route layout (everything turned on):
 Startup order (when both master flags are on):
   1. AHS (registers orchestration callbacks, warms process pool, etc.)
   2. Harness MCP lifespan (via AHSState._mcp_lifespan_ctx)
-  3. Agcouch MCP lifespan
-  4. Yuppster batch-system init (mcp_startup)
+  3. Platform MCP lifespan
+  4. Batch-system init (mcp_startup)
   5. Enabled gateway plugins in registration order (see ``discover_plugins``)
 
 Shutdown is in strict reverse order so in-flight AHS tasks can still use
@@ -45,7 +45,7 @@ runs directly inside the harness MCP lifespan).  When
 plugin loop is not entered at all).
 
 The two MCP mounts expose *disjoint* tool sets — agent tools are reachable
-only via ``/mcp/harness`` and developer tools only via ``/mcp/agcouch``.
+only via ``/mcp/harness`` and developer tools only via ``/mcp/platform``.
 Path is the enforcement boundary; there is no shared tool registry.
 
 All standalone server entrypoints (AHS, SAG, MCP) remain functional and
@@ -68,8 +68,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse, Response
 
 # Import mcp_tools to trigger @mcp_server.tool() decorator registration for all
-# agcouch MCP tools.  This is a side-effect-only import -- without it the
-# agcouch FastMCP instance has an empty tool registry.
+# platform MCP tools.  This is a side-effect-only import -- without it the
+# platform FastMCP instance has an empty tool registry.
 import ypl.mcp_server.mcp_tools  # noqa: F401
 from ypl.agent_harness_service.artifact_routes import artifact_router
 from ypl.agent_harness_service.host_path_guard import HostPathGuardMiddleware
@@ -83,7 +83,7 @@ from ypl.mono_server.gateway_plugin import GatewayPlugin
 from ypl.mono_server.plugins.github import GitHubGatewayPlugin
 from ypl.mono_server.plugins.slack import SlackGatewayPlugin
 from ypl.mono_server.runtime import set_monolith_mode
-from ypl.mono_server.unified_mcp import agcouch_mcp_http_app, harness_mcp_http_app
+from ypl.mono_server.unified_mcp import harness_mcp_http_app, platform_mcp_http_app
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -165,15 +165,15 @@ def _setup_ahs_router(config: MonoConfig) -> None:
 
 
 @asynccontextmanager
-async def _maybe_agcouch_lifespan(enabled: bool) -> AsyncGenerator[None, None]:
-    """Enter the agcouch MCP lifespan when ``enabled``; otherwise no-op.
+async def _maybe_platform_lifespan(enabled: bool) -> AsyncGenerator[None, None]:
+    """Enter the platform MCP lifespan when ``enabled``; otherwise no-op.
 
     Encapsulates the master ``AHS_MONO_ENABLE_MCP`` gate so the body of
     :func:`combined_lifespan` reads as a single linear flow regardless of
     flag state.
     """
     if enabled:
-        async with agcouch_mcp_http_app.lifespan(agcouch_mcp_http_app):
+        async with platform_mcp_http_app.lifespan(platform_mcp_http_app):
             yield
     else:
         yield
@@ -186,7 +186,7 @@ async def combined_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     Both master flags from :class:`~ypl.mono_server.config.MonoConfig` are
     honoured here:
 
-    * ``ahs_mono_enable_mcp=False``  →  skip the agcouch MCP lifespan ctx and
+    * ``ahs_mono_enable_mcp=False``  →  skip the platform MCP lifespan ctx and
       skip ``mcp_startup`` / ``mcp_shutdown``.  The inner block (gateway
       plugins + yield + AHS shutdown) runs directly inside the harness MCP
       lifespan.
@@ -198,8 +198,8 @@ async def combined_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
       1. AHS (wires orchestration callbacks, starts warm process pool,
          launches scheduler, creates harness MCP lifespan context)
       2. Enter harness MCP lifespan (via AHSState._mcp_lifespan_ctx)
-      3. Enter agcouch MCP lifespan (its own FastMCP session manager)
-      4. Yuppster batch-system init (mcp_startup)
+      3. Enter platform MCP lifespan (its own FastMCP session manager)
+      4. Batch-system init (mcp_startup)
       5. Enabled gateway plugins in registration order (see discover_plugins)
 
     Shutdown is the mirror image of startup.  AHS shutdown runs *inside* the
@@ -228,13 +228,13 @@ async def combined_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # need a tool surface, regardless of the master flags.
         async with ahs_state._mcp_lifespan_ctx:
             try:
-                # --- 3. Agcouch MCP lifespan (gated on ahs_mono_enable_mcp) -
+                # --- 3. Platform MCP lifespan (gated on ahs_mono_enable_mcp) -
                 # Separate FastMCP instance with its own session manager.
                 # When the flag is OFF this is a noop async with — the inner
                 # block runs directly inside the harness MCP lifespan only.
-                async with _maybe_agcouch_lifespan(config.ahs_mono_enable_mcp):
-                    # --- 4. Yuppster batch-system init ---------------------
-                    # Tied to the agcouch MCP — when that mount is off, we
+                async with _maybe_platform_lifespan(config.ahs_mono_enable_mcp):
+                    # --- 4. Batch-system init ---------------------
+                    # Tied to the platform MCP — when that mount is off, we
                     # have no batch system to initialise.
                     if config.ahs_mono_enable_mcp:
                         await mcp_startup()
@@ -275,10 +275,10 @@ async def combined_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                                 except Exception:
                                     logger.exception("Plugin %s shutdown failed", plugin.name)
                     finally:
-                        # Yuppster MCP teardown (batch-system flush, Sentry close,
+                        # Platform MCP teardown (batch-system flush, Sentry close,
                         # GCP log flush). The finally block ensures mcp_shutdown
                         # runs even if a plugin startup raises or the yield
-                        # block raises.  Skipped when the agcouch mount is off.
+                        # block raises.  Skipped when the platform mount is off.
                         if config.ahs_mono_enable_mcp:
                             await mcp_shutdown()
             finally:
@@ -307,7 +307,7 @@ def create_app() -> FastAPI:
     Two master flags from :class:`~ypl.mono_server.config.MonoConfig` gate
     the optional mounts:
 
-    * ``ahs_mono_enable_mcp=False``  →  the ``/mcp/agcouch`` mount is skipped.
+    * ``ahs_mono_enable_mcp=False``  →  the ``/mcp/platform`` mount is skipped.
       ``/mcp/harness`` is always mounted.
     * ``ahs_mono_enable_gateway_service=False``  →  no ``/gw/<name>/`` routers
       are included; ``discover_plugins()`` returns an empty list.
@@ -336,7 +336,7 @@ def create_app() -> FastAPI:
     )
 
     # Host-based path allowlist — restricts scoped subdomains (e.g.
-    # mcp.agcouch.com) to specific path prefixes. Reads from HOST_PATH_GUARD
+    # mcp.example.com) to specific path prefixes. Reads from HOST_PATH_GUARD
     # env var. Registered BEFORE AHSRequestLoggingMiddleware so requests
     # rejected by the guard don't pollute AHS access logs.
     # Starlette runs middleware in reverse registration order (LIFO), so this
@@ -357,14 +357,14 @@ def create_app() -> FastAPI:
     # /mcp/harness: agent tools. Auth via HarnessMcpAuthMiddleware
     #   (x-ahs-token or Bearer <secret>:<session_id>). Dev tokens rejected.
     #   ALWAYS mounted — AHS sessions need a tool surface.
-    # /mcp/agcouch: developer tools. Auth via AgcouchMcpAuthMiddleware
+    # /mcp/platform: developer tools. Auth via PlatformMcpAuthMiddleware
     #   (Bearer yupp_dev_*). Agent tokens rejected.  Gated on
     #   ``ahs_mono_enable_mcp`` — off by default for pure-AHS deployments.
     # There is intentionally no catch-all /mcp mount — each tool set is
     # reachable only at its own path.
     application.mount("/mcp/harness", harness_mcp_http_app)
     if config.ahs_mono_enable_mcp:
-        application.mount("/mcp/agcouch", agcouch_mcp_http_app)
+        application.mount("/mcp/platform", platform_mcp_http_app)
 
     # --- Gateway plugins (all enabled plugins, each at /gw/<name>/) ----------
     # Routers are registered here; lifespan (startup/shutdown) is handled by

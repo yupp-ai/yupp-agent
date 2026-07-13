@@ -54,7 +54,7 @@ class GitHubGatewayPlugin:
     ``GATEWAY_GITHUB_ENABLED=true``; default is **off**.
 
     The plugin receives GitHub App webhook events (``pull_request``, ``ping``)
-    and dispatches them to the ``master-reviewer`` agent by creating AHS
+    and dispatches them to the ``code-reviewer`` agent by creating AHS
     sessions.  Webhook signature verification (HMAC-SHA256 via
     ``X-Hub-Signature-256``) is handled inside the existing
     :func:`~ypl.agent_harness_service.github_webhook.github_webhook` endpoint.

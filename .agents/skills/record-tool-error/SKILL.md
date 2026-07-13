@@ -81,7 +81,7 @@ Tool errors are stored at:
 ## Example Entry
 
 ```markdown
-### query_yuppdb: column name error
+### query_appdb: column name error
 - **Error**: `column "user_id" does not exist`
 - **Wrong usage**: `SELECT user_id FROM chats`
 - **Correct usage**: The column is `participant_id`, not `user_id`. Use `SELECT participant_id FROM chats`.

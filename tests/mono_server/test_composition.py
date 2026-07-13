@@ -85,12 +85,12 @@ class TestRouteRegistration:
         assert ahs_paths, f"No /ahs routes found. All paths: {paths}"
 
     def test_mcp_split_mounts_present(self) -> None:
-        """Harness and agcouch MCP are mounted at their own disjoint paths."""
+        """Harness and platform MCP are mounted at their own disjoint paths."""
         from ypl.mono_server.server import app
 
         mounts = _mount_paths(app)
         assert "/mcp/harness" in mounts, f"Missing /mcp/harness mount: {mounts}"
-        assert "/mcp/agcouch" in mounts, f"Missing /mcp/agcouch mount: {mounts}"
+        assert "/mcp/platform" in mounts, f"Missing /mcp/platform mount: {mounts}"
         # There must be no catch-all /mcp mount — each tool set is reachable
         # only at its own path.
         assert "/mcp" not in mounts, f"Unexpected catch-all /mcp mount: {mounts}"

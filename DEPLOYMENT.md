@@ -149,7 +149,7 @@ docker compose -f docker-compose.one-box.yml exec app \
 
 # Open a psql shell
 docker compose -f docker-compose.one-box.yml exec postgres \
-    psql -U postgres yupp_agent
+    psql -U postgres yadb
 ```
 
 ### Stable config/data outside the checkout
@@ -158,19 +158,19 @@ If you want a clean deployment checkout plus stable secrets and runtime data,
 set these two environment variables before running Compose:
 
 ```bash
-export AHS_ENV_FILE="$HOME/deploy/voltcouch/config/.env"
-export AHS_HOST_DATA_DIR="$HOME/deploy/voltcouch/data"
+export AHS_ENV_FILE="$HOME/deploy/ahs/config/.env"
+export AHS_HOST_DATA_DIR="$HOME/deploy/ahs/data"
 
 docker compose -f docker-compose.one-box.yml up -d
 ```
 
 That keeps:
 
-- secrets/config in `~/deploy/voltcouch/config/.env`
-- session/repos/memories/artifacts in `~/deploy/voltcouch/data/`
-- code in a disposable git checkout such as `~/deploy/voltcouch/yupp-agent`
+- secrets/config in `~/deploy/ahs/config/.env`
+- session/repos/memories/artifacts in `~/deploy/ahs/data/`
+- code in a disposable git checkout such as `~/deploy/ahs/yupp-agent`
 
-For a simple wrapper around that layout, use `~/scripts/voltcouch.sh` with
+For a simple wrapper around that layout, use `~/scripts/ahs.sh` with
 `deploy`, `start`, and `stop`.
 
 ---
@@ -281,7 +281,7 @@ git clone https://github.com/yupp-ai/yupp-agent.git
 cd yupp-agent
 
 # Create the database
-createdb yupp_agent
+createdb yadb
 
 # Install Python deps
 poetry install --no-root --without dev
@@ -377,7 +377,7 @@ when a full pass succeeds; on the next run it asks before starting over.
 
 ### Prerequisites you supply
 
-- A domain you control in Cloudflare (e.g. `tian.dev`).
+- A domain you control in Cloudflare (e.g. `example.com`).
 - A Google Cloud project with an **OAuth 2.0 Web Application** client. Add these two authorized redirect URIs (both required if you're tunneling):
   - `https://agent-ui.<your-apex>/oauth2callback`
   - `https://artifacts.<your-apex>/auth/callback`
@@ -540,7 +540,7 @@ claude mcp add --transport http ahs-mono --scope user \
 
 > ⚠️ **Dev tokens (`yupp_dev_*`) are deprecated** and will be removed
 > after 2026-06-15. If you still see deployment scripts that export
-> `AGCOUCH_MCP_TOKEN` or set `Authorization: Bearer yupp_dev_*` in
+> `PLATFORM_MCP_TOKEN` or set `Authorization: Bearer yupp_dev_*` in
 > `.mcp.json`, migrate them to the OAuth setup above. Every dev-token
 > response carries an `X-Auth-Deprecation` header so you can audit
 > remaining usage. See [`ypl/mcp_server/README.md`](./ypl/mcp_server/README.md#legacy-dev-tokens-deprecated)
@@ -569,7 +569,7 @@ curl -s -X POST http://localhost:8090/ahs/sessions \
     -H "Content-Type: application/json" \
     -H "X-API-Key: <your-api-key>" \
     -d '{
-        "agent_name": "general-purpose",
+        "agent_name": "default",
         "user_message": "Hello, what tools do you have?",
         "max_turns": 3
     }' | python3 -m json.tool
@@ -734,7 +734,7 @@ python -m ypl.mono_server.manage --help
 ## 10. Mono server feature flags
 
 The mono server composes four optional surfaces — AHS (always on), the
-harness MCP (always on), gateway plugins (Slack / GitHub), and the agcouch
+harness MCP (always on), gateway plugins (Slack / GitHub), and the platform
 MCP. Two **master flags** in `.env` gate the optional surfaces on or off as
 a unit, and two **per-plugin sub-flags** select which gateways are mounted
 when the gateway master is on. All four are read by `MonoConfig`
@@ -745,10 +745,10 @@ when the gateway master is on. All four are read by `MonoConfig`
 | Flag | Default | Effect when **true** | Effect when **false** |
 |------|---------|----------------------|------------------------|
 | `AHS_MONO_ENABLE_GATEWAY_SERVICE` | **`false`** | Discover and mount gateway plugins (`/gw/<name>/*`); run their startup/shutdown hooks. | Skip the entire gateway plugin loop. The per-plugin sub-flags below are **not consulted**. |
-| `AHS_MONO_ENABLE_MCP`             | **`false`** | Mount `/mcp/agcouch` and run the agcouch FastMCP lifespan + `mcp_startup` / `mcp_shutdown` (yuppster batch system). | Skip the agcouch mount and lifespan entirely. |
+| `AHS_MONO_ENABLE_MCP`             | **`false`** | Mount `/mcp/platform` and run the platform FastMCP lifespan + `mcp_startup` / `mcp_shutdown` (background batch jobs). | Skip the platform mount and lifespan entirely. |
 
 > ⚠️ **Default change (vs. previous releases).** Previously the mono booted
-> with everything mounted (`AHS + SAG + agcouch MCP`). Starting with this
+> with everything mounted (`AHS + SAG + platform MCP`). Starting with this
 > release **both master flags default to `false`** — the mono boots as a
 > *pure AHS process*. Operators who relied on the legacy "everything on"
 > shape **must explicitly opt in** by setting both flags to `true`.
@@ -756,7 +756,7 @@ when the gateway master is on. All four are read by `MonoConfig`
 `/mcp/harness` is **always** mounted, regardless of these flags. Shared and
 external-data tools dual-register on the harness MCP (see
 `ypl/mcp_common/shared_tool.py`), so AHS agent sessions retain access to
-`query_yuppdb`, `search_gcp_logs`, `get_sentry_issue_details`, etc., even
+`query_appdb`, `search_gcp_logs`, `get_sentry_issue_details`, etc., even
 when `AHS_MONO_ENABLE_MCP=false`.
 
 ### Per-plugin sub-flags
@@ -776,8 +776,8 @@ Pick the shape that matches your environment, then set the flags accordingly:
 |-------|-----------------------------------|------------------------|----------|
 | **Pure AHS** (default) | `false` | `false` | Self-hosted deployment that just needs agent sessions; no Slack/GitHub integrations; no external (developer-IDE) MCP access. |
 | **AHS + Slack/GitHub** | `true`  | `false` | Self-hosted deployment with Slack `@mention` flow or GitHub webhook triggers, but no need for the developer-IDE MCP. |
-| **AHS + agcouch MCP**  | `false` | `true`  | Internal Yupp deployment whose engineers connect Claude / Cursor to the agcouch MCP for ad-hoc DB / Sentry / GCP queries. Slack agents not needed. |
-| **Everything on** (legacy) | `true`  | `true`  | The full Yupp prod / staging shape — agents, Slack, GitHub, **and** developer-IDE MCP all in one process. |
+| **AHS + platform MCP**  | `false` | `true`  | An internal deployment whose engineers connect Claude / Cursor to the platform MCP for ad-hoc DB / Sentry / GCP queries. Slack agents not needed. |
+| **Everything on** (legacy) | `true`  | `true`  | The full production / staging shape — agents, Slack, GitHub, **and** developer-IDE MCP all in one process. |
 
 ### `.env` examples
 
@@ -811,10 +811,10 @@ curl -s http://localhost:8090/health
 curl -s -o /dev/null -w "%{http_code}\n" -X POST http://localhost:8090/mcp/harness/
 # → 401
 
-# /mcp/agcouch is mounted iff AHS_MONO_ENABLE_MCP=true.
+# /mcp/platform is mounted iff AHS_MONO_ENABLE_MCP=true.
 #   true  → 401 (mounted, auth rejected)
 #   false → 404 (not mounted)
-curl -s -o /dev/null -w "%{http_code}\n" -X POST http://localhost:8090/mcp/agcouch/
+curl -s -o /dev/null -w "%{http_code}\n" -X POST http://localhost:8090/mcp/platform/
 
 # /gw/slack/* is mounted iff AHS_MONO_ENABLE_GATEWAY_SERVICE=true AND
 # GATEWAY_SLACK_ENABLED=true.

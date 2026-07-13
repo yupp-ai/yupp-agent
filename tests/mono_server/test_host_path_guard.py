@@ -1,6 +1,6 @@
 """Tests for HostPathGuardMiddleware.
 
-Verifies that requests arriving on a "scoped" Host header (e.g. mcp.agcouch.com)
+Verifies that requests arriving on a "scoped" Host header (e.g. mcp.example.com)
 are restricted to the configured path allowlist, while unscoped hosts
 (e.g. direct IP access, other subdomains) pass through untouched.
 """
@@ -32,57 +32,57 @@ def _make_app(host_map: dict[str, list[str]]) -> FastAPI:
 
 
 def test_scoped_host_allows_listed_prefix() -> None:
-    app = _make_app({"mcp.agcouch.com": ["/mcp", "/health"]})
+    app = _make_app({"mcp.example.com": ["/mcp", "/health"]})
     client = TestClient(app)
 
-    resp = client.get("/mcp/ping", headers={"Host": "mcp.agcouch.com"})
+    resp = client.get("/mcp/ping", headers={"Host": "mcp.example.com"})
     assert resp.status_code == 200
     assert resp.json() == {"ok": "mcp"}
 
 
 def test_scoped_host_allows_health() -> None:
-    app = _make_app({"mcp.agcouch.com": ["/mcp", "/health"]})
+    app = _make_app({"mcp.example.com": ["/mcp", "/health"]})
     client = TestClient(app)
 
-    resp = client.get("/health", headers={"Host": "mcp.agcouch.com"})
+    resp = client.get("/health", headers={"Host": "mcp.example.com"})
     assert resp.status_code == 200
 
 
 def test_scoped_host_blocks_other_prefix() -> None:
-    app = _make_app({"mcp.agcouch.com": ["/mcp", "/health"]})
+    app = _make_app({"mcp.example.com": ["/mcp", "/health"]})
     client = TestClient(app)
 
-    resp = client.get("/ahs/ping", headers={"Host": "mcp.agcouch.com"})
+    resp = client.get("/ahs/ping", headers={"Host": "mcp.example.com"})
     assert resp.status_code == 404
 
 
 def test_unscoped_host_passes_through() -> None:
-    app = _make_app({"mcp.agcouch.com": ["/mcp"]})
+    app = _make_app({"mcp.example.com": ["/mcp"]})
     client = TestClient(app)
 
     # Any host not in the map sees all routes.
-    for host in ("localhost", "agent.agcouch.com", "127.0.0.1:8090"):
+    for host in ("localhost", "agent.example.com", "127.0.0.1:8090"):
         resp = client.get("/ahs/ping", headers={"Host": host})
         assert resp.status_code == 200, f"host {host!r} unexpectedly blocked"
 
 
 def test_host_port_stripped_before_match() -> None:
-    """Host headers often include a port (e.g. Host: mcp.agcouch.com:443)."""
-    app = _make_app({"mcp.agcouch.com": ["/mcp"]})
+    """Host headers often include a port (e.g. Host: mcp.example.com:443)."""
+    app = _make_app({"mcp.example.com": ["/mcp"]})
     client = TestClient(app)
 
-    resp = client.get("/mcp/ping", headers={"Host": "mcp.agcouch.com:443"})
+    resp = client.get("/mcp/ping", headers={"Host": "mcp.example.com:443"})
     assert resp.status_code == 200
 
-    resp = client.get("/ahs/ping", headers={"Host": "mcp.agcouch.com:443"})
+    resp = client.get("/ahs/ping", headers={"Host": "mcp.example.com:443"})
     assert resp.status_code == 404
 
 
 def test_empty_allowlist_for_host_blocks_everything() -> None:
-    app = _make_app({"mcp.agcouch.com": []})
+    app = _make_app({"mcp.example.com": []})
     client = TestClient(app)
 
-    resp = client.get("/mcp/ping", headers={"Host": "mcp.agcouch.com"})
+    resp = client.get("/mcp/ping", headers={"Host": "mcp.example.com"})
     assert resp.status_code == 404
 
 
@@ -90,7 +90,7 @@ def test_no_host_map_is_noop() -> None:
     app = _make_app({})
     client = TestClient(app)
 
-    resp = client.get("/ahs/ping", headers={"Host": "mcp.agcouch.com"})
+    resp = client.get("/ahs/ping", headers={"Host": "mcp.example.com"})
     assert resp.status_code == 200
 
 
@@ -99,7 +99,7 @@ def test_prefix_not_substring() -> None:
     app = FastAPI()
     app.add_middleware(
         HostPathGuardMiddleware,
-        host_allowlist={"mcp.agcouch.com": ["/mcp"]},
+        host_allowlist={"mcp.example.com": ["/mcp"]},
     )
 
     @app.get("/mcp")
@@ -111,5 +111,5 @@ def test_prefix_not_substring() -> None:
         return {"ok": "other"}
 
     client = TestClient(app)
-    assert client.get("/mcp", headers={"Host": "mcp.agcouch.com"}).status_code == 200
-    assert client.get("/mcpother", headers={"Host": "mcp.agcouch.com"}).status_code == 404
+    assert client.get("/mcp", headers={"Host": "mcp.example.com"}).status_code == 200
+    assert client.get("/mcpother", headers={"Host": "mcp.example.com"}).status_code == 404

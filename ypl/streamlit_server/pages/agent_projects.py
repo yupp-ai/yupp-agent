@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 import html
+import os
 import uuid
 from collections import defaultdict, deque
 from datetime import UTC, datetime
@@ -42,9 +43,10 @@ from ypl.streamlit_server.auth import require_auth
 from ypl.streamlit_server.permissions import get_current_user_email
 from ypl.structured_logger import get_logger
 
-# Linear workspace slug used to build project URLs
-_LINEAR_WORKSPACE_SLUG = "yupp"
-_LINEAR_TEAM_ID_YUP = "75eb453f-2fed-478c-989e-e96e2cf1024d"
+# Linear workspace slug + team ID used to build project URLs and sync issues.
+# Set LINEAR_WORKSPACE_SLUG and LINEAR_TEAM_ID in your environment.
+_LINEAR_WORKSPACE_SLUG = os.environ.get("LINEAR_WORKSPACE_SLUG", "")
+_LINEAR_TEAM_ID = os.environ.get("LINEAR_TEAM_ID", "")
 
 logger = get_logger()
 
@@ -1886,7 +1888,7 @@ def _render_project_detail(project_id: uuid.UUID, task_id: str | None) -> None:
                         linear_project_id, sync_result = run_coroutine_in_lit_worker(
                             export_project_to_linear(
                                 project_id=str(project.agent_project_id),
-                                linear_team_id=_LINEAR_TEAM_ID_YUP,
+                                linear_team_id=_LINEAR_TEAM_ID,
                             ),
                             timeout=120,
                         )

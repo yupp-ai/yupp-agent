@@ -4,7 +4,7 @@ Both master flags (``AHS_MONO_ENABLE_GATEWAY_SERVICE`` and
 ``AHS_MONO_ENABLE_MCP``) default to *False* in production (the
 pure-AHS deployment shape — see ``DEPLOYMENT.md``).  The bulk of the
 mono-server test suite was written assuming the legacy "AHS + SAG +
-agcouch MCP" shape, so we flip both flags to ``True`` here at conftest
+platform MCP" shape, so we flip both flags to ``True`` here at conftest
 import time — *before* any test module imports ``ypl.mono_server.server``
 and triggers the module-level ``app = create_app()`` call.
 
@@ -25,7 +25,7 @@ import os
 
 # Set BEFORE any mono-server test imports `ypl.mono_server.server`.
 # Without this, the module-level `app` would be the new "pure AHS" shape
-# (no /mcp/agcouch, no /gw/slack), and the legacy tests that assert
+# (no /mcp/platform, no /gw/slack), and the legacy tests that assert
 # those mounts exist would fail across the board.
 os.environ.setdefault("AHS_MONO_ENABLE_GATEWAY_SERVICE", "true")
 os.environ.setdefault("AHS_MONO_ENABLE_MCP", "true")

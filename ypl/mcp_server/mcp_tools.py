@@ -20,7 +20,7 @@ from fastmcp.tools.tool import ToolResult
 # Import tool modules to trigger @mcp_server.tool() registration.
 # Each module self-registers its tools via the @mcp_server.tool() decorator at
 # import time. Deleting any of these lines silently removes the corresponding
-# tools from the agcouch MCP server — agent sessions would then get an empty
+# tools from the platform MCP server — agent sessions would then get an empty
 # tool list (as happened after PR #215). Do NOT remove without also deleting
 # the tool module. Covered by tests/mcp_server/test_tool_registration.py.
 import ypl.mcp_server.tools.agent_artifacts

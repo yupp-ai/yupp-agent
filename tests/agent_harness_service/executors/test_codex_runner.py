@@ -461,7 +461,7 @@ class TestEventParsing:
                 "item": {
                     "id": "item_1",
                     "type": "mcp_tool_call",
-                    "server": "agcouch-mcp-server",
+                    "server": "platform-mcp-server",
                     "tool": "search_gcp_logs",
                     "arguments": {"query": "severity>=ERROR"},
                 },
@@ -471,7 +471,7 @@ class TestEventParsing:
                 "item": {
                     "id": "item_1",
                     "type": "mcp_tool_call",
-                    "server": "agcouch-mcp-server",
+                    "server": "platform-mcp-server",
                     "tool": "search_gcp_logs",
                     "arguments": {"query": "severity>=ERROR"},
                     "result": {

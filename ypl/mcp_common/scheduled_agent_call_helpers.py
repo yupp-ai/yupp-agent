@@ -1,6 +1,6 @@
 """Shared helper functions for agent schedules.
 
-Used by the agcouch MCP server, the AHS local MCP server, and AHS REST
+Used by the platform MCP server, the AHS local MCP server, and AHS REST
 endpoints.
 """
 

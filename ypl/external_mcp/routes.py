@@ -9,7 +9,7 @@ are:
   POST /mcp_oauth/m2m/set?server=<slug>   body: {"api_key": "..."}
 
 The flow is anchored on the public AHS host (e.g.
-``https://ahs.voltcouch.com``) because the provider's redirect_uri must be
+``https://ahs.example.com``) because the provider's redirect_uri must be
 stable + HTTPS.  Streamlit (Lit) opens ``/mcp_oauth/start`` in a new tab;
 once the callback finishes, it redirects the browser back to ``return_to``
 (typically the ``my_mcps`` Lit page) so the user lands where they came from.

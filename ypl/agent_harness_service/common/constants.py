@@ -113,18 +113,18 @@ PERSONAL_AGENT_DEFAULT_CONFIG: dict[str, Any] = {
 # GCS bucket and prefix for persisting session workspace data (attachments, history).
 # Layout: gs://{bucket}/sessions/{environment}/{session_id}/...
 # Persistence is disabled in local dev (checked in session_persistence.py).
-AHS_GCS_SESSION_BUCKET = os.environ.get("AHS_GCS_SESSION_BUCKET", "yupp-agents")
+AHS_GCS_SESSION_BUCKET = os.environ.get("AHS_GCS_SESSION_BUCKET", "your-agent-bucket")
 _AHS_ENVIRONMENT = os.environ.get("ENVIRONMENT", "local")
 AHS_GCS_SESSION_PREFIX = os.environ.get("AHS_GCS_SESSION_PREFIX", f"sessions/{_AHS_ENVIRONMENT}")
 
 # Lit (Streamlit console) base URL — used for session/project links in PR
 # descriptions, Slack messages, and CLI/TUI output. Set this in the deployment's
-# .env to the Streamlit console's public URL (e.g. ``https://lit.agcouch.com``).
+# .env to the Streamlit console's public URL (e.g. ``https://lit.example.com``).
 # When empty, the Lit link is omitted from generated messages.
 AHS_LIT_BASE_URL = os.environ.get("AHS_LIT_BASE_URL", "").rstrip("/")
 
 # Slack workspace subdomain — used to build Slack permalinks back to threads
-# from Lit (e.g. ``yuppai`` or ``agentic-couch``). The full URL is built as
+# from Lit (e.g. ``your-workspace`` or ``agentic-couch``). The full URL is built as
 # ``https://{SLACK_WORKSPACE_DOMAIN_NAME}.slack.com/archives/<channel>/p<msg_ts>...``.
 # When empty, Slack permalink generation returns None and callers should
 # omit the link.
@@ -194,20 +194,20 @@ _CLI_TOOLS_SUPERSEDED_BY_MCP: list[str] = []
 
 # All known MCP server names that a session can be granted access to.
 # These must match the actual keys in .mcp.json (and the dynamically
-# injected ``harness``). ``settings.AGCOUCH_MCP_SERVER_NAME`` is resolved
+# injected ``harness``). ``settings.PLATFORM_MCP_SERVER_NAME`` is resolved
 # at import time so tests that override settings still see the default
 # here; actual connection wiring in ``mcp_client.py`` re-reads the
 # setting at runtime.
 #
-# TODO(phase-4): drop ``settings.AGCOUCH_MCP_SERVER_NAME`` from this list
+# TODO(phase-4): drop ``settings.PLATFORM_MCP_SERVER_NAME`` from this list
 # once the dev-token retirement also retires the ``allowed_servers``
 # permission row referring to it. After PR #300 (phase-2) the AHS
-# executor no longer connects to the agcouch mount, so the name is dead
+# executor no longer connects to the platform mount, so the name is dead
 # weight here, but ``SessionPermissions`` rows persisted with this in
 # ``allowed_servers`` still need to read cleanly.
 # TODO(phase-9): externally-registered MCP servers (from the DB registry)
 # will be appended to this list at runtime when the session starts.
-ALL_MCP_SERVERS: list[str] = ["harness", settings.AGCOUCH_MCP_SERVER_NAME]
+ALL_MCP_SERVERS: list[str] = ["harness", settings.PLATFORM_MCP_SERVER_NAME]
 
 # Harness MCP tools that require USE_MCP permission (bare names, no CLI prefix).
 # Used by both the harnessed path (runner.py, with mcp__harness__ prefix) and
@@ -223,9 +223,9 @@ BLOCKED_HARNESS_TOOLS = frozenset(
     }
 )
 
-# Harness MCP tools that previously lived on the agcouch mount and are now
+# Harness MCP tools that previously lived on the platform mount and are now
 # registered on harness via ``@shared_tool`` (PR #300 / phase-2). They reach
-# yuppdb / agentdb / GCP logs / Sentry / Twitter / Linear / shared agent
+# appdb / agentdb / GCP logs / Sentry / Twitter / Linear / shared agent
 # project + artifact + memory state, and were previously blocked for
 # restricted (no-USE_MCP) sessions by the ``mcp__harness__*``
 # wildcard. Now that the wildcard matches nothing, the security boundary
@@ -279,8 +279,8 @@ SHARED_HARNESS_TOOLS_BLOCKED_FOR_RESTRICTED: frozenset[str] = frozenset(
         "load_memory",
         "list_memory",
         "search_memory",
-        # database — yuppdb / agentdb / bigquery
-        "query_yuppdb",
+        # database — appdb / agentdb / bigquery
+        "query_appdb",
         "query_agentdb",
         "query_bigquery",
         "query_bigquery_expensive",

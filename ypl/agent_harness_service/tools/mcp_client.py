@@ -5,9 +5,9 @@ schemas and a unified tool executor for the raw executor loop.
 
 The harness mount is the only MCP that AHS itself talks to: shared
 (AHS-system) and external-data tools that used to live exclusively on the
-agcouch MCP now register on the harness instance via ``@shared_tool``
+platform MCP now register on the harness instance via ``@shared_tool``
 (see :mod:`ypl.mcp_common.shared_tool`). AHS no longer needs to open a
-second client to ``/mcp/agcouch`` with ``AGCOUCH_MCP_TOKEN`` — every
+second client to ``/mcp/platform`` with ``PLATFORM_MCP_TOKEN`` — every
 tool the agent can call is reachable via ``AHS_MCP_SECRET``.
 
 TODO(phase-9): once the DB-backed external MCP registry lands, extend
@@ -94,7 +94,7 @@ class MCPToolAccess:
         # Harness MCP — the only mount AHS talks to. Shared and
         # external-data tools register on it via ``@shared_tool`` so the
         # agent reaches database / Sentry / GCP-logs tools through this
-        # client without needing a separate agcouch connection.
+        # client without needing a separate platform connection.
         if "harness" in self._allowed_servers:
             harness_url = f"{AHS_MCP_BASE_URL}/mcp/harness/"
             harness_headers = {
@@ -106,7 +106,7 @@ class MCPToolAccess:
             # agent_artifacts, memory_artifacts, etc.) attribute calls
             # to the right principal. The harness auth middleware
             # validates the secret then trusts these tamper-proof
-            # headers — the same model agcouch used previously.
+            # headers — the same model platform used previously.
             if self._user_id:
                 harness_headers["X-User-ID"] = self._user_id
             if self._agent_name:

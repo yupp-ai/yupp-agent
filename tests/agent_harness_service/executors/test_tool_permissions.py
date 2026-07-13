@@ -272,8 +272,8 @@ class TestBuildArgsToolFlags:
         """``*:deny`` with MCP and full access appends harness glob to --allowedTools.
 
         After phase-2 (PR #300) every shared / external-data tool that
-        used to live on agcouch is reachable via ``mcp__harness__*``, so
-        the agcouch wildcard is gone — full access is described entirely
+        used to live on platform is reachable via ``mcp__harness__*``, so
+        the platform wildcard is gone — full access is described entirely
         by the harness glob plus the eager-load predeclares.
         """
         config = _make_config(
@@ -289,11 +289,11 @@ class TestBuildArgsToolFlags:
         tools = args[idx + 1].split(",")
         assert "Read" in tools
         assert "mcp__harness__*" in tools
-        # Regression guard: the dead agcouch wildcard never reappears.
-        assert "mcp__agcouch-mcp-server__*" not in tools
+        # Regression guard: the dead platform wildcard never reappears.
+        assert "mcp__platform-mcp-server__*" not in tools
         # Eager-load fast path: top shared tools are explicitly named so
         # Claude Code skips the deferred-discovery ToolSearch round-trip.
-        assert "mcp__harness__query_yuppdb" in tools
+        assert "mcp__harness__query_appdb" in tools
         assert "mcp__harness__search_gcp_logs" in tools
         assert "mcp__harness__add_artifact" in tools
         assert "mcp__harness__report_security_incident" in tools
@@ -318,8 +318,8 @@ class TestBuildArgsToolFlags:
     def test_default_allow_restricted_blocks_migrated_shared_tools(self) -> None:
         """Restricted sessions in default-allow mode cannot reach the migrated shared tools.
 
-        Pre phase-2 these were on the agcouch mount and blocked for
-        restricted sessions via the ``mcp__agcouch-mcp-server__*``
+        Pre phase-2 these were on the platform mount and blocked for
+        restricted sessions via the ``mcp__platform-mcp-server__*``
         wildcard. After PR #300 they live under ``mcp__harness__*``;
         the deny list enumerates them so the security boundary is
         preserved.
@@ -337,7 +337,7 @@ class TestBuildArgsToolFlags:
         denied = args[idx + 1].split(",")
         # Every shared/external-data tool migrated by PR #300 is denied.
         for blocked in (
-            "mcp__harness__query_yuppdb",
+            "mcp__harness__query_appdb",
             "mcp__harness__query_bigquery_expensive",
             "mcp__harness__search_gcp_logs",
             "mcp__harness__get_sentry_issue_details",
@@ -346,8 +346,8 @@ class TestBuildArgsToolFlags:
             "mcp__harness__save_memory",
         ):
             assert blocked in denied, f"{blocked} should be in restricted deny list"
-        # Regression guard: the dead agcouch wildcard never reappears.
-        assert "mcp__agcouch-mcp-server__*" not in denied
+        # Regression guard: the dead platform wildcard never reappears.
+        assert "mcp__platform-mcp-server__*" not in denied
         # ``report_security_incident`` is intentionally *not* blocked —
         # SECURITY.md instructs every agent to call it.
         assert "mcp__harness__report_security_incident" not in denied

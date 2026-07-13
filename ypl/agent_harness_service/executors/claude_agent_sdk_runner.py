@@ -10,11 +10,11 @@ Architecture (Section 3.2 of AHS Executor v2 design doc):
     │     ◀─── response ────
     └─ on tool_use block:
          ├─ local disk tools (Bash, Read, Write, Edit, Glob, Grep) → BCH (CommandHandlerManager)
-         └─ MCP tools (harness, agcouch) → MCPToolAccess.call_tool()
+         └─ MCP tools (harness, platform) → MCPToolAccess.call_tool()
 
 Tool list:
   - Local disk tools are declared as inline JSON Schema definitions (not via MCP server URL).
-  - Harness + agcouch MCP tools are fetched from the running FastMCP servers and declared
+  - Harness + platform MCP tools are fetched from the running FastMCP servers and declared
     as MCP tool schemas. SessionPermissions.tool_permissions filtering is applied before
     declaring the tool list to the SDK.
 
@@ -305,7 +305,7 @@ class ClaudeAgentSdkRunner(AgentRunner):
 
         Implements the full agentic loop:
         1. Build system prompt and tool list.
-        2. Connect to MCP servers (harness + agcouch) via MCPToolAccess.
+        2. Connect to MCP servers (harness + platform) via MCPToolAccess.
         3. Repeatedly call ``client.messages.create()`` until ``stop_reason != "tool_use"``.
         4. Dispatch each tool_use block: local disk tools → BCH; MCP tools → MCPToolAccess.
         5. Persist message history for cross-turn resumption.
