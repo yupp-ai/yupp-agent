@@ -62,6 +62,16 @@ _COST_PER_M_TOKENS: dict[str, dict[str, float]] = {
     # deepseek-v4 — approximate rates (flash cheaper than pro); verify against published pricing.
     "deepseek-v4-flash": {"input": 0.27, "output": 1.10, "cache_read": 0.07},
     "deepseek-v4-pro": {"input": 0.55, "output": 2.19, "cache_read": 0.14},
+    # Together — serverless list prices as reported by GET https://api.together.ai/v1/models.
+    # Keys are the org-qualified model IDs Together uses (see KNOWN_MODELS in providers.py).
+    # Together does not report per-token prompt-cache rates, so cache_read is omitted and
+    # cached input bills at the full input rate — an over-estimate, never an under-estimate.
+    "deepseek-ai/DeepSeek-V4-Flash-0731": {"input": 0.14, "output": 0.28},
+    "moonshotai/Kimi-K3": {"input": 3.0, "output": 15.0},
+    "zai-org/GLM-5.2": {"input": 1.40, "output": 4.40},
+    "Qwen/Qwen3.8-2.4T-A95B": {"input": 2.50, "output": 6.25},
+    "meta-models/Muse-Glimmer-30B": {"input": 0.35, "output": 1.50},
+    "thinkingmachines/Inkling": {"input": 1.0, "output": 4.05},
 }
 
 # Context window limits (for overflow detection)
@@ -85,6 +95,15 @@ _CONTEXT_LIMITS: dict[str, int] = {
     "deepseek-reasoner": 64_000,
     "deepseek-v4-flash": 128_000,
     "deepseek-v4-pro": 128_000,
+    # Together — context_length as reported by GET https://api.together.ai/v1/models,
+    # which is what the serverless endpoint actually enforces (and can differ from the
+    # marketing page: Qwen3.8 is documented as 256K but served at 1.01M).
+    "deepseek-ai/DeepSeek-V4-Flash-0731": 1_048_576,
+    "moonshotai/Kimi-K3": 1_000_000,
+    "zai-org/GLM-5.2": 512_000,
+    "Qwen/Qwen3.8-2.4T-A95B": 1_010_000,
+    "meta-models/Muse-Glimmer-30B": 131_072,
+    "thinkingmachines/Inkling": 524_288,
 }
 
 _RESERVED_BUFFER = 4_000  # Tokens reserved for response

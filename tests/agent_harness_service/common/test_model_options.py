@@ -51,6 +51,11 @@ def test_harnessed_explicit_only_for_mapped_providers() -> None:
         "harnessed:claude-agent-sdk:anthropic/claude-opus-4-6",
         "harnessed:claude-code-cli:anthropic/claude-opus-4-6",
         "raw:deepseek/deepseek-v4-pro",
+        # Together IDs carry a second slash — the extra separator must survive
+        # canonical -> option -> canonical and the display-label round trip.
+        "raw:together/zai-org/GLM-5.2",
+        "raw:together/deepseek-ai/DeepSeek-V4-Flash-0731",
+        "raw:together/Qwen/Qwen3.8-2.4T-A95B",
     ],
 )
 def test_roundtrip_parse_format(entry: str) -> None:
@@ -58,6 +63,17 @@ def test_roundtrip_parse_format(entry: str) -> None:
     assert format_chain_entry(opt) == entry
     # display label round-trips back to the same canonical entry
     assert display_label_to_canonical(canonical_to_display_label(entry)) == entry
+
+
+def test_together_models_are_raw_only() -> None:
+    """No CLI harness runs Together models, so they appear only as [RAW] options."""
+    options = enumerate_model_options()
+    together = [o for o in options if o.provider == "together"]
+    assert together, "expected Together options"
+    assert all(o.executor_type == "raw" for o in together)
+    labels = {o.display_label for o in options}
+    assert "[RAW] together/zai-org/GLM-5.2" in labels
+    assert "[RAW] together/thinkingmachines/Inkling" in labels
 
 
 def test_chain_entry_to_executor_mapping() -> None:
@@ -69,6 +85,11 @@ def test_chain_entry_to_executor_mapping() -> None:
         "anthropic/claude-opus-4-6",
     )
     assert chain_entry_to_executor("harnessed:codex-cli:openai/gpt-4o") == ("harnessed", "codex-cli", "openai/gpt-4o")
+    assert chain_entry_to_executor("raw:together/moonshotai/Kimi-K3") == (
+        "raw",
+        None,
+        "together/moonshotai/Kimi-K3",
+    )
 
 
 @pytest.mark.parametrize(

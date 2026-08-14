@@ -12,6 +12,7 @@ from ypl.agent_harness_service.common.constants import (
     DEFAULT_MODEL_MINIMAX,
     DEFAULT_MODEL_MOONSHOT,
     DEFAULT_MODEL_OPENAI,
+    DEFAULT_MODEL_TOGETHER,
     DEFAULT_MODEL_ZAI,
     PROVIDER_ANTHROPIC,
     PROVIDER_CEREBRAS,
@@ -19,6 +20,7 @@ from ypl.agent_harness_service.common.constants import (
     PROVIDER_MINIMAX,
     PROVIDER_MOONSHOT,
     PROVIDER_OPENAI,
+    PROVIDER_TOGETHER,
     PROVIDER_ZAI,
 )
 
@@ -75,6 +77,12 @@ PROVIDERS: dict[str, ProviderConfig] = {
         sdk="openai",
         default_model=DEFAULT_MODEL_DEEPSEEK,
     ),
+    PROVIDER_TOGETHER: ProviderConfig(
+        api_base="https://api.together.ai/v1",
+        env_key="TOGETHER_AI_API_KEY",
+        sdk="openai",
+        default_model=DEFAULT_MODEL_TOGETHER,
+    ),
 }
 
 # All known models with provider prefix for route_model diversity guarantees
@@ -99,6 +107,23 @@ KNOWN_MODELS: list[str] = [
     # back on subsequent turns; R1 rejects both (no function calling; HTTP 400 on
     # reasoning_content echo-back). Pricing/context metadata is kept in raw_executor.py
     # so it can be enabled once per-model capability flags exist.
+    #
+    # Together — an aggregator, so its own model IDs are '{org}/{model}' and the full
+    # registry string carries two slashes ('together/zai-org/GLM-5.2'). This is fine:
+    # parse_model_string() splits on the first slash only, and the pricing / context
+    # tables in raw_executor.py are keyed by the org-qualified model_id, which can
+    # never collide with a direct provider's bare model ID.
+    "together/deepseek-ai/DeepSeek-V4-Flash-0731",
+    "together/moonshotai/Kimi-K3",
+    "together/zai-org/GLM-5.2",
+    # NOTE: Qwen3.8 is in Together's catalog but its serverless endpoint currently
+    # answers 503 "no available server" — a 2.4T model with no spare capacity. It is
+    # listed here so it works the moment capacity returns; until then a turn on it
+    # fails outright, because a 503 is not one of the rate-limit phrases the fallback
+    # chain matches on (see is_rate_limit_failure in common/model_options.py).
+    "together/Qwen/Qwen3.8-2.4T-A95B",
+    "together/meta-models/Muse-Glimmer-30B",
+    "together/thinkingmachines/Inkling",
 ]
 
 

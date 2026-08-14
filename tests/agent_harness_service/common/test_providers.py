@@ -2,6 +2,7 @@
 
 import pytest
 from ypl.agent_harness_service.common.providers import (
+    KNOWN_MODELS,
     PROVIDERS,
     get_provider_config,
     is_openai_compatible,
@@ -46,6 +47,12 @@ class TestParseModelString:
         provider, model_id = parse_model_string("anthropic/some/nested/model")
         assert provider == "anthropic"
         assert model_id == "some/nested/model"
+
+    def test_valid_together_model(self) -> None:
+        """Together IDs are org-qualified, so the model_id keeps its own slash."""
+        provider, model_id = parse_model_string("together/zai-org/GLM-5.2")
+        assert provider == "together"
+        assert model_id == "zai-org/GLM-5.2"
 
     def test_no_slash_raises(self) -> None:
         with pytest.raises(ValueError, match="Invalid model format"):
@@ -143,8 +150,14 @@ class TestGetProviderConfig:
         assert cfg.sdk == "openai"
         assert cfg.api_base == "https://api.deepseek.com/v1"
 
+    def test_together_config(self) -> None:
+        cfg = get_provider_config("together")
+        assert cfg.env_key == "TOGETHER_AI_API_KEY"
+        assert cfg.sdk == "openai"
+        assert cfg.api_base == "https://api.together.ai/v1"
+
     def test_all_known_providers_exist(self) -> None:
-        for provider in ("anthropic", "openai", "zai", "minimax", "moonshot", "cerebras", "deepseek"):
+        for provider in ("anthropic", "openai", "zai", "minimax", "moonshot", "cerebras", "deepseek", "together"):
             cfg = get_provider_config(provider)
             assert cfg.env_key
             assert cfg.sdk in ("anthropic", "openai")
@@ -156,6 +169,35 @@ class TestGetProviderConfig:
     def test_empty_provider_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown provider"):
             get_provider_config("")
+
+
+class TestKnownModels:
+    def test_every_known_model_parses(self) -> None:
+        for model in KNOWN_MODELS:
+            parse_model_string(model)  # raises on a bad prefix or unknown provider
+
+    def test_together_models_registered(self) -> None:
+        expected = {
+            "together/deepseek-ai/DeepSeek-V4-Flash-0731",
+            "together/moonshotai/Kimi-K3",
+            "together/zai-org/GLM-5.2",
+            "together/Qwen/Qwen3.8-2.4T-A95B",
+            "together/meta-models/Muse-Glimmer-30B",
+            "together/thinkingmachines/Inkling",
+        }
+        assert expected <= set(KNOWN_MODELS)
+
+    def test_together_model_ids_keep_their_org_prefix(self) -> None:
+        """The org half of a Together ID belongs to model_id, not the provider."""
+        together = [m for m in KNOWN_MODELS if m.startswith("together/")]
+        assert together, "expected Together models in KNOWN_MODELS"
+        for model in together:
+            provider, model_id = parse_model_string(model)
+            assert provider == "together"
+            assert "/" in model_id, f"{model} lost its org prefix"
+
+    def test_no_duplicate_models(self) -> None:
+        assert len(KNOWN_MODELS) == len(set(KNOWN_MODELS))
 
 
 class TestIsOpenAICompatible:
@@ -180,6 +222,9 @@ class TestIsOpenAICompatible:
 
     def test_deepseek_is_compatible(self) -> None:
         assert is_openai_compatible("deepseek") is True
+
+    def test_together_is_compatible(self) -> None:
+        assert is_openai_compatible("together") is True
 
     def test_all_non_anthropic_are_openai_compatible(self) -> None:
         """All providers except anthropic use the openai-compatible SDK."""

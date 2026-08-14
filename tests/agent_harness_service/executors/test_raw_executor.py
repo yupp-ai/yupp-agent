@@ -3,13 +3,48 @@
 from pathlib import Path
 
 import pytest
+from ypl.agent_harness_service.common.providers import KNOWN_MODELS, parse_model_string
 from ypl.agent_harness_service.executors.raw_executor import (
+    _CONTEXT_LIMITS,
+    _COST_PER_M_TOKENS,
     _estimate_cost,
     estimate_messages_tokens,
     estimate_tokens,
     spill_tool_result_to_file,
     truncate_tool_result,
 )
+
+
+class TestTogetherModelMetadata:
+    """Together models must carry real pricing / context metadata.
+
+    Both tables are keyed by the bare model_id, and a miss silently falls back to
+    generic defaults ($3/$15 per M, 128K context) — which would badly misreport cost
+    and misfire overflow detection on 1M-context models. These assert the entries exist.
+    """
+
+    TOGETHER_MODEL_IDS = [parse_model_string(m)[1] for m in KNOWN_MODELS if m.startswith("together/")]
+
+    def test_every_together_model_has_pricing(self) -> None:
+        for model_id in self.TOGETHER_MODEL_IDS:
+            rates = _COST_PER_M_TOKENS.get(model_id)
+            assert rates is not None, f"{model_id} missing from _COST_PER_M_TOKENS"
+            assert rates["input"] > 0
+            assert rates["output"] > 0
+
+    def test_every_together_model_has_context_limit(self) -> None:
+        for model_id in self.TOGETHER_MODEL_IDS:
+            limit = _CONTEXT_LIMITS.get(model_id)
+            assert limit is not None, f"{model_id} missing from _CONTEXT_LIMITS"
+            assert limit >= 128_000
+
+    def test_together_cost_uses_its_own_rates_not_the_default(self) -> None:
+        """A Together model_id must not fall through to the generic $3/$15 default."""
+        usage = {"input_tokens": 1_000_000, "output_tokens": 1_000_000}
+        # DeepSeek-V4-Flash on Together is $0.14 in / $0.28 out per M.
+        cost = _estimate_cost("deepseek-ai/DeepSeek-V4-Flash-0731", usage)
+        assert cost == pytest.approx(0.14 + 0.28)
+        assert cost != pytest.approx(_estimate_cost("some-unknown-model", usage))
 
 
 class TestTruncateToolResult:
