@@ -363,6 +363,7 @@ PROVIDER_OPENAI = "openai"
 PROVIDER_ZAI = "zai"
 PROVIDER_MINIMAX = "minimax"
 PROVIDER_DEEPSEEK = "deepseek"
+PROVIDER_TOGETHER = "together"
 
 # Default models per provider
 DEFAULT_MODEL_ANTHROPIC = "anthropic/claude-sonnet-4-6"
@@ -372,6 +373,9 @@ DEFAULT_MODEL_OPENAI = "openai/gpt-4o"
 DEFAULT_MODEL_ZAI = "zai/glm-5"
 DEFAULT_MODEL_MINIMAX = "minimax/MiniMax-M2.5"
 DEFAULT_MODEL_DEEPSEEK = "deepseek/deepseek-v4-pro"
+# Together model IDs are themselves '{org}/{model}', so the full registry string
+# carries two slashes. parse_model_string() splits on the first one only.
+DEFAULT_MODEL_TOGETHER = "together/zai-org/GLM-5.2"
 
 # Session status values
 SESSION_STATUS_ACTIVE = "ACTIVE"
