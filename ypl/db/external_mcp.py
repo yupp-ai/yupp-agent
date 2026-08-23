@@ -105,6 +105,13 @@ class McpServer(BaseModel, table=True):
     # Shape: {"client_id": str, "authorize_url": str, "token_url": str,
     #         "scopes": list[str], "extra_authorize_params": dict[str,str]}
     oauth_config: dict | None = Field(default=None, sa_column=Column(postgresql.JSONB, nullable=True))
+    # Header the credential rides in.  ``None`` (the common case) means the
+    # RFC 6750 default: ``Authorization: Bearer <token>``.  Set it when the
+    # provider authenticates on a bespoke header instead — e.g. arti's
+    # ``X-Arti-Service-Secret``, or the many internal MCPs that want a bare
+    # ``X-API-Key``.  A custom header carries the token *verbatim*, with no
+    # ``Bearer `` prefix, since that prefix is specific to Authorization.
+    auth_header: str | None = Field(default=None, sa_type=Text)
     enabled: bool = Field(default=True, nullable=False)
     # If false, the resolver will refuse to write the bearer token to the
     # agent's ``.mcp.json``.  Phase-2 proxying lives here; for now any
