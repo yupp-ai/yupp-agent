@@ -15,5 +15,8 @@
   "tool_permissions": {
     "*": "allow"
   },
-  "timeout_s": 36000
+  "timeout_s": 36000,
+  "external_mcps": [
+    "arti"
+  ]
 }
