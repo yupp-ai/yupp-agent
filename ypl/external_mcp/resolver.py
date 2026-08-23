@@ -27,9 +27,11 @@ from ypl.db.external_mcp import (
     McpServer,
     McpServerAgent,
     McpServerRoleAccess,
+    McpServerSecrets,
     McpTransport,
 )
 from ypl.db.rbac import UserRoleAssociation
+from ypl.external_mcp import crypto
 from ypl.external_mcp import grants as grants_svc
 from ypl.structured_logger import get_logger
 
@@ -112,6 +114,60 @@ def _transport_type(srv: McpServer) -> str:
     return "http"
 
 
+async def _m2m_fallback_headers(session: AsyncSession, srv: McpServer) -> dict[str, str] | None:
+    """Shared-secret fallback for a server that also carries an M2M token.
+
+    Lets one OAUTH_OBO server double as an M2M endpoint: interactive users who
+    connected get per-user attribution, while sessions with no grant (scheduled
+    / unattended agents) still reach the server via the admin-configured shared
+    secret.  Returns ``None`` when no usable shared token is stored.
+    """
+    secrets = await session.get(McpServerSecrets, srv.mcp_server_id)
+    if not secrets or not secrets.m2m_shared_token_enc:
+        return None
+    token = crypto.decrypt(secrets.m2m_shared_token_enc)
+    if not token:
+        return None
+    return _auth_headers(srv, token)
+
+
+async def _resolve_headers(
+    session: AsyncSession,
+    *,
+    srv: McpServer,
+    user_id: str,
+    agent_session_id: uuid.UUID | None,
+) -> tuple[dict[str, str] | None, str | None]:
+    """Resolve the HTTP auth header(s) for ``srv``, or ``(None, reason)``.
+
+    OAUTH_OBO prefers the connecting user's grant (``Authorization: Bearer``,
+    the OAuth standard — never a custom header, even if one is set for the M2M
+    fallback below).  When there is no grant we fall back to the server's shared
+    M2M token if one is configured, so a single ``arti`` entry serves both
+    attributed interactive sessions and unattended agents.  Other auth types
+    keep their existing behavior.
+    """
+    if srv.auth_type == McpAuthType.OAUTH_OBO:
+        bearer = await grants_svc.resolve_bearer(
+            session, user_id=user_id, server=srv, agent_session_id=agent_session_id
+        )
+        if bearer:
+            return {"Authorization": f"Bearer {bearer}"}, None
+        fallback = await _m2m_fallback_headers(session, srv)
+        if fallback is not None:
+            return fallback, None
+        return None, "no active grant — connect at /my_mcps"
+
+    bearer = await grants_svc.resolve_bearer(
+        session, user_id=user_id, server=srv, agent_session_id=agent_session_id
+    )
+    if bearer is None:
+        return None, "no active grant — connect at /my_mcps"
+    if bearer == "":  # NONE auth
+        return {}, None
+    return _auth_headers(srv, bearer), None
+
+
 async def build_external_mcp_entries(
     *,
     user_id: str,
@@ -148,19 +204,19 @@ async def build_external_mcp_entries(
                 unavailable.append({"slug": srv.slug, "reason": "token-to-agent disabled (proxy not yet supported)"})
                 continue
 
-            bearer = await grants_svc.resolve_bearer(
-                session, user_id=user_id, server=srv, agent_session_id=agent_session_id
+            headers, reason = await _resolve_headers(
+                session, srv=srv, user_id=user_id, agent_session_id=agent_session_id
             )
-            if bearer is None:
-                unavailable.append({"slug": srv.slug, "reason": "no active grant — connect at /my_mcps"})
+            if headers is None:
+                unavailable.append({"slug": srv.slug, "reason": reason or "unavailable"})
                 continue
 
             entry: dict[str, Any] = {
                 "type": _transport_type(srv),
                 "url": srv.url,
             }
-            if bearer:  # NONE auth returns ""
-                entry["headers"] = _auth_headers(srv, bearer)
+            if headers:  # NONE auth returns {}
+                entry["headers"] = headers
             servers_out[srv.slug] = entry
 
         await session.commit()
