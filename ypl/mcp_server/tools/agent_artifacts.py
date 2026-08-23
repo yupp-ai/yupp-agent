@@ -33,23 +33,16 @@ from ypl.agent_harness_service.artifact_store import (
     Attachment,
     archive_artifact,
     archive_artifacts_by_slug,
-    create_artifact,
     get_artifact_by_id,
     get_artifact_by_slug,
     normalize_artifact_labels,
     read_artifact_content,
 )
-from ypl.agent_harness_service.artifact_store import (
-    list_artifact_versions as _list_artifact_versions,
-)
-from ypl.agent_harness_service.artifact_store import (
-    search_artifacts as _search_artifacts,
-)
-from ypl.backend.db import get_async_session, get_async_session_read_replica, retry_db
+from ypl.backend.db import get_async_session_read_replica
 from ypl.db.agent_harness import AgentArtifact, AgentArtifactType
 from ypl.mcp_common.auth_context import current_request_context
 from ypl.mcp_common.shared_tool import shared_tool
-from ypl.mcp_server.tools.artifact_notifier import notify_artifact_event
+from ypl.mcp_server.tools import _arti_backend
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
@@ -78,178 +71,6 @@ def _parse_session_id(raw: str | None) -> uuid.UUID | None:
         return None
 
 
-@retry_db
-async def _insert_pointer_artifact(
-    *,
-    artifact_type: AgentArtifactType,
-    title: str,
-    url: str,
-    description: str | None,
-    creator_user_id: str | None,
-    creator_agent_id: uuid.UUID | None,
-    agent_session_id: uuid.UUID | None,
-    agent_task_id: uuid.UUID | None,
-    artifact_metadata: dict[str, Any] | None,
-) -> AgentArtifact:
-    """Insert a pointer-only artifact row (no blob upload)."""
-    async with get_async_session() as session:
-        artifact = AgentArtifact(
-            artifact_type=artifact_type,
-            title=title,
-            url=url,
-            description=description,
-            creator_user_id=creator_user_id,
-            creator_agent_id=creator_agent_id,
-            agent_session_id=agent_session_id,
-            agent_task_id=agent_task_id,
-            artifact_metadata=artifact_metadata,
-        )
-        session.add(artifact)
-        await session.commit()
-        await session.refresh(artifact)
-        return artifact
-
-
-async def _insert_pointer_with_session_retry(
-    *,
-    artifact_type: AgentArtifactType,
-    title: str,
-    url: str,
-    description: str | None,
-    creator_user_id: str | None,
-    creator_agent_id: uuid.UUID | None,
-    agent_session_id: uuid.UUID | None,
-    agent_task_id: uuid.UUID | None,
-    artifact_metadata: dict[str, Any] | None,
-) -> tuple[AgentArtifact, bool]:
-    """Insert a pointer artifact, retrying on session FK violations.
-
-    The session row may not be committed by the time this tool is called —
-    there is a race condition between ``session.flush()`` (which inserts the
-    AgentSession row inside an open transaction) and the agent's first MCP call.
-    Because ``IntegrityError`` is excluded from ``retry_db``, it won't be
-    retried automatically; this function handles that case explicitly.
-
-    Returns:
-        (artifact, session_linked) — ``session_linked`` is False when the
-        fallback path was used (artifact saved with ``agent_session_id=None``).
-    """
-    if agent_session_id is None:
-        return await _insert_pointer_artifact(
-            artifact_type=artifact_type,
-            title=title,
-            url=url,
-            description=description,
-            creator_user_id=creator_user_id,
-            creator_agent_id=creator_agent_id,
-            agent_session_id=None,
-            agent_task_id=agent_task_id,
-            artifact_metadata=artifact_metadata,
-        ), True
-
-    last_exc: IntegrityError | None = None
-    for attempt in range(_SESSION_FK_MAX_RETRIES + 1):
-        try:
-            artifact = await _insert_pointer_artifact(
-                artifact_type=artifact_type,
-                title=title,
-                url=url,
-                description=description,
-                creator_user_id=creator_user_id,
-                creator_agent_id=creator_agent_id,
-                agent_session_id=agent_session_id,
-                agent_task_id=agent_task_id,
-                artifact_metadata=artifact_metadata,
-            )
-            return artifact, True
-        except IntegrityError as exc:
-            if getattr(exc.orig, "constraint_name", None) != _SESSION_FK_CONSTRAINT:
-                raise
-            last_exc = exc
-            if attempt < _SESSION_FK_MAX_RETRIES:
-                delay = _SESSION_FK_RETRY_DELAYS[attempt]
-                logger.warning(
-                    "Session FK not found for add_artifact — retrying",
-                    attempt=attempt + 1,
-                    max_retries=_SESSION_FK_MAX_RETRIES,
-                    session_id=str(agent_session_id),
-                    retry_delay_s=delay,
-                )
-                await asyncio.sleep(delay)
-            else:
-                logger.warning(
-                    "Session FK not found for add_artifact — all retries exhausted, falling back to unlinked artifact",
-                    attempt=attempt + 1,
-                    max_retries=_SESSION_FK_MAX_RETRIES,
-                    session_id=str(agent_session_id),
-                )
-
-    # All retries exhausted.  Save the artifact without the session link so
-    # the artifact is never silently lost — the caller will log/warn about it.
-    logger.error(
-        "Session FK violation persists after retries — saving artifact without session link",
-        session_id=str(agent_session_id),
-        title=title,
-        exc_info=last_exc,
-    )
-    artifact = await _insert_pointer_artifact(
-        artifact_type=artifact_type,
-        title=title,
-        url=url,
-        description=description,
-        creator_user_id=creator_user_id,
-        creator_agent_id=creator_agent_id,
-        agent_session_id=None,  # fallback: unlink from missing session
-        agent_task_id=agent_task_id,
-        artifact_metadata=artifact_metadata,
-    )
-    return artifact, False
-
-
-@retry_db
-async def _update_artifact(
-    artifact_id: uuid.UUID,
-    *,
-    title: str | None,
-    description: str | None,
-    url: str | None,
-    artifact_metadata: dict[str, Any] | None,
-    merge_metadata: bool,
-) -> AgentArtifact | None:
-    async with get_async_session() as session:
-        result = await session.get(AgentArtifact, artifact_id)
-        if result is None or result.deleted_at is not None:
-            return None
-        # TODO: Add ownership check — verify result.agent_session_id matches the
-        # caller's session before allowing updates, to prevent cross-session artifact
-        # mutation. Requires threading session context through this helper.
-
-        if title is not None:
-            result.title = title
-        if description is not None:
-            result.description = description
-        if url is not None:
-            result.url = url
-        if artifact_metadata is not None:
-            if merge_metadata and result.artifact_metadata:
-                merged = dict(result.artifact_metadata)
-                merged.update(artifact_metadata)
-                result.artifact_metadata = merged
-            else:
-                result.artifact_metadata = artifact_metadata
-
-        session.add(result)
-        await session.commit()
-        await session.refresh(result)
-        return result
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-
-@retry_db
 async def _resolve_agent_id(agent_name: str) -> uuid.UUID | None:
     """Resolve an agent name to its UUID. Returns None if not found."""
     from sqlmodel import select
@@ -424,118 +245,50 @@ async def add_artifact(
     if normalized_labels:
         artifact_metadata = {**(artifact_metadata or {}), "labels": normalized_labels}
 
+    agent_name = _caller_agent_name()
+    prov = _arti_backend.provenance_labels(session_id=session_id, agent_name=agent_name, task_id=parsed_task_id)
+
     if parsed_type == AgentArtifactType.TEXT:
         if content is None:
             return {"success": False, "error": "TEXT artifacts require a 'content' body."}
+        if attachments:
+            return {"success": False, "error": "attachments are not yet supported for AL arti artifacts."}
         try:
-            decoded_attachments = _decode_attachments_arg(attachments)
-        except ArtifactError as exc:
-            return {"success": False, "error": str(exc)}
-
-        try:
-            artifact = await create_artifact(
-                content=content.encode("utf-8"),
-                content_type=content_type,
+            return await _arti_backend.add_text(
+                user_id=user_id,
+                session_id=session_id,
                 title=title,
-                description=description,
-                creator_user_id=user_id,
-                creator_agent_id=agent_id,
-                agent_session_id=session_id,
-                agent_task_id=parsed_task_id,
+                content=content,
+                content_type=content_type,
                 named_slug=named_slug,
                 create_new_slug=create_new_slug,
-                attachments=decoded_attachments,
-                extra_metadata=artifact_metadata,
+                description=description,
+                labels=normalized_labels,
+                prov=prov,
             )
-        except ArtifactError as exc:
-            return {"success": False, "error": str(exc)}
-        except Exception:
-            logger.exception("Failed to store TEXT artifact", title=title)
-            return {"success": False, "error": "Internal error storing artifact."}
+        except _arti_backend.ArtiToolError as exc:
+            return {"success": False, "error": f"AL arti rejected the write: {exc}"}
+        except _arti_backend.ArtiUnavailable as exc:
+            return {"success": False, "error": f"AL arti unavailable: {exc}"}
 
-        logger.info(
-            "Text artifact created",
-            artifact_id=str(artifact.agent_artifact_id),
-            title=title,
-            slug=artifact.named_slug,
-            version=artifact.version,
-        )
-        # Fan out a Slack notification (fire-and-forget; never blocks the tool).
-        # ``create_new_slug`` is False for "next version of an existing slug"
-        # — that's a content update, not a brand-new artifact.
-        await notify_artifact_event(
-            artifact=artifact,
-            event="created" if create_new_slug or artifact.version in (None, 1) else "new_version",
-            agent_name=_caller_agent_name(),
-            session_id=session_id,
-            user_id=user_id,
-        )
-        return {
-            "success": True,
-            "artifact_id": str(artifact.agent_artifact_id),
-            "url": artifact.url,
-            "title": artifact.title,
-            "slug": artifact.named_slug,
-            "version": artifact.version,
-            "content_type": artifact.content_type,
-            "labels": (artifact.artifact_metadata or {}).get("labels", []),
-            "message": f"Artifact '{title}' (TEXT) created at {artifact.url}.",
-        }
-
-    # CODE_REVIEW / OTHER: pointer-only flow.
+    # CODE_REVIEW / OTHER: pointer flavor, recorded in AL arti as a tagged TEXT record.
     if url is None:
         return {"success": False, "error": f"{artifact_type} artifacts require a 'url'."}
-
     try:
-        artifact, session_linked = await _insert_pointer_with_session_retry(
-            artifact_type=parsed_type,
+        return await _arti_backend.add_pointer(
+            user_id=user_id,
+            session_id=session_id,
+            artifact_type=artifact_type,
             title=title,
             url=url,
             description=description,
-            creator_user_id=user_id,
-            creator_agent_id=agent_id,
-            agent_session_id=session_id,
-            agent_task_id=parsed_task_id,
-            artifact_metadata=artifact_metadata,
+            labels=normalized_labels,
+            prov=prov,
         )
-    except Exception:
-        logger.exception("Failed to store pointer artifact", title=title, artifact_type=artifact_type)
-        return {"success": False, "error": "Internal error storing artifact — the artifact was not saved."}
-
-    logger.info(
-        "Pointer artifact registered",
-        artifact_id=str(artifact.agent_artifact_id),
-        artifact_type=artifact_type,
-        title=title,
-        session_linked=session_linked,
-    )
-    # Fan out a Slack notification (fire-and-forget; never blocks the tool).
-    await notify_artifact_event(
-        artifact=artifact,
-        event="created",
-        agent_name=_caller_agent_name(),
-        session_id=session_id,
-        user_id=user_id,
-    )
-
-    message = (
-        f"Artifact '{title}' ({artifact_type}) registered with ID {artifact.agent_artifact_id}. "
-        "Use this ID to reference the artifact in future sessions or update it later."
-    )
-    if not session_linked:
-        message += (
-            " Note: the artifact could not be linked to the current session "
-            f"(session {session_id} was not found in the database after retries)."
-        )
-
-    return {
-        "success": True,
-        "artifact_id": str(artifact.agent_artifact_id),
-        "url": artifact.url,
-        "title": artifact.title,
-        "labels": (artifact.artifact_metadata or {}).get("labels", []),
-        "message": message,
-    }
+    except _arti_backend.ArtiToolError as exc:
+        return {"success": False, "error": f"AL arti rejected the write: {exc}"}
+    except _arti_backend.ArtiUnavailable as exc:
+        return {"success": False, "error": f"AL arti unavailable: {exc}"}
 
 
 @shared_tool()
@@ -590,41 +343,24 @@ async def update_artifact(
             "error": "At least one field (title, description, url, artifact_metadata) must be provided",
         }
 
+    # AL arti's update surface covers title + labels (metadata). description / url
+    # / arbitrary metadata aren't updatable in place there; pass what maps.
+    updated_labels = None
+    if artifact_metadata and "labels" in artifact_metadata:
+        updated_labels = artifact_metadata["labels"]
     try:
-        artifact = await _update_artifact(
-            parsed_id,
+        return await _arti_backend.update_meta(
+            user_id=_caller_user_id(),
+            ident=str(parsed_id),
             title=title,
-            description=description,
-            url=url,
-            artifact_metadata=artifact_metadata,
-            merge_metadata=merge_metadata,
+            labels=updated_labels,
         )
-    except Exception:
-        logger.exception("Failed to update artifact", artifact_id=artifact_id)
-        return {"success": False, "error": "Internal error updating artifact."}
-
-    if artifact is None:
-        return {"success": False, "error": f"Artifact '{artifact_id}' not found or has been deleted."}
-
-    logger.info("Artifact updated", artifact_id=artifact_id, agent_name=_caller_agent_name())
-    # Fan out a Slack notification (fire-and-forget; never blocks the tool).
-    # ``update_artifact`` only mutates metadata — emit "updated" so the feed
-    # distinguishes it from a brand-new artifact and from a new TEXT version.
-    # We pull session/user from headers directly (no DB round-trip): the
-    # notifier doesn't need the agent_id, only the agent_name.
-    await notify_artifact_event(
-        artifact=artifact,
-        event="updated",
-        agent_name=_caller_agent_name(),
-        session_id=_caller_session_id(),
-        user_id=_caller_user_id(),
-    )
-
-    return {
-        "success": True,
-        "artifact_id": str(artifact.agent_artifact_id),
-        "message": f"Artifact '{artifact.title}' updated successfully.",
-    }
+    except _arti_backend.ArtiToolError as exc:
+        if _arti_backend.arti_client.not_found(exc):
+            return {"success": False, "error": f"Artifact '{artifact_id}' not found in AL arti."}
+        return {"success": False, "error": f"AL arti update failed: {exc}"}
+    except _arti_backend.ArtiUnavailable as exc:
+        return {"success": False, "error": f"AL arti unavailable: {exc}"}
 
 
 @shared_tool()
@@ -662,58 +398,33 @@ async def update_artifact_content(
     except ArtifactError as exc:
         return {"success": False, "error": str(exc)}
 
+    if decoded_attachments:
+        return {"success": False, "error": "attachments are not yet supported for AL arti artifacts."}
     session_id, user_id, agent_id = await _resolve_caller_context()
     resolved_title = title if title is not None else slug
     try:
         normalized_labels = normalize_artifact_labels(labels)
     except ArtifactError as exc:
         return {"success": False, "error": str(exc)}
-
+    prov = _arti_backend.provenance_labels(
+        session_id=session_id, agent_name=_caller_agent_name(), task_id=None
+    )
     try:
-        artifact = await create_artifact(
-            content=content.encode("utf-8"),
+        return await _arti_backend.add_version(
+            user_id=user_id,
+            session_id=session_id,
+            slug=slug,
+            content=content,
             content_type=content_type,
             title=resolved_title,
             description=description,
-            creator_user_id=user_id,
-            creator_agent_id=agent_id,
-            agent_session_id=session_id,
-            named_slug=slug,
-            create_new_slug=False,
-            attachments=decoded_attachments,
-            extra_metadata={"labels": normalized_labels} if normalized_labels else None,
+            labels=normalized_labels,
+            prov=prov,
         )
-    except ArtifactError as exc:
-        return {"success": False, "error": str(exc)}
-    except Exception:
-        logger.exception("Failed to update artifact content", slug=slug)
-        return {"success": False, "error": "Internal error updating artifact content."}
-
-    logger.info(
-        "Text artifact new version saved",
-        artifact_id=str(artifact.agent_artifact_id),
-        slug=slug,
-        version=artifact.version,
-    )
-    # Fan out a Slack notification (fire-and-forget; never blocks the tool).
-    await notify_artifact_event(
-        artifact=artifact,
-        event="new_version",
-        agent_name=_caller_agent_name(),
-        session_id=session_id,
-        user_id=user_id,
-    )
-
-    return {
-        "success": True,
-        "artifact_id": str(artifact.agent_artifact_id),
-        "url": artifact.url,
-        "slug": artifact.named_slug,
-        "version": artifact.version,
-        "content_type": artifact.content_type,
-        "labels": (artifact.artifact_metadata or {}).get("labels", []),
-        "message": f"Artifact '{slug}' updated to version {artifact.version} at {artifact.url}.",
-    }
+    except _arti_backend.ArtiToolError as exc:
+        return {"success": False, "error": f"AL arti rejected the write: {exc}"}
+    except _arti_backend.ArtiUnavailable as exc:
+        return {"success": False, "error": f"AL arti unavailable: {exc}"}
 
 
 @shared_tool()
@@ -734,60 +445,27 @@ async def list_artifacts(
     Returns:
         { success, artifacts: [...], count } on success.
     """
-    from sqlmodel import col, select
-
-    from ypl.db.agent_harness import AgentArtifact
-
     limit = min(max(limit, 1), 100)
     agent_session_id = _caller_session_id()
     if agent_session_id is None:
         return {"success": True, "artifacts": [], "count": 0}
 
-    parsed_type: AgentArtifactType | None = None
-    if artifact_type:
-        if artifact_type not in _VALID_TYPES:
-            return {
-                "success": False,
-                "error": f"Invalid artifact_type '{artifact_type}'. Must be one of: {_VALID_TYPES}",
-            }
-        parsed_type = AgentArtifactType(artifact_type)
-
-    try:
-        async with get_async_session_read_replica() as session:
-            stmt = (
-                select(AgentArtifact)
-                .where(AgentArtifact.deleted_at.is_(None))  # type: ignore[union-attr]
-                .order_by(col(AgentArtifact.created_at).desc())
-                .limit(limit)
-            )
-            if agent_session_id:
-                stmt = stmt.where(AgentArtifact.agent_session_id == agent_session_id)
-            if parsed_type is not None:
-                stmt = stmt.where(AgentArtifact.artifact_type == parsed_type)
-
-            result = await session.execute(stmt)
-            artifacts = result.scalars().all()
-    except Exception:
-        logger.exception("Failed to list artifacts")
-        return {"success": False, "error": "Internal error listing artifacts."}
-
-    rows = [
-        {
-            "artifact_id": str(a.agent_artifact_id),
-            "artifact_type": a.artifact_type.value,
-            "title": a.title,
-            "url": a.url,
-            "description": a.description,
-            "slug": a.named_slug,
-            "version": a.version,
-            "created_at": a.created_at.isoformat() if a.created_at else None,
-            "artifact_metadata": a.artifact_metadata,
-            "labels": (a.artifact_metadata or {}).get("labels", []),
+    if artifact_type and artifact_type not in _VALID_TYPES:
+        return {
+            "success": False,
+            "error": f"Invalid artifact_type '{artifact_type}'. Must be one of: {_VALID_TYPES}",
         }
-        for a in artifacts
-    ]
-
-    return {"success": True, "artifacts": rows, "count": len(rows)}
+    try:
+        return await _arti_backend.list_for_session(
+            user_id=_caller_user_id(),
+            session_id=agent_session_id,
+            artifact_type=artifact_type,
+            limit=limit,
+        )
+    except _arti_backend.ArtiUnavailable as exc:
+        return {"success": False, "error": f"AL arti unavailable: {exc}"}
+    except _arti_backend.ArtiToolError as exc:
+        return {"success": False, "error": f"AL arti list failed: {exc}"}
 
 
 @shared_tool()
@@ -804,24 +482,13 @@ async def list_artifact_versions(slug: str) -> dict[str, Any]:
         { success, slug, versions: [{version, artifact_id, title, url, created_at}], count }
     """
     try:
-        artifacts = await _list_artifact_versions(slug)
-    except Exception:
-        logger.exception("Failed to list artifact versions", slug=slug)
-        return {"success": False, "error": "Internal error listing versions."}
-
-    rows = [
-        {
-            "version": a.version,
-            "artifact_id": str(a.agent_artifact_id),
-            "title": a.title,
-            "url": a.url,
-            "content_type": a.content_type,
-            "created_at": a.created_at.isoformat() if a.created_at else None,
-            "labels": (a.artifact_metadata or {}).get("labels", []),
-        }
-        for a in artifacts
-    ]
-    return {"success": True, "slug": slug, "versions": rows, "count": len(rows)}
+        return await _arti_backend.list_versions(user_id=_caller_user_id(), slug=slug)
+    except _arti_backend.ArtiUnavailable as exc:
+        return {"success": False, "error": f"AL arti unavailable: {exc}"}
+    except _arti_backend.ArtiToolError as exc:
+        if _arti_backend.arti_client.not_found(exc):
+            return {"success": True, "slug": slug, "versions": [], "count": 0}
+        return {"success": False, "error": f"AL arti versions failed: {exc}"}
 
 
 @shared_tool()
@@ -860,32 +527,18 @@ async def search_artifacts(
         parsed_type = AgentArtifactType(artifact_type)
 
     try:
-        artifacts = await _search_artifacts(
-            query,
-            artifact_type=parsed_type,
-            include_archived=include_archived,
+        return await _arti_backend.search(
+            user_id=_caller_user_id(),
+            query=query,
+            artifact_type=artifact_type,
             limit=limit,
             offset=offset,
+            include_archived=include_archived,
         )
-    except Exception:
-        logger.exception("Failed to search artifacts", query=query)
-        return {"success": False, "error": "Internal error searching artifacts."}
-
-    rows = [
-        {
-            "artifact_id": str(a.agent_artifact_id),
-            "artifact_type": a.artifact_type.value,
-            "title": a.title,
-            "url": a.url,
-            "description": a.description,
-            "slug": a.named_slug,
-            "version": a.version,
-            "created_at": a.created_at.isoformat() if a.created_at else None,
-            "labels": (a.artifact_metadata or {}).get("labels", []),
-        }
-        for a in artifacts
-    ]
-    return {"success": True, "results": rows, "count": len(rows)}
+    except _arti_backend.ArtiUnavailable as exc:
+        return {"success": False, "error": f"AL arti unavailable: {exc}"}
+    except _arti_backend.ArtiToolError as exc:
+        return {"success": False, "error": f"AL arti search failed: {exc}"}
 
 
 @shared_tool(
@@ -902,7 +555,19 @@ async def mcp_read_artifact(
     id_or_slug: str,
     version: int | None = None,
 ) -> dict[str, Any]:
-    """Fetch a TEXT artifact's content + metadata."""
+    """Fetch a TEXT artifact's content + metadata (AL arti; legacy fallback)."""
+    # AL arti first.
+    try:
+        arti_res = await _arti_backend.read(user_id=_caller_user_id(), ident=id_or_slug, version=version)
+        if arti_res is not None:
+            return arti_res
+    except _arti_backend.ArtiUnavailable:
+        pass  # fall through to legacy read
+    except _arti_backend.ArtiToolError as exc:
+        if not _arti_backend.arti_client.not_found(exc):
+            return {"error": f"AL arti read failed: {exc}"}
+
+    # Legacy Yupp store fallback (pre-migration artifacts).
     artifact: AgentArtifact | None = None
     try:
         artifact_uuid = uuid.UUID(id_or_slug)
@@ -949,6 +614,18 @@ async def artifact_url(id_or_slug: str) -> dict[str, Any]:
         { success, artifact_id, url, title, artifact_type } on success.
         { success: false, error } if not found.
     """
+    # AL arti first.
+    try:
+        arti_res = await _arti_backend.url_of(user_id=_caller_user_id(), ident=id_or_slug)
+        if arti_res is not None:
+            return arti_res
+    except _arti_backend.ArtiUnavailable:
+        pass
+    except _arti_backend.ArtiToolError as exc:
+        if not _arti_backend.arti_client.not_found(exc):
+            return {"success": False, "error": f"AL arti lookup failed: {exc}"}
+
+    # Legacy Yupp store fallback.
     artifact: AgentArtifact | None = None
     try:
         artifact_uuid = uuid.UUID(id_or_slug)
@@ -977,6 +654,18 @@ async def artifact_url(id_or_slug: str) -> dict[str, Any]:
     ),
 )
 async def mcp_archive_artifact(artifact_id: str) -> dict[str, Any]:
+    # AL arti first.
+    try:
+        ok = await _arti_backend.archive(user_id=_caller_user_id(), ident=artifact_id)
+        if ok:
+            return {"artifact_id": artifact_id, "archived": True}
+    except _arti_backend.ArtiUnavailable:
+        pass
+    except _arti_backend.ArtiToolError as exc:
+        if not _arti_backend.arti_client.not_found(exc):
+            return {"error": f"AL arti archive failed: {exc}"}
+
+    # Legacy Yupp store fallback.
     try:
         artifact_uuid = uuid.UUID(artifact_id)
     except ValueError:
@@ -999,6 +688,22 @@ async def archive_artifact_slug(slug: str) -> dict[str, Any]:
     Returns:
         { success, slug, archived_count, message }
     """
+    # AL arti archives a whole slug when given the slug as ident.
+    try:
+        ok = await _arti_backend.archive(user_id=_caller_user_id(), ident=slug)
+        if ok:
+            return {
+                "success": True,
+                "slug": slug,
+                "message": f"Archived slug '{slug}' in AL arti.",
+            }
+    except _arti_backend.ArtiUnavailable:
+        pass
+    except _arti_backend.ArtiToolError as exc:
+        if not _arti_backend.arti_client.not_found(exc):
+            return {"success": False, "error": f"AL arti archive failed: {exc}"}
+
+    # Legacy Yupp store fallback.
     try:
         count = await archive_artifacts_by_slug(slug)
     except Exception:

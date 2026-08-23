@@ -65,7 +65,7 @@ All paths below live under `/data/ahs/sessions/{SESSION_ID}/`:
 
 Every significant output you produce must be registered as an artifact so work is traceable and referenceable by future sessions.
 
-> **Default store: AL arti** (`arti.voltcouch.com`). Create and read new artifacts through the **`arti` MCP server**'s tools. The built-in `add_artifact` / `read_artifact` tools shown below write to the **legacy Yupp artifact** store (`a.voltcouch.com`) — treat those as **read-only for pre-migration history**. See `ARTIFACT_STORAGE.md` (already in your prompt) for the full rule and the tool-name-collision warning. The tool *shapes* below are the same on both stores.
+> **All artifacts live in AL arti** (`arti.voltcouch.com`). The built-in `add_artifact` / `read_artifact` / … tools shown below now read and write AL arti directly and return `arti.voltcouch.com` URLs; reads fall back to the read-only legacy Yupp store (`a.voltcouch.com`) for older artifacts automatically. See `ARTIFACT_STORAGE.md` (already in your prompt). Nothing to choose — just use the tools below.
 
 ### Artifact types
 

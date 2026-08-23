@@ -1,39 +1,31 @@
-# Artifact Storage — AL arti is the default
+# Artifact Storage — everything is AL arti
 
-There are **two** artifact stores. Always name them explicitly so nobody
-(you, a teammate, a future session) confuses them:
+Your built-in artifact tools now read and write **AL arti** (AngelList arti,
+`arti.voltcouch.com`) directly. There is nothing extra to do and no second tool
+set to choose between — just use the tools you already know:
 
-| Name | Host | Reach it via | Use it for |
-|------|------|--------------|------------|
-| **AL arti** (AngelList arti) | `arti.voltcouch.com` | the **`arti` MCP server** tools (`add_artifact`, `read_artifact`, `list_artifacts`, `search_artifacts`, `append_artifact`, `update_artifact`, `archive_artifact`, `get_artifact`, `list_artifact_versions`) | **Everything new — this is the default for all reads and writes.** |
-| **Yupp artifact** (legacy) | `a.voltcouch.com` | the built-in harness tools (`add_artifact`, `update_artifact_content`, `read_artifact`, `search_artifacts`, `artifact_url`, …) | **Reading pre-migration history only.** Do not write here. |
+- `add_artifact`, `update_artifact_content`, `update_artifact`
+- `read_artifact`, `search_artifacts`, `list_artifacts`, `list_artifact_versions`
+- `artifact_url`, `archive_artifact`, `archive_artifact_slug`
 
-## Rules
+They all operate on **AL arti**. Every artifact you create gets an
+`arti.voltcouch.com` URL — announce it to the user just like a PR link.
 
-1. **Write to AL arti.** Every new artifact — report, investigation, review
-   pointer, deliverable — is created and versioned in **AL arti**, using the
-   **`arti` MCP server**'s tools. Do not create new Yupp artifacts.
-2. **Read from AL arti first.** When you look something up, search/read **AL
-   arti**. Only fall back to the **Yupp artifact** store (the built-in
-   `search_artifacts` / `read_artifact`) when you need older history that has
-   not been migrated yet.
-3. **Name the store when you talk about it.** Say "saved to AL arti" / "found
-   in the Yupp artifact archive", never a bare "artifact", so it is always
-   clear which store you mean.
-4. **Announce the URL of anything you save**, exactly as for a PR: after an AL
-   arti write, surface the artifact's `arti.voltcouch.com` URL to the user.
+## What changed (and what you don't need to think about)
 
-## Tool-name collision — read carefully
+- The **legacy Yupp artifact** store (`a.voltcouch.com`) is no longer written.
+  It stays online read-only, and `read_artifact` / `artifact_url` **fall back
+  to it automatically** for older artifacts that predate the move — so old IDs
+  and slugs still resolve. You never choose a store; the tools do the right thing.
+- Naming, if you need to refer to them: **AL arti** = the live store (AngelList,
+  `arti.voltcouch.com`); **Yupp artifact** = the read-only legacy archive
+  (`a.voltcouch.com`). Born at AngelList and Yupp respectively.
 
-Both stores expose a tool literally named `add_artifact`. They are different:
+## Notes
 
-- **`arti` MCP server → `add_artifact`** writes to **AL arti** ← use this.
-- the **built-in / harness `add_artifact`** writes to the **Yupp artifact**
-  store ← legacy, do not use for new work.
-
-If your runtime namespaces MCP tools (e.g. `mcp__arti__add_artifact`), the
-`arti`-prefixed one is AL arti. When in doubt, prefer the tool that comes from
-the **`arti`** MCP server.
-
-> Agent **memories** (the `search_memory` / memory tools) are a separate system
-> and are **not** covered by this rule — keep using the memory tools as before.
+- Writes are attributed to the connecting user when they've linked arti;
+  otherwise to a shared service identity. Either way the write succeeds.
+- Attachments and non-text package uploads are not yet supported through these
+  tools on AL arti — stick to TEXT `content` for now.
+- Agent **memories** (`search_memory` and the memory tools) are a separate
+  system and are unaffected — keep using them exactly as before.
