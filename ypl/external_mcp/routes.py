@@ -93,7 +93,10 @@ async def start_oauth(
             detail=f"{server!r} oauth_config is missing one of: {sorted(required)}",
         )
 
-    state = oauth_client.sign_state(user_id=user_id, server_slug=server, return_to=return_to)
+    code_verifier, code_challenge = oauth_client.generate_pkce()
+    state = oauth_client.sign_state(
+        user_id=user_id, server_slug=server, return_to=return_to, code_verifier=code_verifier
+    )
     authorize = oauth_client.build_authorize_url(
         authorize_url=cfg["authorize_url"],
         client_id=cfg["client_id"],
@@ -101,6 +104,7 @@ async def start_oauth(
         scopes=cfg.get("scopes") or [],
         state=state,
         extra_params=cfg.get("extra_authorize_params"),
+        code_challenge=code_challenge,
     )
     logger.info("MCP OAuth start", slug=server, user_id=user_id)
     return RedirectResponse(authorize, status_code=302)
@@ -133,6 +137,7 @@ async def oauth_callback(
     slug = claims["slug"]
     user_id = claims["sub"]
     return_to = claims.get("ret", "") or ""
+    code_verifier = claims.get("cv", "") or ""
 
     srv = await _get_server_by_slug(slug)
     cfg = srv.oauth_config or {}
@@ -152,6 +157,7 @@ async def oauth_callback(
                 client_secret=client_secret,
                 code=code,
                 redirect_uri=_redirect_uri(request),
+                code_verifier=code_verifier,
             )
         except Exception as e:
             logger.warning("MCP OAuth code exchange failed", slug=slug, user_id=user_id, error=str(e))
