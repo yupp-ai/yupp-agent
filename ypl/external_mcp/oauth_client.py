@@ -20,6 +20,9 @@ Notion's ``owner=user``).
 """
 
 from __future__ import annotations
+import base64
+import hashlib
+import secrets
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -38,6 +41,21 @@ _STATE_LEEWAY_S = 30
 _STATE_DEFAULT_TTL_S = 600  # 10 minutes — plenty for browser hop
 
 
+def generate_pkce() -> tuple[str, str]:
+    """Return ``(code_verifier, code_challenge)`` for PKCE (RFC 7636, S256).
+
+    Some providers *require* PKCE for the authorization-code grant — arti
+    rejects ``/oauth/authorize`` without a ``code_challenge`` — and it is a
+    strict security improvement for the ones that merely tolerate it (Google).
+    The verifier is a high-entropy secret kept by us until the token exchange;
+    the challenge is its URL-safe base64 SHA-256, sent to the provider.
+    """
+    verifier = secrets.token_urlsafe(64)
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    return verifier, challenge
+
+
 def _signing_key() -> str:
     key = settings.MCP_OAUTH_JWT_SIGNING_KEY
     if not key:
@@ -45,7 +63,13 @@ def _signing_key() -> str:
     return key
 
 
-def sign_state(user_id: str, server_slug: str, return_to: str = "", ttl_s: int = _STATE_DEFAULT_TTL_S) -> str:
+def sign_state(
+    user_id: str,
+    server_slug: str,
+    return_to: str = "",
+    ttl_s: int = _STATE_DEFAULT_TTL_S,
+    code_verifier: str = "",
+) -> str:
     """Encode an opaque ``state`` token the provider will echo back.
 
     The token binds ``(user_id, server_slug)`` so the callback can resolve
@@ -58,6 +82,11 @@ def sign_state(user_id: str, server_slug: str, return_to: str = "", ttl_s: int =
         "sub": user_id,
         "slug": server_slug,
         "ret": return_to,
+        # PKCE verifier round-trips inside the signed (tamper-proof) state so
+        # the callback can present it at token exchange. Confidentiality rests
+        # on the confidential client_secret arti also verifies; the signature
+        # alone prevents an attacker substituting their own challenge/verifier.
+        "cv": code_verifier,
         "iat": now,
         "exp": now + ttl_s,
         "nonce": jwt.utils.base64url_encode(time.time_ns().to_bytes(16, "big")).decode(),
@@ -89,6 +118,7 @@ def build_authorize_url(
     scopes: list[str],
     state: str,
     extra_params: dict[str, str] | None = None,
+    code_challenge: str = "",
 ) -> str:
     """Construct the provider's authorize URL.  Caller hands the result to
     the user's browser via 302."""
@@ -100,6 +130,9 @@ def build_authorize_url(
     }
     if scopes:
         params["scope"] = " ".join(scopes)
+    if code_challenge:
+        params["code_challenge"] = code_challenge
+        params["code_challenge_method"] = "S256"
     if extra_params:
         # Provider-specific knobs win; e.g. Google needs access_type=offline
         # to issue a refresh token at all.
@@ -115,6 +148,7 @@ async def exchange_code(
     client_secret: str,
     code: str,
     redirect_uri: str,
+    code_verifier: str = "",
 ) -> dict[str, Any]:
     """Trade an authorization ``code`` for an access (+ refresh) token.
 
@@ -131,6 +165,7 @@ async def exchange_code(
                 "redirect_uri": redirect_uri,
                 "client_id": client_id,
                 "client_secret": client_secret,
+                **({"code_verifier": code_verifier} if code_verifier else {}),
             },
             headers={"Accept": "application/json"},
         )
