@@ -89,6 +89,22 @@ async def _allowed_servers_for(
     return [by_slug[s] for s in requested_slugs if s in by_slug]
 
 
+def _auth_headers(srv: McpServer, credential: str) -> dict[str, str]:
+    """Render the credential as the HTTP header(s) the provider expects.
+
+    Default is RFC 6750: ``Authorization: Bearer <token>``.  When the server
+    row names a custom ``auth_header``, the credential is sent verbatim on
+    that header instead — the ``Bearer`` prefix is a property of the
+    ``Authorization`` header, not of tokens in general, and providers using a
+    bespoke header (arti's ``X-Arti-Service-Secret``, a plain ``X-API-Key``)
+    compare the raw value.
+    """
+    header = (srv.auth_header or "").strip()
+    if not header or header.lower() == "authorization":
+        return {"Authorization": f"Bearer {credential}"}
+    return {header: credential}
+
+
 def _transport_type(srv: McpServer) -> str:
     """Map our enum onto the string Claude Code / Codex expect in ``.mcp.json``."""
     if srv.transport == McpTransport.SSE:
@@ -144,8 +160,7 @@ async def build_external_mcp_entries(
                 "url": srv.url,
             }
             if bearer:  # NONE auth returns ""
-                token_type = "Bearer"
-                entry["headers"] = {"Authorization": f"{token_type} {bearer}"}
+                entry["headers"] = _auth_headers(srv, bearer)
             servers_out[srv.slug] = entry
 
         await session.commit()
