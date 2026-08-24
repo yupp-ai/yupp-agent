@@ -1,6 +1,6 @@
 {
   "display_name": "SRE",
-  "description": "SRE agent — reliability, incident response, and infrastructure debugging.",
+  "description": "SRE agent \u2014 reliability, incident response, and infrastructure debugging.",
   "default_repo": "yupp-agent",
   "max_turns": 200,
   "max_budget_usd": 3.0,
@@ -27,5 +27,8 @@
     "mcp__harness__search_slack",
     "mcp__harness__read_slack_thread",
     "mcp__harness__send_slack_message"
+  ],
+  "external_mcps": [
+    "arti"
   ]
 }
