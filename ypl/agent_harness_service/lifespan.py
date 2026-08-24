@@ -161,6 +161,7 @@ def _agent_config_to_db_fields(config: AgentConfig) -> dict[str, Any]:
             "enabled": config.sandbox.enabled,
         },
         "allowed_gateways": config.allowed_gateways,
+        "external_mcps": config.external_mcps,
     }
     if config.executor_config.model:
         config_jsonb["executor_config"]["model"] = config.executor_config.model
