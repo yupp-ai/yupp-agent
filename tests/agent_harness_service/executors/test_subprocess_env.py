@@ -44,6 +44,25 @@ class TestBuildSubprocessEnv:
                 continue  # checked above with prepended local_bin
             assert result[key] == value, f"{key} should pass through"
 
+    def test_claude_code_oauth_token_forwarded(self) -> None:
+        """The Claude CLI's OAuth credential must reach the subprocess.
+
+        Regression: CLAUDE_CODE_OAUTH_TOKEN (from ``claude setup-token``) is how
+        a headless/containerised Claude CLI authenticates without a browser.
+        While it was missing from the allowlist the agent runner stripped it and
+        every session died with "Not logged in · Please run /login", even though
+        the parent process had it set.
+        """
+        env = {
+            "PATH": "/usr/bin",
+            "HOME": "/home/agent",
+            "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-xxx",
+        }
+        result = self._build_with_env(env)
+        assert result.get("CLAUDE_CODE_OAUTH_TOKEN") == "sk-ant-oat01-xxx", (
+            "CLAUDE_CODE_OAUTH_TOKEN must pass through or the CLI cannot authenticate"
+        )
+
     def test_platform_mcp_token_not_forwarded(self) -> None:
         """AHS no longer forwards PLATFORM_MCP_TOKEN to subprocesses.
 
