@@ -69,6 +69,7 @@ async def _list_servers() -> list[dict[str, Any]]:
                     "auth_type": srv.auth_type.value,
                     "transport": srv.transport.value,
                     "url": srv.url,
+                    "auth_header": srv.auth_header or "",
                     "enabled": srv.enabled,
                     "n_roles": n_roles,
                     "n_grants": n_grants,
@@ -95,6 +96,7 @@ async def _create_server(
     m2m_shared_token: str | None,
     role_ids: list[uuid.UUID],
     enabled: bool,
+    auth_header: str | None = None,
 ) -> tuple[bool, str]:
     async with get_async_session() as session:
         if (await session.exec(select(McpServer).where(McpServer.slug == slug))).first():
@@ -107,6 +109,7 @@ async def _create_server(
             transport=transport,
             auth_type=auth_type,
             oauth_config=oauth_config,
+            auth_header=auth_header or None,
             enabled=enabled,
         )
         session.add(srv)
@@ -131,6 +134,15 @@ async def _toggle_enabled(mcp_server_id: uuid.UUID, enabled: bool) -> None:
         srv = await session.get(McpServer, mcp_server_id)
         if srv is not None:
             srv.enabled = enabled
+            session.add(srv)
+            await session.commit()
+
+
+async def _set_auth_header(mcp_server_id: uuid.UUID, auth_header: str | None) -> None:
+    async with get_async_session() as session:
+        srv = await session.get(McpServer, mcp_server_id)
+        if srv is not None:
+            srv.auth_header = auth_header or None
             session.add(srv)
             await session.commit()
 
@@ -211,6 +223,7 @@ with tab_browse:
                     "Slug": s["slug"],
                     "Name": s["display_name"],
                     "Auth": s["auth_type"],
+                    "Header": s["auth_header"] or "Authorization: Bearer",
                     "Transport": s["transport"],
                     "Enabled": "✓" if s["enabled"] else "✗",
                     "URL": s["url"],
@@ -242,6 +255,27 @@ with tab_browse:
                 if st.button("Delete server", type="secondary"):
                     run_coroutine_in_lit_worker(_delete_server(mcp_server_id), timeout=10)
                     st.success(f"Deleted {picked!r}.")
+                    st.cache_data.clear()
+                    st.rerun()
+
+            hdr_col, hdr_btn = st.columns([3, 1])
+            with hdr_col:
+                new_header = st.text_input(
+                    "Auth header",
+                    value=srv["auth_header"],
+                    placeholder="Authorization",
+                    key=f"hdr_{picked}",
+                    help=(
+                        "Blank = standard `Authorization: Bearer <token>`.  A custom header "
+                        "(e.g. `X-Arti-Service-Secret`) carries the token verbatim."
+                    ),
+                )
+            with hdr_btn:
+                if new_header.strip() != srv["auth_header"] and st.button("Save header"):
+                    run_coroutine_in_lit_worker(
+                        _set_auth_header(mcp_server_id, new_header.strip() or None), timeout=10
+                    )
+                    st.success("Saved.")
                     st.cache_data.clear()
                     st.rerun()
 
@@ -473,6 +507,17 @@ with tab_add:
             type="password",
             disabled=auth_type != "M2M_SHARED",
         )
+        auth_header = st.text_input(
+            "Custom auth header (optional)",
+            placeholder="Authorization",
+            disabled=auth_type == "NONE",
+            help=(
+                "Leave blank for the standard `Authorization: Bearer <token>`.  Set it when the "
+                "provider authenticates on its own header instead — e.g. `X-Arti-Service-Secret` "
+                "for arti, or `X-API-Key`.  A custom header carries the token verbatim, with no "
+                "`Bearer ` prefix."
+            ),
+        )
 
         st.markdown("#### Access")
         roles = run_coroutine_in_lit_worker(_all_roles(), timeout=10) or []
@@ -525,6 +570,7 @@ with tab_add:
                         m2m_shared_token=m2m_shared or None,
                         role_ids=list(sel_roles),
                         enabled=enabled,
+                        auth_header=auth_header.strip() or None,
                     ),
                     timeout=15,
                 )

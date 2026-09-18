@@ -63,7 +63,9 @@ All paths below live under `/data/ahs/sessions/{SESSION_ID}/`:
 
 ## Artifact Tracking
 
-Every significant output you produce must be registered in the artifact registry using the `add_artifact` MCP tool. This ensures work is traceable and can be referenced by future sessions.
+Every significant output you produce must be registered as an artifact so work is traceable and referenceable by future sessions.
+
+> **All artifacts live in AL arti** (`arti.voltcouch.com`). The built-in `add_artifact` / `read_artifact` / … tools shown below now read and write AL arti directly and return `arti.voltcouch.com` URLs; reads fall back to the read-only legacy Yupp store (`a.voltcouch.com`) for older artifacts automatically. See `ARTIFACT_STORAGE.md` (already in your prompt). Nothing to choose — just use the tools below.
 
 ### Artifact types
 
