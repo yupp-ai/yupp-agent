@@ -992,7 +992,7 @@ def route_model_stub(
         return []
 
     if count == 1:
-        return [pool[0] if pool else "anthropic/claude-sonnet-4-6"]
+        return [pool[0] if pool else DEFAULT_MODEL_ANTHROPIC]
 
     # For count > 1: ensure provider diversity
     selected: list[str] = []
