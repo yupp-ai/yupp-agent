@@ -184,6 +184,14 @@ _ALLOWED_EXACT: frozenset[str] = frozenset(
         "LANGUAGE",
         # Claude CLI
         "ANTHROPIC_API_KEY",
+        # Claude Code's OAuth credential (`claude setup-token`, an
+        # ``sk-ant-oat01…`` value). This is the supported way to authenticate a
+        # headless/containerised Claude CLI: unlike ~/.claude/.credentials.json
+        # it is long-lived and needs no browser. Without it on the allowlist the
+        # subprocess loses the credential and dies with
+        # "Not logged in · Please run /login", even when the parent process has
+        # it set.
+        "CLAUDE_CODE_OAUTH_TOKEN",
         # Claude Code's escape hatch for "running as root inside a container
         # is already sandboxed; trust me and allow --dangerously-skip-permissions".
         # Without forwarding this through the subprocess env, claude-code-cli
