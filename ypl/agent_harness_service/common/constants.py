@@ -366,7 +366,10 @@ PROVIDER_DEEPSEEK = "deepseek"
 PROVIDER_TOGETHER = "together"
 
 # Default models per provider
-DEFAULT_MODEL_ANTHROPIC = "anthropic/claude-sonnet-4-6"
+DEFAULT_MODEL_ANTHROPIC = "anthropic/claude-opus-5-5"
+# Model passed as --model to the Claude Code CLI harness when an agent/task sets
+# none. Empty string -> omit --model and let the CLI pick its own default.
+DEFAULT_CLAUDE_CLI_MODEL = os.environ.get("AHS_CLAUDE_CLI_DEFAULT_MODEL", "claude-opus-5-5")
 DEFAULT_MODEL_CEREBRAS = "cerebras/gpt-oss-120b"
 DEFAULT_MODEL_MOONSHOT = "moonshot/kimi-k2.5"
 DEFAULT_MODEL_OPENAI = "openai/gpt-4o"

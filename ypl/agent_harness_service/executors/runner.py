@@ -30,6 +30,7 @@ from ypl.agent_harness_service.common.constants import (
     _CLI_TOOLS_SUPERSEDED_BY_MCP,
     AHS_DATA_DIR,
     BLOCKED_HARNESS_TOOLS,
+    DEFAULT_CLAUDE_CLI_MODEL,
     HARNESS_TO_CLI_TOOL_MAP,
     SHARED_HARNESS_TOOLS_BLOCKED_FOR_RESTRICTED,
 )
@@ -685,8 +686,9 @@ class ClaudeCodeRunner(AgentRunner):
             "--verbose",
         ]
 
-        if self.config.model:
-            args += ["--model", self.config.model]
+        cli_model = self.config.model or DEFAULT_CLAUDE_CLI_MODEL
+        if cli_model:
+            args += ["--model", cli_model]
 
         if system_prompt:
             args += ["--system-prompt", system_prompt]
