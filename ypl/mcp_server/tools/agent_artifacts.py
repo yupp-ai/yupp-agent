@@ -19,14 +19,11 @@ Both pointer flavors accept ``artifact_metadata`` for type-specific data
 All writes are attributed to the calling agent's session via AHS headers.
 """
 
-import asyncio
 import base64
 import binascii
 import json
 import uuid
 from typing import Any
-
-from sqlalchemy.exc import IntegrityError
 
 from ypl.agent_harness_service.artifact_store import (
     ArtifactError,
@@ -406,9 +403,7 @@ async def update_artifact_content(
         normalized_labels = normalize_artifact_labels(labels)
     except ArtifactError as exc:
         return {"success": False, "error": str(exc)}
-    prov = _arti_backend.provenance_labels(
-        session_id=session_id, agent_name=_caller_agent_name(), task_id=None
-    )
+    prov = _arti_backend.provenance_labels(session_id=session_id, agent_name=_caller_agent_name(), task_id=None)
     try:
         return await _arti_backend.add_version(
             user_id=user_id,
@@ -517,14 +512,11 @@ async def search_artifacts(
     limit = min(max(limit, 1), 100)
     offset = max(offset, 0)
 
-    parsed_type: AgentArtifactType | None = None
-    if artifact_type:
-        if artifact_type not in _VALID_TYPES:
-            return {
-                "success": False,
-                "error": f"Invalid artifact_type '{artifact_type}'. Must be one of: {_VALID_TYPES}",
-            }
-        parsed_type = AgentArtifactType(artifact_type)
+    if artifact_type and artifact_type not in _VALID_TYPES:
+        return {
+            "success": False,
+            "error": f"Invalid artifact_type '{artifact_type}'. Must be one of: {_VALID_TYPES}",
+        }
 
     try:
         return await _arti_backend.search(

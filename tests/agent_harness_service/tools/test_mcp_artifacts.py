@@ -7,6 +7,7 @@ from __future__ import annotations
 import uuid
 from contextlib import ExitStack
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from ypl.mcp_common.auth_context import RequestContext
@@ -97,6 +98,12 @@ class TestParseSessionId:
 # ---------------------------------------------------------------------------
 # add_artifact — pointer flows (CODE_REVIEW / OTHER)
 # ---------------------------------------------------------------------------
+#
+# The artifact tools write to AL arti via ``_arti_backend``; these tests mock
+# that module and pin how each tool validates input, threads caller context /
+# provenance, and maps arti errors onto the tool's ``{success, error}`` shape.
+
+_BACKEND = "ypl.mcp_server.tools._arti_backend"
 
 
 def _enter_caller_ctx(stack: ExitStack) -> None:
@@ -106,26 +113,37 @@ def _enter_caller_ctx(stack: ExitStack) -> None:
     stack.enter_context(patch("ypl.mcp_server.tools.agent_artifacts._resolve_agent_id", AsyncMock(return_value=None)))
 
 
+def _patch_backend(stack: ExitStack, name: str, **kwargs: Any) -> AsyncMock:
+    mock = AsyncMock(**kwargs)
+    stack.enter_context(patch(f"{_BACKEND}.{name}", mock))
+    return mock
+
+
 class TestAddArtifactPointer:
     async def test_code_review_success(self) -> None:
-        artifact = _make_artifact()
+        arti_result = {
+            "success": True,
+            "artifact_id": str(FAKE_ARTIFACT_ID),
+            "url": "https://github.com/pr/1",
+            "title": "My PR",
+            "message": "Registered CODE_REVIEW 'My PR'.",
+        }
         with ExitStack() as stack:
             _enter_caller_ctx(stack)
-            stack.enter_context(
-                patch(
-                    "ypl.mcp_server.tools.agent_artifacts._insert_pointer_artifact",
-                    AsyncMock(return_value=artifact),
-                )
-            )
+            mock_add = _patch_backend(stack, "add_pointer", return_value=arti_result)
             result = await add_artifact.fn(
                 artifact_type="CODE_REVIEW",
                 title="My PR",
                 url="https://github.com/pr/1",
             )
-        assert result["success"] is True
-        assert result["artifact_id"] == str(FAKE_ARTIFACT_ID)
-        assert result["url"] == "https://github.com/pr/1"
-        assert "My PR" in result["message"]
+        assert result == arti_result
+        kwargs = mock_add.call_args.kwargs
+        assert kwargs["artifact_type"] == "CODE_REVIEW"
+        assert kwargs["url"] == "https://github.com/pr/1"
+        assert kwargs["user_id"] == "user-123"
+        assert kwargs["session_id"] == uuid.UUID(FAKE_SESSION_ID)
+        assert f"session:{FAKE_SESSION_ID}" in kwargs["prov"]
+        assert "agent:sre" in kwargs["prov"]
 
     async def test_other_requires_url(self) -> None:
         with ExitStack() as stack:
@@ -158,16 +176,10 @@ class TestAddArtifactPointer:
         assert result["success"] is False
         assert "Invalid agent_task_id" in result["error"]
 
-    async def test_valid_task_id_passed(self) -> None:
-        artifact = _make_artifact()
+    async def test_valid_task_id_becomes_provenance_label(self) -> None:
         with ExitStack() as stack:
             _enter_caller_ctx(stack)
-            mock_insert = stack.enter_context(
-                patch(
-                    "ypl.mcp_server.tools.agent_artifacts._insert_pointer_artifact",
-                    AsyncMock(return_value=artifact),
-                )
-            )
+            mock_add = _patch_backend(stack, "add_pointer", return_value={"success": True})
             result = await add_artifact.fn(
                 artifact_type="CODE_REVIEW",
                 title="Test",
@@ -175,24 +187,35 @@ class TestAddArtifactPointer:
                 agent_task_id=str(FAKE_TASK_ID),
             )
         assert result["success"] is True
-        assert mock_insert.call_args.kwargs["agent_task_id"] == FAKE_TASK_ID
+        assert f"task:{FAKE_TASK_ID}" in mock_add.call_args.kwargs["prov"]
 
-    async def test_store_exception_returns_error(self) -> None:
+    async def test_arti_tool_error_returns_error(self) -> None:
+        from ypl.external_mcp.arti_client import ArtiToolError
+
         with ExitStack() as stack:
             _enter_caller_ctx(stack)
-            stack.enter_context(
-                patch(
-                    "ypl.mcp_server.tools.agent_artifacts._insert_pointer_artifact",
-                    AsyncMock(side_effect=RuntimeError("db error")),
-                )
-            )
+            _patch_backend(stack, "add_pointer", side_effect=ArtiToolError("forbidden"))
             result = await add_artifact.fn(
                 artifact_type="CODE_REVIEW",
                 title="Test",
                 url="http://example.com",
             )
         assert result["success"] is False
-        assert "Internal error" in result["error"]
+        assert "AL arti rejected the write" in result["error"]
+
+    async def test_arti_unavailable_returns_error(self) -> None:
+        from ypl.external_mcp.arti_client import ArtiUnavailable
+
+        with ExitStack() as stack:
+            _enter_caller_ctx(stack)
+            _patch_backend(stack, "add_pointer", side_effect=ArtiUnavailable("not registered"))
+            result = await add_artifact.fn(
+                artifact_type="CODE_REVIEW",
+                title="Test",
+                url="http://example.com",
+            )
+        assert result["success"] is False
+        assert "AL arti unavailable" in result["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -212,37 +235,44 @@ class TestAddArtifactText:
         assert "require a 'content'" in result["error"]
 
     async def test_text_success(self) -> None:
-        artifact = _make_artifact(
-            artifact_type_value="TEXT",
-            title="Report",
-            url="https://viewer.example.com/artifacts/abc",
-            named_slug="my-report",
-            version=1,
-            content_type="text/markdown",
-        )
+        arti_result = {
+            "success": True,
+            "artifact_id": str(FAKE_ARTIFACT_ID),
+            "slug": "my-report",
+            "version": 1,
+            "content_type": "text/markdown",
+        }
         with ExitStack() as stack:
             _enter_caller_ctx(stack)
-            mock_create = stack.enter_context(
-                patch(
-                    "ypl.mcp_server.tools.agent_artifacts.create_artifact",
-                    AsyncMock(return_value=artifact),
-                )
-            )
+            mock_add = _patch_backend(stack, "add_text", return_value=arti_result)
             result = await add_artifact.fn(
                 artifact_type="TEXT",
                 title="Report",
                 content="# Hello",
                 named_slug="my-report",
                 create_new_slug=True,
+                labels=["Ops"],
             )
-        assert result["success"] is True
-        assert result["slug"] == "my-report"
-        assert result["version"] == 1
-        assert result["content_type"] == "text/markdown"
-        # Ensure content encoded as bytes
-        assert mock_create.call_args.kwargs["content"] == b"# Hello"
-        assert mock_create.call_args.kwargs["named_slug"] == "my-report"
-        assert mock_create.call_args.kwargs["create_new_slug"] is True
+        assert result == arti_result
+        kwargs = mock_add.call_args.kwargs
+        assert kwargs["content"] == "# Hello"
+        assert kwargs["named_slug"] == "my-report"
+        assert kwargs["create_new_slug"] is True
+        assert kwargs["labels"] == ["ops"]  # normalized before reaching arti
+
+    async def test_text_attachments_rejected(self) -> None:
+        with ExitStack() as stack:
+            _enter_caller_ctx(stack)
+            mock_add = _patch_backend(stack, "add_text")
+            result = await add_artifact.fn(
+                artifact_type="TEXT",
+                title="Report",
+                content="x",
+                attachments='[{"filename": "a.png", "content_base64": "AA==", "content_type": "image/png"}]',
+            )
+        assert result["success"] is False
+        assert "attachments are not yet supported" in result["error"]
+        mock_add.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -252,19 +282,20 @@ class TestAddArtifactText:
 
 class TestUpdateArtifact:
     async def test_success(self) -> None:
-        artifact = _make_artifact(title="Updated PR")
-        with (
-            patch("ypl.mcp_server.tools.agent_artifacts._caller_agent_name", return_value="sre"),
-            patch(
-                "ypl.mcp_server.tools.agent_artifacts._update_artifact",
-                AsyncMock(return_value=artifact),
-            ),
-        ):
+        with ExitStack() as stack:
+            stack.enter_context(patch("ypl.mcp_server.tools.agent_artifacts._caller_user_id", return_value="u1"))
+            mock_update = _patch_backend(stack, "update_meta", return_value={"success": True})
             result = await update_artifact.fn(
                 artifact_id=str(FAKE_ARTIFACT_ID),
                 title="Updated PR",
+                labels=["Release"],
             )
         assert result["success"] is True
+        kwargs = mock_update.call_args.kwargs
+        assert kwargs["ident"] == str(FAKE_ARTIFACT_ID)
+        assert kwargs["title"] == "Updated PR"
+        assert kwargs["labels"] == ["release"]
+        assert kwargs["user_id"] == "u1"
 
     async def test_invalid_artifact_id_returns_error(self) -> None:
         result = await update_artifact.fn(artifact_id="not-a-uuid", title="x")
@@ -277,13 +308,10 @@ class TestUpdateArtifact:
         assert "At least one field" in result["error"]
 
     async def test_artifact_not_found(self) -> None:
-        with (
-            patch("ypl.mcp_server.tools.agent_artifacts._caller_agent_name", return_value="sre"),
-            patch(
-                "ypl.mcp_server.tools.agent_artifacts._update_artifact",
-                AsyncMock(return_value=None),
-            ),
-        ):
+        from ypl.external_mcp.arti_client import ArtiToolError
+
+        with ExitStack() as stack:
+            _patch_backend(stack, "update_meta", side_effect=ArtiToolError("artifact not found"))
             result = await update_artifact.fn(artifact_id=str(FAKE_ARTIFACT_ID), title="x")
         assert result["success"] is False
         assert "not found" in result["error"]
@@ -296,41 +324,26 @@ class TestUpdateArtifact:
 
 class TestUpdateArtifactContent:
     async def test_success(self) -> None:
-        artifact = _make_artifact(
-            artifact_type_value="TEXT",
-            named_slug="my-report",
-            version=2,
-            content_type="text/markdown",
-            url="https://viewer/artifacts/abc",
-        )
+        arti_result = {"success": True, "slug": "my-report", "version": 2}
         with ExitStack() as stack:
             _enter_caller_ctx(stack)
-            mock_create = stack.enter_context(
-                patch(
-                    "ypl.mcp_server.tools.agent_artifacts.create_artifact",
-                    AsyncMock(return_value=artifact),
-                )
-            )
+            mock_add = _patch_backend(stack, "add_version", return_value=arti_result)
             result = await update_artifact_content.fn(
                 slug="my-report",
                 content="# v2",
             )
-        assert result["success"] is True
-        assert result["version"] == 2
-        assert mock_create.call_args.kwargs["named_slug"] == "my-report"
-        assert mock_create.call_args.kwargs["create_new_slug"] is False
+        assert result == arti_result
+        kwargs = mock_add.call_args.kwargs
+        assert kwargs["slug"] == "my-report"
+        assert kwargs["content"] == "# v2"
+        assert kwargs["title"] == "my-report"  # defaults to the slug
 
-    async def test_artifact_error_returned(self) -> None:
-        from ypl.agent_harness_service.artifact_store import ArtifactError
+    async def test_arti_error_returned(self) -> None:
+        from ypl.external_mcp.arti_client import ArtiToolError
 
         with ExitStack() as stack:
             _enter_caller_ctx(stack)
-            stack.enter_context(
-                patch(
-                    "ypl.mcp_server.tools.agent_artifacts.create_artifact",
-                    AsyncMock(side_effect=ArtifactError("slug 'my-report' does not exist yet")),
-                )
-            )
+            _patch_backend(stack, "add_version", side_effect=ArtiToolError("slug 'my-report' does not exist yet"))
             result = await update_artifact_content.fn(slug="my-report", content="x")
         assert result["success"] is False
         assert "does not exist yet" in result["error"]
@@ -359,28 +372,19 @@ class TestListArtifacts:
         assert "Invalid artifact_type" in result["error"]
 
     async def test_returns_artifacts_for_session(self) -> None:
-        artifact = _make_artifact()
-        scalars = MagicMock()
-        scalars.all.return_value = [artifact]
-        db_result = MagicMock()
-        db_result.scalars.return_value = scalars
-        session = AsyncMock()
-        session.execute.return_value = db_result
-        ctx = MagicMock()
-        ctx.__aenter__ = AsyncMock(return_value=session)
-        ctx.__aexit__ = AsyncMock(return_value=False)
-
-        with (
-            patch(
-                "ypl.mcp_server.tools.agent_artifacts._caller_session_id",
-                return_value=uuid.UUID(FAKE_SESSION_ID),
-            ),
-            patch("ypl.mcp_server.tools.agent_artifacts.get_async_session_read_replica", return_value=ctx),
-        ):
-            result = await list_artifacts.fn()
-        assert result["success"] is True
-        assert result["count"] == 1
-        assert result["artifacts"][0]["artifact_id"] == str(FAKE_ARTIFACT_ID)
+        arti_result = {"success": True, "artifacts": [{"artifact_id": str(FAKE_ARTIFACT_ID)}], "count": 1}
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch(
+                    "ypl.mcp_server.tools.agent_artifacts._caller_session_id",
+                    return_value=uuid.UUID(FAKE_SESSION_ID),
+                )
+            )
+            mock_list = _patch_backend(stack, "list_for_session", return_value=arti_result)
+            result = await list_artifacts.fn(limit=500)
+        assert result == arti_result
+        assert mock_list.call_args.kwargs["session_id"] == uuid.UUID(FAKE_SESSION_ID)
+        assert mock_list.call_args.kwargs["limit"] == 100  # clamped
 
 
 # ---------------------------------------------------------------------------
@@ -390,23 +394,25 @@ class TestListArtifacts:
 
 class TestListArtifactVersions:
     async def test_success(self) -> None:
-        v1 = _make_artifact(artifact_id=uuid.uuid4(), named_slug="my-report", version=1, content_type="text/markdown")
-        v2 = _make_artifact(artifact_id=uuid.uuid4(), named_slug="my-report", version=2, content_type="text/markdown")
-        with patch(
-            "ypl.mcp_server.tools.agent_artifacts._list_artifact_versions",
-            AsyncMock(return_value=[v1, v2]),
-        ):
+        arti_result = {"success": True, "slug": "my-report", "versions": [{"version": 1}, {"version": 2}], "count": 2}
+        with ExitStack() as stack:
+            _patch_backend(stack, "list_versions", return_value=arti_result)
             result = await list_artifact_versions.fn(slug="my-report")
-        assert result["success"] is True
-        assert result["count"] == 2
-        assert result["versions"][0]["version"] == 1
-        assert result["versions"][1]["version"] == 2
+        assert result == arti_result
 
-    async def test_exception(self) -> None:
-        with patch(
-            "ypl.mcp_server.tools.agent_artifacts._list_artifact_versions",
-            AsyncMock(side_effect=RuntimeError("db down")),
-        ):
+    async def test_not_found_is_empty(self) -> None:
+        from ypl.external_mcp.arti_client import ArtiToolError
+
+        with ExitStack() as stack:
+            _patch_backend(stack, "list_versions", side_effect=ArtiToolError("no such slug"))
+            result = await list_artifact_versions.fn(slug="x")
+        assert result == {"success": True, "slug": "x", "versions": [], "count": 0}
+
+    async def test_unavailable(self) -> None:
+        from ypl.external_mcp.arti_client import ArtiUnavailable
+
+        with ExitStack() as stack:
+            _patch_backend(stack, "list_versions", side_effect=ArtiUnavailable("down"))
             result = await list_artifact_versions.fn(slug="x")
         assert result["success"] is False
 
@@ -428,75 +434,106 @@ class TestSearchArtifacts:
         assert "Invalid artifact_type" in result["error"]
 
     async def test_success(self) -> None:
-        artifact = _make_artifact(title="Hello world report", artifact_type_value="TEXT", named_slug="hello")
-        with patch(
-            "ypl.mcp_server.tools.agent_artifacts._search_artifacts",
-            AsyncMock(return_value=[artifact]),
-        ) as mock_search:
+        arti_result = {"success": True, "results": [{"title": "Hello world report"}], "count": 1}
+        with ExitStack() as stack:
+            mock_search = _patch_backend(stack, "search", return_value=arti_result)
             result = await search_artifacts.fn(query="hello", limit=5, offset=0)
-        assert result["success"] is True
-        assert result["count"] == 1
-        assert result["results"][0]["title"] == "Hello world report"
+        assert result == arti_result
+        assert mock_search.call_args.kwargs["query"] == "hello"
         assert mock_search.call_args.kwargs["limit"] == 5
 
 
 # ---------------------------------------------------------------------------
-# artifact_url
+# artifact_url — AL arti first, legacy Yupp store fallback
 # ---------------------------------------------------------------------------
 
 
 class TestArtifactUrl:
-    async def test_by_id_success(self) -> None:
+    async def test_arti_hit(self) -> None:
+        arti_result = {"success": True, "url": "https://arti/a/x", "artifact_type": "TEXT"}
+        with ExitStack() as stack:
+            _patch_backend(stack, "url_of", return_value=arti_result)
+            legacy = stack.enter_context(
+                patch("ypl.mcp_server.tools.agent_artifacts.get_artifact_by_slug", AsyncMock())
+            )
+            result = await artifact_url.fn(id_or_slug="my-slug")
+        assert result == arti_result
+        legacy.assert_not_called()
+
+    async def test_falls_back_to_legacy_by_id(self) -> None:
         art = _make_artifact(artifact_type_value="TEXT", url="https://viewer/artifacts/x")
-        with patch(
-            "ypl.mcp_server.tools.agent_artifacts.get_artifact_by_id",
-            AsyncMock(return_value=art),
-        ):
+        with ExitStack() as stack:
+            _patch_backend(stack, "url_of", return_value=None)
+            stack.enter_context(
+                patch("ypl.mcp_server.tools.agent_artifacts.get_artifact_by_id", AsyncMock(return_value=art))
+            )
             result = await artifact_url.fn(id_or_slug=str(FAKE_ARTIFACT_ID))
         assert result["success"] is True
         assert result["url"] == "https://viewer/artifacts/x"
         assert result["artifact_type"] == "TEXT"
 
-    async def test_by_slug_success(self) -> None:
+    async def test_falls_back_to_legacy_when_arti_unavailable(self) -> None:
+        from ypl.external_mcp.arti_client import ArtiUnavailable
+
         art = _make_artifact(artifact_type_value="TEXT", named_slug="my-slug", url="https://viewer/artifacts/y")
-        with patch(
-            "ypl.mcp_server.tools.agent_artifacts.get_artifact_by_slug",
-            AsyncMock(return_value=art),
-        ):
+        with ExitStack() as stack:
+            _patch_backend(stack, "url_of", side_effect=ArtiUnavailable("down"))
+            stack.enter_context(
+                patch("ypl.mcp_server.tools.agent_artifacts.get_artifact_by_slug", AsyncMock(return_value=art))
+            )
             result = await artifact_url.fn(id_or_slug="my-slug")
         assert result["success"] is True
         assert result["url"] == "https://viewer/artifacts/y"
 
-    async def test_not_found(self) -> None:
-        with patch(
-            "ypl.mcp_server.tools.agent_artifacts.get_artifact_by_slug",
-            AsyncMock(return_value=None),
-        ):
+    async def test_not_found_anywhere(self) -> None:
+        from ypl.external_mcp.arti_client import ArtiToolError
+
+        with ExitStack() as stack:
+            _patch_backend(stack, "url_of", side_effect=ArtiToolError("not found"))
+            stack.enter_context(
+                patch("ypl.mcp_server.tools.agent_artifacts.get_artifact_by_slug", AsyncMock(return_value=None))
+            )
             result = await artifact_url.fn(id_or_slug="missing")
         assert result["success"] is False
         assert "not found" in result["error"].lower()
 
 
 # ---------------------------------------------------------------------------
-# archive_artifact_slug
+# archive_artifact_slug — AL arti first, legacy Yupp store fallback
 # ---------------------------------------------------------------------------
 
 
 class TestArchiveArtifactSlug:
-    async def test_success(self) -> None:
-        with patch(
-            "ypl.mcp_server.tools.agent_artifacts.archive_artifacts_by_slug",
-            AsyncMock(return_value=3),
-        ):
+    async def test_arti_success(self) -> None:
+        with ExitStack() as stack:
+            _patch_backend(stack, "archive", return_value=True)
+            legacy = stack.enter_context(
+                patch("ypl.mcp_server.tools.agent_artifacts.archive_artifacts_by_slug", AsyncMock())
+            )
+            result = await archive_artifact_slug.fn(slug="my-report")
+        assert result["success"] is True
+        assert result["slug"] == "my-report"
+        legacy.assert_not_called()
+
+    async def test_legacy_fallback(self) -> None:
+        with ExitStack() as stack:
+            _patch_backend(stack, "archive", return_value=None)
+            stack.enter_context(
+                patch("ypl.mcp_server.tools.agent_artifacts.archive_artifacts_by_slug", AsyncMock(return_value=3))
+            )
             result = await archive_artifact_slug.fn(slug="my-report")
         assert result["success"] is True
         assert result["archived_count"] == 3
 
-    async def test_exception(self) -> None:
-        with patch(
-            "ypl.mcp_server.tools.agent_artifacts.archive_artifacts_by_slug",
-            AsyncMock(side_effect=RuntimeError("db down")),
-        ):
+    async def test_legacy_exception(self) -> None:
+        with ExitStack() as stack:
+            _patch_backend(stack, "archive", return_value=None)
+            stack.enter_context(
+                patch(
+                    "ypl.mcp_server.tools.agent_artifacts.archive_artifacts_by_slug",
+                    AsyncMock(side_effect=RuntimeError("db down")),
+                )
+            )
             result = await archive_artifact_slug.fn(slug="x")
         assert result["success"] is False
 

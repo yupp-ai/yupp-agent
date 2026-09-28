@@ -8,7 +8,6 @@ compare the raw value.
 """
 
 import pytest
-
 from ypl.db.external_mcp import McpAuthType, McpServer
 from ypl.external_mcp.resolver import _auth_headers
 

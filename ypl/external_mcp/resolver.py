@@ -158,9 +158,7 @@ async def _resolve_headers(
             return fallback, None
         return None, "no active grant — connect at /my_mcps"
 
-    bearer = await grants_svc.resolve_bearer(
-        session, user_id=user_id, server=srv, agent_session_id=agent_session_id
-    )
+    bearer = await grants_svc.resolve_bearer(session, user_id=user_id, server=srv, agent_session_id=agent_session_id)
     if bearer is None:
         return None, "no active grant — connect at /my_mcps"
     if bearer == "":  # NONE auth

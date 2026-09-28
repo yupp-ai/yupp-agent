@@ -14,7 +14,6 @@ Attribution: writes go out as the caller's per-user arti grant when they have on
 """
 
 from __future__ import annotations
-
 import uuid
 from typing import Any
 
@@ -27,9 +26,7 @@ from ypl.external_mcp.arti_client import ArtiToolError, ArtiUnavailable
 _POINTER_KINDS = {"CODE_REVIEW", "OTHER"}
 
 
-def provenance_labels(
-    *, session_id: uuid.UUID | None, agent_name: str | None, task_id: uuid.UUID | None
-) -> list[str]:
+def provenance_labels(*, session_id: uuid.UUID | None, agent_name: str | None, task_id: uuid.UUID | None) -> list[str]:
     """The session/agent/task tags stamped on every write for linkage."""
     out: list[str] = []
     if session_id:
@@ -202,7 +199,12 @@ async def list_for_session(
 ) -> dict[str, Any]:
     if session_id is None:
         return {"success": True, "artifacts": [], "count": 0}
-    args: dict[str, Any] = {"labels": [f"session:{session_id}"], "limit": limit, "order_by": "created_at", "order_dir": "desc"}
+    args: dict[str, Any] = {
+        "labels": [f"session:{session_id}"],
+        "limit": limit,
+        "order_by": "created_at",
+        "order_dir": "desc",
+    }
     if artifact_type == "TEXT":
         args["type"] = "TEXT"
     res = await arti_client.call_tool("list_artifacts", args, user_id=user_id, agent_session_id=session_id)

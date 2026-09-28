@@ -272,9 +272,7 @@ with tab_browse:
                 )
             with hdr_btn:
                 if new_header.strip() != srv["auth_header"] and st.button("Save header"):
-                    run_coroutine_in_lit_worker(
-                        _set_auth_header(mcp_server_id, new_header.strip() or None), timeout=10
-                    )
+                    run_coroutine_in_lit_worker(_set_auth_header(mcp_server_id, new_header.strip() or None), timeout=10)
                     st.success("Saved.")
                     st.cache_data.clear()
                     st.rerun()

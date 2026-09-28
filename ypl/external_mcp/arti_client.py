@@ -12,7 +12,6 @@ and get back the parsed result (arti returns a JSON string in
 """
 
 from __future__ import annotations
-
 import json
 import os
 import uuid
