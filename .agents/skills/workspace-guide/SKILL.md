@@ -52,7 +52,7 @@ Call `request_write_access` to create an isolated git worktree. The worktree app
 request_write_access(repo="yupp-agent", branch={BRANCH_NAME})
 ```
 
-Use `list_available_repos()` to see which repos support write access.
+Use `list_available_repos()` to see which repos support write access. To work on a GitHub repo that is not listed, pass `repo="owner/repo"` and it will be cloned first (when the deployment enables `AHS_ALLOW_REPO_CLONE`). If the response says `auth_required`, have the user complete GitHub authorization, then retry.
 
 **Naming conventions:**
 

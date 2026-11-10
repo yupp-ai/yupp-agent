@@ -11,14 +11,32 @@ Handles:
 
 import os
 import re
+import shutil
 import subprocess
+import tempfile
+import threading
+from collections import defaultdict
 
-from ypl.agent_harness_service.common.constants import AHS_REPOS_DIR, AHS_SESSIONS_DIR, SESSION_INFRA_DIRS
+from ypl.agent_harness_service.common.constants import (
+    AHS_ALLOW_REPO_CLONE,
+    AHS_REPOS_DIR,
+    AHS_SESSIONS_DIR,
+    SESSION_INFRA_DIRS,
+)
 from ypl.structured_logger import get_logger
 
 logger = get_logger()
 
 _SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
+
+# Accepts "owner/repo" and GitHub HTTPS/SSH URLs. Anchored to github.com, so a
+# repo spec can never point git at an arbitrary host or smuggle in a git option.
+_GITHUB_REPO_RE = re.compile(
+    r"^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)?"
+    r"(?P<owner>[a-zA-Z0-9][a-zA-Z0-9-]*)/(?P<name>[a-zA-Z0-9][a-zA-Z0-9._-]*?)(?:\.git)?/?$"
+)
+_CLONE_TIMEOUT_SECONDS = 600
+_clone_locks: defaultdict[str, threading.Lock] = defaultdict(threading.Lock)
 
 # Regex to split branch names into word-like segments
 _BRANCH_SLUG_SPLIT = re.compile(r"[-_/]+")
@@ -116,10 +134,103 @@ def list_repos() -> list[dict[str, str]]:
     return repos
 
 
+class RepoCloneError(ValueError):
+    """A GitHub repo could not be cloned (missing, private without access, or network)."""
+
+
+def local_repo_name(repo: str) -> str:
+    """Return the AHS_REPOS_DIR directory name for a plain name, 'owner/repo', or GitHub URL."""
+    match = _GITHUB_REPO_RE.match(repo)
+    return match.group("name") if match else repo
+
+
+def _git_env(github_token: str | None) -> dict[str, str]:
+    """Env for git calls: never prompt, and authenticate through the GH_TOKEN credential helper."""
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    if github_token:
+        env["GH_TOKEN"] = github_token
+    return env
+
+
+def _default_remote_ref(repo_path: str) -> str:
+    """Return the repo's default remote branch (e.g. 'origin/master'), falling back to 'origin/main'."""
+    result = subprocess.run(
+        ["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 and result.stdout.strip() else "origin/main"
+
+
+def ensure_repo(repo: str, github_token: str | None = None) -> str:
+    """Resolve a repo spec to a directory name in AHS_REPOS_DIR, cloning it if allowed.
+
+    A plain name is returned unchanged and validated later by create_worktree.
+    An 'owner/repo' spec or GitHub URL is cloned when absent and
+    AHS_ALLOW_REPO_CLONE is set. The token is passed through the environment,
+    never the remote URL, so it is not written to the shared checkout's config.
+
+    Raises:
+        RepoCloneError: If the clone fails.
+        ValueError: If cloning is disabled or the name belongs to a different repo.
+    """
+    match = _GITHUB_REPO_RE.match(repo)
+    if not match:
+        return repo
+
+    owner, name = match.group("owner"), match.group("name")
+    if not _SAFE_NAME_RE.match(name) or name in (".", ".."):
+        raise ValueError(f"Invalid repo name: {repo!r}")
+    url = f"https://github.com/{owner}/{name}.git"
+    repo_path = os.path.join(AHS_REPOS_DIR, name)
+
+    with _clone_locks[name]:
+        if os.path.isdir(repo_path):
+            existing = subprocess.run(
+                ["git", "remote", "get-url", "origin"], cwd=repo_path, capture_output=True, text=True
+            ).stdout.strip()
+            existing_match = _GITHUB_REPO_RE.match(existing)
+            # GitHub owner and repo names are case-insensitive.
+            if not existing_match or existing_match.group("owner").lower() != owner.lower():
+                raise ValueError(f"Repo name {name!r} is already used by a different repository.")
+            return name
+
+        if not AHS_ALLOW_REPO_CLONE:
+            raise ValueError(f"Repo {name!r} is not available and cloning is disabled (AHS_ALLOW_REPO_CLONE).")
+
+        os.makedirs(AHS_REPOS_DIR, exist_ok=True)
+        # Clone beside the destination, then rename, so a failed clone never
+        # leaves a partial checkout that looks like a usable repo.
+        temp_dir = tempfile.mkdtemp(dir=AHS_REPOS_DIR, prefix=".clone-")
+        try:
+            target = os.path.join(temp_dir, name)
+            subprocess.run(
+                ["git", "clone", "--", url, target],
+                check=True,
+                capture_output=True,
+                timeout=_CLONE_TIMEOUT_SECONDS,
+                env=_git_env(github_token),
+            )
+            os.rename(target, repo_path)
+        except subprocess.TimeoutExpired as e:
+            raise RepoCloneError(f"Timed out cloning {owner}/{name}.") from e
+        except subprocess.CalledProcessError as e:
+            stderr = e.stderr.decode("utf-8", errors="replace")[:300] if e.stderr else ""
+            logger.warning("git clone failed", repo=f"{owner}/{name}", stderr=stderr)
+            raise RepoCloneError(f"Could not clone {owner}/{name}: {stderr}") from e
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    logger.info(f"Cloned repo repo={owner}/{name}", repo=f"{owner}/{name}")
+    return name
+
+
 def create_worktree(
     repo: str,
     session_id: str,
     branch: str | None = None,
+    github_token: str | None = None,
 ) -> dict[str, str]:
     """Create a git worktree for a session.
 
@@ -127,6 +238,7 @@ def create_worktree(
         repo: Repo name (e.g., 'yupp-agent')
         session_id: Session UUID string
         branch: Branch name. Defaults to 'agent/{session_id}'.
+        github_token: Optional token so the pre-worktree fetch can reach private repos.
 
     Returns:
         Dict with workspace path, branch name, and status.
@@ -170,6 +282,7 @@ def create_worktree(
             check=True,
             capture_output=True,
             timeout=30,
+            env=_git_env(github_token),
         )
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
         stderr = ""
@@ -183,9 +296,9 @@ def create_worktree(
             stderr=stderr,
         )
 
-    # Create worktree with new branch from origin/main
+    # Create worktree with new branch from the repo's default branch
     subprocess.run(
-        ["git", "worktree", "add", "-b", branch, workspace, "origin/main"],
+        ["git", "worktree", "add", "-b", branch, workspace, _default_remote_ref(repo_path)],
         cwd=repo_path,
         check=True,
         capture_output=True,
@@ -468,7 +581,7 @@ def pull_repo(repo_path: str) -> bool:
     """
     try:
         subprocess.run(
-            ["git", "pull", "--ff-only", "origin", "main"],
+            ["git", "pull", "--ff-only", "origin", _default_remote_ref(repo_path).removeprefix("origin/")],
             cwd=repo_path,
             check=True,
             capture_output=True,

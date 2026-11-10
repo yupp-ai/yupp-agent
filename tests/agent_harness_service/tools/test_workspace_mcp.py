@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from ypl.agent_harness_service.common.constants import AHS_LIT_BASE_URL
 from ypl.agent_harness_service.tools.mcp_instance import _resolve_pr_attribution
+from ypl.agent_harness_service.tools.repo_manager import RepoCloneError
 from ypl.agent_harness_service.tools.workspace import (
     create_pr as _create_pr_tool,
 )
@@ -33,34 +34,83 @@ INVALID_SESSION = "bad-uuid"
 # ---------------------------------------------------------------------------
 
 
+_WS = "ypl.agent_harness_service.tools.workspace"
+
+
 class TestRequestWriteAccess:
-    def test_success(self) -> None:
+    async def test_success(self) -> None:
         expected = {"status": "granted", "workspace": "/tmp/session/yupp-agent-fix-bug", "branch": "agent/fix-bug"}
 
-        with patch(
-            "ypl.agent_harness_service.tools.workspace.create_worktree",
-            return_value=expected,
+        with (
+            patch(f"{_WS}._get_valid_github_token", AsyncMock(return_value=None)),
+            patch(f"{_WS}.create_worktree", return_value=expected),
         ):
-            result = request_write_access(session_id=VALID_SESSION, repo="yupp-agent")
+            result = await request_write_access(session_id=VALID_SESSION, repo="yupp-agent")
 
         assert result == expected
 
-    def test_branch_passed_through(self) -> None:
-        with patch(
-            "ypl.agent_harness_service.tools.workspace.create_worktree",
-            return_value={"status": "granted"},
-        ) as mock_create:
-            request_write_access(session_id=VALID_SESSION, repo="yupp-agent", branch="my-feature")
+    async def test_branch_passed_through(self) -> None:
+        with (
+            patch(f"{_WS}._get_valid_github_token", AsyncMock(return_value="tok")),
+            patch(f"{_WS}.create_worktree", return_value={"status": "granted"}) as mock_create,
+        ):
+            await request_write_access(session_id=VALID_SESSION, repo="yupp-agent", branch="my-feature")
 
-        mock_create.assert_called_once_with(repo="yupp-agent", session_id=VALID_SESSION, branch="my-feature")
+        mock_create.assert_called_once_with(
+            repo="yupp-agent", session_id=VALID_SESSION, branch="my-feature", github_token="tok"
+        )
 
-    def test_invalid_session_id_raises(self) -> None:
+    async def test_token_lookup_failure_does_not_block_local_repo(self) -> None:
+        with (
+            patch(f"{_WS}._get_valid_github_token", AsyncMock(side_effect=RuntimeError("redis down"))),
+            patch(f"{_WS}.create_worktree", return_value={"status": "granted"}) as mock_create,
+        ):
+            result = await request_write_access(session_id=VALID_SESSION, repo="yupp-agent")
+
+        assert result == {"status": "granted"}
+        assert mock_create.call_args.kwargs["github_token"] is None
+
+    async def test_owner_repo_uses_cloned_local_name(self) -> None:
+        with (
+            patch(f"{_WS}._get_valid_github_token", AsyncMock(return_value="tok")),
+            patch(f"{_WS}.ensure_repo", return_value="example-repo") as mock_ensure,
+            patch(f"{_WS}.create_worktree", return_value={"status": "granted"}) as mock_create,
+        ):
+            await request_write_access(session_id=VALID_SESSION, repo="owner/example-repo")
+
+        mock_ensure.assert_called_once_with("owner/example-repo", "tok")
+        assert mock_create.call_args.kwargs["repo"] == "example-repo"
+
+    async def test_clone_failure_without_token_starts_device_flow(self) -> None:
+        flow = {"verification_uri": "https://github.com/login/device", "user_code": "ABCD"}
+        with (
+            patch(f"{_WS}._get_valid_github_token", AsyncMock(return_value=None)),
+            patch(f"{_WS}.ensure_repo", side_effect=RepoCloneError("not found")),
+            patch(f"{_WS}._get_current_message_user_id", AsyncMock(return_value="user")),
+            patch(f"{_WS}._initiate_device_flow", AsyncMock(return_value=flow)),
+        ):
+            result = await request_write_access(session_id=VALID_SESSION, repo="o/private")
+
+        assert result["auth_required"] == "true"
+        assert result["user_code"] == "ABCD"
+        assert "request_write_access" in result["next_step"]
+
+    async def test_clone_failure_with_token_reports_error(self) -> None:
+        with (
+            patch(f"{_WS}._get_valid_github_token", AsyncMock(return_value="tok")),
+            patch(f"{_WS}.ensure_repo", side_effect=RepoCloneError("no access")),
+        ):
+            result = await request_write_access(session_id=VALID_SESSION, repo="o/private")
+
+        assert result == {"status": "error", "error": "no access"}
+
+    async def test_invalid_session_id_raises(self) -> None:
         with pytest.raises(ValueError, match="not a valid UUID"):
-            request_write_access(session_id=INVALID_SESSION, repo="yupp-agent")
+            await request_write_access(session_id=INVALID_SESSION, repo="yupp-agent")
 
-    def test_empty_session_id_raises(self) -> None:
+    async def test_empty_session_id_raises(self) -> None:
         with pytest.raises(ValueError, match="session_id is required"):
-            request_write_access(session_id="", repo="yupp-agent")
+            await request_write_access(session_id="", repo="yupp-agent")
 
 
 # ---------------------------------------------------------------------------
