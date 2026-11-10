@@ -37,6 +37,12 @@ AHS_SHARED_DIR = os.environ.get(
 )
 AHS_REPOS_DIR = os.environ.get("AHS_REPOS_DIR", os.path.join(AHS_DATA_DIR, "repos"))
 
+# When true, request_write_access may clone any GitHub repo ("owner/repo") into
+# AHS_REPOS_DIR. That directory is shared by every session, so a private repo
+# cloned with one user's token is readable by all agents. Off by default; only
+# enable on single-tenant deployments.
+AHS_ALLOW_REPO_CLONE = os.environ.get("AHS_ALLOW_REPO_CLONE", "").strip().lower() in ("1", "true", "yes")
+
 # Skills directory: contains SKILL.md files loaded on-demand by Claude Code.
 # For non-Claude-Code executors, build_system_prompt() inlines skill content
 # into the system prompt since those executors cannot invoke skills.
