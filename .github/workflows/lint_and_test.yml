@@ -91,6 +91,10 @@ jobs:
       - name: Create env file for tests
         run: cp .env.test .env
 
+      # ubuntu-26.04 moved alias zones such as US/Pacific into tzdata-legacy.
+      - name: Install legacy timezone aliases
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq tzdata-legacy
+
       - name: Run tests with coverage
         env:
           ENVIRONMENT: test
