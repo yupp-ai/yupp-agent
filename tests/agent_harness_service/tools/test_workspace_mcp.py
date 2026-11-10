@@ -1,12 +1,17 @@
-"""Tests for workspace.py — request_write_access, list_available_repos, create_pr."""
+"""Tests for workspace.py — request_write_access, list_available_repos, clone_repo, create_pr."""
 
 from __future__ import annotations
+import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from ypl.agent_harness_service.common.constants import AHS_LIT_BASE_URL
 from ypl.agent_harness_service.tools.mcp_instance import _resolve_pr_attribution
+from ypl.agent_harness_service.tools.repo_manager import clone_repo_into_session
+from ypl.agent_harness_service.tools.workspace import (
+    clone_repo as _clone_repo_tool,
+)
 from ypl.agent_harness_service.tools.workspace import (
     create_pr as _create_pr_tool,
 )
@@ -551,3 +556,142 @@ class TestResolvePrAttribution:
 
         assert result is not None
         assert "[Slack]" not in result
+
+
+# ---------------------------------------------------------------------------
+# clone_repo
+# ---------------------------------------------------------------------------
+
+clone_repo = _clone_repo_tool.fn
+
+
+class TestCloneRepo:
+    async def test_no_token_returns_auth_required(self) -> None:
+        with (
+            patch(
+                "ypl.agent_harness_service.tools.workspace._get_valid_github_token",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "ypl.agent_harness_service.tools.workspace._get_current_message_user_id",
+                new=AsyncMock(return_value="user-abc"),
+            ),
+            patch(
+                "ypl.agent_harness_service.tools.workspace._initiate_device_flow",
+                new=AsyncMock(
+                    return_value={
+                        "status": "pending",
+                        "verification_uri": "https://github.com/login/device",
+                        "user_code": "ABCD-1234",
+                    }
+                ),
+            ),
+            patch("ypl.agent_harness_service.tools.workspace.clone_repo_into_session") as mock_clone,
+        ):
+            result = await clone_repo(session_id=VALID_SESSION, github_repo="octo/private")
+
+        assert result["status"] == "error"
+        assert result["auth_required"] == "true"
+        assert "clone_repo" in result["next_step"]
+        mock_clone.assert_not_called()
+
+    async def test_success_passes_token_server_side(self) -> None:
+        expected = {"status": "granted", "workspace": "/s/private-clone", "repo": "private", "branch": "main"}
+        with (
+            patch(
+                "ypl.agent_harness_service.tools.workspace._get_valid_github_token",
+                new=AsyncMock(return_value="ghu_tok"),
+            ),
+            patch(
+                "ypl.agent_harness_service.tools.workspace.clone_repo_into_session",
+                return_value=expected,
+            ) as mock_clone,
+        ):
+            result = await clone_repo(session_id=VALID_SESSION, github_repo="octo/private", branch="feat")
+
+        assert result == expected
+        assert "ghu_tok" not in str(result)
+        mock_clone.assert_called_once_with(
+            github_repo="octo/private", session_id=VALID_SESSION, user_github_token="ghu_tok", branch="feat"
+        )
+
+    async def test_invalid_repo_returns_error(self) -> None:
+        with patch(
+            "ypl.agent_harness_service.tools.workspace._get_valid_github_token",
+            new=AsyncMock(return_value="ghu_tok"),
+        ):
+            result = await clone_repo(session_id=VALID_SESSION, github_repo="../etc/passwd")
+
+        assert result["status"] == "error"
+        assert "Invalid GitHub repo" in result["error"]
+
+    async def test_invalid_session_id_raises(self) -> None:
+        with pytest.raises(ValueError, match="not a valid UUID"):
+            await clone_repo(session_id=INVALID_SESSION, github_repo="octo/private")
+
+
+class TestCloneRepoIntoSession:
+    def test_rejects_bad_names(self, tmp_path: Path) -> None:
+        for bad in ["noslash", "a/b/c", "../x", "o/..", "o/.hidden", "-o/x", "o/x;rm"]:
+            with (
+                patch("ypl.agent_harness_service.tools.repo_manager.AHS_SESSIONS_DIR", str(tmp_path)),
+                pytest.raises(ValueError),
+            ):
+                clone_repo_into_session(github_repo=bad, session_id=VALID_SESSION, user_github_token="t")
+
+    def test_clone_uses_env_token_and_session_dir(self, tmp_path: Path) -> None:
+        calls: list[tuple[list[str], dict[str, str] | None]] = []
+
+        def fake_run(cmd: list[str], **kwargs: object) -> MagicMock:
+            env = kwargs.get("env")
+            calls.append((cmd, env if isinstance(env, dict) else None))
+            out = MagicMock()
+            out.stdout = "main\n"
+            return out
+
+        with (
+            patch("ypl.agent_harness_service.tools.repo_manager.AHS_SESSIONS_DIR", str(tmp_path)),
+            patch("ypl.agent_harness_service.tools.repo_manager.subprocess.run", side_effect=fake_run),
+        ):
+            result = clone_repo_into_session(
+                github_repo="octo/private", session_id=VALID_SESSION, user_github_token="ghu_tok"
+            )
+
+        workspace = str(tmp_path / VALID_SESSION / "private-clone")
+        assert result["status"] == "granted"
+        assert result["workspace"] == workspace
+        assert result["branch"] == "main"
+        clone_cmd, clone_env = calls[0]
+        assert clone_cmd == ["gh", "repo", "clone", "octo/private", workspace]
+        # Token only travels via env — never on the command line or in the result.
+        assert clone_env is not None
+        assert clone_env["GH_TOKEN"] == "ghu_tok"
+        assert all("ghu_tok" not in " ".join(c) for c, _ in calls)
+        assert "ghu_tok" not in str(result)
+
+    def test_existing_clone_is_reused(self, tmp_path: Path) -> None:
+        (tmp_path / VALID_SESSION / "private-clone").mkdir(parents=True)
+        with (
+            patch("ypl.agent_harness_service.tools.repo_manager.AHS_SESSIONS_DIR", str(tmp_path)),
+            patch("ypl.agent_harness_service.tools.repo_manager.subprocess.run") as mock_run,
+        ):
+            result = clone_repo_into_session(
+                github_repo="octo/private", session_id=VALID_SESSION, user_github_token="t"
+            )
+
+        assert result["status"] == "granted"
+        assert "already exists" in result["note"]
+        mock_run.assert_not_called()
+
+    def test_clone_failure_returns_error(self, tmp_path: Path) -> None:
+        err = subprocess.CalledProcessError(1, ["gh"], stderr=b"repository not found")
+        with (
+            patch("ypl.agent_harness_service.tools.repo_manager.AHS_SESSIONS_DIR", str(tmp_path)),
+            patch("ypl.agent_harness_service.tools.repo_manager.subprocess.run", side_effect=err),
+        ):
+            result = clone_repo_into_session(
+                github_repo="octo/private", session_id=VALID_SESSION, user_github_token="t"
+            )
+
+        assert result["status"] == "error"
+        assert "repository not found" in result["error"]
