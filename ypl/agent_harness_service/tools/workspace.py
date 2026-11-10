@@ -1,7 +1,8 @@
 """Git workspace management tools for the harness MCP server.
 
 Provides tools for agents to create isolated git worktrees, list available
-repositories, and open GitHub pull requests attributed to the requesting user.
+repositories, clone user-authorized GitHub repos into the session, and open
+GitHub pull requests attributed to the requesting user.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from ypl.agent_harness_service.tools.mcp_instance import (
     _validate_session_id,
     mcp,
 )
-from ypl.agent_harness_service.tools.repo_manager import create_worktree, push_and_create_pr
+from ypl.agent_harness_service.tools.repo_manager import clone_repo_into_session, create_worktree, push_and_create_pr
 from ypl.agent_harness_service.tools.repo_manager import list_repos as _list_repos
 from ypl.structured_logger import get_logger
 
@@ -66,6 +67,82 @@ def list_available_repos() -> list[dict[str, str]]:
     """
     logger.info("MCP tool: list_available_repos")
     return _list_repos()
+
+
+async def _github_auth_required_response(session_id: str, action: str, retry_tool: str) -> dict[str, Any]:
+    """Start (or report) the GitHub device flow when no valid user token exists."""
+    user_id = await _get_current_message_user_id(session_id)
+    device_flow_result = await _initiate_device_flow(session_id, user_id)
+
+    if device_flow_result.get("status") == "error":
+        return {
+            "status": "error",
+            "error": f"GitHub authorization required but failed to initiate: {device_flow_result.get('error')}",
+        }
+
+    # Polling already in progress (e.g. from a prior call): no verification_uri is returned.
+    if "verification_uri" not in device_flow_result:
+        return {
+            "status": "error",
+            "error": f"GitHub authorization required to {action}.",
+            "auth_required": "true",
+            "message": device_flow_result.get("message", "Authorization already in progress."),
+            "next_step": f"Call check_github_auth_status to verify, then retry {retry_tool}.",
+        }
+
+    return {
+        "status": "error",
+        "error": f"GitHub authorization required to {action}.",
+        "auth_required": "true",
+        "verification_uri": device_flow_result.get("verification_uri", ""),
+        "user_code": device_flow_result.get("user_code", ""),
+        "expires_in_seconds": device_flow_result.get("expires_in_seconds", ""),
+        "instructions": device_flow_result.get("instructions", ""),
+        "next_step": (
+            f"After the user completes authorization, call check_github_auth_status to verify, then retry {retry_tool}."
+        ),
+    }
+
+
+@mcp.tool(
+    name="clone_repo",
+    description=(
+        "Clone a GitHub repository (including private repos) into this session's workspace "
+        "using the requesting user's GitHub authorization (device flow). "
+        "Use when the repo is not in list_available_repos. The clone is visible only to this "
+        "session, appears as '{name}-clone' in the workspace, and is available on your next turn. "
+        "Pass 'branch' to create a working branch so you can commit and later call "
+        "create_pr(repo='{name}'). If the user has not authorized GitHub yet, returns "
+        "device-flow instructions to relay to the user."
+    ),
+)
+async def clone_repo(session_id: str, github_repo: str, branch: str | None = None) -> dict[str, Any]:
+    """Clone a GitHub repo into the session workspace with the user's token.
+
+    Args:
+        session_id: Your harness session ID (provided in the system prompt).
+        github_repo: Repository as 'owner/name' (e.g., 'octocat/hello-world').
+        branch: Optional new branch to create and check out for making changes.
+
+    Returns:
+        Dict with workspace path, repo name, branch and status.
+    """
+    logger.info("MCP tool: clone_repo", session_id=session_id, github_repo=github_repo, branch=branch)
+    _validate_session_id(session_id)
+
+    user_github_token = await _get_valid_github_token(session_id)
+    if not user_github_token:
+        return await _github_auth_required_response(session_id, "clone repositories", "clone_repo")
+
+    try:
+        return clone_repo_into_session(
+            github_repo=github_repo,
+            session_id=session_id,
+            user_github_token=user_github_token,
+            branch=branch,
+        )
+    except ValueError as e:
+        return {"status": "error", "error": str(e)}
 
 
 @mcp.tool(
@@ -146,39 +223,7 @@ async def create_pr(
 
     if not user_github_token:
         # No valid token - initiate device flow and return error with auth details
-        user_id = await _get_current_message_user_id(session_id)
-        device_flow_result = await _initiate_device_flow(session_id, user_id)
-
-        if device_flow_result.get("status") == "error":
-            return {
-                "status": "error",
-                "error": f"GitHub authorization required but failed to initiate: {device_flow_result.get('error')}",
-            }
-
-        # Polling already in progress (e.g. from a prior create_pr or authorize_github_user call):
-        # _initiate_device_flow returns {"status": "pending", "message": "..."} with no verification_uri.
-        # Return a clear "check status and retry" message rather than falling through with empty strings.
-        if "verification_uri" not in device_flow_result:
-            return {
-                "status": "error",
-                "error": "GitHub authorization required to create PRs.",
-                "auth_required": "true",
-                "message": device_flow_result.get("message", "Authorization already in progress."),
-                "next_step": "Call check_github_auth_status to verify, then retry create_pr.",
-            }
-
-        return {
-            "status": "error",
-            "error": "GitHub authorization required to create PRs.",
-            "auth_required": "true",
-            "verification_uri": device_flow_result.get("verification_uri", ""),
-            "user_code": device_flow_result.get("user_code", ""),
-            "expires_in_seconds": device_flow_result.get("expires_in_seconds", ""),
-            "instructions": device_flow_result.get("instructions", ""),
-            "next_step": (
-                "After the user completes authorization, call check_github_auth_status to verify, then retry create_pr."
-            ),
-        }
+        return await _github_auth_required_response(session_id, "create PRs", "create_pr")
 
     # For task-triggered sessions, prepend the attribution header if not already present.
     # Attribution is cosmetic — must not block PR creation on DB errors.

@@ -460,6 +460,121 @@ def push_and_create_pr(
     return {"status": "created", "pr_url": pr_url, "branch": branch}
 
 
+_GITHUB_REPO_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}$")
+
+# Directory suffix for session-scoped clones. Keeps the "{repo}-{suffix}"
+# naming used by worktrees so create_pr(repo=...) can find the clone.
+_CLONE_DIR_SUFFIX = "clone"
+
+
+def clone_repo_into_session(
+    github_repo: str,
+    session_id: str,
+    user_github_token: str,
+    branch: str | None = None,
+) -> dict[str, str]:
+    """Clone a GitHub repo into the session workspace using the user's token.
+
+    The clone is session-scoped (``AHS_SESSIONS_DIR/{session_id}/{name}-clone``)
+    rather than added to the shared ``AHS_REPOS_DIR``, so a user's private repo
+    is never exposed to other users' sessions.
+
+    The token is passed only via the ``GH_TOKEN`` env var of the ``gh`` / ``git``
+    subprocesses. ``gh repo clone`` authenticates through an ephemeral credential
+    helper, so the token is never written to ``.git/config`` and the agent
+    sandbox never sees it.
+
+    Args:
+        github_repo: ``owner/name`` on github.com.
+        session_id: Session UUID string.
+        user_github_token: The requesting user's device-flow GitHub token.
+        branch: Optional new branch to create and check out (so the agent can
+            commit and later call create_pr). Defaults to the repo's default branch.
+
+    Returns:
+        Dict with status, workspace path, repo name and branch.
+    """
+    if not _GITHUB_REPO_RE.match(github_repo) or ".." in github_repo:
+        raise ValueError(f"Invalid GitHub repo (expected 'owner/name'): {github_repo!r}")
+    name = github_repo.split("/", 1)[1]
+    name = name.removesuffix(".git")
+    if not _SAFE_NAME_RE.match(name):
+        raise ValueError(f"Invalid repo name: {name!r}")
+    if branch:
+        _validate_branch_name(branch)
+
+    workspace = os.path.join(AHS_SESSIONS_DIR, session_id, f"{name}-{_CLONE_DIR_SUFFIX}")
+    if os.path.isdir(workspace):
+        return {
+            "status": "granted",
+            "workspace": workspace,
+            "repo": name,
+            "note": "Clone already exists.",
+        }
+    os.makedirs(os.path.dirname(workspace), exist_ok=True)
+
+    env = os.environ.copy()
+    env["GH_TOKEN"] = user_github_token
+    env["GIT_TERMINAL_PROMPT"] = "0"
+
+    try:
+        subprocess.run(
+            ["gh", "repo", "clone", github_repo, workspace],
+            env=env,
+            check=True,
+            capture_output=True,
+            timeout=300,
+        )
+    except subprocess.TimeoutExpired:
+        logger.error("gh repo clone timed out", github_repo=github_repo, session_id=session_id)
+        return {"status": "error", "error": "Clone timed out after 300s."}
+    except subprocess.CalledProcessError as e:
+        stderr = e.stderr.decode("utf-8", errors="replace")[:500] if e.stderr else ""
+        logger.error("gh repo clone failed", github_repo=github_repo, session_id=session_id, stderr=stderr)
+        return {"status": "error", "error": f"Clone failed: {stderr}"}
+
+    _normalize_origin_to_https(workspace)
+
+    result_branch = ""
+    if branch:
+        subprocess.run(["git", "checkout", "-b", branch], cwd=workspace, check=True, capture_output=True)
+        # Set upstream here — inside the sandbox .git/config may be read-only.
+        subprocess.run(
+            ["git", "config", f"branch.{branch}.remote", "origin"], cwd=workspace, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "config", f"branch.{branch}.merge", f"refs/heads/{branch}"],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+        )
+        result_branch = branch
+    else:
+        head = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        result_branch = head.stdout.strip()
+
+    logger.info(
+        f"Cloned repo into session github_repo={github_repo!r} session_id={session_id}",
+        github_repo=github_repo,
+        session_id=session_id,
+        workspace=workspace,
+        branch=result_branch,
+    )
+    return {
+        "status": "granted",
+        "workspace": workspace,
+        "repo": name,
+        "branch": result_branch,
+        "note": "Clone available on your next turn.",
+    }
+
+
 def pull_repo(repo_path: str) -> bool:
     """Pull latest main for a repo.
 

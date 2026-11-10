@@ -215,6 +215,7 @@ ALL_MCP_SERVERS: list[str] = ["harness", settings.PLATFORM_MCP_SERVER_NAME]
 BLOCKED_HARNESS_TOOLS = frozenset(
     {
         "request_write_access",
+        "clone_repo",
         "list_available_repos",
         "create_pr",
         "list_agents",

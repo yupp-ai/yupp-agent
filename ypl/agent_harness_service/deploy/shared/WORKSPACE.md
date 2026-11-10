@@ -40,6 +40,7 @@ All paths below live under `/data/ahs/sessions/{SESSION_ID}/`:
 
 - The `repos/` directory is a **read-only, shared reference copy** of every checked-out repo. All sessions see the same `repos/`, so a repo cloned or checked out there is immediately visible to other agents. Never edit or commit inside `repos/` — use a worktree for any change.
 - Worktree directories are your **working copies**, created by `request_write_access`. They live at `/data/ahs/sessions/{SESSION_ID}/{repo}-{work_name}/`.
+- **Repos not in `repos/`** (e.g. a user's private GitHub repo): call `clone_repo(session_id, github_repo="owner/name", branch=None)`. It clones with the requesting user's GitHub authorization (device flow — relay the verification URL/code if returned) into `/data/ahs/sessions/{SESSION_ID}/{name}-clone/`, visible only to this session, on your next turn. Pass `branch` if you plan to commit and `create_pr(repo="{name}")`. Never try to clone private repos with raw `git`/`gh` in Bash — you have no credentials there.
 
 ## Repositories
 
