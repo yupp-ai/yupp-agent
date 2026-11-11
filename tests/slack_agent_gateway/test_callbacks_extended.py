@@ -55,6 +55,7 @@ def _make_session(
     last_reply_ts: str | None = "1111.000",
     placeholder_ts: str | None = None,
     status_message_ts: str | None = None,
+    show_tool_calls: bool = True,
 ) -> AgentSession:
     now = datetime.now(UTC)
     return AgentSession(
@@ -69,6 +70,7 @@ def _make_session(
         last_reply_ts=last_reply_ts,
         placeholder_ts=placeholder_ts,
         status_message_ts=status_message_ts,
+        show_tool_calls=show_tool_calls,
         created_at=now,
         last_activity_at=now,
         expires_at=now + timedelta(hours=8),

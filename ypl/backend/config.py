@@ -248,6 +248,11 @@ class Settings(BaseSettings):
     # Slack Agent Gateway encryption key (base64-encoded 32-byte key for Fernet)
     SLACK_AGENT_GW_ENCRYPTION_KEY: str = ""
 
+    # Whether new Slack threads show live tool-call status (the /verbose mode).
+    # Default off: threads show only the agent's replies. Users can still
+    # toggle per thread with /verbose and /quiet.
+    SLACK_SHOW_TOOL_CALLS_DEFAULT: bool = False
+
     # External-MCP per-user grant encryption key (Fernet).  Protects the
     # OAuth access / refresh tokens and per-user API keys stored in
     # ``mcp_user_grants``, plus the OAuth client_secret + M2M_SHARED token

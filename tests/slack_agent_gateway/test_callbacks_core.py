@@ -1027,3 +1027,35 @@ class TestResetTurnState:
         assert ok is True
         # save_session is skipped when status_message_ts is already None.
         save.assert_not_awaited()
+
+
+class TestShowToolCallsDefault:
+    """New Slack threads are quiet unless SLACK_SHOW_TOOL_CALLS_DEFAULT is set."""
+
+    def _new_session(self) -> AgentSession:
+        now = datetime.now(UTC)
+        return AgentSession(
+            session_id="C1:1.0:A1",
+            channel_id="C1",
+            thread_ts="1.0",
+            creator_slack_user_id="U1",
+            app_id="A1",
+            agent_name="test-agent",
+            created_at=now,
+            last_activity_at=now,
+            expires_at=now + timedelta(hours=1),
+        )
+
+    def test_default_is_quiet(self) -> None:
+        with patch("ypl.slack_agent_gateway.types.settings.SLACK_SHOW_TOOL_CALLS_DEFAULT", False):
+            assert self._new_session().show_tool_calls is False
+
+    def test_setting_turns_verbose_back_on(self) -> None:
+        with patch("ypl.slack_agent_gateway.types.settings.SLACK_SHOW_TOOL_CALLS_DEFAULT", True):
+            assert self._new_session().show_tool_calls is True
+
+    def test_stored_value_wins_over_default(self) -> None:
+        session = self._new_session()
+        session.show_tool_calls = True
+        restored = AgentSession.model_validate_json(session.model_dump_json())
+        assert restored.show_tool_calls is True
