@@ -108,8 +108,8 @@ def extract_bare_command(text: str) -> tuple[str, str] | None:
         /agents         list available agents
         /models         list available models
         /status         show current session metadata
-        /verbose        turn tool-call display on  (default)
-        /quiet          turn tool-call display off
+        /verbose        turn tool-call display on
+        /quiet          turn tool-call display off (default)
         /attach         (rejected — needs a UUID)
         /attach <uuid>  link thread to existing AHS session
         /attach:<uuid>  legacy colon form (alias)
@@ -292,8 +292,8 @@ HELP_TEXT = (
     "• `/status` — show session id, agent, model, and activity\n"
     "• `/agents` — list all AHS agents you can route to\n"
     "• `/models` — list all models you can use\n"
-    "• `/verbose` — show live tool-call info in-thread (default)\n"
-    "• `/quiet` — hide live tool-call info for the rest of this thread\n"
+    "• `/verbose` — show live tool-call info in this thread\n"
+    "• `/quiet` — hide live tool-call info in this thread (default)\n"
     "\n"
     "*First message of a thread only:*\n"
     "• `/model SPEC` — use a specific model for this session "

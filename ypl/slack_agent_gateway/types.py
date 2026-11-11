@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from ypl.backend.config import settings
+
 
 def _utc_now() -> datetime:
     """Get current UTC time with timezone info."""
@@ -98,12 +100,12 @@ class AgentSession(BaseModel):
 
     # Presentation preferences (toggled by /verbose and /quiet slash commands)
     show_tool_calls: bool = Field(
-        default=True,
+        default_factory=lambda: settings.SLACK_SHOW_TOOL_CALLS_DEFAULT,
         description=(
             "Whether tool-call start/result events should render as the live status "
-            "cluster in this thread. Default True (verbose). Flipped to False by "
-            "/quiet, back to True by /verbose. Purely a presentation flag — the "
-            "underlying agent behaviour is unchanged."
+            "cluster in this thread. Defaults to settings.SLACK_SHOW_TOOL_CALLS_DEFAULT "
+            "(False: quiet). Set True by /verbose, False by /quiet. Purely a "
+            "presentation flag — the underlying agent behaviour is unchanged."
         ),
     )
 
