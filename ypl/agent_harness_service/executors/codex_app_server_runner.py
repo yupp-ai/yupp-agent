@@ -40,7 +40,11 @@ from typing import Any
 import aiohttp
 
 from ypl.agent_harness_service.common.config import AgentConfig
-from ypl.agent_harness_service.executors.mcp_config import build_codex_mcp_args, build_codex_mcp_env
+from ypl.agent_harness_service.executors.mcp_config import (
+    browser_available,
+    build_codex_mcp_args,
+    build_codex_mcp_env,
+)
 from ypl.agent_harness_service.executors.runner import (
     AGENT_RESPONSE_DEBUG,
     AgentRunner,
@@ -419,6 +423,7 @@ class CodexAppServerRunner(AgentRunner):
             is_slack=context.is_slack,
             agent_name=self.config.name,
             external_mcps=self.config.external_mcps or None,
+            workspace=context.workspace,
         )
         return args
 
@@ -452,6 +457,7 @@ class CodexAppServerRunner(AgentRunner):
             has_native_skills=False,
             required_tools=None,
             workspace=context.workspace,
+            include_browser=browser_available(context.session_context, is_slack=context.is_slack),
         )
         parts = [base, _CODEX_ENVIRONMENT_PROMPT]
         skill_catalog = build_skill_catalog_section(exclude=SKILL_BACKED_NAMES)

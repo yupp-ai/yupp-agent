@@ -36,7 +36,7 @@ from ypl.agent_harness_service.common.constants import (
 from ypl.agent_harness_service.common.models import RetryConfig, tool_permissions_to_cli_flags
 from ypl.agent_harness_service.common.types import SessionPermissions
 from ypl.agent_harness_service.common.types import StreamEvent as StreamEvent  # re-export for compat
-from ypl.agent_harness_service.executors.mcp_config import ensure_workspace_mcp_config
+from ypl.agent_harness_service.executors.mcp_config import browser_available, ensure_workspace_mcp_config
 from ypl.agent_harness_service.executors.system_prompt import build_system_prompt
 from ypl.backend.utils.monitoring import metric_inc, metric_record_with_labels
 from ypl.structured_logger import get_logger
@@ -221,6 +221,10 @@ _ALLOWED_EXACT: frozenset[str] = frozenset(
         "NODE_PATH",
         "NODE_EXTRA_CA_CERTS",
         "UV_THREADPOOL_SIZE",
+        # Playwright browser install location (opt-in browser, AHS_BROWSER_ENABLED).
+        # Lets the Playwright MCP server and agent-written Playwright scripts find
+        # Chromium when the image installs it outside the default cache dir.
+        "PLAYWRIGHT_BROWSERS_PATH",
     }
 )
 
@@ -674,6 +678,10 @@ class ClaudeCodeRunner(AgentRunner):
             additional_system_prompt=self.config.additional_system_prompt,
             required_tools=self.config.required_tools or None,
             workspace=context.workspace,
+            # The browser MCP server lives in the workspace .mcp.json, which is
+            # only written for MCP-enabled agents.
+            include_browser=self.config.has_mcp
+            and browser_available(context.session_context, is_slack=context.is_slack),
         )
 
         args = [

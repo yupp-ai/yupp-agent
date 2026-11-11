@@ -22,9 +22,14 @@ import os
 from typing import Any
 
 from ypl.agent_harness_service.common.constants import (
+    AHS_BROWSER_CHROMIUM_SANDBOX,
+    AHS_BROWSER_ENABLED,
+    AHS_BROWSER_MCP_COMMAND,
     AHS_MCP_BASE_URL,
     AHS_MCP_SECRET,
     ALL_MCP_SERVERS,
+    BROWSER_MCP_SERVER_NAME,
+    BROWSER_OUTPUT_SUBDIR,
 )
 from ypl.agent_harness_service.common.types import SessionPermissions
 from ypl.structured_logger import get_logger
@@ -36,16 +41,59 @@ logger = get_logger()
 CODEX_HARNESS_BEARER_ENV = "AHS_MCP_BEARER"
 
 
-def _build_base_servers() -> dict[str, Any]:
+def build_browser_mcp_server(workspace: str | None = None) -> dict[str, Any]:
+    """Return the stdio entry for the Playwright MCP server (headless Chromium).
+
+    Screenshots, page snapshots and downloads go to ``<workspace>/browser`` so
+    they live with the session and the agent can read or publish them. The
+    profile is in-memory (``--isolated``): no cookies or logins persist across
+    turns or sessions.
+    """
+    args = ["--headless", "--isolated", "--browser", "chromium"]
+    if not AHS_BROWSER_CHROMIUM_SANDBOX:
+        args.append("--no-sandbox")
+    if workspace:
+        args += ["--output-dir", os.path.join(workspace, BROWSER_OUTPUT_SUBDIR)]
+    server: dict[str, Any] = {"type": "stdio", "command": AHS_BROWSER_MCP_COMMAND, "args": args}
+    # The CLI hands MCP servers a filtered env; pass the browser location
+    # explicitly so Chromium is found wherever the image installed it.
+    browsers_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    if browsers_path:
+        server["env"] = {"PLAYWRIGHT_BROWSERS_PATH": browsers_path}
+    return server
+
+
+def _build_base_servers(workspace: str | None = None) -> dict[str, Any]:
     """Return the baseline set of MCP servers available to any session.
 
-    Currently empty — the harness server is injected later in
-    :func:`resolve_mcp_servers` because it needs per-session headers
-    (``X-AHS-Session-ID``). When we add additional first-party MCP
-    servers (or a DB-backed registry of external ones in phase-9), they
-    plug in here.
+    The harness server is injected later in :func:`resolve_mcp_servers`
+    because it needs per-session headers (``X-AHS-Session-ID``). The
+    opt-in Playwright browser (``AHS_BROWSER_ENABLED``) is added here so the
+    ``allowed_servers`` permission filter applies to it.
     """
-    return {}
+    servers: dict[str, Any] = {}
+    if AHS_BROWSER_ENABLED:
+        servers[BROWSER_MCP_SERVER_NAME] = build_browser_mcp_server(workspace)
+    return servers
+
+
+def _resolve_permissions(ctx: dict[str, Any], is_slack: bool) -> SessionPermissions:
+    """Session permissions from context, with fail-secure defaults."""
+    if "permissions" in ctx:
+        return SessionPermissions.from_context(ctx)
+    if is_slack:
+        # Slack session without any permission info - fail secure
+        return SessionPermissions.restricted()
+    # Non-Slack sessions (API, cron, webhook) - allow by default
+    return SessionPermissions()
+
+
+def browser_available(session_context: dict[str, Any] | None = None, is_slack: bool = False) -> bool:
+    """True when :func:`resolve_mcp_servers` would give this session the browser."""
+    if not AHS_BROWSER_ENABLED:
+        return False
+    perms = _resolve_permissions(session_context or {}, is_slack)
+    return BROWSER_MCP_SERVER_NAME in perms.allowed_servers
 
 
 def resolve_mcp_servers(
@@ -54,28 +102,22 @@ def resolve_mcp_servers(
     is_slack: bool = False,
     agent_name: str = "",
     external_mcps: list[str] | None = None,
+    workspace: str | None = None,
 ) -> dict[str, Any]:
     """Resolve the set of MCP servers a session should have access to.
 
     Builds the baseline set, applies permission filtering, injects the
     harness MCP server, and returns the final server dict.
     """
-    base_servers = _build_base_servers()
+    base_servers = _build_base_servers(workspace)
 
-    # Resolve permissions from context (with fail-secure defaults).
     ctx = session_context or {}
-    if "permissions" in ctx:
-        perms = SessionPermissions.from_context(ctx)
-    elif is_slack:
-        # Slack session without any permission info - fail secure
-        perms = SessionPermissions.restricted()
+    perms = _resolve_permissions(ctx, is_slack)
+    if is_slack and "permissions" not in ctx:
         logger.warning(
             "Slack session missing permissions, defaulting to restricted",
             session_id=session_id,
         )
-    else:
-        # Non-Slack sessions (API, cron, webhook) - allow by default
-        perms = SessionPermissions()
 
     # Remove MCP servers not in the allowed list; third-party servers are kept.
     known_servers = set(ALL_MCP_SERVERS)
@@ -207,7 +249,7 @@ def ensure_workspace_mcp_config(
         return
 
     servers = resolve_mcp_servers(
-        session_id, session_context, is_slack, agent_name=agent_name, external_mcps=external_mcps
+        session_id, session_context, is_slack, agent_name=agent_name, external_mcps=external_mcps, workspace=workspace
     )
 
     mcp_json_path = os.path.join(workspace, ".mcp.json")
@@ -225,6 +267,7 @@ def build_codex_mcp_args(
     is_slack: bool = False,
     agent_name: str = "",
     external_mcps: list[str] | None = None,
+    workspace: str | None = None,
 ) -> list[str]:
     """Build -c flags for Codex CLI to inject MCP servers at launch time.
 
@@ -242,10 +285,22 @@ def build_codex_mcp_args(
         is_slack,
         agent_name=agent_name,
         external_mcps=external_mcps,
+        workspace=workspace,
     )
     args: list[str] = []
 
     for name, server in servers.items():
+        if server.get("type") == "stdio":
+            # Stdio servers (e.g. the Playwright browser): command + args (+ env)
+            # as TOML values. JSON string/array syntax is valid TOML here.
+            args += ["-c", f"mcp_servers.{name}.command={json.dumps(server['command'])}"]
+            args += ["-c", f"mcp_servers.{name}.args={json.dumps(server.get('args', []))}"]
+            env = server.get("env") or {}
+            if env:
+                pairs = ", ".join(f"{k} = {json.dumps(v)}" for k, v in env.items())
+                args += ["-c", f"mcp_servers.{name}.env={{ {pairs} }}"]
+            continue
+
         url = server.get("url", "")
         if not url:
             continue
