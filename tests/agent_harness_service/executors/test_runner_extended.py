@@ -726,6 +726,20 @@ class TestClaudeCodeRunnerBuildArgs:
         assert "--model" in args
         assert "claude-sonnet-4-6" in args
 
+    def test_default_model_passed_when_unset(self) -> None:
+        """With no model override, the CLI still gets the harness default --model."""
+        runner = self._make_runner()
+        with patch("ypl.agent_harness_service.executors.runner.DEFAULT_CLAUDE_CLI_MODEL", "claude-opus-5-5"):
+            args = self._build_args(runner)
+        assert args[args.index("--model") + 1] == "claude-opus-5-5"
+
+    def test_empty_default_model_omits_flag(self) -> None:
+        """AHS_CLAUDE_CLI_DEFAULT_MODEL="" falls back to the CLI's own default."""
+        runner = self._make_runner()
+        with patch("ypl.agent_harness_service.executors.runner.DEFAULT_CLAUDE_CLI_MODEL", ""):
+            args = self._build_args(runner)
+        assert "--model" not in args
+
     def test_default_deny_mode_uses_allowedtools(self) -> None:
         """Default-deny mode ("*": "deny") uses --allowedTools."""
         runner = self._make_runner(tool_permissions={"*": "deny", "bash": "allow"})

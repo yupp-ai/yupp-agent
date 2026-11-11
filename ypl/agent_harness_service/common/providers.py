@@ -87,6 +87,7 @@ PROVIDERS: dict[str, ProviderConfig] = {
 
 # All known models with provider prefix for route_model diversity guarantees
 KNOWN_MODELS: list[str] = [
+    "anthropic/claude-opus-5-5",
     "anthropic/claude-opus-4-6",
     "anthropic/claude-sonnet-4-6",
     "anthropic/claude-haiku-4-5",

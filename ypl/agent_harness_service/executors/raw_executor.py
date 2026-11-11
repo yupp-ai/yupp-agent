@@ -39,6 +39,7 @@ logger = get_logger()
 # cache_read / cache_write / reasoning are optional; see _estimate_cost() for fallback logic.
 _COST_PER_M_TOKENS: dict[str, dict[str, float]] = {
     # Anthropic — cache_read = 0.1x input, cache_write = 1.25x input
+    "claude-opus-5-5": {"input": 4.0, "output": 20.0, "cache_read": 0.20, "cache_write": 5.0},
     "claude-opus-4-6": {"input": 15.0, "output": 75.0, "cache_read": 1.50, "cache_write": 18.75},
     "claude-sonnet-4-6": {"input": 3.0, "output": 15.0, "cache_read": 0.30, "cache_write": 3.75},
     "claude-haiku-4-5": {"input": 0.80, "output": 4.0, "cache_read": 0.08, "cache_write": 1.00},
@@ -76,6 +77,7 @@ _COST_PER_M_TOKENS: dict[str, dict[str, float]] = {
 
 # Context window limits (for overflow detection)
 _CONTEXT_LIMITS: dict[str, int] = {
+    "claude-opus-5-5": 1_000_000,
     "claude-opus-4-6": 200_000,
     "claude-sonnet-4-6": 200_000,
     "claude-haiku-4-5": 200_000,
@@ -109,7 +111,7 @@ _CONTEXT_LIMITS: dict[str, int] = {
 _RESERVED_BUFFER = 4_000  # Tokens reserved for response
 
 # Models that reject sampling parameters (temperature, top_p, etc.)
-_MODELS_NO_SAMPLING_PARAMS: set[str] = {"kimi-k2.5"}
+_MODELS_NO_SAMPLING_PARAMS: set[str] = {"kimi-k2.5", "claude-opus-5-5"}
 
 
 def truncate_tool_result(text: str, max_chars: int, max_lines: int) -> str:
@@ -499,13 +501,11 @@ async def _run_anthropic(
             "cache_creation_input_tokens": getattr(response.usage, "cache_creation_input_tokens", 0) or 0,
             "cache_read_input_tokens": getattr(response.usage, "cache_read_input_tokens", 0) or 0,
         },
-        "raw_content": [
-            {
-                "type": b.type,
-                **({"text": b.text} if b.type == "text" else {"id": b.id, "name": b.name, "input": b.input}),
-            }
-            for b in response.content
-        ],
+        # Echo every block back verbatim on the next turn. Thinking /
+        # redacted_thinking blocks must be replayed unchanged (signature
+        # included) for tool-use continuations — and models such as
+        # claude-opus-5-5 always think, so they're always present.
+        "raw_content": [b.model_dump(exclude_none=True) for b in response.content],
     }
 
 
@@ -869,7 +869,7 @@ async def run_raw_executor(
                     system_prompt=system_prompt,
                     messages=messages,
                     tools=tool_schemas,
-                    temperature=agent.temperature,
+                    temperature=None if model_id in _MODELS_NO_SAMPLING_PARAMS else agent.temperature,
                     enable_caching=True,
                     model_parameters=agent.model_parameters,
                 )
