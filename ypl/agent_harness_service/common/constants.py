@@ -142,6 +142,31 @@ AHS_MCP_BASE_URL = os.environ.get("AHS_MCP_BASE_URL", "http://127.0.0.1:8090")
 # MCP endpoint auth token. Falls back to a random value for local dev.
 AHS_MCP_SECRET = os.environ.get("AHS_MCP_SECRET", secrets.token_urlsafe(32))
 
+# --- Browser (Playwright MCP) ---
+# Opt-in headless browser for harnessed agents (navigate, click, fill, screenshot).
+# When enabled, every Claude Code / Codex session gets a stdio ``playwright`` MCP
+# server in its MCP config and the shared/BROWSER.md prompt section.
+#
+# The Docker image installs the browser only when built with
+# ``--build-arg INSTALL_BROWSER=true`` (compose: ``AHS_INSTALL_BROWSER=true`` in the
+# env file), and that build also sets ``AHS_BROWSER_ENABLED=true``. Bare-metal hosts
+# install ``@playwright/mcp`` + Chromium themselves and set the flag in ``.env``.
+BROWSER_MCP_SERVER_NAME = "playwright"
+AHS_BROWSER_ENABLED = os.environ.get("AHS_BROWSER_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
+# Executable for the Playwright MCP server (``npm install -g @playwright/mcp``).
+AHS_BROWSER_MCP_COMMAND = os.environ.get("AHS_BROWSER_MCP_COMMAND", "playwright-mcp")
+# Chromium's own sandbox needs user namespaces, which unprivileged Docker (running
+# as root) does not provide. Default off there; set to "true" on hosts where the
+# Chromium sandbox works.
+AHS_BROWSER_CHROMIUM_SANDBOX = os.environ.get("AHS_BROWSER_CHROMIUM_SANDBOX", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+# Workspace-relative directory where screenshots, snapshots and downloads land.
+BROWSER_OUTPUT_SUBDIR = "browser"
+
 # --- Executor types (executor_config.type) ---
 EXECUTOR_TYPE_RAW = "raw"
 EXECUTOR_TYPE_HARNESSED = "harnessed"
@@ -213,7 +238,11 @@ _CLI_TOOLS_SUPERSEDED_BY_MCP: list[str] = []
 # ``allowed_servers`` still need to read cleanly.
 # TODO(phase-9): externally-registered MCP servers (from the DB registry)
 # will be appended to this list at runtime when the session starts.
-ALL_MCP_SERVERS: list[str] = ["harness", settings.PLATFORM_MCP_SERVER_NAME]
+#
+# ``playwright`` (the opt-in browser, see AHS_BROWSER_ENABLED) is listed so the
+# permission model governs it: restricted sessions (``allowed_servers=["harness"]``)
+# don't get a browser.
+ALL_MCP_SERVERS: list[str] = ["harness", settings.PLATFORM_MCP_SERVER_NAME, BROWSER_MCP_SERVER_NAME]
 
 # Harness MCP tools that require USE_MCP permission (bare names, no CLI prefix).
 # Used by both the harnessed path (runner.py, with mcp__harness__ prefix) and

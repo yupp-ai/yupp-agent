@@ -130,6 +130,28 @@ services:
       SANDBOX_ENABLED: "true"
 ```
 
+### Browser for agents (optional)
+
+Agents can drive a headless Chromium (navigate, click, fill forms, screenshot) through the [Playwright MCP server](https://github.com/microsoft/playwright-mcp). It is off by default because it adds ~700 MB to the image. To turn it on, add to the env file you pass with `--env-file`, then rebuild:
+
+```bash
+AHS_INSTALL_BROWSER=true   # build arg: installs @playwright/mcp + Chromium into the image
+```
+
+```bash
+docker compose -f docker-compose.one-box.yml --env-file .env up -d --build
+```
+
+That build also sets `AHS_BROWSER_ENABLED=true`, so Claude Code and Codex sessions get a `playwright` MCP server and the `shared/BROWSER.md` prompt section. Restricted sessions (users without MCP access) do not. Runtime knobs:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AHS_BROWSER_ENABLED` | `true` when the image has the browser | Set `false` to hide the browser without rebuilding. |
+| `AHS_BROWSER_CHROMIUM_SANDBOX` | `false` | Chromium's own sandbox needs user namespaces, which unprivileged Docker lacks. Set `true` on hosts where it works. |
+| `AHS_BROWSER_MCP_COMMAND` | `playwright-mcp` | Executable for the MCP server. |
+
+On bare metal or a MacBook, install it yourself (`npm install -g @playwright/mcp@0.0.84 && npx playwright install --with-deps chromium`) and set `AHS_BROWSER_ENABLED=true` in `.env`. Page snapshots and downloads land in `browser/` inside each session workspace; the prompt tells agents to save screenshots there too.
+
 ### Useful commands
 
 ```bash

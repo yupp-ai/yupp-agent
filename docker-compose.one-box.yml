@@ -78,6 +78,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # Opt-in headless browser (Playwright) for agents. Set
+        # AHS_INSTALL_BROWSER=true in the env file passed via --env-file.
+        INSTALL_BROWSER: ${AHS_INSTALL_BROWSER:-false}
     image: ahs-mono:local
     ports:
       - "8090:8090"
@@ -153,6 +157,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        INSTALL_BROWSER: ${AHS_INSTALL_BROWSER:-false}  # same image as app
     image: ahs-mono:local
     ports:
       - "8501:8501"
@@ -179,6 +185,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        INSTALL_BROWSER: ${AHS_INSTALL_BROWSER:-false}  # same image as app
     image: ahs-mono:local
     ports:
       - "8095:8095"

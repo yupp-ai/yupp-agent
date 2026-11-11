@@ -77,6 +77,11 @@ _ALWAYS_INJECT_BULLET_RE = re.compile(r"^[ \t]*[-*][ \t]+([A-Za-z0-9][A-Za-z0-9_
 # Shared prompt files that should only be included for Slack-triggered sessions.
 _SLACK_ONLY_SHARED_FILES = {"SLACK_GATEWAY.md"}
 
+# Shared prompt file describing the opt-in Playwright browser. Included only when
+# the session actually gets the ``playwright`` MCP server (see
+# ``mcp_config.browser_available``), so agents never read about tools they lack.
+_BROWSER_SHARED_FILE = "BROWSER.md"
+
 # Shared prompt files that have been slimmed to skill pointers (Claude Code only).
 # For non-Claude-Code executors (Codex, raw), the full content from the corresponding
 # skill SKILL.md file is inlined instead, since those executors cannot invoke skills.
@@ -457,6 +462,7 @@ def build_system_prompt(
     has_native_skills: bool = True,
     required_tools: list[str] | None = None,
     workspace: str | None = None,
+    include_browser: bool = False,
 ) -> str:
     """Assemble the system prompt from identity files.
 
@@ -495,6 +501,9 @@ def build_system_prompt(
             concatenates each listed user-scope slug into the
             ``## User Always-Loaded Memories`` section. When omitted, that section
             is skipped silently.
+        include_browser: Include shared/BROWSER.md. The caller sets this when the
+            session's MCP config carries the Playwright browser server
+            (``mcp_config.browser_available``); otherwise the file is skipped.
 
     Returns:
         Assembled system prompt string.
@@ -516,6 +525,8 @@ def build_system_prompt(
         # Skip Slack-specific shared files for non-Slack sessions
         basename = os.path.basename(md_path)
         if basename in _SLACK_ONLY_SHARED_FILES and not is_slack:
+            continue
+        if basename == _BROWSER_SHARED_FILE and not include_browser:
             continue
         # For skill-backed files: when the executor doesn't support skills,
         # replace the slim pointer with the full content from the skill file.

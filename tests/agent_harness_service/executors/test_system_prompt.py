@@ -634,3 +634,21 @@ class TestBuildSystemPromptAlwaysInject:
         marker_idx = prompt.index("MARKER_BODY")
         session_idx = prompt.index("## Session Context")
         assert marker_idx < session_idx
+
+
+class TestBrowserPromptSection:
+    """shared/BROWSER.md is included only when the session has the browser."""
+
+    def _build(self, tmpdir: str, **kwargs: Any) -> str:
+        with contextlib.ExitStack() as stack:
+            for p in _make_patches(tmpdir):
+                stack.enter_context(p)
+            return build_system_prompt(name="test-agent", **kwargs)
+
+    def test_skipped_by_default(self, tmp_path: Path) -> None:
+        (tmp_path / "BROWSER.md").write_text("# Browser marker")
+        assert "Browser marker" not in self._build(str(tmp_path))
+
+    def test_included_when_enabled(self, tmp_path: Path) -> None:
+        (tmp_path / "BROWSER.md").write_text("# Browser marker")
+        assert "Browser marker" in self._build(str(tmp_path), include_browser=True)

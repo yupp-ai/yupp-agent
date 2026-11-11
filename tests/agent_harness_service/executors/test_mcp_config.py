@@ -19,6 +19,7 @@ from unittest.mock import patch
 from ypl.agent_harness_service.common.types import SessionPermissions
 from ypl.agent_harness_service.executors.mcp_config import (
     CODEX_HARNESS_BEARER_ENV,
+    browser_available,
     build_codex_mcp_args,
     build_codex_mcp_env,
     ensure_workspace_mcp_config,
@@ -189,6 +190,7 @@ class TestBuildCodexMcpArgs:
             True,
             agent_name="veronia",
             external_mcps=["gmail"],
+            workspace=None,
         )
 
 
@@ -208,3 +210,75 @@ class TestBuildCodexMcpEnv:
         env1 = build_codex_mcp_env("session-1")
         env2 = build_codex_mcp_env("session-2")
         assert env1[CODEX_HARNESS_BEARER_ENV] != env2[CODEX_HARNESS_BEARER_ENV]
+
+
+_MCP_CONFIG = "ypl.agent_harness_service.executors.mcp_config"
+
+
+def _full_ctx() -> dict[str, Any]:
+    return {"permissions": SessionPermissions.full_access().model_dump(mode="json")}
+
+
+class TestBrowserMcpServer:
+    """Opt-in Playwright browser (AHS_BROWSER_ENABLED)."""
+
+    def test_absent_when_disabled(self) -> None:
+        with patch(f"{_MCP_CONFIG}.AHS_BROWSER_ENABLED", False):
+            servers = resolve_mcp_servers(session_id="s", session_context=_full_ctx(), workspace="/ws")
+        assert "playwright" not in servers
+        assert browser_available(_full_ctx()) is False
+
+    def test_stdio_entry_when_enabled(self) -> None:
+        with (
+            patch(f"{_MCP_CONFIG}.AHS_BROWSER_ENABLED", True),
+            patch(f"{_MCP_CONFIG}.AHS_BROWSER_CHROMIUM_SANDBOX", False),
+            patch.dict(os.environ, {"PLAYWRIGHT_BROWSERS_PATH": "/opt/ms-playwright"}),
+        ):
+            servers = resolve_mcp_servers(session_id="s", session_context=_full_ctx(), workspace="/ws")
+        entry = servers["playwright"]
+        assert entry["type"] == "stdio"
+        assert entry["command"] == "playwright-mcp"
+        args = entry["args"]
+        assert {"--headless", "--isolated", "--no-sandbox"} <= set(args)
+        assert args[args.index("--browser") + 1] == "chromium"
+        assert args[args.index("--output-dir") + 1] == "/ws/browser"
+        assert entry["env"] == {"PLAYWRIGHT_BROWSERS_PATH": "/opt/ms-playwright"}
+
+    def test_chromium_sandbox_flag(self) -> None:
+        with (
+            patch(f"{_MCP_CONFIG}.AHS_BROWSER_ENABLED", True),
+            patch(f"{_MCP_CONFIG}.AHS_BROWSER_CHROMIUM_SANDBOX", True),
+        ):
+            servers = resolve_mcp_servers(session_id="s", session_context=_full_ctx())
+        assert "--no-sandbox" not in servers["playwright"]["args"]
+        assert "--output-dir" not in servers["playwright"]["args"]
+
+    def test_restricted_session_gets_no_browser(self) -> None:
+        ctx: dict[str, Any] = {"permissions": SessionPermissions.restricted().model_dump(mode="json")}
+        with patch(f"{_MCP_CONFIG}.AHS_BROWSER_ENABLED", True):
+            servers = resolve_mcp_servers(session_id="s", session_context=ctx)
+            assert browser_available(ctx) is False
+            assert browser_available(None, is_slack=True) is False
+            assert browser_available(_full_ctx()) is True
+        assert "playwright" not in servers
+
+    def test_written_to_workspace_mcp_json(self, tmp_path: Path) -> None:
+        with patch(f"{_MCP_CONFIG}.AHS_BROWSER_ENABLED", True):
+            ensure_workspace_mcp_config(str(tmp_path), session_id="s", session_context=_full_ctx())
+        data = json.loads((tmp_path / ".mcp.json").read_text())
+        assert data["mcpServers"]["playwright"]["type"] == "stdio"
+        assert str(tmp_path / "browser") in data["mcpServers"]["playwright"]["args"]
+
+    def test_codex_stdio_args(self) -> None:
+        with (
+            patch(f"{_MCP_CONFIG}.AHS_BROWSER_ENABLED", True),
+            patch.dict(os.environ, {"PLAYWRIGHT_BROWSERS_PATH": "/opt/ms-playwright"}),
+        ):
+            args = build_codex_mcp_args(session_id="s", session_context=_full_ctx(), workspace="/ws")
+        flags = [args[i + 1] for i, a in enumerate(args) if a == "-c"]
+        assert 'mcp_servers.playwright.command="playwright-mcp"' in flags
+        args_flag = next(f for f in flags if f.startswith("mcp_servers.playwright.args="))
+        assert json.loads(args_flag.split("=", 1)[1])[-2:] == ["--output-dir", "/ws/browser"]
+        assert 'mcp_servers.playwright.env={ PLAYWRIGHT_BROWSERS_PATH = "/opt/ms-playwright" }' in flags
+        # No url-style flags leak in for the stdio server.
+        assert not any(f.startswith("mcp_servers.playwright.url") for f in flags)

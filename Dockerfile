@@ -42,6 +42,26 @@ RUN set -e && \
 RUN git config --system credential.https://github.com.helper \
     '!f() { test "$1" = get && test -n "$GH_TOKEN" && printf "username=x-access-token\npassword=%s\n" "$GH_TOKEN"; }; f'
 
+# Optional headless browser for agents (Playwright MCP + Chromium, ~700 MB).
+# Off by default; build with ``--build-arg INSTALL_BROWSER=true`` (compose:
+# ``AHS_INSTALL_BROWSER=true`` in the env file). The same arg turns the feature
+# on at runtime via AHS_BROWSER_ENABLED, which a deployment can still override.
+# Chromium lives under /opt so the bwrap sandbox (which ro-binds /opt) sees it.
+ARG INSTALL_BROWSER=false
+ARG PLAYWRIGHT_MCP_VERSION=0.0.84
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
+    AHS_BROWSER_ENABLED=${INSTALL_BROWSER}
+RUN if [ "$INSTALL_BROWSER" = "true" ]; then \
+        set -e && \
+        npm install -g "@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}" && \
+        # Use the playwright bundled with @playwright/mcp so the browser
+        # revision matches what the MCP server expects. ``--with-deps`` apt-installs
+        # Chromium's shared libraries.
+        node /usr/local/lib/node_modules/@playwright/mcp/node_modules/playwright/cli.js install --with-deps chromium && \
+        chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH" && \
+        apt-get clean && rm -rf /var/lib/apt/lists/* /root/.npm /tmp/*; \
+    fi
+
 # Application code + data. ``.env`` is injected at runtime (docker-compose
 # ``env_file:`` / systemd ``EnvironmentFile=``) — never bake it into the image.
 COPY ./ypl/ /app/ypl/
