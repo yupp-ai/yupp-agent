@@ -44,6 +44,7 @@ async def _fetch_slack_agents_raw() -> list[dict[str, Any]]:
                 "bot_name": r.bot_name,
                 "display_name": r.display_name,
                 "status": r.status.value,
+                "reply_in_thread_without_mention": r.reply_in_thread_without_mention,
                 "has_bot_token_encrypted": bool(r.bot_token_encrypted),
                 "has_signing_secret_encrypted": bool(r.signing_secret_encrypted),
                 "created_by_user_id": r.created_by_user_id or "",
@@ -127,6 +128,7 @@ async def _update_slack_agent(
     bot_name: str,
     display_name: str,
     status: SlackAgentStatus,
+    reply_in_thread_without_mention: bool = False,
 ) -> tuple[bool, str]:
     """Update an existing SlackAgent row. Returns (success, message)."""
     async with get_async_session() as session:
@@ -145,6 +147,7 @@ async def _update_slack_agent(
         row.bot_name = bot_name
         row.display_name = display_name
         row.status = status
+        row.reply_in_thread_without_mention = reply_in_thread_without_mention
         session.add(row)
         try:
             await session.commit()
@@ -268,6 +271,7 @@ def _render_list(rows: list[dict[str, Any]]) -> None:
             "bot_name": r["bot_name"],
             "display_name": r["display_name"],
             "status": r["status"],
+            "reply_without_mention": r["reply_in_thread_without_mention"],
             "encrypted_bot_token": r["has_bot_token_encrypted"],
             "encrypted_signing_secret": r["has_signing_secret_encrypted"],
             "created_at": r["created_at"],
@@ -381,6 +385,15 @@ def _render_edit_section(rows: list[dict[str, Any]], agent_names: list[str]) -> 
         new_bot_name = st.text_input("Bot name", value=row["bot_name"]).strip()
         new_display_name = st.text_input("Display name", value=row["display_name"]).strip()
         new_status_value = st.selectbox("Status", options=_STATUS_VALUES, index=status_index)
+        new_reply_without_mention = st.checkbox(
+            "Reply in thread without @mention",
+            value=row["reply_in_thread_without_mention"],
+            help=(
+                "Once the bot has a session in a thread, it also answers plain replies there "
+                "(replies that @mention anyone are ignored). The Slack app must subscribe to the "
+                "message.channels and message.groups bot events."
+            ),
+        )
         col_save, col_delete = st.columns(2)
         save_clicked = col_save.form_submit_button("Save changes", type="primary")
         delete_clicked = col_delete.form_submit_button("Delete", type="secondary")
@@ -407,6 +420,7 @@ def _render_edit_section(rows: list[dict[str, Any]], agent_names: list[str]) -> 
                 bot_name=new_bot_name,
                 display_name=new_display_name,
                 status=SlackAgentStatus(new_status_value),
+                reply_in_thread_without_mention=new_reply_without_mention,
             ),
             timeout=10,
         )

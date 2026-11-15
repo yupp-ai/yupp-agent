@@ -112,6 +112,8 @@ class TestBuildManifest:
     def test_event_subscriptions_include_app_mention(self) -> None:
         result = build_manifest("bot", "Bot")
         assert "app_mention" in result["settings"]["event_subscriptions"]["bot_events"]
+        assert "message.channels" in result["settings"]["event_subscriptions"]["bot_events"]
+        assert "message.groups" in result["settings"]["event_subscriptions"]["bot_events"]
 
     def test_socket_mode_disabled(self) -> None:
         result = build_manifest("bot", "Bot")

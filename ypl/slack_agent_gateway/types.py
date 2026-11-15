@@ -63,6 +63,10 @@ class AgentAppConfig(BaseModel):
     bot_token: str = Field(..., description="Slack bot token (xoxb-...)")
     signing_secret: str = Field(..., description="Slack signing secret")
     display_name: str = Field(..., description="Human-readable name (e.g., 'Giladovski')")
+    reply_in_thread_without_mention: bool = Field(
+        False,
+        description="Answer non-mention replies in threads where this bot already has an active session",
+    )
 
 
 class AgentSession(BaseModel):

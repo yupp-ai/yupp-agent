@@ -97,6 +97,17 @@ class SlackAgent(BaseModel, table=True):
         ),
     )
 
+    # Behavior
+    reply_in_thread_without_mention: bool = Field(
+        default=False,
+        sa_column=sa.Column(sa.Boolean, nullable=False, server_default=sa.false()),
+        description=(
+            "When true, the bot also answers plain replies (no @mention) in threads where it "
+            "already has an active session. Requires the message.channels / message.groups "
+            "bot events on the Slack app."
+        ),
+    )
+
     # Audit fields
     created_by_user_id: str | None = Field(
         default=None,
