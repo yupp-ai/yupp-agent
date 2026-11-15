@@ -3,6 +3,7 @@
 Handles incoming Slack events from multiple agent apps:
 - URL verification challenge
 - app_mention events
+- message events (thread replies without an @mention, for bots that opt in)
 - reaction_added events (emoji feedback on agent replies)
 - Event deduplication
 - Signature verification against multiple signing secrets
@@ -46,6 +47,7 @@ from ypl.slack_agent_gateway.mention_commands import (
 )
 from ypl.slack_agent_gateway.redis_client import (
     get_ahs_session_for_thread,
+    get_session,
     get_session_for_reply,
     save_session,
     try_claim_event,
@@ -56,7 +58,7 @@ from ypl.slack_agent_gateway.sessions import (
     process_slack_attachments,
 )
 from ypl.slack_agent_gateway.slack_client import build_slack_client
-from ypl.slack_agent_gateway.types import AgentAppConfig, AgentSession
+from ypl.slack_agent_gateway.types import AgentAppConfig, AgentSession, SessionStatus
 from ypl.structured_logger import get_logger
 from ypl.utils import async_timed_cache
 
@@ -657,6 +659,64 @@ async def handle_app_mention(
     }
 
 
+# Any user / bot mention token, e.g. ``<@U123ABC>`` or ``<@W123|name>``.
+_USER_MENTION_RE = re.compile(r"<@[UW][A-Z0-9]+(?:\|[^>]*)?>")
+
+
+async def handle_thread_message(
+    event: dict[str, Any],
+    app_config: AgentAppConfig,
+) -> dict[str, Any]:
+    """Handle a plain ``message`` event: a thread reply that doesn't @mention the bot.
+
+    Only acted on when the bot has ``reply_in_thread_without_mention`` enabled
+    and already has an active SAG session for the thread. All other messages
+    are ignored, so bots that don't opt in behave exactly as before.
+
+    Skipped (never forwarded):
+    - edits, deletes, joins and other subtyped messages (``file_share`` is kept)
+    - messages from bots, including this one, to avoid reply loops
+    - top-level channel messages (no ``thread_ts``)
+    - messages containing any ``<@...>`` mention. A mention of this bot arrives
+      separately as ``app_mention`` and is handled there; a mention of someone
+      else means the message is addressed to them.
+    """
+    if not app_config.reply_in_thread_without_mention:
+        return {"status": "skipped", "reason": "reply_in_thread_without_mention disabled"}
+
+    subtype = event.get("subtype")
+    if subtype and subtype != "file_share":
+        return {"status": "skipped", "reason": f"ignored subtype {subtype}"}
+    if event.get("bot_id") or event.get("bot_profile"):
+        return {"status": "skipped", "reason": "bot message"}
+
+    channel_id = event.get("channel", "")
+    user_id = event.get("user", "")
+    ts = event.get("ts", "")
+    thread_ts = event.get("thread_ts")
+    if not channel_id or not user_id or not ts:
+        return {"status": "invalid_event", "reason": "missing required fields"}
+    if not thread_ts or thread_ts == ts:
+        return {"status": "skipped", "reason": "not a thread reply"}
+
+    if _USER_MENTION_RE.search(event.get("text", "")):
+        return {"status": "skipped", "reason": "message contains a mention"}
+
+    session = await get_session(AgentSession.build_session_id(channel_id, thread_ts, app_config.app_id))
+    if session is None or session.status != SessionStatus.ACTIVE:
+        return {"status": "skipped", "reason": "no active session for thread"}
+
+    logger.info(
+        "Handling thread reply without mention",
+        agent_name=app_config.agent_name,
+        channel_id=channel_id,
+        thread_ts=thread_ts,
+    )
+    # Same pipeline as a mention in an existing thread: ack, placeholder,
+    # attachments, forward to the session (or queue if the agent is busy).
+    return await handle_app_mention(event, app_config)
+
+
 # Emoji-to-rating mapping for feedback (only whitelisted emojis are recorded)
 _EMOJI_TO_RATING: dict[str, str] = {
     "+1": "POSITIVE",
@@ -814,6 +874,10 @@ async def handle_event_callback(payload: dict[str, Any]) -> JSONResponse:
     # Handle different event types
     if event_type == "app_mention":
         result = await handle_app_mention(event, app_config)
+        return JSONResponse(status_code=200, content=result)
+
+    if event_type == "message":
+        result = await handle_thread_message(event, app_config)
         return JSONResponse(status_code=200, content=result)
 
     if event_type == "reaction_added":

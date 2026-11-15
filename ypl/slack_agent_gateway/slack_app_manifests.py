@@ -303,6 +303,10 @@ def build_manifest(
                 "request_url": events_url,
                 "bot_events": [
                     "app_mention",
+                    # Thread replies without an @mention; only acted on when the
+                    # bot's ``reply_in_thread_without_mention`` flag is on.
+                    "message.channels",
+                    "message.groups",
                     "reaction_added",
                 ],
             },

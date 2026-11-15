@@ -184,6 +184,7 @@ async def _load_agent_configs_from_database() -> dict[str, AgentAppConfig]:
             bot_token=bot_token,
             signing_secret=signing_secret,
             display_name=agent.display_name,
+            reply_in_thread_without_mention=agent.reply_in_thread_without_mention,
         )
         configs[agent.app_id] = config
         logger.info(
