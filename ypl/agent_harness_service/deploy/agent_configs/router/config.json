@@ -19,6 +19,7 @@
   "streaming": false,
   "timeout_s": 36000,
   "external_mcps": [
-    "arti"
+    "arti",
+    "slack"
   ]
 }

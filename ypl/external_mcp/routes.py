@@ -105,6 +105,7 @@ async def start_oauth(
         state=state,
         extra_params=cfg.get("extra_authorize_params"),
         code_challenge=code_challenge,
+        scope_separator=cfg.get("scope_separator") or " ",
     )
     logger.info("MCP OAuth start", slug=server, user_id=user_id)
     return RedirectResponse(authorize, status_code=302)
@@ -171,7 +172,7 @@ async def oauth_callback(
             refresh_token=payload.get("refresh_token"),
             token_type=payload.get("token_type", "Bearer"),
             expires_at=oauth_client.expiry_from_expires_in(payload.get("expires_in")),
-            scopes=(payload.get("scope") or "").split() if payload.get("scope") else None,
+            scopes=oauth_client.parse_scopes(payload.get("scope")),
         )
         await session.commit()
 

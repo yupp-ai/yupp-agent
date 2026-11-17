@@ -29,6 +29,7 @@
     "mcp__harness__send_slack_message"
   ],
   "external_mcps": [
-    "arti"
+    "arti",
+    "slack"
   ]
 }

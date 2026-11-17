@@ -35,9 +35,17 @@ class CatalogEntry:
     token_url: str = ""
     scopes: list[str] = field(default_factory=list)
     extra_authorize_params: dict[str, str] = field(default_factory=dict)
+    # Joiner for ``scopes`` in the authorize URL.  RFC 6749 says space;
+    # Slack wants commas.
+    scope_separator: str = " "
     # Operator hint shown in the UI — typically "create + enable the API in
     # your GCP project" or "go to <provider settings> to mint a key".
     setup_hint: str = ""
+    # Env vars the admin page pre-fills the OAuth client_id/secret from (and
+    # that gate the one-click install).  Defaults to the Google OAuth client
+    # the Mac installer writes to ``.env``.
+    client_id_env: str = "GOOGLE_AUTH_CLIENT_ID"
+    client_secret_env: str = "GOOGLE_AUTH_CLIENT_SECRET"
 
 
 # Google's first-party hosted MCP servers.  All three live under
@@ -55,6 +63,39 @@ _GOOGLE_OAUTH_EXTRA = {
     # a previous one has been revoked.
     "prompt": "consent",
 }
+
+
+# Slack's hosted MCP (https://docs.slack.dev/ai/slack-mcp-server/).  Every
+# tool runs on a *user* token (xoxp-) from Slack's user-only OAuth flow, so
+# requests are scoped to what the connecting human can see.  No dynamic client
+# registration: the admin registers one internal Slack app with MCP enabled.
+_SLACK_MCP_URL = "https://mcp.slack.com/mcp"
+_SLACK_USER_SCOPES = [
+    # Search messages / files / users
+    "search:read.public",
+    "search:read.private",
+    "search:read.mpim",
+    "search:read.im",
+    "search:read.files",
+    "search:read.users",
+    # Read channels, threads and DMs
+    "channels:history",
+    "groups:history",
+    "mpim:history",
+    "im:history",
+    "channels:read",
+    "groups:read",
+    "mpim:read",
+    "im:read",
+    # Users, files, canvases, reactions
+    "users:read",
+    "files:read",
+    "canvases:read",
+    "reactions:read",
+    # Writes as the user
+    "chat:write",
+    "reactions:write",
+]
 
 
 CATALOG: list[CatalogEntry] = [
@@ -109,6 +150,31 @@ CATALOG: list[CatalogEntry] = [
             "Enable the Calendar API "
             "(https://console.cloud.google.com/apis/library/calendar-json.googleapis.com). "
             "Same OAuth client + same callback as Gmail."
+        ),
+    ),
+    CatalogEntry(
+        slug="slack",
+        display_name="Slack",
+        description=(
+            "Search, read, and post in Slack as the connecting user via Slack's hosted MCP "
+            "(channels, threads, DMs, files, users, canvases)."
+        ),
+        url=_SLACK_MCP_URL,
+        transport=McpTransport.STREAMABLE_HTTP,
+        auth_type=McpAuthType.OAUTH_OBO,
+        authorize_url="https://slack.com/oauth/v2_user/authorize",
+        token_url="https://slack.com/api/oauth.v2.user.access",
+        scopes=_SLACK_USER_SCOPES,
+        scope_separator=",",
+        client_id_env="SLACK_MCP_OAUTH_CLIENT_ID",
+        client_secret_env="SLACK_MCP_OAUTH_CLIENT_SECRET",
+        setup_hint=(
+            "Create (or reuse) an internal Slack app at https://api.slack.com/apps — Slack only "
+            "allows internal or directory-published apps to use MCP.  Under *Agents & AI Apps* "
+            "turn on the Model Context Protocol toggle; under *OAuth & Permissions* add the "
+            "user token scopes listed above and the redirect URL "
+            "https://ahs.<your-apex>/mcp_oauth/callback.  Paste its client_id + secret here, or "
+            "set SLACK_MCP_OAUTH_CLIENT_ID / SLACK_MCP_OAUTH_CLIENT_SECRET in .env for one-click."
         ),
     ),
 ]
