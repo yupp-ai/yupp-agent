@@ -178,6 +178,7 @@ async def _create_from_catalog(
             "token_url": entry.token_url,
             "scopes": list(entry.scopes),
             "extra_authorize_params": dict(entry.extra_authorize_params),
+            "scope_separator": entry.scope_separator,
         },
         client_secret=client_secret or None,
         m2m_shared_token=None,
@@ -311,22 +312,28 @@ with tab_catalog:
     st.caption(
         "Curated registry of well-known MCPs.  Everything except your OAuth "
         "client_id/secret is filled in for you — and when those are already in "
-        "`.env` (which they are on a Mac-installed deploy), you can register all "
-        "three with a single button."
+        "`.env` (the Google ones are on a Mac-installed deploy), you can register them "
+        "with a single button."
     )
 
     existing = run_coroutine_in_lit_worker(_existing_slugs(), timeout=10) or set()
     catalog_roles = run_coroutine_in_lit_worker(_all_roles(), timeout=10) or []
 
-    env_cid = os.environ.get("GOOGLE_AUTH_CLIENT_ID", "")
-    env_csec = os.environ.get("GOOGLE_AUTH_CLIENT_SECRET", "")
+    def _env_creds(entry: CatalogEntry) -> tuple[str, str]:
+        """OAuth client_id/secret for ``entry`` from the container env (Google
+        for the Google MCPs, Slack's own app for Slack, …)."""
+        return os.environ.get(entry.client_id_env, ""), os.environ.get(entry.client_secret_env, "")
+
     admin_role_id = next((r.role_id for r in catalog_roles if r.name == RoleName.ADMIN), None)
 
     # One-click bulk install for the operator who's already on the
-    # straightforward path: .env creds + ADMIN role.
+    # straightforward path: .env creds + ADMIN role.  Only entries whose own
+    # provider creds are in .env qualify — never register Slack with the
+    # Google client.
     missing_in_db = [e for e in CATALOG if e.slug not in existing]
-    if env_cid and env_csec and admin_role_id and missing_in_db:
-        slugs_left = ", ".join(e.slug for e in missing_in_db)
+    installable = [e for e in missing_in_db if all(_env_creds(e))]
+    if admin_role_id and installable:
+        slugs_left = ", ".join(e.slug for e in installable)
         col1, col2 = st.columns([3, 2])
         with col1:
             st.markdown("#### Install all catalog MCPs now")
@@ -338,12 +345,13 @@ with tab_catalog:
         with col2:
             if st.button("⚡ Install all", type="primary", use_container_width=True):
                 summary: list[str] = []
-                for entry in missing_in_db:
+                for entry in installable:
+                    cid_env, csec_env = _env_creds(entry)
                     ok, msg = run_coroutine_in_lit_worker(
                         _create_from_catalog(
                             entry,
-                            client_id=env_cid,
-                            client_secret=env_csec,
+                            client_id=cid_env,
+                            client_secret=csec_env,
                             role_ids=[admin_role_id],
                             enabled=True,
                         ),
@@ -354,10 +362,11 @@ with tab_catalog:
                     (st.success if line.startswith("✓") else st.error)(line)
                 st.cache_data.clear()
                 st.rerun()
-    elif not (env_cid and env_csec):
+    elif missing_in_db and not installable:
         st.warning(
-            "`GOOGLE_AUTH_CLIENT_ID` / `GOOGLE_AUTH_CLIENT_SECRET` not present in the "
-            "Streamlit container env — falling back to per-card forms."
+            "No OAuth client creds for the unregistered catalog MCPs in the Streamlit "
+            "container env (e.g. `GOOGLE_AUTH_CLIENT_ID` / `GOOGLE_AUTH_CLIENT_SECRET`, "
+            "`SLACK_MCP_OAUTH_CLIENT_ID` / `SLACK_MCP_OAUTH_CLIENT_SECRET`) — use the per-card forms."
         )
     elif not missing_in_db:
         st.success("All catalog MCPs are already registered. Manage them on the **Browse** tab.")
@@ -366,6 +375,7 @@ with tab_catalog:
 
     for entry in CATALOG:
         is_registered = entry.slug in existing
+        env_cid, env_csec = _env_creds(entry)
         with st.container(border=True):
             head_l, head_r = st.columns([3, 1])
             with head_l:

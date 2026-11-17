@@ -119,9 +119,13 @@ def build_authorize_url(
     state: str,
     extra_params: dict[str, str] | None = None,
     code_challenge: str = "",
+    scope_separator: str = " ",
 ) -> str:
     """Construct the provider's authorize URL.  Caller hands the result to
-    the user's browser via 302."""
+    the user's browser via 302.
+
+    ``scope_separator`` defaults to RFC 6749's space; Slack wants commas.
+    """
     params: dict[str, str] = {
         "response_type": "code",
         "client_id": client_id,
@@ -129,7 +133,7 @@ def build_authorize_url(
         "state": state,
     }
     if scopes:
-        params["scope"] = " ".join(scopes)
+        params["scope"] = (scope_separator or " ").join(scopes)
     if code_challenge:
         params["code_challenge"] = code_challenge
         params["code_challenge_method"] = "S256"
@@ -171,8 +175,7 @@ async def exchange_code(
         )
     if resp.status_code >= 400:
         raise RuntimeError(f"Token exchange failed ({resp.status_code}): {resp.text[:500]}")
-    payload: dict[str, Any] = resp.json()
-    return payload
+    return _checked_token_payload(resp, "Token exchange")
 
 
 async def refresh_access_token(
@@ -200,8 +203,31 @@ async def refresh_access_token(
         )
     if resp.status_code >= 400:
         raise RuntimeError(f"Token refresh failed ({resp.status_code}): {resp.text[:500]}")
+    return _checked_token_payload(resp, "Token refresh")
+
+
+def _checked_token_payload(resp: httpx.Response, what: str) -> dict[str, Any]:
+    """Parse a 2xx token response and reject ones that carry no token.
+
+    Slack (and a few others) answer errors with HTTP 200 and
+    ``{"ok": false, "error": "invalid_code"}``; without this check the caller
+    would hit a ``KeyError`` on ``access_token`` instead of a readable error.
+    """
     payload: dict[str, Any] = resp.json()
+    if payload.get("ok") is False or payload.get("error") or not payload.get("access_token"):
+        err = payload.get("error") or "no access_token in response"
+        raise RuntimeError(f"{what} failed: {err}")
     return payload
+
+
+def parse_scopes(scope: str | None) -> list[str] | None:
+    """Split a granted-scope string from a token response.
+
+    RFC 6749 uses spaces; Slack returns commas.  Accept either.
+    """
+    if not scope:
+        return None
+    return [s for s in scope.replace(",", " ").split() if s]
 
 
 def expiry_from_expires_in(expires_in: int | float | None) -> datetime | None:
