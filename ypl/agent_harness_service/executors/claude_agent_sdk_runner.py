@@ -78,7 +78,7 @@ logger = get_logger()
 
 # Default Anthropic model when agent config does not specify llm_model.
 # Override via env var for environment-specific defaults.
-_DEFAULT_SDK_MODEL = os.environ.get("AHS_SDK_DEFAULT_MODEL", "claude-opus-4-5")
+_DEFAULT_SDK_MODEL = os.environ.get("AHS_SDK_DEFAULT_MODEL", "claude-opus-5-5")
 
 # Max response tokens per API call. Intentionally larger than the raw
 # executor default (4096) to allow longer tool-heavy agent responses.

@@ -16,6 +16,7 @@ import ypl.agent_harness_service.tools.mcp_instance as _mcp_instance
 from ypl.agent_harness_service.common.agent_registry import get_agent_spec, list_predefined_agents
 from ypl.agent_harness_service.common.config import load_agent_config
 from ypl.agent_harness_service.common.constants import (
+    DEFAULT_MODEL_ANTHROPIC,
     PERSONAL_AGENT_DEFAULT_CONFIG,
     PERSONAL_AGENT_PREFIXES,
     is_personal_agent,
@@ -214,7 +215,7 @@ async def new_task(
 
     # Pre-generate session UUID so the caller gets it immediately
     pre_session_id = str(_uuid.uuid4())
-    preview_model = model or parent_model or "anthropic/claude-sonnet-4-6"
+    preview_model = model or parent_model or DEFAULT_MODEL_ANTHROPIC
 
     # Fire-and-forget: run subagent in background; result delivered via subagent queue
     _subagent_task = asyncio.ensure_future(

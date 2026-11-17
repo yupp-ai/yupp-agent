@@ -24,7 +24,9 @@ RUN set -e && \
     apt-get update && \
     apt-get install -y --no-install-recommends gh && \
     poetry install --no-root --without dev --no-interaction --no-ansi --compile && \
-    npm install -g @anthropic-ai/claude-code @openai/codex && \
+    # Floor on the Claude CLI: claude-opus-5-5 (DEFAULT_CLAUDE_CLI_MODEL) needs
+    # >= 2.1.280; older builds 400 with "does not support this model".
+    npm install -g "@anthropic-ai/claude-code@>=2.1.280" @openai/codex && \
     # Poetry itself has no runtime role; drop it (and its now-orphaned deps,
     # notably the keyring 24.x it pins which clashes with the project's
     # keyring 25.x and makes `pip check` further down fail).

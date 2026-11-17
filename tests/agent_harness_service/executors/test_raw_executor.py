@@ -272,3 +272,44 @@ class TestSpillToolResultToFile:
 
         spill_tool_result_to_file("some result", "my_tool", "id-1", session_id)
         assert (tmp_path / session_id / "tool-results").is_dir()
+
+
+class TestRunAnthropicReplaysThinking:
+    """Always-thinking models (claude-opus-5-5) return thinking blocks that must be
+    echoed back verbatim on the tool-use continuation turn."""
+
+    async def test_raw_content_preserves_thinking_and_tool_use(self) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+
+        from anthropic.types import TextBlock, ThinkingBlock, ToolUseBlock
+        from ypl.agent_harness_service.executors.raw_executor import _run_anthropic
+
+        response = SimpleNamespace(
+            content=[
+                ThinkingBlock(type="thinking", thinking="", signature="sig-123"),
+                TextBlock(type="text", text="Checking."),
+                ToolUseBlock(type="tool_use", id="tu_1", name="bash", input={"cmd": "ls"}),
+            ],
+            stop_reason="tool_use",
+            usage=SimpleNamespace(
+                input_tokens=10, output_tokens=5, cache_creation_input_tokens=0, cache_read_input_tokens=0
+            ),
+        )
+        client = MagicMock()
+        client.messages.create = AsyncMock(return_value=response)
+
+        result = await _run_anthropic(
+            client=client,
+            model_id="claude-opus-5-5",
+            system_prompt="sys",
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[],
+            temperature=None,
+        )
+
+        assert result["raw_content"][0] == {"type": "thinking", "thinking": "", "signature": "sig-123"}
+        assert result["raw_content"][1] == {"type": "text", "text": "Checking."}
+        assert result["raw_content"][2] == {"type": "tool_use", "id": "tu_1", "name": "bash", "input": {"cmd": "ls"}}
+        assert result["tool_calls"] == [{"id": "tu_1", "name": "bash", "arguments": {"cmd": "ls"}}]
+        assert "temperature" not in client.messages.create.call_args.kwargs
